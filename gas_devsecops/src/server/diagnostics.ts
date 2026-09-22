@@ -8,7 +8,7 @@
 import { SCOPES } from "../domain/config";
 import { getProp, hasWizCredentials, PROP_KEYS, projectScope, resolveWizAuthMode } from "./props";
 import { activeJob, isStaleJob } from "./jobsStore";
-import { BUILD_ID } from "./buildInfo";
+import { BUILD_ID } from "../../../gas_shared/server/buildInfo";
 import { cellCount, dataRowCount, ledgerSpreadsheet, SCHEMA_VERSION, TABS } from "./sheetsDb";
 import { loadSettings } from "./settingsStore";
 import { fetchPage, forgetToken, getToken, WizNotAuthorizedError } from "./wizClient";

@@ -10,9 +10,9 @@ Four guards carry most of the weight:
 * **the scan pin** -- a cell that reads an append-only gold table directly, rather than through a
   ``v_*`` view, blends every run that has ever happened and still draws a plausible chart;
 * **cell discipline** -- metric arithmetic in a notebook is arithmetic no test can reach;
-* **the ``Chart ▸`` recipes** -- the four native visualizations are not committed (their metadata
-  format is undocumented), so the recipe for rebuilding them is, and it must not rot;
-* **one cell 1** -- seven notebooks that boot differently is seven ways to be misconfigured.
+* **the ``Chart ▸`` recipes** -- the eight native visualizations are not committed (their
+  metadata format is undocumented), so the recipe for rebuilding them is, and it must not rot;
+* **one cell 1** -- nine notebooks that boot differently is nine ways to be misconfigured.
 """
 
 from __future__ import annotations
@@ -36,19 +36,39 @@ PAGES = [
     "00_security_posture",
     "01_mttr_sla",
     "02_program_performance",
+    "03_code_vulnerabilities",
     "03_os_vulnerabilities",
     "04_scan_history",
     "05_estate",
     "06_run_and_verify",
+    "08_code_assets",
 ]
 
-#: One-shot migration tooling. Not a page: it has no scan to pin, draws nothing, and boots
-#: without the chart layer -- so the page-shaped guards below skip it explicitly rather than
-#: being loosened for everything. The artifact guards still apply.
+#: The register pages that are per-scope rather than whole-register, and the scope each one opens
+#: on. Two ``03`` pages, one per CVE-bearing register -- ported from the OS register's own
+#: ``brick/notebooks/03_os_vulnerabilities.ipynb`` (``git show
+#: ef22b05^:brick/notebooks/03_os_vulnerabilities.ipynb``, that directory having been retired at
+#: ``ef22b05``) when this tree absorbed the ``os`` scope (S2). They are the same page over two
+#: populations, so they share every cell below the boot cell; what makes them two pages rather
+#: than one widget is that an analyst opens the one their register is in, and a page that opens on
+#: the wrong scope is a page that reads as empty.
+SCOPE_PAGES = {
+    "03_code_vulnerabilities": "sca",
+    "03_os_vulnerabilities": "os",
+}
+
+#: `07_import_gas` -- ported from the OS register's own `brick/notebooks/07_import_gas.ipynb`
+#: (`git show ef22b05^:brick/notebooks/07_import_gas.ipynb`, that directory having been retired at
+#: `ef22b05`) when this tree absorbed the `os` scope (S2). GAS is the OS-patching register: the
+#: importer seeds `--scope=os` history only, `sca`/`sast` have no prior GAS deployment to import
+#: from, and nothing here enforces that (see `import_bundle`'s module docstring). It is not a read
+#: page -- `page_only` skips the page-shaped guards for it -- so it stays out of `PAGES` and in
+#: its own list, the way the OS register's own suite split the two.
 MIGRATION = ["07_import_gas"]
 
-#: Everything that ships under notebooks/.
-EXPECTED = PAGES + MIGRATION
+#: Everything that ships under notebooks/, in the order `sorted(glob)` returns them -- the
+#: importer is 07 and the P2P v5 page is 08, so the page list is not contiguous.
+EXPECTED = sorted(PAGES + MIGRATION)
 
 
 def page_only(name: str) -> None:
@@ -58,8 +78,12 @@ def page_only(name: str) -> None:
 
 
 #: Append-only tables. A read that names one of these without pinning a scan blends every run.
-APPEND_ONLY = ("findings_raw", "wiz_os_findings", "metrics_mttr", "metrics_program",
-               "metrics_capacity")
+#: Three tables now, not five: ``metrics_mttr``/``metrics_program``/``metrics_capacity`` were
+#: three separate gold tables under 2.x and are one ``metrics`` table (family-columned) now, and
+#: ``wiz_os_findings`` never matched a table this pipeline writes (bronze is ``findings_raw``,
+#: unprefixed at the module level -- the prefix is a ``resolve_tables`` concern) -- both stale
+#: entries that happened not to fire because no cell ever named them.
+APPEND_ONLY = ("findings_raw", "metrics")
 
 #: ``Chart ▸`` keys whose value must be a real column. The rest are chart-editor settings.
 COLUMN_KEYS = {"X", "Y", "Group by", "Order", "Rows", "Columns", "Value"}
@@ -140,6 +164,24 @@ def test_every_cell_has_a_unique_id(notebook):
     assert len(set(nuids)) == len(nuids), name
 
 
+def test_no_two_notebooks_share_a_cell_id():
+    """Across the folder, not just within a file -- a copied notebook is how they collide.
+
+    ``03_os_vulnerabilities`` was ported by copying ``03_code_vulnerabilities`` (the two pages
+    are the same page over two registers), and a straight copy carries all nineteen of the
+    original's nuids. Databricks keys cell-level state -- comments, the chart the editor built,
+    a run result -- on the nuid, so two pages sharing one is two pages sharing that state after
+    both are imported into a workspace. The port therefore regenerates them; this is what says
+    so, and it is the guard the next copy will trip.
+    """
+    seen = {}
+    for name in EXPECTED:
+        for cell in load(NOTEBOOK_DIR / f"{name}.ipynb")["cells"]:
+            nuid = cell["metadata"]["application/vnd.databricks.v1+cell"]["nuid"]
+            assert nuid not in seen, f"{name} shares nuid {nuid} with {seen.get(nuid)}"
+            seen[nuid] = name
+
+
 def test_the_first_markdown_cell_states_the_one_question(notebook):
     """One notebook, one question. If a page needs two, it is two pages."""
     name, doc = notebook
@@ -178,9 +220,12 @@ def without_page(body):
 
 
 def test_every_notebook_boots_the_same_way():
-    """Seven ways to put the modules on ``sys.path`` is seven ways to be misconfigured.
+    """Nine ways to put the modules on ``sys.path`` is nine ways to be misconfigured.
 
-    The only permitted difference is the ``PAGE`` literal -- the page's own widgets.
+    The only permitted difference is the ``PAGE`` literal -- the page's own widgets, and since
+    S2 the scope the page opens on (see ``SCOPE_PAGES``). That the two ``03`` pages differ
+    *only* there is the point: they are one page over two registers, so a fix to either has to
+    be a fix to both, and this is what says the boot cell is not where they drifted.
     """
     bodies = {}
     for name in PAGES:
@@ -199,7 +244,7 @@ def test_the_boot_cell_handles_both_documented_deployments():
     assert "os.path.dirname(_here)" in body
     assert 'dbutils.widgets.get("module_path")' in body
     assert "sys.path.insert(0, _p)" in body
-    assert "sys.path.append" not in body, "insert, not append -- see README.md, Layout"
+    assert "sys.path.append" not in body, "insert, not append -- see docs/internals.md, Layout"
     assert "README.md" in body, "the failure has to name where the fix is written down"
 
 
@@ -228,6 +273,85 @@ def test_every_widget_read_is_declared_in_that_notebooks_page_literal(name):
         used |= set(re.findall(r"ctx\.(?:int_)?param\(\s*'(\w+)'", source(cell)))
         used |= set(re.findall(r'ctx\.(?:int_)?param\(\s*"(\w+)"', source(cell)))
     assert used <= declared, f"{name} reads undeclared widgets: {sorted(used - declared)}"
+
+
+def page_literal(name):
+    """The page's own ``PAGE`` dict, evaluated. The half ``without_page`` throws away.
+
+    Evaluated rather than parsed: the literal legitimately reaches into ``panels``
+    (``GROUP_DIMENSIONS``, ``BASE_WIDGETS``), so a text assertion here would be a second,
+    weaker copy of what the notebook actually does.
+    """
+    import panels
+
+    body = boot_cell(load(NOTEBOOK_DIR / f"{name}.ipynb"))
+    start = body.index("PAGE = ") + len("PAGE = ")
+    end = body.index("\npanels.declare_widgets(", start)
+    return eval(body[start:end], {"panels": panels})  # noqa: PGH001 -- the notebook's own source
+
+
+class FakeWidgets:
+    """``dbutils.widgets``, with Databricks' one behaviour that matters here.
+
+    **A widget that already exists keeps its value** -- re-declaring does not overwrite it --
+    which is why this is ``setdefault`` and not assignment, and why ``BASE_WIDGETS`` merged
+    under a page literal can only lose to a widget somebody already set. ``get`` raises for an
+    undeclared name exactly as the real one does; ``dbx.widget`` catches that and returns "".
+    """
+
+    def __init__(self):
+        self.values = {}
+
+    def dropdown(self, name, default, choices, label=""):
+        assert default in choices, f"{name}: default {default!r} is not one of {choices}"
+        self.values.setdefault(name, default)
+
+    def text(self, name, default, label=""):
+        self.values.setdefault(name, default)
+
+    def get(self, name):
+        return self.values[name]
+
+
+class FakeDbutils:
+    def __init__(self):
+        self.widgets = FakeWidgets()
+
+
+@pytest.mark.parametrize("name,scope", sorted(SCOPE_PAGES.items()))
+def test_each_scope_page_opens_on_its_own_scope(name, scope, monkeypatch):
+    """The page literal is what decides the scope, and this runs the mechanism to prove it.
+
+    Not a text assertion: ``declare_widgets`` merges ``PAGE`` over ``BASE_WIDGETS`` and creates
+    the widget, and ``context()`` then resolves the scope by *reading that widget back* through
+    ``run_pipeline.resolve_scope`` -- which is the whole chain, and the reason ``panels.py``
+    needs no page-scope parameter. (A ``scope`` key also lands in ``ctx.params`` because every
+    PAGE entry does; nothing reads it, and it is not what sets ``ctx.scope``.)
+
+    **Where the guard bites:** only on ``03_code_vulnerabilities``. ``config.DEFAULT_SCOPE`` is
+    ``os``, so deleting the ``scope`` entry from the OS page's literal changes nothing at all --
+    which is the last assertion here, stated rather than left implied. Delete it from the code
+    page's literal and that page opens on the OS register: every panel returns rows, every
+    figure draws, and the numbers belong to a different population.
+    """
+    import dbx
+    import panels
+    import run_pipeline
+    from config import DEFAULT_SCOPE
+
+    monkeypatch.delenv("SCOPE", raising=False)
+    fake = FakeDbutils()
+    monkeypatch.setattr(dbx, "get_dbutils", lambda: fake)
+
+    panels.declare_widgets(**page_literal(name))
+    assert fake.widgets.values["scope"] == scope
+    assert run_pipeline.resolve_scope(argv=[]) == scope
+
+    # The control: with no widgets declared at all, every page would open on the deployment
+    # default -- which is what the entry above overrides, and what it happens to agree with on
+    # the OS page.
+    monkeypatch.setattr(dbx, "get_dbutils", lambda: FakeDbutils())
+    assert run_pipeline.resolve_scope(argv=[]) == DEFAULT_SCOPE
 
 
 # --------------------------------------------------------------------- cell discipline
@@ -293,13 +417,25 @@ def test_no_cell_reads_an_append_only_table_directly(notebook):
 
     An unpinned read of a gold table returns every run that has ever happened, and renders as a
     chart that looks entirely reasonable.
+
+    Scoped to ``%sql`` cells, not every code cell: this used to sweep ``cells(doc, "code")``
+    whole, which was safe only because every APPEND_ONLY name was compound
+    (``metrics_mttr`` / ``metrics_program`` / ``metrics_capacity``) and matched nothing else in
+    these notebooks. The three-table collapse (this wave) makes the gold table's bare name
+    ``metrics`` -- which is also the ``metrics.py`` module, imported by that name in 06's
+    "module versions" diagnostic cell (``import config, dbx, ingest, ledger, metrics,
+    run_pipeline``) -- so the whole-cell sweep now flags a Python import list as an unpinned
+    table read. That claim was never true: ``test_no_notebook_does_its_own_thinking`` already
+    forbids a bare ``spark.sql(`` outside a ``%sql`` cell in every page, so a Python cell has no
+    way to read any table directly in the first place, and ``%sql`` is where the real risk --
+    and the one this test's own docstring describes, a chart drawn from an unpinned read -- has
+    always lived. ``sql_cells`` narrows to exactly that surface without weakening it.
     """
     name, doc = notebook
-    for cell in cells(doc, "code"):
-        text = source(cell)
+    for cell, query in sql_cells(doc):
         for table in APPEND_ONLY:
-            if table in text:
-                assert "scan_id =" in text or "v_" in text, (
+            if table in query:
+                assert "scan_id =" in query or "v_" in query, (
                     f"{name}: {title(cell)!r} names {table} without a pin or a view"
                 )
 
@@ -337,7 +473,7 @@ def parse(recipe: str) -> dict:
 
 
 def test_the_native_charts_are_all_documented():
-    """Five visualizations are left to the chart editor, and each one ships its recipe.
+    """Eight visualizations are left to the chart editor, and each one ships its recipe.
 
     Their metadata format is undocumented and version-dependent, so nothing here can author one
     correctly and nothing here could verify it if it did -- which is the failure mode the AI/BI
@@ -345,7 +481,9 @@ def test_the_native_charts_are_all_documented():
     plus the recipe to rebuild the chart in fifteen seconds. See brick/README.md.
     """
     found = [(name, r) for name in EXPECTED for _, r in recipes(load(NOTEBOOK_DIR / f"{name}.ipynb"))]
-    assert len(found) == 5, [f for f, _ in found]
+    # Eight, not six: the two ``03`` pages are the same page over two registers and each ships
+    # the same two recipes. See SCOPE_PAGES.
+    assert len(found) == 8, [f for f, _ in found]
 
 
 def test_every_recipe_parses_under_the_grammar(notebook):
@@ -398,7 +536,7 @@ def live_ctx(live_tables):
     import panels
 
     spark, tables = live_tables
-    os.environ["SCOPE"] = "os"
+    os.environ["SCOPE"] = "sca"
     os.environ["SEVERITIES"] = "CRITICAL,HIGH"
     os.environ["SCAN_ID"] = ""
     return spark, panels.context(spark, tables=tables)
@@ -428,12 +566,12 @@ def test_at_least_one_page_ships_an_editable_sql_cell():
 # ---------------------------------------------------------------------------- the tree
 
 
-def test_the_readme_notebook_tree_matches_what_ships():
+def test_the_deploy_doc_notebook_tree_matches_what_ships():
     """The deployment instructions cannot drift from the artifact -- the same rule the pipeline's
     own module tree has had since a stale folder cost 137,870 findings."""
     import run_pipeline
 
-    text = (BRICK_DIR / "README.md").read_text(encoding="utf-8")
+    text = (BRICK_DIR / "docs" / "deploy.md").read_text(encoding="utf-8")
     start = next(
         i for i, line in enumerate(text.splitlines())
         if "these files go on sys.path too" in line
@@ -447,7 +585,8 @@ def test_the_readme_notebook_tree_matches_what_ships():
         f"{m}.py" for m in run_pipeline.NOTEBOOK_MODULES + run_pipeline.MIGRATION_MODULES
     } | {f"{n}.ipynb" for n in EXPECTED}
     assert listed == expected, (
-        f"only in README {sorted(listed - expected)}, only shipped {sorted(expected - listed)}"
+        f"only in docs/deploy.md {sorted(listed - expected)},"
+        f" only shipped {sorted(expected - listed)}"
     )
 
 
@@ -460,7 +599,12 @@ def test_matplotlib_is_no_longer_a_dependency():
     keeping.
     """
     here = Path(__file__).resolve()  # this file names the token it is looking for
-    sources = list(BRICK_DIR.glob("*.py")) + list(BRICK_DIR.glob("tests/*.py")) + NOTEBOOKS
+    sources = (
+        list(BRICK_DIR.glob("*.py"))
+        + list(BRICK_DIR.glob("tests/*.py"))
+        + list(BRICK_DIR.glob("tools/*.py"))
+        + NOTEBOOKS
+    )
     for path in sources:
         if path.resolve() == here:
             continue

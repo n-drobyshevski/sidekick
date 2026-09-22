@@ -105,14 +105,15 @@ describe("the movement section's own prose is untouched — copied verbatim from
   // is checked as the SEPARATE quoted segments the source itself concatenates with `+` (a
   // check spanning the join would never match, since CODE is raw source text — quotes,
   // newlines, `+` signs and all — not the runtime-concatenated string).
+  // REWRITTEN BY THE TIP-BUDGET ROUND, and re-pinned rather than relaxed. The one sentence
+  // became two short lines so the card reads as two statements instead of a 179-character
+  // paragraph; the claim it protects is unchanged, and so is this test's job — that an edit
+  // nearby cannot quietly reword it.
   it("keeps the section heading's tip lines exactly as written", () => {
     expect(CODE).toContain(
-      "Two tables, not one: an API-confirmed resolution and a finding that merely stopped ",
+      "Two tables, not one: a confirmed resolution and a disappearance are counted apart.",
     );
-    expect(CODE).toContain(
-      "appearing in a scan are counted separately, because only one of them is a confirmed ",
-    );
-    expect(CODE).toContain("remediation.\",\n    ] }),");
+    expect(CODE).toContain("Only one of them is a confirmed remediation.\",\n    ] }),");
   });
 
   it("keeps the section-note paragraph exactly as written", () => {

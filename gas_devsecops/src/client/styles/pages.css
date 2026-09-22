@@ -1,8 +1,8 @@
 /* THIS APP'S PAGES, and nothing a sibling would want.
    Everything the three sidekicks draw the same way lives in gas_shared/styles/; the rules
-   below dress pages only this register draws - the open-backlog isotype, the coverage
-   headline, the signal-rows tri-state bar, the capacity verdict word and the repository
-   foothold cell, the scan-scopes list and the history spiral. Imported after the shared
+   below dress pages only this register draws - the coverage headline, the signal-rows
+   tri-state bar, the capacity verdict word, the repository foothold cell, the scan-scopes
+   list and the history spiral. Imported after the shared
    sheets and before gas_shared/styles/overrides.css, which must stay last.
 
    P3.4b (2026-09-08) promoted the rules that used to live here BYTE-IDENTICAL to gas's own
@@ -11,31 +11,13 @@
    .code-block, trend-aside*, rate-with-meter*, unclassified-card/-swatch, kpi-spark* and
    .section-label > .heading-pill, plus the two narrow-viewport collapses and the rail status
    dot - into gas_shared/styles/{components,tables,base}.css. What is left below is what this
-   register alone draws. */
+   register alone draws.
 
-/* -------------------------------------------- Executive: the open-backlog isotype
-   Neurath's rule, in three declarations: quantity is MORE MARKS OF THE SAME SIZE. Every mark
-   is 8x12 whatever the row's count is, and the unit is chosen once per table (executive.js,
-   `pictogramUnit`) so two rows' marks are comparable - a mark that grew with its value would
-   make the row's length and the mark's size two different encodings of one number.
-
-   --ink, NOT --accent. The brand accent is a FILL token at 1.52:1 on white (styles/tokens.css
-   states this at length); a mark carrying a COUNT has to be legible on its own, so these are
-   the page's ink. Nothing about the marks is colour-coded either - the percentage beside them
-   is the readout, and the marks are a second encoding of it.
-
-   The partial mark is CLIPPED, not shrunk: same box, same baseline, --tenths of it painted.
-   var(--tenths) is a bare integer so `var(--tenths) * 10%` resolves inside calc(). */
-.isotype { display: inline-flex; gap: 2px; margin-right: 8px; vertical-align: middle; }
-.isotype-mark { width: 8px; height: 12px; background: var(--ink); border-radius: 1px; display: inline-block; }
-.isotype-mark--part { clip-path: inset(0 calc(100% - var(--tenths) * 10%) 0 0); }
-
-/* Forced colours drop `background` entirely, which would leave the row of marks invisible with
-   nothing in its place - the one state where the picture is the only thing that changed. An
-   outlined mark in CanvasText survives the substitution, and the clip still applies to it. */
-@media (forced-colors: active) {
-  .isotype-mark { border: 2px solid CanvasText; background: transparent; }
-}
+   The unit-chart wave (2026-09-15) promoted the isotype block the same way: .isotype,
+   .isotype-mark, .isotype-mark--part and their forced-colours rule moved BYTE-IDENTICAL
+   into gas_shared/styles/components.css beside .hatch, because ui/unitChart.js now draws
+   them for every register rather than this one. The class name did not change with the
+   move, and dev/densityModel.mjs's isotype bucket is why - see that file's own comment. */
 
 /* ------------------------------------------------------------------------ .section-note
    The line under a section heading that is prose, not a chart caption (`.chart-note` is the
@@ -126,24 +108,52 @@
 .coverage-headline { display: grid; gap: var(--space-1); margin: 0 0 var(--space-3); }
 .coverage-headline .meter { max-width: 28rem; height: 10px; }
 
-/* --------------------------------- Coverage & efficiency: the capacity verdict, as a word
-   Ported from gas_ai's `.cap-verdict` (inventory.css), rule and reasoning intact: the WORD is
-   the signal and the dot only repeats it. Three states told apart by hue alone survive
-   neither greyscale nor a dichromat, and this is the one figure on the card a reader takes
-   away. Sized and spaced like gas_shared's `.rail-status-dot` (styles/base.css), so the app
-   has one dot vocabulary.
+/* The verdict dot-and-word moved to gas_shared/styles/components.css, beside ui/verdict.js.
+   gas drew byte-identical rules for it, which is the promotion trigger. */
 
-   The dot takes the ok / neutral / bad tones the per-month pills used to carry, rather than a
-   second list keyed by verdict slug. */
-.verdict-mark { display: inline-flex; align-items: center; gap: var(--space-2); }
-.verdict-word { font-size: var(--fs-lead); font-weight: 650; }
-.verdict-dot {
-  width: 9px; height: 9px; border-radius: var(--radius-pill); flex: 0 0 auto;
-  background: var(--text-3);
+/* ------------------------------------------ Repositories: the team x idle-bucket heatmap
+   An app-local table (`table.data.heat`), not a component: this is the one grid in the app
+   whose cells carry an ordinal shade, and nothing in `gas_shared` draws one.
+
+   THE RAMP IS NEUTRAL INK, AND THAT IS A RULE RATHER THAN A PREFERENCE. DESIGN.md §4 says
+   outright that if this register ever grows an ordinal scale the brand yellow would be tier 2
+   of 4 (it is literally gas_ai's `--rank-2-solid`) and that at that point "the ramp moves, not
+   the brand" — so the brand is not in the ramp at all. The severity palette is the other
+   thing a reader already knows the meaning of, and idle time is not severity: borrowing
+   red/orange/amber here would have a 70-day-idle cell read as "HIGH". What is left is ink at
+   four alphas over the page's own ground — a scale with no second meaning to mistake it for.
+
+   AND THE COUNT IS ALWAYS PRINTED. The shade is the redundancy, never the reading: every cell
+   spells its repository count and, under it, the open findings sitting in that bucket, so the
+   grid survives greyscale, a dichromat, and the forced-colors rule below that strips the
+   fills outright (`background` is one of the properties forced-colors mode overrides, so the
+   alphas would land on a system ground they were never measured against). */
+/* The caption is the grid's method sentence and reads as prose, so it is left-aligned and
+   sits above the header rather than centred over it the way a browser's default caption does.
+   No other table in this app has one — `dataTable` puts its explanation in a `<p>` beside the
+   table — but this grid's columns move with the operator's threshold, and a sentence a reader
+   might not connect to the table it belongs to is worse than no sentence. */
+table.data.heat caption {
+  caption-side: top; text-align: left; padding: 0 0 var(--space-2);
 }
-.verdict-dot--ok { background: var(--ok); }
-.verdict-dot--neutral { background: var(--text-3); }
-.verdict-dot--bad { background: var(--bad); }
+/* A project name is a row LABEL, not a column heading: the base `table.data th` rule dresses
+   every `th` as an uppercase micro-label, which is right above a column of numbers and wrong
+   in front of one. Only the alignment, weight and case are restored; the ground stays. */
+table.data.heat th[scope="row"] {
+  font-size: var(--fs-body); font-weight: 600; letter-spacing: normal;
+  text-transform: none; color: var(--ink);
+}
+.heat-cell[data-level="0"] { background: transparent; }
+.heat-cell[data-level="1"] { background: rgba(23, 23, 23, 0.06); }
+.heat-cell[data-level="2"] { background: rgba(23, 23, 23, 0.12); }
+.heat-cell[data-level="3"] { background: rgba(23, 23, 23, 0.20); }
+.heat-cell[data-level="4"] { background: rgba(23, 23, 23, 0.30); }
+/* The open-findings line under the count, on its own line rather than trailing it: a cell is
+   a figure and its denominator-in-miniature, and inline they read as one run-on number. */
+.heat-cell > .small { display: block; }
+@media (forced-colors: active) {
+  .heat-cell { background: transparent; }
+}
 
 /* ------------------------------------------------ Repositories: the foothold cell, as a verdict
    Yes/No used to print as plain text; the glyph now carries the same word rather than replacing

@@ -140,6 +140,28 @@
   --warn: #8a5406;
   --bad: #b91c1c;
 
+  /* THE SAME VERDICTS AS A LARGE FIELD, WHICH IS NOT THE SAME JOB. The triad above is
+     TEXT-GRADE — the comment on it records --ok and --bad being darkened until they cleared
+     4.5:1 as text on their own tints — and a census lattice spends them as a solid fill over a
+     hundred cells. At 6.14:1 and 6.10:1 against the card that is twice the 3:1 a non-text
+     graphic owes, and the picture reads as a shout rather than as a count.
+
+     These are the field grade: same hues, less chroma, lighter, and still 3.58:1 and 4.70:1
+     against --surface (3.79 and 4.98 against --page), so the floor is cleared with margin on
+     both grounds a lattice is drawn over.
+
+     AND THEY SEPARATE FROM EACH OTHER, WHICH THE TEXT PAIR DOES NOT. --ok and --bad sit at
+     6.14 and 6.10, so in greyscale they are the SAME cell: a dichromat, or a black-and-white
+     print, reads a cold asset and a warm one as one block. These two are 1.31 apart in
+     greyscale and 2.18 under a deuteranope simulation, so the picture now survives what the
+     key row beneath it used to have to rescue alone.
+
+     ONE CONSUMER TODAY: the cold zone's census, in both registers. gas_ai's coverage census
+     (.cov-census) is the same shape with the same defect and is NOT repainted here — that is
+     its own register's round to measure, not a cold-zone commit's to take. */
+  --ok-field: #4a9167;
+  --bad-field: #c2453f;
+
   /* THE POSTURE TIER SCALE, which is NOT the four .pill kinds — see ui/posture.js for why
      an ordinal scale forks from a categorical one. Per step: the fill it wears solid (the
      mass strip), the tint it wears as a surface (lattice cells, badges), the text that

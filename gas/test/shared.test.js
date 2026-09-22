@@ -28,6 +28,8 @@ import { describe, expect, it, afterAll, beforeAll } from "vitest";
 import { SEVERITY_COLORS, SLA_TARGETS } from "../src/domain/config";
 
 import { registerBrandMarkContract } from "../../gas_shared/test/contracts/brandMark.js";
+import { registerCollapsibleSectionContract }
+  from "../../gas_shared/test/contracts/collapsibleSection.js";
 import { registerEmptyStateContract } from "../../gas_shared/test/contracts/emptyStates.js";
 import { registerNavGroupContract } from "../../gas_shared/test/contracts/navGroups.js";
 import { registerPageHeaderContract } from "../../gas_shared/test/contracts/pageHeader.js";
@@ -38,8 +40,14 @@ import { ratio, registerTokenContract } from "../../gas_shared/test/contracts/to
 import { registerZScaleContract } from "../../gas_shared/test/contracts/zscale.js";
 import { registerRelativeAgeContract } from "../../gas_shared/test/contracts/relativeAge.js";
 import { openAndTotal, relativeAge } from "../../gas_shared/ui/figures.js";
+import { registerBandBarContract } from "../../gas_shared/test/contracts/bandBar.js";
 import { registerSparklineContract } from "../../gas_shared/test/contracts/sparkline.js";
+import { bandBarModel } from "../../gas_shared/ui/bandBar.js";
 import { sparkLabel, sparkPath } from "../../gas_shared/ui/sparkline.js";
+import { registerUnitChartContract } from "../../gas_shared/test/contracts/unitChart.js";
+import {
+  COUNT_UNITS, MAX_EXACT_CELLS, MAX_MARKS, unitChartModel, unitCounts, unitScale,
+} from "../../gas_shared/ui/unitChart.js";
 import { registerSettingsReadoutsContract } from "../../gas_shared/test/contracts/settingsReadouts.js";
 import {
   createCutHistogram, impactSplitModel, severitySplitModel, tickTimeline,
@@ -48,15 +56,21 @@ import { registerSyncCaptionContract } from "../../gas_shared/test/contracts/syn
 import { registerScanStepContract } from "../../gas_shared/test/contracts/scanSteps.js";
 import { registerHubUrlContract } from "../../gas_shared/test/contracts/hubUrl.js";
 import { normalizeHubUrl } from "../src/server/hubUrl";
+import { registerWizUrlContract } from "../../gas_shared/test/contracts/wizUrl.js";
 import { registerSettingsFormContract } from "../../gas_shared/test/contracts/settingsForm.js";
 import { DEFAULT_TAB, SETTINGS_TABS, SETTING_FIELDS } from "../src/client/js/settingsModel.js";
 
 import { LANE_ICONS, ROUTE_ICONS } from "../src/client/js/routeIcons.js";
 import { scopeChrome, scopeKinds } from "../src/client/js/scopeKinds.js";
 import * as SCOPE_MODEL from "../../gas_shared/ui/scopeModel.js";
+// THE ROUTE TABLE, IMPORTED. It lives in its own `pages.js` precisely so this line can
+// exist: the nav and page-header contracts used to read it back out of app.js with a regex,
+// because app.js touches the DOM at module scope. pages.js does not, so they get the real
+// objects — `render` included — instead of whatever a line-shaped pattern could match.
+import { PAGES } from "../src/client/js/pages.js";
 
 const APP_ROOT = new URL("../", import.meta.url);
-const base = { describe, it, expect, appRoot: APP_ROOT, app: "os" };
+const base = { describe, it, expect, appRoot: APP_ROOT, PAGES, app: "os" };
 
 // What the splash is held to. Written out here rather than read from app.js, which is the
 // point: the contract compares these against the MANIFEST and against the rendered markup, so
@@ -118,6 +132,7 @@ registerTokenContract({
 });
 
 registerZScaleContract(base);
+registerCollapsibleSectionContract(base);
 
 // =========================================================================================
 //  The seam: what this app is still allowed to keep a local copy of
@@ -172,6 +187,10 @@ registerEmptyStateContract({
   // PAGES; the contract resolves `<route>.js` per name, so only routes belong here.
   routes: [
     "executive", "mttr", "program", "overview", "data", "history", "attribution", "settings",
+    // The Cold zone page, added with the cold-zone family: a page-level first-run gate, two
+    // notice-variant absences (no clock; nothing sitting still) and exactly one errorState, on
+    // the RPC that did not answer.
+    "coldZone",
   ],
   // The non-vacuity half: these seven still carry the failure messages, on errorState. All
   // seven "Couldn't …" call sites were emptyState before P4 — a crash announced through
@@ -195,7 +214,13 @@ registerEmptyStateContract({
   // page whose whole subject is what has been measured announced its own failures nowhere on
   // screen at all. attribution.js had a page-level firstRunNotice and no errorState: seven
   // section renderers, each able to throw on its own slice of the payload, all unguarded.
-  errorStateCarriers: ["executive", "mttr", "overview", "program", "data", "history", "attribution"],
+  errorStateCarriers: [
+    "executive", "mttr", "overview", "program", "data", "history", "attribution",
+    // "coldZone" carries one: the api_getColdZonePage call failing. Its other two absences are
+    // states the register is legitimately in (no flat scan on record, nothing idle) and both
+    // render through emptyState(..., { variant: "notice" }) — the split this list measures.
+    "coldZone",
+  ],
   // The four pages that render section-by-section behind a guard(), because they are the
   // ones a single failing section must not blank. "mttr" and "attribution" joined with P1.3:
   // mttr's hero/survival-curve/SLA-table/by-domain sections each read a different slice of
@@ -233,7 +258,7 @@ registerEmptyStateContract({
   // reason. Keeping it here would force the page back to the weaker component, or to drawing
   // both — two absences saying the same thing in two voices, which is what this whole
   // contract exists to stop.
-  firstRunRoutes: ["attribution", "history", "mttr", "overview"],
+  firstRunRoutes: ["attribution", "history", "mttr", "overview", "coldZone"],
   // `data`'s two are section notes inside Report and Export ("No scan saved yet — run a scan
   // to generate a report"), which name the specific thing that section cannot do; replacing
   // them with one page-wide notice would say less, in a bigger box, twice. Registering `data`
@@ -250,7 +275,10 @@ registerEmptyStateContract({
   // file even though each ALSO carries an undated `synced: false` branch for the no-scan-at-
   // all case — the check is file-level ("does this route ever date its notice"), not
   // per-call, and both routes do.
-  firstRunNoAt: ["attribution", "overview"],
+  // `coldZone` is on this list for the same reason as the other two: its one firstRunNotice(
+  // call renders inside `if (!boot.latestScan)`, where `synced: false` is a literal and there
+  // is never a scan to date.
+  firstRunNoAt: ["attribution", "overview", "coldZone"],
 });
 
 // =========================================================================================
@@ -263,8 +291,8 @@ registerNavGroupContract({
   // In rail order. This list moves only when a route is added or removed on purpose.
   // `help` joined it with P7: the key sheet, last page of the Data lane.
   expectedRoutes: [
-    "executive", "mttr", "program", "overview", "data", "history", "attribution", "help",
-    "settings",
+    "executive", "mttr", "program", "overview", "coldZone", "data", "history", "attribution",
+    "help", "settings",
   ],
   defaultRoute: "executive",
   // No `panelBlocksModule`: this register's nav panels list page links and nothing else, so
@@ -430,6 +458,14 @@ registerSyncCaptionContract(base);
 // `sparkLabel` directly, so this register's own KPI-band sparklines are held to the same
 // refuse-before-cast contract `gas_devsecops`'s Scan History page already registers.
 registerSparklineContract({ ...base, sparkPath, sparkLabel });
+registerBandBarContract({ ...base, bandBarModel });
+
+// The unit chart. This register draws no isotype yet at the time the contract lands, and
+// registering it anyway is the point: the arithmetic is the design system's, and the page
+// that adopts it should find the guard already running rather than bring its own.
+registerUnitChartContract({
+  ...base, unitScale, unitCounts, unitChartModel, COUNT_UNITS, MAX_MARKS, MAX_EXACT_CELLS,
+});
 
 // =========================================================================================
 //  The hub link: one rule, this register's boundary and the shared header gate
@@ -440,6 +476,16 @@ registerSparklineContract({ ...base, sparkPath, sparkLabel });
 // exist because no `src/server/**` module here imports gas_shared (tsconfig has no `allowJs`),
 // and this table is what holds them to the same rule.
 registerHubUrlContract({ ...base, normalizeHubUrl });
+
+// The Wiz console link's rule. Unlike hubUrl there is no per-app boundary to hand in — the
+// ingestion copy is one shared TypeScript module — so what this register contributes is its
+// own finding sheet's source, for the wiring half of the contract.
+registerWizUrlContract({
+  ...base,
+  sheetSrc: readFileSync(
+    new URL("../src/client/js/pages/findingSheet.js", import.meta.url), "utf8",
+  ),
+});
 
 // =========================================================================================
 //  The scope-walk chip: one mark per register, not two

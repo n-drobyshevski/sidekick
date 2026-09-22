@@ -96,7 +96,7 @@ function row(o: { key: string; scope: Scope; first: string; resolved?: string | 
     cwe: null, ai_verdict: null, language: null, file_path: null, start_line: null, origin: null,
     secret_kind: null, rotated_at: null, removed_at: null,
     validation_state: null, validated_at: null, confidence: null,
-    owner_project: "proj-a", owner_path: null, tags_json: null, projects_json: null,
+    owner_project: "proj-a", owner_path: null, tags_json: null, projects_json: null, portal_url: null,
     mttr_days: null, age_days: 30,
     fix_available_at: o.first, actionable_from: o.first,
     mttr_actionable_days: null, actionable_age_days: null, awaiting_vendor_fix: false,

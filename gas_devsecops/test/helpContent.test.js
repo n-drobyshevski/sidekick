@@ -61,12 +61,46 @@ const EXPECTED_IDS = [
   // table used to say which is which. The entry is where that reading lives now, and the
   // meter beside each cell is drawn only for the first of the three.
   "signal-coverage",
+  // The capacity section's absolute half. It publishes a rate and the P2P one-in-N idiom
+  // beside it, and neither says whether that is four findings a month or four hundred — the
+  // figure a reader staffs against. Beside mmcr rather than folded into capacity: the tip
+  // card renders two lines, so a third line is a definition nobody reaches, and this is a
+  // count where capacity defines a comparison.
+  "closed-per-month",
+  // The cold zone's three, from the Repositories section and the Executive card it feeds.
+  // Three entries rather than one folded entry, for this array's usual reason: the tip card
+  // renders two lines, so a third word defined as a third line is defined nowhere a reader can
+  // reach. The split itself is the product — cold is a fact about a team, unobserved a fact
+  // about the scanner, and idle is the number both are read off.
+  // (No quoted ids inside this comment: test/pagesHelp.test.js reads this array as TEXT.)
+  "cold-zone", "unobserved", "idle",
+  // Phase 2's two, from the second way the cold line can be drawn. The mode entry is what the
+  // Settings control and the Repositories caption both point at; the other is the team-level
+  // mark on the project table, which is a POSITION relative to the other projects rather than
+  // a verdict about any one of them — a distinction worth a card of its own.
+  // (No quoted ids inside this comment: test/pagesHelp.test.js reads this array as TEXT.)
+  "cold-zone-mode", "coldest-share",
+  // The repository tag the register learned to read, and the one value in it anything acts on.
+  // Two entries rather than one, this array's usual reason again: the Lifecycle column wants a
+  // definition of the whole vocabulary, and the Settings switch wants the argument for
+  // removing one word from it. Neither fits as the other's third line.
+  // (No quoted ids inside this comment: test/pagesHelp.test.js reads this array as TEXT.)
+  "lifecycle", "end-of-life",
 ];
 
-// Long enough for the three-line entries already in the file (the longest today is 164
-// characters including its quotes), short enough that a paragraph masquerading as a tip
-// line would still fail. The tip card renders only the first two.
-const MAX_TIP_LINE_LENGTH = 220;
+// THE CARD IS 300px WIDE, which is about 45 characters to a rendered row. This was 220, and
+// 220 on each of the two lines the card paints permits a ten-row wall before the "Enter for
+// the full definition" line is added. The book was written to it: the median card ran 230
+// characters and the worst three reached 389.
+//
+// 120 is the line budget, deliberately looser than the 110/90 split root DESIGN.md asks for,
+// because a test should fail on a paragraph rather than on a well-judged clause. The card
+// totals ~150 now.
+//
+// This does NOT shorten the book. Displaced sentences moved DOWN into lines three and four,
+// where the Help page still renders them and the card never showed them — which is why the
+// line-count ceiling below is 4 rather than 3. Same figure gas uses, for the same reason.
+const MAX_TIP_LINE_LENGTH = 120;
 
 describe("allEntries", () => {
   it("holds exactly the ids this register expects, in some order", () => {
@@ -91,11 +125,11 @@ describe("allEntries", () => {
     }
   });
 
-  it("gives every entry 2 or 3 lines, each a non-empty string", () => {
+  it("gives every entry 2 to 4 lines, each a non-empty string", () => {
     for (const e of ENTRIES) {
       expect(Array.isArray(e.lines), `${e.id}.lines is not an array`).toBe(true);
       expect(e.lines.length, `${e.id} has ${e.lines.length} lines`).toBeGreaterThanOrEqual(2);
-      expect(e.lines.length, `${e.id} has ${e.lines.length} lines`).toBeLessThanOrEqual(3);
+      expect(e.lines.length, `${e.id} has ${e.lines.length} lines`).toBeLessThanOrEqual(4);
       for (const line of e.lines) {
         expect(typeof line, `${e.id} has a non-string line`).toBe("string");
         expect(line.trim().length, `${e.id} has an empty line`).toBeGreaterThan(0);
@@ -165,10 +199,14 @@ describe("the measurement decisions in the new entries", () => {
     expect(t).not.toMatch(/censored, not excluded/);
   });
 
-  it("foothold: one open high-risk finding is enough, on a repo or a language group", () => {
+  it("foothold: one open high-risk finding is enough, on a repo or the product over it", () => {
     const t = text("foothold");
     expect(t).toMatch(/repository|repo/);
-    expect(t).toMatch(/language/);
+    // The second grain the Repositories table offers. It used to be a language group; that
+    // table is gone, and an entry naming a grouping the page no longer draws would send a
+    // reader looking for a table that is not there.
+    expect(t).toMatch(/product/);
+    expect(t).not.toMatch(/language/);
     expect(t).toMatch(/high-risk/);
   });
 

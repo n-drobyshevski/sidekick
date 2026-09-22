@@ -163,6 +163,48 @@ const ASSETS: AssetSpec[] = Array.from({ length: 26 }, (_, i) => {
   };
 });
 
+// Four assets that exist ONLY for the cold-zone section (`domain/coldZone.ts`) to have
+// something to show locally. They are deliberately NOT in ASSETS — the main generation loop
+// below cycles the seeded RNG once per asset in that array, and adding entries there would
+// shift every subsequent `rnd()` call and silently reassign every existing finding's severity,
+// score and resolution roll. These four are appended as pinned rows instead (see
+// COLD_ZONE_PINNED / VANISHING below), which call `rnd()` nowhere.
+//
+// "prod-account" / "dev-account" / "core-prod" fold (case-insensitively) to keys `boot.js`
+// seeds into the support-group map, so the cold, slow and unobserved assets each resolve to a
+// real Support Group; `shadow-it-legacy` below deliberately does NOT, so the `(no support
+// group)` row is reachable without editing the map.
+export const COLD_ASSET: AssetSpec = {
+  id: "asset-cold-01", name: "batch-legacy-01", cloud: "AWS", os: "Ubuntu",
+  sub: "prod-account", subExt: "111122223333", subId: "sub-111122223333",
+  tags: { env: "prod", team: "platform", owner: "sre", "Wiz/Domain": "SUPPLY" },
+  wide: false, limited: false,
+};
+// Idle for a shorter but still-real stretch than COLD_ASSET — past the 14-day default floor,
+// short of the 90-day default window — so relative mode at 20% has a SECOND asset to rank
+// against COLD_ASSET, and the derived line (not the floor) decides the cut.
+export const SLOW_ASSET: AssetSpec = {
+  id: "asset-cold-02", name: "batch-legacy-02", cloud: "AWS", os: "Ubuntu",
+  sub: "dev-account", subExt: "444455556666", subId: "sub-444455556666",
+  tags: { env: "dev", team: "platform", owner: "sre", "Wiz/Domain": "SUPPLY" },
+  wide: false, limited: false,
+};
+// `shadow-it-legacy` is NOT a key in dev/boot.js's support-group map (nor is it one of the six
+// CLOUDS subscriptions above), so `attachSupportGroups` never sets `_supportGroup` on its
+// rows — the one asset in the seed that reaches `COLD_GROUP_NONE` ("(no support group)").
+export const NO_GROUP_ASSET: AssetSpec = {
+  id: "asset-cold-03", name: "shadow-storage-01", cloud: "AWS", os: "Ubuntu",
+  sub: "shadow-it-legacy", subExt: "555566667777", subId: "sub-555566667777",
+  tags: { env: "prod", team: "app", owner: "core" },
+  wide: false, limited: false,
+};
+export const UNOBSERVED_ASSET: AssetSpec = {
+  id: "asset-cold-04", name: "retired-edge-01", cloud: "Azure", os: "Ubuntu",
+  sub: "core-prod", subExt: "azure-sub-001", subId: "sub-azure-sub-001",
+  tags: { env: "prod", team: "sre", owner: "secops", "Wiz/Domain": "CROSS" },
+  wide: false, limited: false,
+};
+
 // -------------------------------------------------------------------- generation
 function makeNode(spec: CveSpec, asset: AssetSpec, idx: number): Rec {
   const node: Rec = JSON.parse(JSON.stringify(pick(TEMPLATES)));
@@ -314,6 +356,19 @@ interface PinSpec {
   epss: number | null;
   /** false = vendor-blocked: no published fix, so `awaiting_vendor_fix` is true. */
   fixed: boolean;
+  /**
+   * Cold-zone dev-seed overrides. Both optional and unset on every existing PINNED/VANISHING
+   * spec: default behaviour (status "OPEN", resolvedAt null) is unchanged for them. Setting
+   * `resolvedAt` is how a pinned row arrives ALREADY RESOLVED — an API-declared resolution
+   * (`reconcile.ts`'s "API-declared resolution closes a currently-open row", triggered the
+   * first scan this row is reconciled at all, since a brand-new row starts OPEN in `makeRow`
+   * and is only flipped by that later check) rather than one inferred from disappearance. This
+   * is the only path that dates a movement in the PAST: `dev/boot.js`'s VANISHING withholding
+   * dates a resolution at the withholding SCAN's timestamp (~5 d back, once seeded), which is
+   * wrong for a row meant to look idle for 150 d.
+   */
+  resolvedAt?: string;
+  status?: string;
 }
 
 function pinnedNode(spec: PinSpec, idx: number): Rec {
@@ -340,9 +395,11 @@ function pinnedNode(spec: PinSpec, idx: number): Rec {
   node["publishedDate"] = iso(firstMs - 30 * DAY);
   node["firstDetectedAt"] = iso(firstMs);
   node["lastDetectedAt"] = iso(NOW - DAY / 2);
-  node["status"] = "OPEN";
-  node["resolvedAt"] = null;
-  node["fixDate"] = null;
+  node["status"] = spec.status ?? "OPEN";
+  node["resolvedAt"] = spec.resolvedAt ?? null;
+  // A resolved pin dates its fix the same instant, so a resolved row never disagrees with
+  // itself about when it closed.
+  node["fixDate"] = spec.resolvedAt ?? null;
   node["fixDateBefore"] = null;
   node["isOperatingSystemEndOfLife"] = false;
   // A published fix is signalled by `fixedVersion`; its absence is what `withDerived` reads as
@@ -394,6 +451,56 @@ const PINNED: PinSpec[] = [
 
 for (const spec of PINNED) nodes.push(pinnedNode(spec, nodes.length + 1));
 
+// -------------------------------------------------------------- the cold zone, three assets
+//
+// COLD_ASSET carries two open rows that never resolve and one row that arrives ALREADY
+// RESOLVED (`resolvedAt` set, not inferred from absence) 150 days ago — well past the 90-day
+// default `coldAfterDays` — so `domain/coldZone.ts` measures it `cold` rather than merely
+// bounding it, and the asset stays `observed` because this row is returned at EVERY seeded
+// scan (see the `resolvedAt` note on `PinSpec` above for why an API resolution, not a
+// disappearance, is what dates the movement 150 days back instead of ~5). SLOW_ASSET is the
+// same shape at a shorter remove (40 days: past the 14-day floor, short of the 90-day window),
+// so relative mode at the default 20% target has a second reading to rank against
+// COLD_ASSET's — the derived line, not the floor, decides how many are caught.
+// NO_GROUP_ASSET carries two ordinary open rows on a subscription no map entry names, so the
+// `(no support group)` row in the by-group table is reachable without editing
+// dev/boot.js's seed map.
+// Every row below is CRITICAL or HIGH — the page's default display severities
+// (config.DEFAULT_DISPLAY_SEVERITIES) — so all three assets are reachable without first
+// widening the severity toggle in Settings.
+const COLD_ZONE_PINNED: PinSpec[] = [
+  // COLD_ASSET: never resolves…
+  { cve: "CVE-2026-90201", asset: COLD_ASSET, severity: "HIGH", ageDays: 210,
+    kev: false, exploit: false, epss: 0.04, fixed: true },
+  { cve: "CVE-2026-90202", asset: COLD_ASSET, severity: "CRITICAL", ageDays: 205,
+    kev: false, exploit: false, epss: 0.03, fixed: true },
+  // …except this one, which arrived resolved 150 days ago — the asset's one real (if old)
+  // movement. `ageDays` (200) is comfortably before `resolvedAt` (150 days back), so
+  // `resolved_at > first_seen` holds the way a real remediation would.
+  { cve: "CVE-2026-90203", asset: COLD_ASSET, severity: "HIGH", ageDays: 200,
+    kev: false, exploit: false, epss: 0.02, fixed: true, resolvedAt: iso(NOW - 150 * DAY), status: "RESOLVED" },
+
+  // SLOW_ASSET: same shape, a shorter remove.
+  { cve: "CVE-2026-90211", asset: SLOW_ASSET, severity: "HIGH", ageDays: 70,
+    kev: false, exploit: false, epss: 0.05, fixed: true },
+  { cve: "CVE-2026-90212", asset: SLOW_ASSET, severity: "CRITICAL", ageDays: 55,
+    kev: false, exploit: false, epss: 0.03, fixed: true },
+  { cve: "CVE-2026-90213", asset: SLOW_ASSET, severity: "HIGH", ageDays: 80,
+    kev: false, exploit: false, epss: 0.02, fixed: true, resolvedAt: iso(NOW - 40 * DAY), status: "RESOLVED" },
+
+  // NO_GROUP_ASSET: ordinary open findings; the point is the subscription, not the verdict.
+  // CRITICAL/HIGH (not MEDIUM/LOW): the page's default display severities are CRITICAL and
+  // HIGH only (config.DEFAULT_DISPLAY_SEVERITIES) — a MEDIUM/LOW-only asset would be filtered
+  // out of `coldZoneData` before the group rollup ever saw it, and the `(no support group)`
+  // row would need a settings change to reach, which defeats the point of seeding it.
+  { cve: "CVE-2026-90221", asset: NO_GROUP_ASSET, severity: "HIGH", ageDays: 45,
+    kev: false, exploit: false, epss: 0.02, fixed: true },
+  { cve: "CVE-2026-90222", asset: NO_GROUP_ASSET, severity: "CRITICAL", ageDays: 25,
+    kev: false, exploit: false, epss: 0.01, fixed: true },
+];
+
+for (const spec of COLD_ZONE_PINNED) nodes.push(pinnedNode(spec, nodes.length + 1));
+
 // ------------------------------------------ the branch a dry-run scan could never produce
 //
 // EVERY RESOLVED ROW IN THE SEEDED LEDGER WAS `resolution_src: "api"`, and that is a fact
@@ -407,21 +514,28 @@ for (const spec of PINNED) nodes.push(pinnedNode(spec, nodes.length + 1));
 // seeded ledger carried `resolution_src: "disappeared"`, so "Gone by" was unreachable locally
 // in every state but hypothetical, and so was the finding sheet's bounded-date row.
 //
-// HOW IT IS REACHED WITHOUT MOVING ANY OTHER NUMBER. These six rows are appended AFTER the
+// HOW IT IS REACHED WITHOUT MOVING ANY OTHER NUMBER. These nine rows are appended AFTER the
 // generation loop and the pinned rows, they call `rnd()` NOWHERE, and `dev/boot.js` withholds
 // them from the fifth seed scan onward through `withholdVanishing()` below. So:
 //
 //   - every previously generated node stays byte-identical (the seeded stream is untouched);
 //   - `dryRunScan`'s "resolve the first `seq` open findings" walks `nodes.filter(open)` in
-//     order and `seq` never exceeds 7, while these six sit at the very END of a ~166-node
+//     order and `seq` never exceeds 7, while these nine sit at the very END of a ~180-node
 //     list — so which findings get an API resolution does not change either;
-//   - by the last seed scan all six have left the register, so the OPEN counts every other
-//     figure on every page is built from are unchanged. Only `resolved` grows, by six, and
-//     six rows now carry a bounded death date.
+//   - by the last seed scan all nine have left the register, so the OPEN counts every other
+//     figure on every page is built from are unchanged. Only `resolved` grows, by nine, and
+//     nine rows now carry a bounded death date.
 //
 // The withheld set is a module-level Set behind a getter rather than a rebuilt array: `nodes`
 // is read once per `dryRunScan` call, so a getter is the one place a "the tenant stopped
 // returning these" event can be modelled without a second SAMPLE_FLAT.
+//
+// COLD-ZONE ADDITION (WP6): the first six rows below sit on EXPOSED_ASSETS/INTERNAL_ASSET,
+// which the main generation loop also gives OTHER, non-vanishing findings — so those three
+// assets stay `observed` after the withholding, just with fewer rows. The last three rows are
+// UNOBSERVED_ASSET's ENTIRE population: that asset has no other row anywhere in the seed, so
+// once withheld it disappears completely, and `domain/coldZone.ts` reads it as `unobserved`
+// rather than `clear` or `cold` — the case this whole withholding mechanism exists to reach.
 const VANISHING: PinSpec[] = [
   // Two internet-reachable exploitable rows, so a "Gone by" row is reachable under the
   // `exposed=1` filter the Executive's tier-1 link lands on.
@@ -444,10 +558,20 @@ const VANISHING: PinSpec[] = [
   // remediation is exactly the reading "Gone by" exists to qualify.
   { cve: "CVE-2026-90106", asset: EXPOSED_ASSETS[0], severity: "HIGH", ageDays: 22,
     kev: false, exploit: true, epss: 0.12, fixed: false },
+
+  // UNOBSERVED_ASSET's entire population — three OPEN rows across three severities and NO
+  // other row anywhere in the seed. Once withheld, `retired-edge-01` returns zero rows and
+  // `domain/coldZone.ts` marks it `unobserved` rather than `clear` or `cold`.
+  { cve: "CVE-2026-90301", asset: UNOBSERVED_ASSET, severity: "CRITICAL", ageDays: 30,
+    kev: false, exploit: false, epss: 0.06, fixed: true },
+  { cve: "CVE-2026-90302", asset: UNOBSERVED_ASSET, severity: "HIGH", ageDays: 25,
+    kev: false, exploit: false, epss: 0.05, fixed: true },
+  { cve: "CVE-2026-90303", asset: UNOBSERVED_ASSET, severity: "MEDIUM", ageDays: 20,
+    kev: false, exploit: false, epss: 0.02, fixed: true },
 ];
 
 /** The ids `withholdVanishing()` drops. Read by `dev/boot.js` through the global below. */
-const VANISHING_IDS: string[] = [];
+export const VANISHING_IDS: string[] = [];
 for (const spec of VANISHING) {
   const idx = nodes.length + 1;
   nodes.push(pinnedNode(spec, idx));

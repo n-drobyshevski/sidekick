@@ -1,22 +1,23 @@
-"""Run a fork's real ``run_pipeline.main()`` against a fake Wiz server, into a local lake.
+"""Run ``brick``'s real ``run_pipeline.main()`` against a fake Wiz server, into a local lake.
 
-``scan()`` is the whole harness in one call: it puts a fork on ``sys.path`` (switching away
-from whichever fork was there before, if any -- see :func:`_ensure_fork_on_path`), precreates
-the tables ``create_clustered``'s builder cannot parse a three-level name for
-(``devlake.lake.precreate_clustered`` / ``precreate_silver``), installs a
+``scan()`` is the whole harness in one call: it puts ``brick/`` on ``sys.path`` (see
+:func:`_ensure_brick_on_path`), precreates the tables ``create_clustered``'s builder cannot
+parse a three-level name for (``devlake.lake.precreate_clustered`` -- every clustered table,
+ledger and bronze; silver is not a table at all, see ``lake.py``), installs a
 ``devlake.fakewiz.FakeWiz`` serving the node list handed to it, and calls ``main()`` -- the real
 entry point, not ``build_metrics`` -- so ``ingest_to_bronze``, ``ensure_schema``,
-``recorded_scan`` and ``clear_scan`` are all exercised exactly as a Databricks Job would exercise
-them.
+``recorded_scan`` and ``clear_scan`` are all exercised exactly as a Databricks Job would
+exercise them.
 
 CLI:
 
-    python -m devlake.run --fork=brick --scope=os --scans=2 --lake=/tmp/lakecheck
-    python -m devlake.run --fork=devsecops --scope=sca --scans=2 --lake=/tmp/lakecheck
+    python -m devlake.run --scope=os --scans=2 --lake=/tmp/lakecheck
+    python -m devlake.run --scope=sca --scans=2 --lake=/tmp/lakecheck
+    python -m devlake.run --scope=sast --scans=2 --lake=/tmp/lakecheck
 
-Runs ``--scans`` scans a day apart, starting ``2026-06-01T00:00:00Z``, through the fork's
-committed fixture (:func:`default_fixture`), and prints the ``scans`` log and the
-``resolution_src`` split at the end.
+Runs ``--scans`` scans a day apart, starting ``2026-06-01T00:00:00Z``, through the committed
+fixture (:func:`default_fixture`), and prints the scan log (the ``family='scan'`` rows of the
+``metrics`` table) and the ``resolution_src`` split at the end.
 """
 
 from __future__ import annotations
@@ -35,13 +36,14 @@ from devlake import fakewiz, lake as lake_module
 from devlake import session
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+BRICK = REPO_ROOT / "brick"
 
-#: The committed captures each fork ships, keyed by (fork, scope). See ``default_fixture`` for
-#: the scan-2 slicing rule that goes with each one.
+#: The committed captures ``brick/`` ships, keyed by scope. See ``default_fixture`` for the
+#: scan-2 slicing rule that goes with each one.
 FIXTURES = {
-    ("brick", "os"): REPO_ROOT / "os_vulns_response_exemple.json",
-    ("devsecops", "sca"): REPO_ROOT / "brick" / "devsecops" / "sca_findings_example.json",
-    ("devsecops", "sast"): REPO_ROOT / "brick" / "devsecops" / "sast_response.json",
+    "os": REPO_ROOT / "os_vulns_response_exemple.json",
+    "sca": BRICK / "fixtures" / "sca_findings_example.json",
+    "sast": BRICK / "fixtures" / "sast_response.json",
 }
 
 
@@ -49,7 +51,7 @@ FIXTURES = {
 class RunResult:
     """What one :func:`scan` call produced.
 
-    ``fork_result`` is the fork's own ``run_pipeline.RunResult`` (``tables``, ``scan_id``,
+    ``pipeline_result`` is ``run_pipeline``'s own ``RunResult`` (``tables``, ``scan_id``,
     ``scan_ts``, ``scope``), or ``None`` exactly when ``main()`` itself returns ``None`` -- an
     idempotent replay of an already-recorded ``scan_id``, or (not exercised by this harness) a
     maintain/export/restore run. ``tables``, ``calls`` and ``spark`` are handed back too so a
@@ -59,73 +61,49 @@ class RunResult:
     the scan ran against.
     """
 
-    fork_result: Optional[Any]
+    pipeline_result: Optional[Any]
     tables: Any
     calls: list
     spark: Any
     fake: fakewiz.FakeWiz
 
 
-def _ensure_fork_on_path(fork: str) -> Path:
-    """``session.put_fork_on_path``, recoverable across separate :func:`scan` calls.
+def _ensure_brick_on_path() -> Path:
+    """``session.put_brick_on_path``, kept as its own name for the rest of this module and the
+    test suite to call.
 
-    ``put_fork_on_path`` refuses outright to mix two forks within *one* scan, correctly: two
-    forks resolving a bare ``import config`` mid-run really is the "half of one pipeline, half
-    of the other" bug it exists to prevent. Across *separate* calls in the same process it is a
-    different question -- a scan's whole result lives in Spark tables by the time it returns,
-    not in a Python object this process keeps a reference to -- so when the *other* fork is the
-    one currently resolvable, this purges ``session.FORK_MODULE_NAMES`` out of ``sys.modules``
-    and both fork directories out of ``sys.path`` first, then calls ``put_fork_on_path`` fresh.
-
-    A same-fork call -- the common case, several scans in a row -- finds no conflict and falls
-    straight through; ``put_fork_on_path`` is already a no-op for that case. This is what lets
-    ``python -m pytest devlake/tests`` exercise both forks' end-to-end scans in one process, and
-    what lets the CLI below be invoked once per fork without caring what ran before it.
+    There is only one tree now, so this is not the fork-switching helper it used to be -- it is
+    a thin wrapper that exists so callers here do not each need their own
+    ``import devlake.session``. ``put_brick_on_path`` is already idempotent for repeat calls in
+    the same process (a same-directory call finds no conflict and falls straight through), which
+    is what lets ``python -m pytest devlake/tests`` run several ``scan()`` calls across ``os``,
+    ``sca`` and ``sast`` in one process, and what lets the CLI below be invoked once per scope
+    with no state to reset in between.
     """
-    fork_dir = session.FORKS[fork].resolve()
-    other_dirs = {name: path.resolve() for name, path in session.FORKS.items() if name != fork}
-
-    conflict = any(
-        entry and Path(entry).resolve() in other_dirs.values() for entry in sys.path
-    )
-    if not conflict:
-        for name in session.FORK_MODULE_NAMES:
-            module = sys.modules.get(name)
-            module_file = getattr(module, "__file__", None) if module is not None else None
-            if module_file and Path(module_file).resolve().parent != fork_dir:
-                conflict = True
-                break
-
-    if conflict:
-        for name in session.FORK_MODULE_NAMES:
-            sys.modules.pop(name, None)
-        all_dirs = {p.resolve() for p in session.FORKS.values()}
-        sys.path[:] = [p for p in sys.path if not (p and Path(p).resolve() in all_dirs)]
-
-    return session.put_fork_on_path(fork)
+    return session.put_brick_on_path()
 
 
-def purge_fork_state() -> None:
-    """Unload whichever fork is currently active, leaving a clean process behind.
+def purge_brick_state() -> None:
+    """Unload ``brick/`` from ``sys.path`` and ``sys.modules``, leaving a clean process behind.
 
-    Not needed between two ``scan()`` calls -- :func:`_ensure_fork_on_path` already handles
-    that -- only at the end of a test module that used this package's fork-switching to run
-    both forks in one pytest session, so a *different* test file collected afterward (one that
-    calls the plain ``devlake.session.put_fork_on_path`` and expects a fresh process) is not
-    left holding a refusal for a fork it never asked for.
+    Not needed between two ``scan()`` calls -- :func:`_ensure_brick_on_path` already handles
+    that -- only at the end of a test module so a *different* test file collected afterward is
+    not left seeing ``brick``'s modules already imported from a previous test's tables/lake
+    setup (harmless in itself, but this keeps each test file's own fixtures free to build their
+    own session from a clean slate).
     """
-    for name in session.FORK_MODULE_NAMES:
+    for name in session.BRICK_MODULE_NAMES:
         sys.modules.pop(name, None)
-    all_dirs = {p.resolve() for p in session.FORKS.values()}
-    sys.path[:] = [p for p in sys.path if not (p and Path(p).resolve() in all_dirs)]
+    brick_dir = session.BRICK_DIR.resolve()
+    sys.path[:] = [p for p in sys.path if not (p and Path(p).resolve() == brick_dir)]
 
 
 def _extract_nodes(payload: Any) -> list:
-    """The same "any connection under ``data``" fallback ``ingest.extract_nodes`` uses in both
-    forks, duplicated rather than imported: this runs in :func:`default_fixture`, which has to
-    work *before* any fork is on ``sys.path`` (the CLI resolves the fixture before it resolves
-    ``--fork``'s ``config.SCOPES`` for the refusal check), so there is no fork ``ingest`` module
-    to import from yet."""
+    """The same "any connection under ``data``" fallback ``ingest.extract_nodes`` uses, duplicated
+    rather than imported: this runs in :func:`default_fixture`, which has to work *before*
+    ``brick/`` is on ``sys.path`` (the CLI resolves the fixture before it resolves
+    ``run_pipeline.SCOPES`` for the refusal check), so there is no ``ingest`` module to import
+    from yet."""
     if isinstance(payload, list):
         return [n for n in payload if isinstance(n, dict)]
     if not isinstance(payload, dict):
@@ -140,8 +118,8 @@ def _extract_nodes(payload: Any) -> list:
     return []
 
 
-def default_fixture(fork: str, scope: str):
-    """The committed capture for ``(fork, scope)``, plus the scan-2 slicing rule that makes
+def default_fixture(scope: str):
+    """The committed capture for ``scope``, plus the scan-2 slicing rule that makes
     disappearance actually fire on it. Returns ``(path, scan1_nodes, scan2_nodes)``.
 
     **os** (``os_vulns_response_exemple.json``, 4 findings, in file order): CRITICAL/OPEN,
@@ -157,37 +135,34 @@ def default_fixture(fork: str, scope: str):
     CRITICAL is inside the default scan scope, so its disappearance is exactly what the guard
     is for, and it is the case this harness's end-to-end test asserts on.
 
-    **sca** (``sca_findings_example.json``, 54 findings): a plain first-half truncation already
-    fires disappearance here -- measured, the dropped half carries 14 HIGH/OPEN and 7
+    **sca** (``fixtures/sca_findings_example.json``, 54 findings): a plain first-half truncation
+    already fires disappearance here -- measured, the dropped half carries 14 HIGH/OPEN and 7
     CRITICAL/OPEN findings, both inside the default scan scope -- so no special slice is needed.
 
-    **sast** (``sast_response.json``, 40 findings, all HIGH/OPEN, no ``createdAt`` -- the
+    **sast** (``fixtures/sast_response.json``, 40 findings, all HIGH/OPEN, no ``createdAt`` -- the
     capture predates that column): scan 2 here is the same 40 nodes again, which resolves and
     reopens nothing; the payoff this harness exists to demonstrate for SAST is the birth-date
     column, not the disappearance guard (the sca and os cases already cover that), so
     ``test_end_to_end.py`` adds one synthetic node carrying ``createdAt`` itself rather than
     this function inventing tenant data that was never actually captured.
     """
-    key = (fork, scope)
-    path = FIXTURES.get(key)
+    path = FIXTURES.get(scope)
     if path is None:
         raise RuntimeError(
-            f"no default fixture for fork={fork!r} scope={scope!r} -- expected one of "
-            f"{sorted(FIXTURES)}"
+            f"no default fixture for scope={scope!r} -- expected one of {sorted(FIXTURES)}"
         )
     nodes = _extract_nodes(json.loads(path.read_text()))
-    if key == ("brick", "os"):
+    if scope == "os":
         scan2 = nodes[1:]
-    elif key == ("devsecops", "sca"):
+    elif scope == "sca":
         half = max(1, len(nodes) // 2)
         scan2 = nodes[:half]
-    else:  # ("devsecops", "sast")
+    else:  # "sast"
         scan2 = list(nodes)
     return path, nodes, scan2
 
 
 def scan(
-    fork: str,
     scope: str,
     nodes: Sequence[dict],
     *,
@@ -212,26 +187,24 @@ def scan(
     ``devlake.session.build`` at all. Left ``None``, it builds one against ``lake``.
     """
     lake_path = Path(lake).resolve()
-    _ensure_fork_on_path(fork)
-    import ingest as ingest_module  # noqa: PLC0415 -- bare, resolves against `fork` on sys.path
+    _ensure_brick_on_path()
+    import ingest as ingest_module  # noqa: PLC0415 -- bare, resolves against brick/ on sys.path
     import run_pipeline as run_pipeline_module  # noqa: PLC0415
 
     if scope not in run_pipeline_module.SCOPES:
         raise RuntimeError(
-            f"unknown scope {scope!r} for fork {fork!r} -- expected one of "
-            f"{sorted(run_pipeline_module.SCOPES)}"
+            f"unknown scope {scope!r} -- expected one of {sorted(run_pipeline_module.SCOPES)}"
         )
 
     if spark is None:
         spark = session.build(lake_path)
 
-    # Creates the schema too (CREATE SCHEMA IF NOT EXISTS) -- both precreation calls below need
-    # it to already exist, and main()'s own ensure_schema only runs after they do.
+    # Creates the schema too (CREATE SCHEMA IF NOT EXISTS) -- precreate_clustered below needs
+    # it to already exist, and main()'s own ensure_schema only runs after it does.
     lake_module.reregister(spark, lake_path, schema)
     namespace = lake_module.namespace(schema)
-    tables = run_pipeline_module.resolve_tables(namespace, scope, argv=[])
+    tables = run_pipeline_module.resolve_tables(namespace, argv=[])
     lake_module.precreate_clustered(spark, run_pipeline_module, tables)
-    lake_module.precreate_silver(spark, run_pipeline_module, tables.silver, scope)
 
     fake = fakewiz.FakeWiz(scope, ingest_module, nodes=nodes)
 
@@ -253,9 +226,11 @@ def scan(
         stack.enter_context(
             mock.patch.dict(os.environ, {"WIZ_CLIENT_ID": "fake", "WIZ_CLIENT_SECRET": "fake"})
         )
-        fork_result = run_pipeline_module.main()
+        pipeline_result = run_pipeline_module.main()
 
-    return RunResult(fork_result=fork_result, tables=tables, calls=fake.calls, spark=spark, fake=fake)
+    return RunResult(
+        pipeline_result=pipeline_result, tables=tables, calls=fake.calls, spark=spark, fake=fake
+    )
 
 
 def _cli(argv: Optional[Sequence[str]] = None) -> int:
@@ -264,30 +239,28 @@ def _cli(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m devlake.run",
         description=(
-            "Run N fake Wiz scans through a fork's real run_pipeline.main(), into a local lake."
+            "Run N fake Wiz scans through brick's real run_pipeline.main(), into a local lake."
         ),
     )
-    parser.add_argument("--fork", required=True, choices=sorted(session.FORKS))
     parser.add_argument("--scope", required=True)
     parser.add_argument("--scans", type=int, default=2)
     parser.add_argument("--lake", required=True)
     parser.add_argument("--schema", default="wiz")
     args = parser.parse_args(argv)
 
-    _ensure_fork_on_path(args.fork)
+    _ensure_brick_on_path()
     import run_pipeline as run_pipeline_module  # noqa: PLC0415
 
     if args.scope not in run_pipeline_module.SCOPES:
         raise SystemExit(
-            f"unknown scope {args.scope!r} for fork {args.fork!r} -- expected one of "
-            f"{sorted(run_pipeline_module.SCOPES)}"
+            f"unknown scope {args.scope!r} -- expected one of {sorted(run_pipeline_module.SCOPES)}"
         )
 
-    _, scan1_nodes, scan2_nodes = default_fixture(args.fork, args.scope)
+    _, scan1_nodes, scan2_nodes = default_fixture(args.scope)
     node_sets = [scan1_nodes] + [scan2_nodes] * max(0, args.scans - 1)
 
     lake_dir = Path(args.lake)
-    spark = session.build(lake_dir, app_name=f"devlake-run-{args.fork}-{args.scope}")
+    spark = session.build(lake_dir, app_name=f"devlake-run-{args.scope}")
 
     base = dt.datetime(2026, 6, 1, tzinfo=dt.timezone.utc)
     result: Optional[RunResult] = None
@@ -295,22 +268,30 @@ def _cli(argv: Optional[Sequence[str]] = None) -> int:
         scan_ts = (base + dt.timedelta(days=i)).strftime("%Y-%m-%dT%H:%M:%SZ")
         scan_id = f"scan-{i + 1}"
         result = scan(
-            args.fork, args.scope, scan_nodes,
+            args.scope, scan_nodes,
             lake=lake_dir, schema=args.schema, scan_id=scan_id, scan_ts=scan_ts, spark=spark,
         )
-        print(f"[{scan_id}] {scan_ts}: {result.fork_result}")
+        print(f"[{scan_id}] {scan_ts}: {result.pipeline_result}")
 
     if result is None:
         print("no scans ran (--scans <= 0)")
         return 0
 
+    from pyspark.sql import functions as F  # noqa: PLC0415 -- pyspark, not a brick module
+
     tables = result.tables
-    print("\n-- scans --")
-    spark.table(tables.scans).orderBy("scan_ts").show(truncate=False)
-    print("-- resolution_src split (ledger) --")
-    spark.table(tables.ledger).groupBy("resolution_src").count().orderBy("resolution_src").show(
-        truncate=False
-    )
+    # Scoped, both of them. One lake now holds one table set for every scope, so a run of
+    # `--scope=os` against a lake that has also seen `sca` would otherwise print the other
+    # register's scans under this one's heading -- the harness's whole job is to show what this
+    # run did.
+    print(f"\n-- scans ({args.scope}) --")
+    spark.table(tables.metrics).where(
+        (F.col("family") == run_pipeline_module.FAMILY_SCAN) & (F.col("scope") == args.scope)
+    ).select(*run_pipeline_module.SCANS_COLUMNS).orderBy("scan_ts").show(truncate=False)
+    print(f"-- resolution_src split (ledger, {args.scope}) --")
+    spark.table(tables.ledger).where(F.col("scope") == args.scope).groupBy(
+        "resolution_src"
+    ).count().orderBy("resolution_src").show(truncate=False)
     return 0
 
 

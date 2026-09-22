@@ -187,12 +187,32 @@ describe("every chart canvas ships a data-table alternative", () => {
 // eager card build, or a few lines later inside that block's own `loadCharts().then(...)` /
 // `painters.push(...)`).
 
-/** The identifier or dotted-property path passed as the first argument to a `*TableModel(`
- *  call inside `window` — the value `ui/chartTable.js`'s rule says must be the SAME reference
- *  the chart wrapper reads. `null` when the window carries no such call (nothing to check). */
-function modelArrayIdent(window) {
-  const m = /\b\w*TableModel\(\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)/.exec(window);
-  return m ? m[1] : null;
+/** The identifier or dotted-property path passed as the first argument to the `*TableModel(`
+ *  call NEAREST the `chartTable(` at `at` — the value `ui/chartTable.js`'s rule says must be
+ *  the SAME reference the chart wrapper reads. `null` when the window carries no such call.
+ *
+ *  NEAREST, NOT FIRST-IN-WINDOW. Searching the whole window took the first `*TableModel(` in
+ *  2,000 characters of preceding source, which is a different card's the moment two cards sit
+ *  close together. That bit for real: the prose round of 2026-09-16 moved two captions off the
+ *  Overview's tier and aging cards, the aging card's `chartTable(` drew 300 characters nearer
+ *  the tier card, and the old heuristic read the aging table's model as `trend` — a card it
+ *  does not draw — and failed a page whose tables were all correct. (Reading only FORWARD from
+ *  the call fails the other way, on mttr.js's survival card, whose model is built into a
+ *  variable just before the call.) */
+function modelArrayIdent(window, at = 0) {
+  const re = /\b\w*TableModel\(\s*([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)/g;
+  // NEAREST TO THE CALL, on either side — not first-in-window and not first-after-call. A
+  // model built inline sits just after `chartTable(`; one built eagerly into a variable
+  // (mttr.js's survival card) sits just before it. Either way it is the closest
+  // `*TableModel(` to the call, and a neighbouring card's model is further off in both
+  // directions.
+  let best = null;
+  let m;
+  while ((m = re.exec(window))) {
+    const d = Math.abs(m.index - at);
+    if (best === null || d < best.d) best = { d, ident: m[1] };
+  }
+  return best ? best.ident : null;
 }
 
 /** Does `ident` appear inside the argument list of a `charts.<wrapper>(...)` call in
@@ -250,7 +270,8 @@ describe("every chartTable's model is built from the array the wrapper plots", (
       const exceptions = SAME_ARRAY_EXCEPTIONS.get(file) || new Set();
       for (const [i, window] of windows.entries()) {
         if (exceptions.has(i)) continue;
-        const ident = modelArrayIdent(window);
+        // The call itself sits at the window's midpoint (see chartTableWindows' span).
+        const ident = modelArrayIdent(window, window.indexOf("chartTable("));
         expect(ident, `${file} chartTable #${i + 1}: no *TableModel( call found nearby`)
           .not.toBeNull();
         expect(usedInWrapperCall(window, ident), `${file} chartTable #${i + 1}: "${ident}" is `

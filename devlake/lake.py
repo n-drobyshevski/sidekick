@@ -1,12 +1,12 @@
 """Re-register a lake's on-disk Delta tables after a fresh session boots, and pre-create the
-one table shape the local ``DeltaTable`` builder cannot.
+clustered table shapes the local ``DeltaTable`` builder cannot.
 
 Spark's in-memory catalog (no ``enableHiveSupport()``, see ``brick/tests/conftest.py``) lives
 and dies with the ``SparkSession`` -- so a table that was ``CREATE TABLE``-d under
 ``spark_catalog.wiz.wiz_os_vuln_ledger`` in one process is, to a fresh process pointed at the
 same warehouse directory, just a directory again: the Delta log on disk still has every commit,
 but nothing in the new session's catalog knows the name. :func:`reregister` is exactly the
-migration recipe ``brick/README.md`` ("Moving it into the lake later") already documents for
+migration recipe ``brick/docs/storage.md`` ("Moving it into the lake later") already documents for
 moving a register into a *real* catalog -- ``CREATE TABLE ... USING DELTA LOCATION`` -- run here
 on every local boot instead of once, because a local session has no catalog that persists any
 other way.
@@ -23,7 +23,6 @@ deleted outright. Nothing here relies on either behaviour; it is a caveat for wh
 
 from __future__ import annotations
 
-import inspect
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -87,7 +86,7 @@ def _render_ddl(schema) -> str:
     """A ``StructType`` as a ``CREATE TABLE`` column list.
 
     Copied from ``brick/tests/test_catalog_mode.py::render_ddl`` rather than imported: that
-    module lives under a fork's own ``tests/`` directory, on a ``sys.path`` this package must
+    module lives under ``brick``'s own ``tests/`` directory, on a ``sys.path`` this package must
     not assume is set up, and importing test code from library code would run the guard
     backwards regardless. ``simpleString()`` is ``StructType.toDDL``'s SQL spelling -- Scala-only
     in PySpark 3.5 -- so nested types render correctly with no hand-rolled type-name table to get
@@ -100,7 +99,7 @@ def _render_ddl(schema) -> str:
 
 
 def precreate_clustered(spark: "SparkSession", run_pipeline_module, tables) -> list:
-    """Create the clustered tables production's ``create_clustered`` cannot, by SQL DDL.
+    """Create every clustered table production's ``create_clustered`` cannot, by SQL DDL.
 
     ``create_clustered`` (the function ``ensure_tables`` and ``build_metrics`` both call) makes
     its table through the Python ``DeltaTable.createIfNotExists(spark).tableName(...)`` builder,
@@ -116,17 +115,14 @@ def precreate_clustered(spark: "SparkSession", run_pipeline_module, tables) -> l
     ``table_exists``, pre-creating a table this way before ``main()`` runs makes production code
     run unchanged from there on -- it finds the table already there and never calls the builder.
 
-    Iterates ``run_pipeline_module.CLUSTERING`` -- ``ledger``, ``bronze``, ``silver`` -- and
-    skips whichever already exist. **``silver`` has no schema to precreate with**: unlike
-    ``ledger`` (``ledger.LEDGER_SCHEMA``) and ``bronze`` (``run_pipeline.BRONZE_TABLE_SCHEMA``),
-    silver's schema is not a declared constant anywhere in either fork -- it is whatever
-    ``metrics.silver_findings`` happens to project for a given scan's rows, computed fresh each
-    scan (see ``run_pipeline.build_metrics``, and ``test_catalog_mode.py``'s
-    ``three_level_register`` fixture, which builds silver's DDL from real scan data for exactly
-    this reason). There is nothing to precreate it *with* before a scan has run, so this
-    function leaves ``silver`` for ``create_clustered`` to fail on and a caller with real data in
-    hand (``devlake.fakewiz`` / ``devlake.run``, a later step) to precreate the same way once it
-    has a frame to read the schema off.
+    Iterates ``run_pipeline_module.CLUSTERING`` -- ``ledger`` and ``bronze`` -- and skips
+    whichever already exist, reading each one's declared schema straight off ``brick``
+    (``ledger.LEDGER_SCHEMA``, ``run_pipeline.BRONZE_TABLE_SCHEMA``). There is no ``silver`` here
+    to skip any more: silver is not a Delta table at all -- it is a projection
+    derived from ``bronze`` in memory (``metrics.silver_findings``), so it has no on-disk shape
+    to precreate. ``metrics`` (the gold + scan-log table) is unclustered and needs no entry here
+    either; it is created the way ``scans`` used to be, as an empty declared frame that gains its
+    gold columns through ``mergeSchema`` on first write.
 
     Returns the table references it created.
     """
@@ -142,65 +138,20 @@ def precreate_clustered(spark: "SparkSession", run_pipeline_module, tables) -> l
             continue
         table_schema = declared_schemas.get(attr)
         if table_schema is None:
-            # silver -- see docstring above.
+            # Every current CLUSTERING entry (ledger, bronze) has a declared schema above; this
+            # guards a future clustered table added without one rather than firing today.
             continue
         if isinstance(table_schema, str):
             table_schema = spark.createDataFrame([], table_schema).schema
+        # `cluster_by` is a TUPLE of column names -- `(scope, vuln_key)` for the ledger,
+        # `(scope, scan_id)` for bronze -- since every scope shares one table set and `scope`
+        # leads every read. Rendered as a comma list here; `create_clustered` unpacks the same
+        # tuple into the builder's `clusterBy(*cols)`.
         cluster_by, deletion_vectors = run_pipeline_module.CLUSTERING[attr]
         spark.sql(
             f"CREATE TABLE IF NOT EXISTS {table} ({_render_ddl(table_schema)}) USING DELTA "
-            f"CLUSTER BY ({cluster_by}) TBLPROPERTIES "
+            f"CLUSTER BY ({', '.join(cluster_by)}) TBLPROPERTIES "
             f"(delta.enableDeletionVectors = {'true' if deletion_vectors else 'false'})"
         )
         created.append(table)
     return created
-
-
-def precreate_silver(spark: "SparkSession", run_pipeline_module, table: str, scope: str) -> bool:
-    """Create the one clustered table :func:`precreate_clustered` cannot: ``silver``.
-
-    Silver has no declared schema anywhere in either fork -- it is whatever
-    ``metrics.silver_findings`` projects for a given scan's rows (see ``precreate_clustered``'s
-    docstring). But that projection does not actually depend on the *rows*, only on the
-    *columns* ``run_pipeline.BRONZE_TABLE_SCHEMA`` declares -- ``silver_findings`` is a
-    ``from_json``/``select`` pipeline over a fixed node schema, so its output ``StructType`` is
-    the same whether ``bronze`` holds zero rows or a million. This runs it over an **empty**
-    frame of that schema, purely to read the ``StructType`` back off the result, then
-    ``CREATE TABLE``s from it exactly the way :func:`precreate_clustered` does for ``ledger``
-    and ``bronze``.
-
-    ``scope`` matters for one fork and not the other. ``brick.metrics.silver_findings(bronze)``
-    takes one argument; ``brick/devsecops.metrics.silver_findings(bronze, scope)`` takes a
-    second, because that fork's two scopes read different API connections and therefore
-    dispatch to a different projection (``silver_sast`` vs. the default). Both projections are
-    documented to emit the **same** silver columns, so passing the wrong scope would likely not
-    even change the schema -- but there is no reason to rely on that when the real scope is
-    sitting right there, so it is passed whenever the installed ``silver_findings`` accepts it.
-    Detected by parameter count, not by fork name, for the same reason the rest of this package
-    stays fork-agnostic: a third fork with the same shape needs no change here.
-
-    Returns ``True`` if it created the table, ``False`` if it already existed (mirroring
-    :func:`precreate_clustered`'s per-table bookkeeping).
-    """
-    if run_pipeline_module.table_exists(spark, table):
-        return False
-
-    metrics_mod = run_pipeline_module.metrics
-    empty_bronze = spark.createDataFrame([], run_pipeline_module.BRONZE_TABLE_SCHEMA)
-    silver_findings_params = inspect.signature(metrics_mod.silver_findings).parameters
-    if len(silver_findings_params) >= 2:
-        silver_raw = metrics_mod.silver_findings(empty_bronze, scope)
-    else:
-        silver_raw = metrics_mod.silver_findings(empty_bronze)
-
-    rule_for_scope = getattr(run_pipeline_module, "rule_for_scope", None)
-    rule = rule_for_scope(scope) if rule_for_scope is not None else run_pipeline_module.DEFAULT_RISK_RULE
-    silver_schema = metrics_mod.classify_risk(silver_raw, rule).schema
-
-    cluster_by, deletion_vectors = run_pipeline_module.CLUSTERING["silver"]
-    spark.sql(
-        f"CREATE TABLE IF NOT EXISTS {table} ({_render_ddl(silver_schema)}) USING DELTA "
-        f"CLUSTER BY ({cluster_by}) TBLPROPERTIES "
-        f"(delta.enableDeletionVectors = {'true' if deletion_vectors else 'false'})"
-    )
-    return True

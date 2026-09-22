@@ -97,13 +97,13 @@ function scaPayload(over) {
     },
     oldest: {
       findings: [
-        { identifier: "CVE-2021-44228", repo: "acme/api", ownerProject: "Platform", severity: "CRITICAL", ageDays: 412.5 },
-        { identifier: "CVE-2023-1111", repo: "acme/web", ownerProject: "Web", severity: "HIGH", ageDays: 210.25 },
-        { identifier: null, repo: null, ownerProject: null, severity: "MEDIUM", ageDays: 12 },
+        { identifier: "CVE-2021-44228", repo: "acme/api", product: "product-platform", severity: "CRITICAL", ageDays: 412.5 },
+        { identifier: "CVE-2023-1111", repo: "acme/web", product: "product-web", severity: "HIGH", ageDays: 210.25 },
+        { identifier: null, repo: null, product: null, severity: "MEDIUM", ageDays: 12 },
       ],
       byRepo: [
-        { key: "acme/api", agedCount: 30, openCount: 55, oldestDays: 412.5, ownerProject: "Platform" },
-        { key: "acme/web", agedCount: 8, openCount: 35, oldestDays: 210.25, ownerProject: "Web" },
+        { key: "acme/api", agedCount: 30, openCount: 55, oldestDays: 412.5, product: "product-platform" },
+        { key: "acme/web", agedCount: 8, openCount: 35, oldestDays: 210.25, product: "product-web" },
       ],
     },
     movement: { newCount: 7, resolvedCount: 4, reopenedCount: 1, persisting: 79, hasPrevious: true },
@@ -111,9 +111,10 @@ function scaPayload(over) {
       perDim: {
         repo: [{ key: "acme/api", open: 55, repos: 1, kev: 6 }, { key: "acme/web", open: 35, repos: 1, kev: 1 }],
         language: [{ key: "java", open: 60, repos: 2, kev: 5 }, { key: "python", open: 30, repos: 1, kev: 2 }],
-        owner_project: [{ key: "Platform", open: 55, repos: 1, kev: 6 }],
+        product: [{ key: "product-platform", open: 55, repos: 1, kev: 6 }],
+        support_group: [{ key: "CE-TRANSPORT", open: 90, repos: 2, kev: 7 }],
       },
-      moreDim: { repo: 3, language: 1, owner_project: 0 },
+      moreDim: { repo: 3, language: 1, product: 0, support_group: 0 },
     },
     tiers: {
       perTier: { kev: 7, exploit: 12, epss: 20, cwe: 0, aiVerdict: 0, critical: 0, none: 39, unknown: 12 },
@@ -207,11 +208,11 @@ function secretsPayload(over) {
     aging: { perSev: { LOW: [2, 4, 6, 8], INFO: [1, 2, 3, 4], UNKNOWN: [0, 1, 0, 0] }, totalOpen: 31 },
     oldest: {
       findings: [
-        { identifier: "sd-8812", repo: "acme/api", ownerProject: "Platform", severity: "LOW", ageDays: 300 },
+        { identifier: "sd-8812", repo: "acme/api", product: "product-platform", severity: "LOW", ageDays: 300 },
       ],
       byRepo: [
-        { key: "acme/api", agedCount: 12, openCount: 25, oldestDays: 300, ownerProject: "Platform" },
-        { key: "acme/infra", agedCount: 3, openCount: 16, oldestDays: 91.5, ownerProject: "Infra" },
+        { key: "acme/api", agedCount: 12, openCount: 25, oldestDays: 300, product: "product-platform" },
+        { key: "acme/infra", agedCount: 3, openCount: 16, oldestDays: 91.5, product: "product-infra" },
       ],
     },
     movement: { newCount: 2, resolvedCount: 5, reopenedCount: 0, persisting: 39, hasPrevious: true },
@@ -222,9 +223,10 @@ function secretsPayload(over) {
           { key: "SAAS_API_KEY", open: 20, repos: 2, kev: 0 },
           { key: "CERTIFICATE", open: 12, repos: 1, kev: 0 },
         ],
-        owner_project: [{ key: "Platform", open: 25, repos: 1, kev: 0 }],
+        product: [{ key: "product-platform", open: 25, repos: 1, kev: 0 }],
+        support_group: [{ key: "CE-TRANSPORT", open: 41, repos: 3, kev: 0 }],
       },
-      moreDim: { repo: 2, secret_kind: 4, owner_project: 1 },
+      moreDim: { repo: 2, secret_kind: 4, product: 1, support_group: 0 },
     },
     tiers: { perTier: {}, open: 0, unclassified: 0, excludedSecrets: 41 },
     funnel: { open: 0, intel: 0, exploitable: 0, exposed: 0, overdue: 0, unclassified: 0, exposureKnown: false, excludedSecrets: 41 },
@@ -547,6 +549,34 @@ describe("sast — the disappearance-dating caveat is on the page", () => {
     expect(SAST.weaknessMix.more).toBe(9);
     // …and does not repeat it among the plain breakdowns below.
     expect(SAST.concentration.map((c) => c.dim)).not.toContain("cwe");
+  });
+
+  // THE TENANT'S TWO OWNERSHIP GRAINS, ON ALL THREE REGISTERS. A repository is filed under a
+  // `product-…` product and under a CS/CE/LU support group that holds several products
+  // (src/domain/projectGrain.ts); the single "By owning project" card these replaced showed
+  // whichever of the two Wiz returned first. Both must be asked for by name, because
+  // `concentrationModel` maps over the dims the PAGE hands it — the list is stated here and in
+  // readModels.ts's CONCENTRATION_DIMS, and a name in one copy only yields a zero-row card
+  // rather than no card.
+  it("every register breaks down by BOTH project grains, never by the conflated column", () => {
+    for (const [name, vm] of [["sca", SCA], ["sast", SAST], ["secrets", SECRETS]]) {
+      const dims = vm.concentration.map((c) => c.dim);
+      expect(dims, `${name} must break down by product`).toContain("product");
+      expect(dims, `${name} must break down by support group`).toContain("support_group");
+      expect(dims, `${name} must not still carry the conflated column`)
+        .not.toContain("owner_project");
+      // The product is listed first: it is the finer grain and the one a reader acts on; the
+      // support group beside it is the roll-up they escalate to.
+      expect(dims.indexOf("product")).toBeLessThan(dims.indexOf("support_group"));
+    }
+  });
+
+  it("names each grain in the tenant's own word, and neither says 'owning'", () => {
+    const labels = Object.fromEntries(SCA.concentration.map((c) => [c.dim, c.label]));
+    expect(labels.product).toBe("By product");
+    expect(labels.support_group).toBe("By support group");
+    // Three cards all captioned "owning" would read as three answers to one question.
+    for (const c of SCA.concentration) expect(c.label).not.toMatch(/owning/i);
   });
 
   /**

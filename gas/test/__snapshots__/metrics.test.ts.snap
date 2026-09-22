@@ -1,0 +1,78 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`calculateMttr (fixture parity) > matches overall_sla_oldest > oldestDays 1`] = `115.8`;
+
+exports[`calculateMttr (fixture parity) > matches overall_sla_oldest > slaPct 1`] = `75`;
+
+exports[`calculateMttr (fixture parity) > matches the Python per-severity and overall summary > overall 1`] = `
+{
+  "mttr_mean": 8.125,
+  "mttr_median": 6.75,
+  "open": 6,
+  "resolved": 4,
+}
+`;
+
+exports[`calculateMttr (fixture parity) > matches the Python per-severity and overall summary > perSev 1`] = `
+{
+  "CRITICAL": {
+    "mttr_mean": 11.25,
+    "mttr_median": 11.25,
+    "open": 1,
+    "open_age_p50": 21,
+    "open_age_p90": 21,
+    "resolved": 2,
+    "sla_compliant": 1,
+    "sla_pct": 50,
+    "sla_target": 7,
+  },
+  "HIGH": {
+    "mttr_mean": 9,
+    "mttr_median": 9,
+    "open": 3,
+    "open_age_p50": 91,
+    "open_age_p90": 115.8,
+    "resolved": 1,
+    "sla_compliant": 1,
+    "sla_pct": 100,
+    "sla_target": 14,
+  },
+  "INFO": {
+    "mttr_mean": 1,
+    "mttr_median": 1,
+    "open": 0,
+    "open_age_p50": null,
+    "open_age_p90": null,
+    "resolved": 1,
+    "sla_compliant": 1,
+    "sla_pct": 100,
+    "sla_target": 180,
+  },
+  "MEDIUM": {
+    "mttr_mean": null,
+    "mttr_median": null,
+    "open": 0,
+    "open_age_p50": null,
+    "open_age_p90": null,
+    "resolved": 0,
+    "sla_compliant": 0,
+    "sla_pct": null,
+    "sla_target": 30,
+  },
+  "UNKNOWN": {
+    "mttr_mean": null,
+    "mttr_median": null,
+    "open": 1,
+    "open_age_p50": 30,
+    "open_age_p90": 30,
+    "resolved": 0,
+    "sla_compliant": 0,
+    "sla_pct": null,
+    "sla_target": null,
+  },
+}
+`;
+
+exports[`calculateMttr edge cases > returns empty without a first-seen column > overall 1`] = `{}`;
+
+exports[`calculateMttr edge cases > returns empty without a first-seen column > perSev 1`] = `{}`;

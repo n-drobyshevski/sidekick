@@ -14,6 +14,8 @@
 
 import { gap } from "../domain/aars";
 import { countIssueCategories } from "../domain/aarsTrend";
+import { buildAllFrameworkTrees } from "../domain/compliancePosture";
+import { censusCompliancePosture, encodeCompliancePosture } from "../domain/complianceTrend";
 import { withAiAdjacency } from "../domain/graphEnrich";
 import type { AarsHints, AdjacencyCensus } from "../domain/graphEnrich";
 import type { EffectiveAccessRow } from "../domain/effectiveAccess";
@@ -1888,6 +1890,36 @@ export function seedPostureTrend(endIso: string): SeedPostureTrendEntry[] {
     });
   }
   return entries;
+}
+
+/**
+ * The compliance census the fabricated syncs carry — every framework's percentage and the
+ * subcategory coverage behind it, in the shape `persistSync` writes the real cell.
+ *
+ * DERIVED, NEVER TYPED, exactly as the adjacency and category cells above are: it runs
+ * `SEED_POSTURE` through the same `buildAllFrameworkTrees` + `censusCompliancePosture` pair
+ * the commit path uses, so the eight fabricated points and the dry run's own live point are
+ * one arithmetic over one fixture. A hand-written table here would be a third copy of four
+ * percentages that must agree with two others, and the drift would be invisible — a chart
+ * still draws.
+ *
+ * THE SAME CENSUS ON ALL EIGHT ROWS, and that is the honest reading rather than a shortcut.
+ * `edgesKnown` is 79 on every synthetic row for the identical reason (see that section's
+ * header): the fabricated history runs over ONE graph and ONE posture fixture, so the
+ * percentages genuinely did not move across it. The line is flat because the fixture is, and
+ * a fabricated wobble would be inventing a remediation programme this seed never ran.
+ *
+ * Why seed it at all, where `exploitation_json` stays null: no evidence pass ran over the
+ * fabricated history, so there is nothing to record there. The posture steps DID run — the
+ * dry run collects `SEED_POSTURE` and writes a real census on its own row — so leaving the
+ * eight earlier rows blank would say "nobody measured compliance until today" about a
+ * landscape this fixture has measured all along, and the card would render a heading, a note
+ * and no chart on the one dataset every dev harness and every test opens.
+ */
+export function seedCompliancePostureCell(): string | null {
+  return encodeCompliancePosture(censusCompliancePosture(
+    buildAllFrameworkTrees(SEED_POSTURE, SEED_FRAMEWORK_POLICIES, SEED_FRAMEWORKS),
+  ));
 }
 
 // ----------------------------------------------- rule catalogue + identity hygiene (dry-run)

@@ -59,15 +59,22 @@ export function execMttrSlice(mttr: unknown): Rec | null {
  * client relabels from. `trend` is dropped whole — the exec table has no chart under it.
  *
  * ONLY `group` SURVIVES, not the `domain` alias beside it. `mttrByDomainData` writes both
- * (`api.ts`: "Keep `domain` alongside the generic `group` label"), but the by-support-group
- * split writes only `group`, which is why every reader already goes through `group ?? domain`.
- * Shipping both would send each group's name twice for one of the two dimensions.
+ * (`api.ts`: "Keep `domain` alongside the generic `group` label"), but the by-support-group and
+ * by-asset splits write only `group`, which is why every reader already goes through
+ * `group ?? domain`. Shipping both would send each group's name twice for one of the three.
  *
- * ROWS ARE NOT CAPPED HERE, though the page draws five. How many rows are worth showing is a
- * presentation decision, and it already lives in `executiveByDomainView` where it is tested;
- * capping server-side too would put the same number in two places, free to drift. The cost is
- * bounded by the number of groups in the register rather than by the estate's size — a wide
- * register pays a few hundred bytes for rows it will not draw, which is the trade being made.
+ * ROWS ARE STILL NOT CAPPED HERE, and the reason has narrowed. It used to rest on "the cost is
+ * bounded by the number of groups in the register rather than by the estate's size" — true of
+ * domains and support groups, which an operator configures, and FALSE of assets, which the
+ * estate supplies. So the by-asset split is capped, but UPSTREAM (`ASSET_TOP_N` in api.ts) and
+ * for a payload reason: these rows go eagerly to the landing page. The presentation decision —
+ * how many of what it is given the page draws — stays in `executiveByDomainView` where it is
+ * tested, and is still not duplicated here.
+ *
+ * `cut` RIDES ALONG for that reason. It is what the upstream cap dropped, and it travels with
+ * the rows so neither surface can draw a bounded table without a line saying it is bounded.
+ * Null for the two uncapped dimensions, which is the difference between "nothing fell off" and
+ * "nothing could have".
  */
 export function execGroupSlice(byGroup: unknown): Rec | null {
   if (!byGroup || typeof byGroup !== "object") return null;
@@ -80,6 +87,7 @@ export function execGroupSlice(byGroup: unknown): Rec | null {
       kmMedian: r["kmMedian"],
       open: r["open"],
     })),
+    cut: b["cut"] ?? null,
   };
 }
 
@@ -263,14 +271,22 @@ export function oldestOpenSlice(insights: unknown, view: string): Rec {
 /**
  * `getMttrPage`'s per-group split without its trend series — the table only.
  *
- * `rows` stays EAGER. It is bounded by the number of groups rather than by the estate, the
- * table is what makes the drawer feel instant when it opens, and the `awaiting` footnote sums
- * it before the drawer exists. Only the two per-scan x per-group series move.
+ * `rows` stays EAGER. It is bounded — by the number of groups for the two operator-configured
+ * dimensions, and by `ASSET_TOP_N` upstream for the estate-sized one — the table is what makes
+ * the drawer feel instant when it opens, and the `awaiting` footnote sums it before the drawer
+ * exists. Only the two per-scan x per-group series move.
+ *
+ * `cut` comes with them: what the upstream cap dropped, so the table can say so. Null where
+ * nothing could have been cut.
  */
 export function mttrGroupTableSlice(byGroup: unknown): Rec | null {
   if (!byGroup || typeof byGroup !== "object") return null;
   const b = byGroup as Rec;
-  return { dimension: b["dimension"], rows: Array.isArray(b["rows"]) ? b["rows"] : [] };
+  return {
+    dimension: b["dimension"],
+    rows: Array.isArray(b["rows"]) ? b["rows"] : [],
+    cut: b["cut"] ?? null,
+  };
 }
 
 /** The series the by-group drawer's two charts draw, fetched when it opens. */
@@ -389,6 +405,13 @@ export const REGISTER_ROW_COLUMNS: readonly string[] = [
   "last_seen", "resolved_at",
   "has_kev", "has_exploit", "epss", "internet_exposed",
   "mttr_days", "age_days", "actionable_age_days",
+  // Wiz's own console link for this finding. NOT A DRAWN COLUMN — no table cell reads it —
+  // but the finding sheet does, and the sheet may only touch keys on this list
+  // (test/findingSheet.test.js hands the model a Proxy row and asserts exactly that). So it
+  // ships here rather than as a second payload, for the same reason `vuln_key` does: one
+  // `api_getRegisterRows` already carries everything the drill-down needs, and a sheet that
+  // had to fetch would cost one call per finding opened.
+  "portal_url",
 ];
 
 /**

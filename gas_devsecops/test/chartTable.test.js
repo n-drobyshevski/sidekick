@@ -160,8 +160,14 @@ describe("every chart canvas ships a data-table alternative", () => {
     // under the aging stack: the SAME open population measured against each finding's own
     // deadline instead of the shared 7/30/90 edges, so it is a second chart rather than a
     // reshape of the tenth. One `el("canvas"` literal, one `chartTable` beside it.
+    //
+    // 11 -> 12 (the cold zone's idle-vs-backlog scatter). The twelfth canvas is in repos.js,
+    // at the foot of the Cold zone section: one dot per repository the newest scan still
+    // returns that has an open finding, idle days against backlog with the threshold drawn as
+    // a dashed rule. One `el("canvas"` literal, one `chartTable` beside it — whose "Reading"
+    // column is what says which dots are a measured silence and which are a lower bound.
     const total = PAGE_FILES.reduce((n, f) => n + count(PAGE_CODE[f], /el\("canvas"/g), 0);
-    expect(total).toBe(11);
+    expect(total).toBe(12);
   });
 
   it("every chartTable call is handed the canvas it describes, so aria-details is wired", () => {

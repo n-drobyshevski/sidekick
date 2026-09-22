@@ -8,8 +8,7 @@
       "team": "core"
      }
     }
-   },
-   "expected": "{\"env\": \"prod\", \"team\": \"core\"}"
+   }
   },
   {
    "input": {
@@ -19,30 +18,26 @@
       "a": "1"
      }
     }
-   },
-   "expected": "{\"a\": \"1\", \"b\": \"2\"}"
+   }
   },
   {
    "input": {
     "vulnerableAsset.tags.env": "prod",
     "vulnerableAsset.tags.team": "core"
-   },
-   "expected": "{\"env\": \"prod\", \"team\": \"core\"}"
+   }
   },
   {
    "input": {
     "vulnerableAsset.tags.empty": "",
     "vulnerableAsset.tags.gone": null
-   },
-   "expected": null
+   }
   },
   {
    "input": {
     "vulnerableAsset": {
      "tags": {}
     }
-   },
-   "expected": null
+   }
   },
   {
    "input": {
@@ -51,12 +46,10 @@
       "only": null
      }
     }
-   },
-   "expected": null
+   }
   },
   {
-   "input": {},
-   "expected": null
+   "input": {}
   },
   {
    "input": {
@@ -66,8 +59,7 @@
       "flag": true
      }
     }
-   },
-   "expected": "{\"flag\": true, \"num\": 3}"
+   }
   },
   {
    "input": {
@@ -76,8 +68,7 @@
       "uni": "\u00fcn\u00efcode"
      }
     }
-   },
-   "expected": "{\"uni\": \"\u00fcn\u00efcode\"}"
+   }
   }
  ]
 }

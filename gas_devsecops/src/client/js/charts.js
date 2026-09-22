@@ -168,19 +168,152 @@ function fmtDay(day) {
   return `${String(d.getUTCDate()).padStart(2, "0")}-${MONTHS[d.getUTCMonth()]}-${d.getUTCFullYear()}`;
 }
 
+// ------------------------------------------------------------------- the day axis, ported
+// PORTED VERBATIM FROM `gas/src/client/js/charts.js`, tick thinning included. This register's
+// own copy had the axis but not the thinning, which is how the last two date labels on every
+// day-axis chart here came to overprint each other — `dropRemainderTick`'s header carries the
+// measurement that names the defect, and it is `gas/`'s measurement, off `gas/`'s harness.
+// Three registers, one chassis: where this file and `gas/`'s disagree on the chassis, this
+// file is the one that is wrong.
+
+/** The width of a `fmtDay` label, in multiples of the tick font size.
+ *
+ *  MEASURED, not estimated: `measureText` at the axis's own 12px system stack over a spread of
+ *  real labels gave 65.5px ("10-feb-2026") to 68.4px ("29-aug-2026") — 5.7 font sizes at the
+ *  widest. Every `fmtDay` string is exactly eleven characters of digits, lowercase and hyphens,
+ *  so this is a property of the FORMAT, not of one date. */
+export const DAY_LABEL_EMS = 5.7;
+
+/** Clear space demanded between two day labels on top of their own width. Chart.js's own
+ *  `autoSkipPadding` default is 3px per side; this is that, both sides. */
+export const TICK_LABEL_GUTTER_PX = 6;
+
+/** The centre-to-centre pixel distance two `fmtDay` labels need to clear each other. */
+export function dayLabelPitchPx(fontSize) {
+  return fontSize * DAY_LABEL_EMS + TICK_LABEL_GUTTER_PX;
+}
+
+/**
+ * Drop the second-to-last tick when the last one is a REMAINDER rather than a full step.
+ *
+ * WHY THIS IS UNAVOIDABLE WITH `bounds: "data"`. Chart.js's `generateTicks` anchors the tick
+ * grid on the bounds it is given: with `bounds: "data"` it sets `niceMin = rmin` and
+ * `niceMax = rmax` outright — the data's own min and max — and then steps from `rmin` by a nice
+ * `spacing` and appends `rmax` at the end. So the final gap is `span % spacing`, which is
+ * whatever the data happens to leave over: anywhere from 0 to a full step. Nothing about that
+ * is a misconfiguration; it is what pinning an axis to real data means.
+ *
+ * WHY CHART.JS DOES NOT CATCH IT ITSELF. It tries: the generator merges the last stepped tick
+ * INTO `rmax` when the two are within `relativeLabelSize(max, minSpacing, …)`. But that size is
+ * `0.75 * minSpacing * ('' + value).length` — measured on the RAW NUMBER. Our x values are epoch
+ * days, so `'' + 20704` is five characters, while `fmtDay` draws "29-aug-2026", eleven. Chart.js
+ * budgets for a label less than half the width of the one it will paint. `autoSkip` cannot
+ * rescue it either: it measures real label widths but assumes ticks are EVENLY spaced, and the
+ * remainder tick is precisely the one that is not.
+ *
+ * MEASURED on the dev harness at 2026-09-08, `#/mttr` → "Open vs resolved", 578px axis over
+ * 20494..20704 (210 days): ticks `[20494, 20544, 20594, 20644, 20694, 20704]`, gaps
+ * `[50, 50, 50, 50, 10]`. Ten days is 27px where the label is ~66px, so "29-aug-2026" and
+ * "08-sep-2026" printed directly on top of each other. The same axis on "SLA quality" left a
+ * 52-day final gap and read fine, which is the same generator on different data — the defect is
+ * the REMAINDER, not the chart.
+ *
+ * WHY THE SECOND-TO-LAST GOES, NOT THE LAST. The last tick is the data's own end — the "as of"
+ * date the reader is looking for, and the one the plotted line actually reaches. Dropping it
+ * instead would leave the axis labelled ten days short of where the series visibly ends, which
+ * reads as a chart cut off mid-series. Dropping its crowded neighbour just widens one gap.
+ *
+ * `bounds: "ticks"` was the other candidate and is worse: it rounds the axis out to the nice
+ * grid, which here would add 46 days of empty space past the last scan on a 210-day range and
+ * make a current register look a month stale. `dayAxis`'s own comment already rejects it.
+ *
+ * BOTH CONDITIONS ARE LOAD-BEARING, and a ratio alone was not enough — the first cut of this
+ * asked only whether the final gap was under half the step, and the 90d window walked straight
+ * through it: step 20 days, remainder 10, ratio exactly 0.5, and 10 days at that zoom is 64px
+ * under a 68px label. Pixels are the unit the collision actually happens in. The `< step` test
+ * stays beside it so this only ever touches the REMAINDER: an axis whose ticks are evenly
+ * spaced and merely crowded is autoSkip's job, and autoSkip does that one correctly.
+ *
+ * @param {Array<{value: number}>} ticks  as `generateTicks` built them, in ascending order
+ * @param {number} pxPerUnit  drawn pixels per axis unit (a day, here)
+ * @param {number} minPitchPx  centre-to-centre pixels two labels need — `dayLabelPitchPx()`
+ * @returns {Array<{value: number}>} the same array, or a copy one tick shorter
+ */
+export function dropRemainderTick(ticks, pxPerUnit, minPitchPx) {
+  if (!Array.isArray(ticks) || ticks.length < 3) return ticks;
+  const last = ticks[ticks.length - 1].value;
+  const prev = ticks[ticks.length - 2].value;
+  const step = prev - ticks[ticks.length - 3].value;
+  const finalGap = last - prev;
+  // Anything not measurable is left alone: a non-positive or non-finite step is not an evenly
+  // stepped axis, and with no usable pixel scale there is no collision to judge.
+  if (!Number.isFinite(step) || step <= 0) return ticks;
+  if (!Number.isFinite(finalGap) || finalGap <= 0) return ticks;
+  if (!Number.isFinite(pxPerUnit) || pxPerUnit <= 0) return ticks;
+  if (!Number.isFinite(minPitchPx) || minPitchPx <= 0) return ticks;
+  if (finalGap >= step) return ticks; // a full step: not a remainder
+  if (finalGap * pxPerUnit >= minPitchPx) return ticks; // a remainder, but a legible one
+  return [...ticks.slice(0, -2), ticks[ticks.length - 1]];
+}
+
 /** Switch a baseOptions() x scale to the proportional day axis. `xRange` ({min,max} in
  *  epoch days) pins the visible span — e.g. a "30d" window stays 30 days wide even when
- *  the data only reaches back a fortnight, showing honest empty space instead. */
+ *  the data only reaches back a fortnight, showing honest empty space instead.
+ *
+ *  `afterBuildTicks` is here because `bounds: "data"` GUARANTEES an uneven final gap, and this
+ *  axis draws labels far wider than the numbers Chart.js sizes them by. See `dropRemainderTick`
+ *  for the whole mechanism and the measurement. */
 function dayAxis(opts, xRange) {
   opts.scales.x.type = "linear";
   opts.scales.x.bounds = "data"; // don't stretch the axis past the data to a "nice" tick
   opts.scales.x.ticks.precision = 0; // whole days — a tick between two dates is nonsense
   opts.scales.x.ticks.maxTicksLimit = 8;
   opts.scales.x.ticks.callback = (v) => fmtDay(v);
+  // `setDimensions()` and the data-limits pass both run before `buildTicks()` (Chart.js's
+  // `Scale.update`), so `width`, `min` and `max` are all real by the time this fires — which is
+  // what lets the decision be made in PIXELS rather than in a ratio that has to guess at zoom.
+  opts.scales.x.afterBuildTicks = (scale) => {
+    const span = scale.max - scale.min;
+    const fontSize = scale.options?.ticks?.font?.size || FONT.size;
+    scale.ticks = dropRemainderTick(
+      scale.ticks,
+      span > 0 ? scale.width / span : 0,
+      dayLabelPitchPx(fontSize),
+    );
+  };
   if (xRange) {
     opts.scales.x.min = xRange.min;
     opts.scales.x.max = xRange.max;
   }
+  opts.plugins.tooltip.callbacks.title = (items) =>
+    items.length ? fmtDay(items[0].parsed.x) : "";
+}
+
+/**
+ * Flip a `baseOptions()` chart to horizontal bars — and UNDO the numeric defaults it put on
+ * the y scale, which is the whole reason this is a function rather than one assignment.
+ *
+ * `baseOptions()` builds y as the VALUE axis: `precision: 0`, `beginAtZero`, and
+ * `callback: localeNum`. Setting `indexAxis = "y"` makes y the CATEGORY axis, and Chart.js
+ * hands a category scale's tick callback the tick's INDEX, not its label — so `localeNum`
+ * formatted 0, 1, 2, 3, 4 and every bar chart drawn this way lost its category names. MEASURED
+ * on the dev harness at 2026-09-08, `#/mttr` → By domain: five coloured bars against a y axis
+ * reading "0 1 2 3 4", with the domain names nowhere on the card. The bars were identified by
+ * HUE ALONE, which is the one thing DESIGN.md's non-colour-signal rule forbids outright, and
+ * the reader could not name a single domain the chart was about.
+ *
+ * It went unseen because the two charts it hit lived inside a drawer, and the third
+ * (`severityBar`) is exported but drawn by no page here. Deleting the three keys is the fix:
+ * `beginAtZero` and `precision` are meaningless on a category scale, and with no `callback`
+ * Chart.js falls back to `getLabelForValue`, which is the label.
+ */
+function horizontalBars(opts) {
+  opts.indexAxis = "y";
+  delete opts.scales.y.ticks.callback;
+  delete opts.scales.y.ticks.precision;
+  delete opts.scales.y.beginAtZero;
+  opts.scales.y.grid = { display: false };
+  return opts;
 }
 
 function baseOptions(unit = "") {
@@ -285,11 +418,35 @@ function reconstructedBand(flags, xDays) {
  * draws the accent-colored single line the sync trend uses; several draw one line per
  * severity, each in its own severity token, with the legend on (the only way to tell
  * them apart, so color is never carrying it alone).
+ *
+ * THE X VALUE IS THE DATE, which is what `gas/`'s own `trendLine` has always done and what
+ * this port dropped. Chart.js's default CATEGORY scale spaces points BY INDEX, so a series
+ * whose slots are not evenly spaced in time — anything built on `trend.trendFromBase`, which
+ * emits one point per DAY of rebuilt pre-scan history and then one per SAVED SCAN — is drawn
+ * with its rebuilt stretch stretched and its recent one crushed, and a caller that leaves an
+ * unmeasured slot out silently moves every point after it. On the day axis (`dayOf`, whole UTC
+ * days, `bounds: "data"` so the axis ends where the data does) both stop being true at once:
+ * the range follows the readings, and a slot the caller left out costs nothing, because nothing
+ * was positioned by counting.
+ *
+ * `categoryAxis` IS THE ONE ESCAPE, AND IT EXISTS FOR ONE CALLER. `repos.js`'s
+ * "Slowest-clearing repositories" passes repository NAMES as `x` — `dayOf` of a name is NaN —
+ * so that chart asks for the index spacing back. It is a RANKED series drawn by a trend
+ * wrapper, which is a smell worth its own change rather than a redesign smuggled in here; the
+ * flag keeps it honest in the meantime by making the odd one out say so at the call site.
  */
-export function trendLine(canvas, points, { yLabel, series } = {}) {
+export function trendLine(canvas, points, { yLabel, series, categoryAxis } = {}) {
   destroyExisting(canvas);
   const opts = baseOptions();
   opts.scales.y.beginAtZero = true;
+  const days = categoryAxis ? null : points.map((p) => dayOf(p.x));
+  if (days) {
+    dayAxis(opts);
+    // Points hide (pointRadius 0) above 40 samples, so a nearest/intersect tooltip has nothing
+    // to hit; index mode reveals the value at the nearest date on hover. Matches
+    // `openResolvedLines` and `gas/`'s own `trendLine`.
+    opts.interaction = { mode: "index", intersect: false };
+  }
   if (yLabel) {
     // An empty yLabel means the caller already names the axis outside the canvas (the
   // header's own "Cumulative cover" label). A rotated title in a 124px-tall chart clips.
@@ -310,7 +467,7 @@ export function trendLine(canvas, points, { yLabel, series } = {}) {
   const datasets = (series && series.length ? series : [{ color: ACCENT, data: points.map((p) => p.y) }])
     .map((s) => ({
       label: s.label,
-      data: s.data,
+      data: days ? s.data.map((y, i) => ({ x: days[i], y })) : s.data,
       borderColor: s.color || ACCENT,
       backgroundColor: multi ? s.color || ACCENT : "rgba(124, 74, 10, 0.08)",
       fill: !multi,
@@ -319,10 +476,18 @@ export function trendLine(canvas, points, { yLabel, series } = {}) {
       pointBackgroundColor: s.color || ACCENT,
       borderWidth: 2,
     }));
+  // The rebuilt prefix, shaded — `gas/`'s `trendLine` does this and the port lost it with the
+  // axis, which is why this file's callers had to say "reconstructed" in words beside a chart
+  // that drew the distinction nowhere. It reads PIXELS FROM DAY VALUES, so it only works on
+  // the day axis; a categoryAxis caller gets no band, and neither of them carries the flag.
+  const band = days ? reconstructedBand(points.map((p) => !!p.reconstructed), days) : null;
   return new Chart(canvas, {
     type: "line",
-    data: { labels: points.map((p) => String(p.x).slice(0, 10)), datasets },
+    // No `labels` on the day axis: the x value carries the date, and a label array beside it
+    // would be a second, index-ordered claim about the same points.
+    data: days ? { datasets } : { labels: points.map((p) => String(p.x).slice(0, 10)), datasets },
     options: opts,
+    plugins: band ? [band] : [],
   });
 }
 
@@ -446,7 +611,7 @@ export function severityBar(canvas, counts, palette, onClickSeverity) {
  *
  * NOTHING IN THIS PACKAGE CALLS IT YET. `stackedAgeBar` below accepts an optional
  * `palette.fills(canvas, key)` hook exactly like gas/'s does, so a future palette builder
- * (e.g. the verdict-hatched capacity split in `brick/devsecops/figures.py::capacity_split`,
+ * (e.g. the verdict-hatched capacity split in `brick/figures.py::capacity_split`,
  * not yet ported) can reach for this instead of re-deriving it. Kept private and unexported,
  * same as gas/ keeps it, so it stays an implementation detail of whichever palette adopts it.
  */
@@ -1816,5 +1981,140 @@ export function coverageEfficiencyScatter(canvas, points) {
     },
     options: opts,
     plugins: [labels],
+  });
+}
+
+/**
+ * The cold zone as a scatter: idle days on x, open findings on y, a dashed rule at the
+ * threshold. Up-and-to-the-RIGHT is the worst quadrant here — a big backlog nobody has
+ * touched — which is the opposite of `coverageEfficiencyScatter` above and the reason the
+ * threshold rule is drawn at all: without it the reader has to know where 90 days is.
+ *
+ * Implemented as `type: "line"` with `showLine: false` **on purpose**, exactly as the
+ * coverage scatter is. charts.js registers only the controllers it uses, and
+ * ScatterController is not among them; a genuine `type: "scatter"` would fail at runtime in
+ * the bundle. LineController + PointElement + LinearScale are all registered, and a line
+ * dataset with no line drawn is exactly a scatter. Do not "fix" this into type: "scatter"
+ * without also registering the controller.
+ *
+ * TWO CLASSES, AND THE COLOUR IS THE SECOND CUE RATHER THAN THE FIRST. Cold repositories are
+ * `rectRot` filled in this register's accent INK (`CATEGORICAL[0]` = `--accent-text`; never
+ * `--accent`, which is 1.52:1 on the canvas ground — DESIGN.md's Split-Accent Rule); every
+ * other repository is a hollow `circle` outlined in the neutral `OTHER_COLOR`. The shape
+ * carries the split on its own in greyscale, under every CVD simulation, and in forced
+ * colors. Validated with the dataviz skill's own checker over the two marks
+ * (`#7c4a0a`, `#94a3b8`): CVD separation ΔE 27.3 deutan / 28.1 tritan and normal-vision
+ * ΔE 28.6, all well past the ≥ 8 bar; it reports the neutral below the chroma floor and
+ * under 3:1 against the surface, which is what "neutral" means here — the grey is not a
+ * second category hue but "everything else", and the contrast note is relieved the way the
+ * checker asks, by the `chartTable` twin every caller ships beside this canvas.
+ *
+ * WHERE THE RULE CAME FROM IS PART OF THE RULE. One dashed line at 47 days is two different
+ * claims: an operator's standing window, or the idle time of the k-th idlest repository on
+ * this estate at this scan (`src/domain/coldZone.ts` — `cold_after_days` is the EFFECTIVE line
+ * in both modes, so the canvas receives one number either way). A derived line MOVES when the
+ * population moves, and a reader comparing two screenshots a week apart has to be able to see
+ * that from the picture. Hence "(relative)" on the label and the mode in the description —
+ * no second colour, no second line, no legend: one more word on a rule that was already
+ * labelled.
+ *
+ * @param {*} canvas
+ * @param {Array<{label: string, idleDays: number, open: number, cold: boolean,
+ *                bounded: boolean}>} points  one per observed repository with open findings
+ * @param {{thresholdDays: number, mode: string}} opts
+ */
+export function coldZoneScatter(canvas, points, { thresholdDays, mode } = {}) {
+  destroyExisting(canvas);
+  const plotted = (points || []).filter(
+    (p) => typeof p.idleDays === "number" && Number.isFinite(p.idleDays)
+      && typeof p.open === "number" && Number.isFinite(p.open),
+  );
+  const threshold =
+    typeof thresholdDays === "number" && Number.isFinite(thresholdDays) ? thresholdDays : null;
+  // Absent means the fixed window — the older contract — and only the exact word is relative.
+  const relative = mode === "relative";
+  const modeText = relative ? "relative mode" : "the fixed window";
+  describe(
+    canvas,
+    "Idle days against open findings for each repository the newest scan still returns: " +
+      plotted
+        .map(
+          (p) =>
+            `${p.label}, idle ${p.bounded ? "at least " : ""}${Math.round(p.idleDays)} days, ` +
+            `${localeNum(p.open)} open${p.cold ? " (in the cold zone)" : ""}`,
+        )
+        .join("; ") +
+      "." +
+      (threshold === null
+        ? ` The cold-zone line comes from ${modeText}.`
+        : ` The cold-zone threshold is ${Math.round(threshold)} days, from ${modeText}.`),
+  );
+  const opts = baseOptions("");
+  opts.scales.x.type = "linear";
+  opts.scales.x.beginAtZero = true;
+  opts.scales.x.title = { display: true, text: "idle days", font: FONT, color: INK2 };
+  opts.scales.y.title = { display: true, text: "open findings", font: FONT, color: INK2 };
+  opts.plugins.tooltip.callbacks.title = (items) =>
+    items.length ? plotted[items[0].dataIndex].label : "";
+  opts.plugins.tooltip.callbacks.label = (ctx) => {
+    const p = plotted[ctx.dataIndex];
+    return [
+      // "at least" in prose, "≥" in a cell — README.md above the Pages table. A tooltip is
+      // prose, so a bound reads the long way here and the short way in the table beside it.
+      `Idle ${p.bounded ? "at least " : ""}${Math.round(p.idleDays)} d`,
+      `${localeNum(p.open)} open`,
+    ];
+  };
+  // The threshold as a dashed vertical rule, labelled in words. Dashed BECAUSE it is a
+  // threshold rather than data — the one place a dash is right on a canvas whose gridlines are
+  // all solid hairlines — and labelled because a rule with no label is a line a reader has to
+  // guess the meaning of. Drawn after the datasets so a point never hides it.
+  const rule = threshold === null ? null : {
+    id: "coldThreshold",
+    afterDatasetsDraw(chart) {
+      const { ctx, chartArea, scales } = chart;
+      const x = scales.x.getPixelForValue(threshold);
+      if (!Number.isFinite(x) || x < chartArea.left || x > chartArea.right) return;
+      ctx.save();
+      ctx.strokeStyle = HAIRLINE;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.moveTo(x, chartArea.top);
+      ctx.lineTo(x, chartArea.bottom);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = "600 11px " + FONT.family;
+      ctx.fillStyle = INK2;
+      ctx.textBaseline = "top";
+      // Flipped inside the plot near the right edge, so the label never clips.
+      const right = x > chartArea.right - 80;
+      ctx.textAlign = right ? "right" : "left";
+      // "(relative)" rather than a second rule or a second colour: the line is in the same
+      // place either way, and what changes is what it is a line OF.
+      const label = `cold at ${Math.round(threshold)} d` + (relative ? " (relative)" : "");
+      ctx.fillText(label, x + (right ? -4 : 4), chartArea.top + 2);
+      ctx.restore();
+    },
+  };
+  return new Chart(canvas, {
+    type: "line", // see the note above — NOT "scatter"
+    data: {
+      datasets: [
+        {
+          data: plotted.map((p) => ({ x: p.idleDays, y: p.open })),
+          showLine: false,
+          pointRadius: plotted.map((p) => (p.cold ? 7 : 5)),
+          pointHoverRadius: 9,
+          pointBackgroundColor: plotted.map((p) => (p.cold ? CATEGORICAL[0] : "#ffffff")),
+          pointBorderColor: plotted.map((p) => (p.cold ? CATEGORICAL[0] : OTHER_COLOR)),
+          pointBorderWidth: 2,
+          // The non-colour cue: a filled diamond is cold, a hollow circle is not.
+          pointStyle: plotted.map((p) => (p.cold ? "rectRot" : "circle")),
+        },
+      ],
+    },
+    options: opts,
+    plugins: rule ? [rule] : [],
   });
 }

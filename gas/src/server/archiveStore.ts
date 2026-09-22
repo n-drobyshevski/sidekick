@@ -13,6 +13,7 @@
 import type { Checkpoint } from "../domain/compaction";
 import type { LedgerState } from "../domain/ledgerCore";
 import type { Observation } from "../domain/reconcile";
+import { recordError } from "./errorLog";
 import { PROP_KEYS, requireProp } from "./props";
 
 const SUBFOLDERS = [
@@ -23,20 +24,83 @@ const SUBFOLDERS = [
 ] as const;
 export type Subfolder = (typeof SUBFOLDERS)[number];
 
+// ------------------------------------------------------------- reading is never fatal
+// A READ THAT CANNOT REACH DRIVE ANSWERS "ABSENT" AND SAYS SO WHERE AN OPERATOR CAN LOOK.
+//
+// Every read below has a fallback behind it — `findings.currentScan()` falls frame -> slim ->
+// raw pages -> [], `ledgerStore.loadState()` falls snapshot -> Sheets tabs — so a Drive service
+// error is a slower answer rather than a dead app, but only if something catches it. It used to
+// propagate out of `bootstrapCore()` instead, and because every page awaits the bootstrap before
+// it renders anything, one Drive hiccup painted the shell's "This page failed to load — Service
+// error: Drive" box on every route at once.
+//
+// `console.warn` alone would then HIDE it: the Apps Script execution log is not reachable from
+// the deployed web app, so each failure is also recorded for Settings -> System -> Diagnostics.
+// ONE ENTRY PER LABEL PER EXECUTION — a Drive that fails fails for every read in the request, and
+// the log is a 25-entry ring in a single Script Property, so an unthrottled record would push the
+// first and most informative entry out with copies of itself. `recordError` is safe to call from
+// here: it touches Script Properties, never Drive, and swallows every failure of its own.
+const recordedFailures = new Set<string>();
+
+function noteDriveFailure(label: string, e: unknown): void {
+  console.warn(`${label}: ${e}`);
+  if (recordedFailures.has(label)) return;
+  recordedFailures.add(label);
+  recordError(label, e, "error");
+}
+
 function rootFolder(): GoogleAppsScript.Drive.Folder {
   return DriveApp.getFolderById(requireProp(PROP_KEYS.archiveFolderId));
 }
 
+/** Look a child folder up WITHOUT creating it — the half every read uses. */
+function findChild(
+  parent: GoogleAppsScript.Drive.Folder,
+  name: string,
+): GoogleAppsScript.Drive.Folder | null {
+  const it = parent.getFoldersByName(name);
+  return it.hasNext() ? it.next() : null;
+}
+
+/** Look up or create. WRITE PATHS ONLY: a read that creates its own folder writes to Drive on a
+ *  GET and turns "this archive is missing" into "this archive is empty", which reads as data. */
 function childFolder(
   parent: GoogleAppsScript.Drive.Folder,
   name: string,
 ): GoogleAppsScript.Drive.Folder {
-  const it = parent.getFoldersByName(name);
-  return it.hasNext() ? it.next() : parent.createFolder(name);
+  return findChild(parent, name) ?? parent.createFolder(name);
 }
 
 export function subfolder(name: Subfolder): GoogleAppsScript.Drive.Folder {
   return childFolder(rootFolder(), name);
+}
+
+/** The read-side `subfolder`: total, and it never creates. null means "absent, or Drive could
+ *  not be reached" — one answer, because every caller treats both the same way. */
+export function findSubfolder(name: Subfolder): GoogleAppsScript.Drive.Folder | null {
+  try {
+    return findChild(rootFolder(), name);
+  } catch (e) {
+    noteDriveFailure(`archiveRead:${name}`, e);
+    return null;
+  }
+}
+
+/** One gz-JSON file by name out of an already-resolved folder. Total: null when the folder is
+ *  absent, the file is absent, or Drive threw on the way. */
+export function readGzJsonIn(
+  folder: GoogleAppsScript.Drive.Folder | null,
+  name: string,
+  label = "archiveRead",
+): unknown | null {
+  if (!folder) return null;
+  try {
+    const files = folder.getFilesByName(name);
+    return files.hasNext() ? parseGzBlob(files.next().getBlob()) : null;
+  } catch (e) {
+    noteDriveFailure(label, e);
+    return null;
+  }
 }
 
 /** Create the folder skeleton (idempotent); returns the root folder id. */
@@ -89,9 +153,22 @@ function parseGzBlob(blob: GoogleAppsScript.Base.Blob): unknown | null {
 }
 
 // ------------------------------------------------------------------- raw scan pages
-/** The Drive folder holding one scan's page files (created on demand). */
+/** The Drive folder holding one scan's page files (created on demand). WRITE PATH — reads go
+ *  through `findScanFolder`, which answers null rather than minting an empty archive. */
 export function scanFolder(scanId: string): GoogleAppsScript.Drive.Folder {
   return childFolder(subfolder("scans"), safeName(scanId));
+}
+
+/** The read-side `scanFolder`: null when the scan has no archive folder, or Drive is down. */
+function findScanFolder(scanId: string): GoogleAppsScript.Drive.Folder | null {
+  const scans = findSubfolder("scans");
+  if (!scans) return null;
+  try {
+    return findChild(scans, safeName(scanId));
+  } catch (e) {
+    noteDriveFailure("archiveRead:scans", e);
+    return null;
+  }
 }
 
 export function writeScanPage(scanId: string, pageNumber: number, payload: unknown): string {
@@ -102,8 +179,7 @@ export function writeScanPage(scanId: string, pageNumber: number, payload: unkno
 /** One raw archive page by number, or null (missing/unreadable). */
 export function readScanPage(scanId: string, pageNumber: number): unknown | null {
   const name = `page-${String(pageNumber).padStart(4, "0")}.json.gz`;
-  const files = scanFolder(scanId).getFilesByName(name);
-  return files.hasNext() ? parseGzBlob(files.next().getBlob()) : null;
+  return readGzJsonIn(findScanFolder(scanId), name, "archiveRead:page");
 }
 
 export function writeSlimRecords(scanId: string, records: unknown[]): string {
@@ -111,9 +187,7 @@ export function writeSlimRecords(scanId: string, records: unknown[]): string {
 }
 
 export function readSlimRecords(scanId: string): unknown[] | null {
-  const files = scanFolder(scanId).getFilesByName("slim.json.gz");
-  if (!files.hasNext()) return null;
-  const parsed = parseGzBlob(files.next().getBlob());
+  const parsed = readGzJsonIn(findScanFolder(scanId), "slim.json.gz", "archiveRead:slim");
   return Array.isArray(parsed) ? parsed : null;
 }
 
@@ -130,9 +204,7 @@ export function writeFrame(scanId: string, records: unknown[]): string {
 }
 
 export function readFrame(scanId: string): unknown[] | null {
-  const files = scanFolder(scanId).getFilesByName(FRAME_NAME);
-  if (!files.hasNext()) return null;
-  const parsed = parseGzBlob(files.next().getBlob());
+  const parsed = readGzJsonIn(findScanFolder(scanId), FRAME_NAME, "archiveRead:frame");
   return Array.isArray(parsed) ? parsed : null;
 }
 
@@ -146,9 +218,7 @@ export function writePageRuns(scanId: string, runs: Array<[number, number]>): vo
 }
 
 export function readPageRuns(scanId: string): Array<[number, number]> | null {
-  const files = scanFolder(scanId).getFilesByName(PAGE_RUNS_NAME);
-  if (!files.hasNext()) return null;
-  const parsed = parseGzBlob(files.next().getBlob());
+  const parsed = readGzJsonIn(findScanFolder(scanId), PAGE_RUNS_NAME, "archiveRead:pageRuns");
   return Array.isArray(parsed) ? (parsed as Array<[number, number]>) : null;
 }
 
@@ -166,14 +236,19 @@ export function readScanPayload(scanRef: string | null): unknown | null {
     return null;
   }
   const pages: Array<{ name: string; payload: unknown }> = [];
-  const files = folder.getFiles();
-  while (files.hasNext()) {
-    const f = files.next();
-    const name = f.getName();
-    if (!/^page-\d+\.json(\.gz)?$/.test(name)) continue;
-    const payload = parseGzBlob(f.getBlob());
-    if (payload === null) return null; // any unreadable page = unreadable archive
-    pages.push({ name, payload });
+  try {
+    const files = folder.getFiles();
+    while (files.hasNext()) {
+      const f = files.next();
+      const name = f.getName();
+      if (!/^page-\d+\.json(\.gz)?$/.test(name)) continue;
+      const payload = parseGzBlob(f.getBlob());
+      if (payload === null) return null; // any unreadable page = unreadable archive
+      pages.push({ name, payload });
+    }
+  } catch (e) {
+    noteDriveFailure("archiveRead:scanPayload", e);
+    return null;
   }
   if (!pages.length) return null;
   pages.sort((a, b) => (a.name < b.name ? -1 : 1));
@@ -315,10 +390,15 @@ export function listScanPageNumbers(scanRef: string | null): number[] {
     return [];
   }
   const nums: number[] = [];
-  const files = folder.getFiles();
-  while (files.hasNext()) {
-    const m = /^page-(\d+)\.json(\.gz)?$/.exec(files.next().getName());
-    if (m) nums.push(Number(m[1]));
+  try {
+    const files = folder.getFiles();
+    while (files.hasNext()) {
+      const m = /^page-(\d+)\.json(\.gz)?$/.exec(files.next().getName());
+      if (m) nums.push(Number(m[1]));
+    }
+  } catch (e) {
+    noteDriveFailure("archiveRead:pageNumbers", e);
+    return [];
   }
   return nums.sort((a, b) => a - b);
 }
@@ -326,8 +406,9 @@ export function listScanPageNumbers(scanRef: string | null): number[] {
 /** Trash a scan's page-run spill (stale once a purge shrinks its pages). */
 export function trashPageRuns(scanId: string): void {
   try {
-    const files = scanFolder(scanId).getFilesByName(PAGE_RUNS_NAME);
-    while (files.hasNext()) files.next().setTrashed(true);
+    const folder = findScanFolder(scanId);
+    const files = folder ? folder.getFilesByName(PAGE_RUNS_NAME) : null;
+    while (files && files.hasNext()) files.next().setTrashed(true);
   } catch (e) {
     console.warn(`Couldn't trash page runs for ${scanId}: ${e}`);
   }
@@ -350,9 +431,7 @@ export function writeLedgerSnapshot(state: LedgerState): void {
 
 /** The fast-read ledger copy, or null (missing/unreadable -> fall back to the tab). */
 export function readLedgerSnapshot(): LedgerSnapshot | null {
-  const files = subfolder("snapshots").getFilesByName(SNAPSHOT_NAME);
-  if (!files.hasNext()) return null;
-  const parsed = parseGzBlob(files.next().getBlob());
+  const parsed = readGzJsonIn(findSubfolder("snapshots"), SNAPSHOT_NAME, "archiveRead:snapshot");
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
   const snap = parsed as LedgerSnapshot;
   return snap.ledger && snap.episodes ? snap : null;
@@ -392,32 +471,36 @@ export function writeMigrationExport(name: string, bundle: unknown): {
 /** One gz-JSON file by name from a subfolder, or null when absent or unreadable. Keeps the
  *  gzip-magic sniff in `parseGzBlob` private rather than re-implemented by every caller. */
 export function readGzJsonNamed(folder: Subfolder, name: string): unknown | null {
-  const files = subfolder(folder).getFilesByName(name);
-  return files.hasNext() ? parseGzBlob(files.next().getBlob()) : null;
+  return readGzJsonIn(findSubfolder(folder), name, `archiveRead:${folder}`);
 }
 
 /** Every file currently in a subfolder, by name. */
 export function listNames(folder: Subfolder): string[] {
+  const dir = findSubfolder(folder);
+  if (!dir) return [];
   const out: string[] = [];
-  const files = subfolder(folder).getFiles();
-  while (files.hasNext()) out.push(files.next().getName());
+  try {
+    const files = dir.getFiles();
+    while (files.hasNext()) out.push(files.next().getName());
+  } catch (e) {
+    noteDriveFailure(`archiveRead:${folder}`, e);
+    return [];
+  }
   return out;
 }
 
 /** Trash one named file in a subfolder. No-op when absent. */
 export function trashNamed(folder: Subfolder, name: string): void {
-  const files = subfolder(folder).getFilesByName(name);
+  const dir = findSubfolder(folder);
+  if (!dir) return; // nothing to trash in a folder that isn't there — and never create one
+  const files = dir.getFilesByName(name);
   while (files.hasNext()) files.next().setTrashed(true);
 }
 
-/** Drop every durable read-model file. A reset bumps DATA_VERSION so they are already
- *  unreachable, but reset should mean reset rather than "unreachable and still on disk". */
-export function trashReadModels(): void {
-  for (const name of listNames("readmodels")) trashNamed("readmodels", name);
-}
-
 export function trashLedgerSnapshot(): void {
-  const files = subfolder("snapshots").getFilesByName(SNAPSHOT_NAME);
+  const dir = findSubfolder("snapshots");
+  if (!dir) return;
+  const files = dir.getFilesByName(SNAPSHOT_NAME);
   while (files.hasNext()) files.next().setTrashed(true);
 }
 
@@ -431,13 +514,24 @@ export function importFolder(sessionId: string): GoogleAppsScript.Drive.Folder {
   return childFolder(subfolder("imports"), safeName(sessionId));
 }
 
+/** The read-side `importFolder`: null rather than a freshly minted empty staging area. */
+function findImportFolder(sessionId: string): GoogleAppsScript.Drive.Folder | null {
+  const imports = findSubfolder("imports");
+  if (!imports) return null;
+  try {
+    return findChild(imports, safeName(sessionId));
+  } catch (e) {
+    noteDriveFailure("archiveRead:imports", e);
+    return null;
+  }
+}
+
 export function writeImportManifest(sessionId: string, manifest: unknown): string {
   return writeGzJson(importFolder(sessionId), "manifest.json.gz", manifest).getId();
 }
 
 export function readImportManifest(sessionId: string): unknown | null {
-  const files = importFolder(sessionId).getFilesByName("manifest.json.gz");
-  return files.hasNext() ? parseGzBlob(files.next().getBlob()) : null;
+  return readGzJsonIn(findImportFolder(sessionId), "manifest.json.gz", "archiveRead:imports");
 }
 
 export function stageShard(sessionId: string, index: number, payload: unknown): string {

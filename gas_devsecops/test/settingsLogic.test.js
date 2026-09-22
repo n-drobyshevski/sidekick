@@ -9,10 +9,14 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_SETTINGS, DEFAULT_SYNC_HOUR, cleanSettings, effectiveSlaTargets, validateSettings,
-  withSettings,
+  DEFAULT_SETTINGS, DEFAULT_SYNC_HOUR, cleanSettings, effectiveColdAfterDays,
+  effectiveColdZoneSettings, effectiveExcludeEndOfLifeFromMttr, effectiveSlaTargets,
+  validateSettings, withSettings,
 } from "../src/domain/settingsLogic";
 import {
+  COLD_AFTER_DAYS_MAX, COLD_AFTER_DAYS_MIN, COLD_FLOOR_DAYS_MAX, COLD_FLOOR_DAYS_MIN,
+  COLD_TARGET_SHARE_PCT_MAX, COLD_TARGET_SHARE_PCT_MIN, COLD_ZONE_MODES, DEFAULT_COLD_AFTER_DAYS,
+  DEFAULT_COLD_FLOOR_DAYS, DEFAULT_COLD_TARGET_SHARE_PCT, DEFAULT_COLD_ZONE_MODE,
   DEFAULT_FETCH_SEVERITIES, DEFAULT_RETENTION_DAYS, SCOPES, SLA_TARGETS,
 } from "../src/domain/config";
 import { RETENTION_MIN_DAYS } from "../src/domain/maintenance";
@@ -276,6 +280,304 @@ describe("the S6 battery settings", () => {
   });
 });
 
+// =========================================================================================
+//  coldAfterDays: the cold-zone window
+// =========================================================================================
+//
+// The one setting whose stage-one coercion is bounded at BOTH ends. `domain/coldZone.ts`
+// derives its four idle buckets as thirds of this number and REFUSES a non-positive one, so a
+// value that gets past `cleanSettings` reaches a function that throws on it — which makes the
+// clamp below the thing standing between a typo and a Repositories page that will not draw.
+describe("the cold-zone window", () => {
+  it("defaults to config.ts's DEFAULT_COLD_AFTER_DAYS", () => {
+    expect(DEFAULT_SETTINGS.coldAfterDays).toBe(DEFAULT_COLD_AFTER_DAYS);
+    expect(DEFAULT_COLD_AFTER_DAYS).toBe(90);
+  });
+
+  it("coerces junk to the default rather than throwing", () => {
+    for (const junk of [null, undefined, "ninety", NaN, {}, [], ""]) {
+      expect(cleanSettings({ coldAfterDays: junk }).coldAfterDays).toBe(DEFAULT_COLD_AFTER_DAYS);
+    }
+  });
+
+  it("CLAMPS a real out-of-range number instead of defaulting it, at either end", () => {
+    // The same distinction cleanRetentionDays draws between "missing" and "typed something
+    // out of range": an operator who typed 3 asked for the shortest window they could, not
+    // for 90, and one who typed 400 asked for the longest.
+    expect(cleanSettings({ coldAfterDays: 3 }).coldAfterDays).toBe(COLD_AFTER_DAYS_MIN);
+    expect(cleanSettings({ coldAfterDays: 0 }).coldAfterDays).toBe(COLD_AFTER_DAYS_MIN);
+    expect(cleanSettings({ coldAfterDays: -50 }).coldAfterDays).toBe(COLD_AFTER_DAYS_MIN);
+    expect(cleanSettings({ coldAfterDays: 400 }).coldAfterDays).toBe(COLD_AFTER_DAYS_MAX);
+    // and both ends are inclusive — "at least 7", "at most 365", never ">"
+    expect(cleanSettings({ coldAfterDays: COLD_AFTER_DAYS_MIN }).coldAfterDays).toBe(COLD_AFTER_DAYS_MIN);
+    expect(cleanSettings({ coldAfterDays: COLD_AFTER_DAYS_MAX }).coldAfterDays).toBe(COLD_AFTER_DAYS_MAX);
+  });
+
+  it("floors a fraction, the same rule slaTargets and retentionDays already apply", () => {
+    expect(cleanSettings({ coldAfterDays: 45.9 }).coldAfterDays).toBe(45);
+  });
+
+  it("round-trips through withSettings, and a second clean is a no-op", () => {
+    const s = withSettings(DEFAULT_SETTINGS, { coldAfterDays: 120 });
+    expect(s.coldAfterDays).toBe(120);
+    expect(cleanSettings(s)).toEqual(s);
+  });
+
+  it("validateSettings rejects an out-of-range window it did not clean", () => {
+    // PINNED CHOICE, same as retentionDays: cleanSettings clamps and never throws;
+    // validateSettings — which never repairs — is what rejects a hand-built Settings that
+    // skipped stage one.
+    expect(validateSettings({ ...DEFAULT_SETTINGS, coldAfterDays: COLD_AFTER_DAYS_MIN - 1 }).join(" "))
+      .toMatch(/cold-zone window/i);
+    expect(validateSettings({ ...DEFAULT_SETTINGS, coldAfterDays: COLD_AFTER_DAYS_MAX + 1 }).join(" "))
+      .toMatch(/cold-zone window/i);
+    expect(validateSettings({ ...DEFAULT_SETTINGS, coldAfterDays: NaN }).join(" "))
+      .toMatch(/cold-zone window/i);
+    // ...and says it the inclusive way the README's bound rule requires.
+    const msg = validateSettings({ ...DEFAULT_SETTINGS, coldAfterDays: 1 }).join(" ");
+    expect(msg).toMatch(/at least 7 days/);
+    expect(msg).not.toMatch(/>/);
+  });
+
+  it("effectiveColdAfterDays degrades a PARTIAL settings object to the default", () => {
+    // Why this function exists at all: `server/readModels.ts`'s `norm()` reads it off
+    // `loadSettings()`, and a settings row (or a test mock) that never went through
+    // cleanSettings would otherwise hand `coldZoneProfile` an undefined it refuses.
+    expect(effectiveColdAfterDays(undefined)).toBe(DEFAULT_COLD_AFTER_DAYS);
+    expect(effectiveColdAfterDays(null)).toBe(DEFAULT_COLD_AFTER_DAYS);
+    expect(effectiveColdAfterDays({})).toBe(DEFAULT_COLD_AFTER_DAYS);
+    expect(effectiveColdAfterDays({ coldAfterDays: "junk" })).toBe(DEFAULT_COLD_AFTER_DAYS);
+    // a saved value wins, and is clamped by the same coercion cleanSettings uses
+    expect(effectiveColdAfterDays({ coldAfterDays: 120 })).toBe(120);
+    expect(effectiveColdAfterDays({ coldAfterDays: 400 })).toBe(COLD_AFTER_DAYS_MAX);
+  });
+});
+
+// =========================================================================================
+//  The relative cold zone: coldZoneMode, coldTargetSharePct, coldFloorDays
+// =========================================================================================
+//
+// THE THREE FIELDS THAT MUST TRAVEL TOGETHER. `coldZoneProfile` THROWS when the mode is
+// "relative" and either number is missing or out of (0, 100] / non-positive — there is no
+// default inside the profile, because a share the caller never named is not a share. So the
+// property these tests pin is not only "each field cleans correctly" but "the four of them
+// come out of ONE door together", which is what `effectiveColdZoneSettings` is.
+describe("the cold-zone mode", () => {
+  it("defaults to fixed — every deployment that predates this field keeps its behaviour", () => {
+    expect(DEFAULT_SETTINGS.coldZoneMode).toBe(DEFAULT_COLD_ZONE_MODE);
+    expect(DEFAULT_COLD_ZONE_MODE).toBe("fixed");
+    expect([...COLD_ZONE_MODES]).toEqual(["fixed", "relative"]);
+  });
+
+  it("FALLS BACK rather than clamping, because a two-member set has no nearest legal value", () => {
+    // The distinction this whole block exists for: `coldAfterDays: 400` is CLAMPED to 365
+    // because 400 points at an end of a real range; `coldZoneMode: "warm"` points at nothing,
+    // so the only honest reading is "nothing was chosen".
+    expect(cleanSettings({ coldZoneMode: "warm" }).coldZoneMode).toBe(DEFAULT_COLD_ZONE_MODE);
+    expect(cleanSettings({ coldZoneMode: "" }).coldZoneMode).toBe(DEFAULT_COLD_ZONE_MODE);
+  });
+
+  it("coerces junk to the default rather than throwing, INCLUDING the String(null) trap", () => {
+    // `cleanViewScope`'s documented trap, on the other side of the cast: `String(null)` is
+    // "null" and `String({})` is "[object Object]", so a cleaner that cast before checking
+    // would be one renamed mode away from reading a non-string as a real answer. This cleaner
+    // refuses anything that is not ALREADY a string.
+    for (const junk of [null, undefined, 0, 1, NaN, true, false, {}, [], ["relative"]]) {
+      expect(cleanSettings({ coldZoneMode: junk }).coldZoneMode).toBe(DEFAULT_COLD_ZONE_MODE);
+    }
+  });
+
+  it("reads a genuine string trimmed and lowercased, so a hand-edited cell still works", () => {
+    expect(cleanSettings({ coldZoneMode: "RELATIVE" }).coldZoneMode).toBe("relative");
+    expect(cleanSettings({ coldZoneMode: " relative " }).coldZoneMode).toBe("relative");
+    expect(cleanSettings({ coldZoneMode: " Fixed" }).coldZoneMode).toBe("fixed");
+  });
+
+  it("round-trips through withSettings, and a second clean is a no-op", () => {
+    const s = withSettings(DEFAULT_SETTINGS, { coldZoneMode: "relative" });
+    expect(s.coldZoneMode).toBe("relative");
+    expect(cleanSettings(s)).toEqual(s);
+  });
+
+  it("validateSettings names both modes, since there is no range to state", () => {
+    const msg = validateSettings({ ...DEFAULT_SETTINGS, coldZoneMode: "warm" }).join(" ");
+    expect(msg).toBe("The cold-zone mode must be either fixed or relative.");
+    expect(validateSettings({ ...DEFAULT_SETTINGS, coldZoneMode: "relative" })).toEqual([]);
+  });
+});
+
+describe("the cold-zone target share", () => {
+  it("defaults to config.ts's DEFAULT_COLD_TARGET_SHARE_PCT", () => {
+    expect(DEFAULT_SETTINGS.coldTargetSharePct).toBe(DEFAULT_COLD_TARGET_SHARE_PCT);
+    expect(DEFAULT_COLD_TARGET_SHARE_PCT).toBe(20);
+  });
+
+  it("coerces junk to the default rather than throwing", () => {
+    for (const junk of [null, undefined, "a fifth", NaN, {}, [], ""]) {
+      expect(cleanSettings({ coldTargetSharePct: junk }).coldTargetSharePct)
+        .toBe(DEFAULT_COLD_TARGET_SHARE_PCT);
+    }
+  });
+
+  it("CLAMPS a real out-of-range number instead of defaulting it, at either end", () => {
+    expect(cleanSettings({ coldTargetSharePct: 0 }).coldTargetSharePct).toBe(COLD_TARGET_SHARE_PCT_MIN);
+    expect(cleanSettings({ coldTargetSharePct: -5 }).coldTargetSharePct).toBe(COLD_TARGET_SHARE_PCT_MIN);
+    expect(cleanSettings({ coldTargetSharePct: 80 }).coldTargetSharePct).toBe(COLD_TARGET_SHARE_PCT_MAX);
+    expect(cleanSettings({ coldTargetSharePct: 100 }).coldTargetSharePct).toBe(COLD_TARGET_SHARE_PCT_MAX);
+    // both ends inclusive — "at least 1%", "at most 50%", never ">"
+    expect(cleanSettings({ coldTargetSharePct: COLD_TARGET_SHARE_PCT_MIN }).coldTargetSharePct)
+      .toBe(COLD_TARGET_SHARE_PCT_MIN);
+    expect(cleanSettings({ coldTargetSharePct: COLD_TARGET_SHARE_PCT_MAX }).coldTargetSharePct)
+      .toBe(COLD_TARGET_SHARE_PCT_MAX);
+  });
+
+  it("floors a fraction, the same rule every other numeric field applies", () => {
+    expect(cleanSettings({ coldTargetSharePct: 12.9 }).coldTargetSharePct).toBe(12);
+  });
+
+  it("round-trips through withSettings, and a second clean is a no-op", () => {
+    const s = withSettings(DEFAULT_SETTINGS, { coldTargetSharePct: 35 });
+    expect(s.coldTargetSharePct).toBe(35);
+    expect(cleanSettings(s)).toEqual(s);
+  });
+
+  it("validateSettings states the range inclusively", () => {
+    const msg = validateSettings({ ...DEFAULT_SETTINGS, coldTargetSharePct: 0 }).join(" ");
+    expect(msg).toBe("The cold-zone target share must be at least 1% and at most 50%.");
+    expect(msg).not.toMatch(/>/);
+    expect(validateSettings({ ...DEFAULT_SETTINGS, coldTargetSharePct: 80 }).join(" "))
+      .toMatch(/cold-zone target share/i);
+    expect(validateSettings({ ...DEFAULT_SETTINGS, coldTargetSharePct: NaN }).join(" "))
+      .toMatch(/cold-zone target share/i);
+  });
+});
+
+describe("the cold-zone floor", () => {
+  it("defaults to config.ts's DEFAULT_COLD_FLOOR_DAYS", () => {
+    expect(DEFAULT_SETTINGS.coldFloorDays).toBe(DEFAULT_COLD_FLOOR_DAYS);
+    expect(DEFAULT_COLD_FLOOR_DAYS).toBe(14);
+  });
+
+  it("coerces junk to the default rather than throwing", () => {
+    for (const junk of [null, undefined, "a fortnight", NaN, {}, [], ""]) {
+      expect(cleanSettings({ coldFloorDays: junk }).coldFloorDays).toBe(DEFAULT_COLD_FLOOR_DAYS);
+    }
+  });
+
+  it("CLAMPS a real out-of-range number instead of defaulting it, at either end", () => {
+    expect(cleanSettings({ coldFloorDays: 0 }).coldFloorDays).toBe(COLD_FLOOR_DAYS_MIN);
+    expect(cleanSettings({ coldFloorDays: -9 }).coldFloorDays).toBe(COLD_FLOOR_DAYS_MIN);
+    expect(cleanSettings({ coldFloorDays: 900 }).coldFloorDays).toBe(COLD_FLOOR_DAYS_MAX);
+    expect(cleanSettings({ coldFloorDays: COLD_FLOOR_DAYS_MIN }).coldFloorDays).toBe(COLD_FLOOR_DAYS_MIN);
+    expect(cleanSettings({ coldFloorDays: COLD_FLOOR_DAYS_MAX }).coldFloorDays).toBe(COLD_FLOOR_DAYS_MAX);
+    // the ceiling is the fixed window's own, so a floor can never outrun the longest window
+    expect(COLD_FLOOR_DAYS_MAX).toBe(COLD_AFTER_DAYS_MAX);
+  });
+
+  it("floors a fraction", () => {
+    expect(cleanSettings({ coldFloorDays: 21.7 }).coldFloorDays).toBe(21);
+  });
+
+  it("round-trips through withSettings, and a second clean is a no-op", () => {
+    const s = withSettings(DEFAULT_SETTINGS, { coldFloorDays: 30 });
+    expect(s.coldFloorDays).toBe(30);
+    expect(cleanSettings(s)).toEqual(s);
+  });
+
+  it("validateSettings states the range inclusively", () => {
+    const msg = validateSettings({ ...DEFAULT_SETTINGS, coldFloorDays: 0 }).join(" ");
+    expect(msg).toBe("The cold-zone floor must be at least 1 day and at most 365 days.");
+    expect(msg).not.toMatch(/>/);
+    expect(validateSettings({ ...DEFAULT_SETTINGS, coldFloorDays: 10_000 }).join(" "))
+      .toMatch(/cold-zone floor/i);
+    expect(validateSettings({ ...DEFAULT_SETTINGS, coldFloorDays: NaN }).join(" "))
+      .toMatch(/cold-zone floor/i);
+  });
+});
+
+describe("effectiveColdZoneSettings, the one door to coldZoneProfile", () => {
+  const ALL_DEFAULTS = {
+    mode: DEFAULT_COLD_ZONE_MODE,
+    coldAfterDays: DEFAULT_COLD_AFTER_DAYS,
+    targetSharePct: DEFAULT_COLD_TARGET_SHARE_PCT,
+    floorDays: DEFAULT_COLD_FLOOR_DAYS,
+    // FIVE FIELDS NOW, and the fifth is the one that decides WHO is measured rather than where
+    // the line falls — which is exactly why it comes out of the same door: a caller that read
+    // the mode here and this flag off the settings row could derive a relative line over one
+    // population and then draw the table over another.
+    excludeEndOfLife: false,
+  };
+
+  it("degrades nothing at all to the five shared defaults", () => {
+    // The case that makes this function load-bearing rather than tidy: readModels.test.ts's
+    // `loadSettings()` mock returns a PARTIAL settings object, and `coldZoneProfile` throws on
+    // a relative mode with no target. Four fields out of one call is what makes "a mode with
+    // nothing to aim at" unconstructible.
+    expect(effectiveColdZoneSettings(null)).toEqual(ALL_DEFAULTS);
+    expect(effectiveColdZoneSettings(undefined)).toEqual(ALL_DEFAULTS);
+    expect(effectiveColdZoneSettings({})).toEqual(ALL_DEFAULTS);
+  });
+
+  it("fills in the fields a PARTIAL object left out, keeping the ones it carries", () => {
+    // Exactly the shape the server's mock hands it: a mode and nothing else. The mode is
+    // honoured AND the two numbers it makes mandatory arrive with it.
+    expect(effectiveColdZoneSettings({ coldZoneMode: "relative" })).toEqual({
+      ...ALL_DEFAULTS, mode: "relative",
+    });
+    expect(effectiveColdZoneSettings({ coldAfterDays: 120 })).toEqual({
+      ...ALL_DEFAULTS, coldAfterDays: 120,
+    });
+    expect(effectiveColdZoneSettings({ coldTargetSharePct: 35, coldFloorDays: 30 })).toEqual({
+      ...ALL_DEFAULTS, targetSharePct: 35, floorDays: 30,
+    });
+  });
+
+  it("applies each field's own cleaner — junk defaults, a real number is clamped", () => {
+    expect(effectiveColdZoneSettings({
+      coldZoneMode: " RELATIVE ", coldAfterDays: 400, coldTargetSharePct: 80, coldFloorDays: 0,
+      excludeEndOfLifeFromColdZone: true,
+    })).toEqual({
+      mode: "relative",
+      coldAfterDays: COLD_AFTER_DAYS_MAX,
+      targetSharePct: COLD_TARGET_SHARE_PCT_MAX,
+      floorDays: COLD_FLOOR_DAYS_MIN,
+      excludeEndOfLife: true,
+    });
+    expect(effectiveColdZoneSettings({
+      coldZoneMode: "warm", coldAfterDays: "junk", coldTargetSharePct: {}, coldFloorDays: [],
+      // ONLY A LITERAL `true` EXCLUDES. Deleting repositories from a page on the strength of a
+      // truthy string is the one coercion this field must never make.
+      excludeEndOfLifeFromColdZone: "true",
+    })).toEqual(ALL_DEFAULTS);
+    expect(effectiveColdZoneSettings({ excludeEndOfLifeFromColdZone: 1 }).excludeEndOfLife).toBe(false);
+    expect(effectiveColdZoneSettings({ excludeEndOfLifeFromColdZone: true }).excludeEndOfLife).toBe(true);
+    // AND IT READS ONLY ITS OWN FIELD. The MTTR switch is a separate decision; a door that
+    // answered for both would make one page silently obey the other page's setting.
+    expect(effectiveColdZoneSettings({ excludeEndOfLifeFromMttr: true }).excludeEndOfLife).toBe(false);
+  });
+
+  it("reads a real Settings object back unchanged", () => {
+    const s = withSettings(DEFAULT_SETTINGS, {
+      coldZoneMode: "relative", coldAfterDays: 120, coldTargetSharePct: 35, coldFloorDays: 30,
+      excludeEndOfLifeFromColdZone: true,
+    });
+    expect(effectiveColdZoneSettings(s)).toEqual({
+      mode: "relative", coldAfterDays: 120, targetSharePct: 35, floorDays: 30,
+      excludeEndOfLife: true,
+    });
+  });
+
+  it("is what effectiveColdAfterDays is now built on, so the two cannot drift", () => {
+    // `effectiveColdAfterDays` kept its exact old contract while gaining a single shared
+    // implementation — one coercion of `coldAfterDays` exists in this module's exported
+    // surface, so there is nothing for the two functions to disagree about.
+    for (const input of [null, undefined, {}, { coldAfterDays: "junk" }, { coldAfterDays: 120 },
+      { coldAfterDays: 400 }, { coldAfterDays: 1 }, DEFAULT_SETTINGS]) {
+      expect(effectiveColdAfterDays(input)).toBe(effectiveColdZoneSettings(input).coldAfterDays);
+    }
+  });
+});
+
 // projectView: the VIEW scope — which project the pages SHOW, distinct from WIZ_PROJECT_ID_V2
 // (the FETCH scope, which stays a Script Property and is never added here — see
 // settingsLogic.ts's own header). "" means no scope: show the whole register.
@@ -344,7 +646,7 @@ describe("projectView, the view scope", () => {
 describe("tabStatus: per-tab dirty and invalid state", () => {
   const saved = draftFromSettings(DEFAULT_SETTINGS);
 
-  it("TAB_FIELDS names exactly the six real batched fields, and only real tab keys", () => {
+  it("TAB_FIELDS names exactly the real batched fields, and only real tab keys", () => {
     // The "cannot drift" claim, checked as data rather than assumed: the pure module's map
     // and the DOM half's own BATCHED_KEYS (pages/settings.js's Object.keys(FIELD_TABS), which
     // is now `= TAB_FIELDS`) must name the exact same field set.
@@ -411,11 +713,23 @@ describe("tabStatus: per-tab dirty and invalid state", () => {
     // TAB_FIELDS` (the same object, not a copy), so a field dropped from TAB_FIELDS drops
     // out of BATCHED_KEYS in lockstep and a TAB_FIELDS-vs-BATCHED_KEYS comparison can never
     // catch that removal — a guard that fires on nothing. Grepping the DOM half's own
-    // `draft.<field>` reads/writes is independent of TAB_FIELDS's own definition: the six
+    // `draft.<field>` reads/writes is independent of TAB_FIELDS's own definition: the seven
     // fields below are how each panel builder actually reads and mutates the draft, and stay
     // in the source even if TAB_FIELDS is edited.
     const fieldsSourceActuallyDrivesTheDraftFor = [
-      "scopes", "fetchSeverities", "slaTargets", "syncSchedule", "autoCompact", "retentionDays",
+      "scopes", "fetchSeverities", "slaTargets", "coldAfterDays",
+      // The cold-zone mode and the two numbers only relative mode reads. All three are driven
+      // from the Deadlines panel exactly as `coldAfterDays` is — the mode's `segmented`
+      // onChange writes `draft.coldZoneMode`, the two number inputs write their own fields —
+      // so all three belong in this sweep, and in TAB_FIELDS.
+      "coldZoneMode", "coldTargetSharePct", "coldFloorDays",
+      // The fifth cold-zone field, driven from the same panel by a `switchToggle` rather than
+      // by a number input — and the only one of the five that is not read by a mode branch, so
+      // it is on screen in both modes and belongs in this sweep for both. Its twin sits in the
+      // same panel, above the cold-zone block rather than below it, beside the SLA windows the
+      // figures it governs are measured against.
+      "excludeEndOfLifeFromColdZone", "excludeEndOfLifeFromMttr",
+      "syncSchedule", "autoCompact", "retentionDays",
     ];
     for (const field of fieldsSourceActuallyDrivesTheDraftFor) {
       const re = new RegExp(`draft\\.${field}\\b`);
@@ -486,4 +800,74 @@ describe("tabStatus: per-tab dirty and invalid state", () => {
   // block, stayed green — (a)/(b)/(c) exercise `slaTargets`, not `retentionDays`, so a hole in
   // TAB_FIELDS for an unrelated field is invisible to them. Reverted immediately after the
   // observation; both files were back to fully green (40/40, 49/49) on the next run.
+});
+
+// =========================================================================================
+//  excludeEndOfLifeFromMttr — the second switch, and its own door
+// =========================================================================================
+//
+// TWO SWITCHES, TWO ARGUMENTS, AND NEITHER IS A DEFAULT FOR THE OTHER. The cold-zone one
+// removes retired repositories from a reading about SILENCE; this one removes them from
+// readings about HOW LONG A FINDING LIVED. A reader can want either without the other, and the
+// thing that makes that true in code is that the two fields are read separately — which is
+// what these cases hold.
+
+describe("excludeEndOfLifeFromMttr", () => {
+  it("defaults to false, so every deployment behaves as it did until someone opts in", () => {
+    expect(DEFAULT_SETTINGS.excludeEndOfLifeFromMttr).toBe(false);
+    expect(effectiveExcludeEndOfLifeFromMttr(DEFAULT_SETTINGS)).toBe(false);
+  });
+
+  it("degrades a partial or absent settings object to false rather than to undefined", () => {
+    // readModels.test.ts's `loadSettings()` mock hands back exactly this kind of partial row.
+    for (const v of [null, undefined, {}, { coldAfterDays: 90 }]) {
+      expect(effectiveExcludeEndOfLifeFromMttr(v), JSON.stringify(v)).toBe(false);
+    }
+  });
+
+  it("ONLY A LITERAL `true` TURNS IT ON — a truthy string is not consent", () => {
+    expect(effectiveExcludeEndOfLifeFromMttr({ excludeEndOfLifeFromMttr: true })).toBe(true);
+    for (const v of ["true", 1, {}, [], "yes"]) {
+      expect(
+        effectiveExcludeEndOfLifeFromMttr({ excludeEndOfLifeFromMttr: v }),
+        String(v),
+      ).toBe(false);
+    }
+    expect(cleanSettings({ excludeEndOfLifeFromMttr: "true" }).excludeEndOfLifeFromMttr)
+      .toBe(false);
+    expect(cleanSettings({ excludeEndOfLifeFromMttr: true }).excludeEndOfLifeFromMttr)
+      .toBe(true);
+  });
+
+  // Perturbation, run and reverted: reading `excludeEndOfLifeFromColdZone` in either function
+  // fails this case — and on screen it would make one page silently obey the other page's
+  // setting, which is the one thing two independent switches must never do.
+  it("THE TWO SWITCHES ARE READ SEPARATELY, in both directions", () => {
+    const coldOnly = cleanSettings({ excludeEndOfLifeFromColdZone: true });
+    expect(coldOnly.excludeEndOfLifeFromColdZone).toBe(true);
+    expect(coldOnly.excludeEndOfLifeFromMttr).toBe(false);
+    expect(effectiveExcludeEndOfLifeFromMttr(coldOnly)).toBe(false);
+    expect(effectiveColdZoneSettings(coldOnly).excludeEndOfLife).toBe(true);
+
+    const mttrOnly = cleanSettings({ excludeEndOfLifeFromMttr: true });
+    expect(mttrOnly.excludeEndOfLifeFromColdZone).toBe(false);
+    expect(mttrOnly.excludeEndOfLifeFromMttr).toBe(true);
+    expect(effectiveExcludeEndOfLifeFromMttr(mttrOnly)).toBe(true);
+    expect(effectiveColdZoneSettings(mttrOnly).excludeEndOfLife).toBe(false);
+  });
+
+  it("is NOT part of the cold zone's bundle — that type carries what must travel together", () => {
+    // `EffectiveColdZone` exists because `coldZoneProfile` throws on a relative mode with no
+    // target. This flag travels with none of those, so a sixth field there would suggest the
+    // two decisions are one.
+    expect(Object.keys(effectiveColdZoneSettings(DEFAULT_SETTINGS)).sort()).toEqual([
+      "coldAfterDays", "excludeEndOfLife", "floorDays", "mode", "targetSharePct",
+    ]);
+  });
+
+  it("survives a withSettings round trip, like every other batched field", () => {
+    const next = withSettings(DEFAULT_SETTINGS, { excludeEndOfLifeFromMttr: true });
+    expect(next.excludeEndOfLifeFromMttr).toBe(true);
+    expect(next.excludeEndOfLifeFromColdZone).toBe(false);
+  });
 });

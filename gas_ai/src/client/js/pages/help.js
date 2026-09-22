@@ -164,8 +164,11 @@ export async function renderHelp(main, params, _ctx) {
   doc.append(
     pageHeader({
       route: "help",
+      // ONE LINE, because the h1 above it now says the other one. pageHeader draws the
+      // route's own PAGES title, and that title is "Key sheet" since this page moved out of
+      // the chrome tail and into the Data lane — so leading the lede with the same two words
+      // printed them twice, one under the other.
       lede: heroLines(
-        "Key sheet",
         "What every word and mark means, and how much of each this tenant holds.",
       ),
     }),
@@ -910,7 +913,7 @@ function lexiconShell(shown, hidden) {
         for (const entry of g.entries) {
           const node = entryRow(entry);
           // Searched once, at build time: term, its alias and the definition body.
-          const hay = [entry.term, entry.aka || "", entry.blurb || "", entry.more || ""]
+          const hay = [entry.term, entry.aka || "", (entry.lines || []).join(" "), entry.more || ""]
             .join(" ").toLowerCase();
           rows.push({ entry, node, hay });
           list.append(node);
@@ -929,12 +932,22 @@ function entryRow(entry) {
 
   row.append(el("div", { class: "help-entry-mark" }, entry.mark()));
 
+  // ONE PARAGRAPH PER LINE, and the first two of them are the tip card.
+  //
+  // This read `entry.blurb` — a single 443-character string on the median entry, 1,164 on the
+  // worst — and `glossaryTipLines` has no use for that shape: with no `lines` array it falls
+  // through to `tipLead(entry.blurb)`, which CUT 46 of the 51 entries mid-sentence and put an
+  // ellipsis on the card. Four fifths of the book never reached a reader who hovered. The
+  // entries carry `lines` now, the same shape gas and gas_devsecops use and the one
+  // gas_shared/README.md documents, so the card gets a written lead instead of a truncation
+  // and this page still shows the whole entry. Mirrors gas_shared/ui/helpPage.js's own loop —
+  // that module is still not imported here, for the reasons gas_shared/README.md gives.
   const body = el("div", { class: "help-entry-body" },
     el("div", { class: "help-entry-term" },
       entry.term,
       entry.aka ? el("em", {}, " · " + entry.aka) : null),
-    el("p", { class: "help-entry-def" }, entry.blurb),
   );
+  for (const line of entry.lines) body.append(el("p", { class: "help-entry-def" }, line));
   if (entry.strip) body.append(categoryStrip(entry.strip()));
   if (entry.more) body.append(el("p", { class: "help-entry-more" }, entry.more));
   // Each destination keeps its word and gains the route's own sidebar mark, so the page

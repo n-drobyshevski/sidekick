@@ -70,15 +70,24 @@ import { registerHubUrlContract } from "../../gas_shared/test/contracts/hubUrl.j
 import { normalizeHubUrl } from "../src/server/hubUrl";
 import { registerSettingsFormContract } from "../../gas_shared/test/contracts/settingsForm.js";
 import { DEFAULT_TAB, SETTINGS_TABS, SETTING_FIELDS } from "../src/client/js/settingsModel.js";
+import { registerUnitChartContract } from "../../gas_shared/test/contracts/unitChart.js";
+import {
+  COUNT_UNITS, MAX_EXACT_CELLS, MAX_MARKS, unitChartModel, unitCounts, unitScale,
+} from "../../gas_shared/ui/unitChart.js";
 import { registerSettingsReadoutsContract } from "../../gas_shared/test/contracts/settingsReadouts.js";
 import {
   createCutHistogram, impactSplitModel, severitySplitModel, tickTimeline,
 } from "../../gas_shared/ui/settingsReadouts.js";
+// THE ROUTE TABLE, IMPORTED. It lives in its own `pages.js` precisely so this line can
+// exist: the nav and page-header contracts used to read it back out of app.js with a regex,
+// because app.js touches the DOM at module scope. pages.js does not, so they get the real
+// objects — `render` included — instead of whatever a line-shaped pattern could match.
+import { PAGES } from "../src/client/js/pages.js";
 
 const APP_ROOT = new URL("../", import.meta.url);
 
 const base = {
-  describe, it, expect, beforeAll, afterAll, appRoot: APP_ROOT, app: "ai",
+  describe, it, expect, beforeAll, afterAll, appRoot: APP_ROOT, PAGES, app: "ai",
 };
 
 // The manifest, restated. app.js is the source (configureApp) and the navGroups contract
@@ -91,7 +100,9 @@ const OPENING_NOUN = "graph";
 // Every route in PAGES order. Moves only when a route is added or removed on purpose.
 const ROUTES = [
   "graph", "inventory", "problems", "combos", "config",
-  "compliance", "scans", "aars", "data", "settings", "help",
+  // `help` ahead of `settings`: the two content pages became a Data lane and lanes are
+  // contiguous, so Settings is the whole chrome tail now.
+  "compliance", "scans", "aars", "data", "help", "settings",
 ];
 
 registerTokenContract({
@@ -403,4 +414,15 @@ registerSettingsFormContract({
 // =========================================================================================
 registerSettingsReadoutsContract({
   ...base, impactSplitModel, severitySplitModel, tickTimeline, createCutHistogram, openAndTotal,
+});
+
+// =========================================================================================
+//  The unit chart: the design system's arithmetic, not this register's
+// =========================================================================================
+//
+// Registered before this app draws one, for the reason the sibling registrations give: what a
+// count is worth in marks is one rule across three registers, and a page that adopts it should
+// meet the guard already running rather than arrive with its own copy.
+registerUnitChartContract({
+  ...base, unitScale, unitCounts, unitChartModel, COUNT_UNITS, MAX_MARKS, MAX_EXACT_CELLS,
 });

@@ -129,6 +129,11 @@ export function registerParityContract(ctx) {
         "normalizeTab", "changedFields", "settingsPatch", "changeSummary", "changeCountText",
         "tabStatus", "sameValue",
         "openAndTotal",
+        // The unit-chart ladder. The failure this catches is not a second FILE — it is a page
+        // re-inlining "how many marks is this count", which is exactly the shape the
+        // open-backlog isotype had before gas_shared/ui/unitChart.js took it. The two retired
+        // names are listed beside the new ones so a revert-by-copy is caught too.
+        "unitScale", "unitCounts", "unitChartModel", "pictogramUnit", "pictogramCounts",
       ];
       /** @type {string[]} */
       const files = [];

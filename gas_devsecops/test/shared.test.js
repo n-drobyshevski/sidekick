@@ -31,6 +31,8 @@ import { SEVERITY_COLORS, SEVERITY_TEXT, SLA_TARGETS } from "../src/domain/confi
 import { LANE_ICONS, ROUTE_ICONS } from "../src/client/js/routeIcons.js";
 
 import { ratio, registerTokenContract } from "../../gas_shared/test/contracts/tokens.js";
+import { registerCollapsibleSectionContract }
+  from "../../gas_shared/test/contracts/collapsibleSection.js";
 import { registerEmptyStateContract } from "../../gas_shared/test/contracts/emptyStates.js";
 import { registerNavGroupContract } from "../../gas_shared/test/contracts/navGroups.js";
 import { registerPageHeaderContract } from "../../gas_shared/test/contracts/pageHeader.js";
@@ -46,11 +48,18 @@ import { figureCardModel, openAndTotal, relativeAge } from "../../gas_shared/ui/
 import { registerFigureCardContract } from "../../gas_shared/test/contracts/figureCard.js";
 import { registerQuadContract } from "../../gas_shared/test/contracts/quad.js";
 import { quadModel } from "../../gas_shared/ui/quad.js";
+import { registerBandBarContract } from "../../gas_shared/test/contracts/bandBar.js";
 import { registerSparklineContract } from "../../gas_shared/test/contracts/sparkline.js";
+import { bandBarModel } from "../../gas_shared/ui/bandBar.js";
 import { sparkLabel, sparkPath } from "../../gas_shared/ui/sparkline.js";
+import { registerUnitChartContract } from "../../gas_shared/test/contracts/unitChart.js";
+import {
+  COUNT_UNITS, MAX_EXACT_CELLS, MAX_MARKS, unitChartModel, unitCounts, unitScale,
+} from "../../gas_shared/ui/unitChart.js";
 import { registerSyncCaptionContract } from "../../gas_shared/test/contracts/syncCaption.js";
 import { registerScanStepContract } from "../../gas_shared/test/contracts/scanSteps.js";
 import { registerHubUrlContract } from "../../gas_shared/test/contracts/hubUrl.js";
+import { registerWizUrlContract } from "../../gas_shared/test/contracts/wizUrl.js";
 import { normalizeHubUrl } from "../src/server/hubUrl";
 import { registerSettingsFormContract } from "../../gas_shared/test/contracts/settingsForm.js";
 import { DEFAULT_TAB, SETTINGS_TABS, SETTING_FIELDS } from "../src/client/js/settingsModel.js";
@@ -58,9 +67,14 @@ import { registerSettingsReadoutsContract } from "../../gas_shared/test/contract
 import {
   createCutHistogram, impactSplitModel, severitySplitModel, tickTimeline,
 } from "../../gas_shared/ui/settingsReadouts.js";
+// THE ROUTE TABLE, IMPORTED. It lives in its own `pages.js` precisely so this line can
+// exist: the nav and page-header contracts used to read it back out of app.js with a regex,
+// because app.js touches the DOM at module scope. pages.js does not, so they get the real
+// objects — `render` included — instead of whatever a line-shaped pattern could match.
+import { PAGES } from "../src/client/js/pages.js";
 
 const APP_ROOT = new URL("../", import.meta.url);
-const base = { describe, it, expect, beforeAll, afterAll, appRoot: APP_ROOT, app: "devsecops" };
+const base = { describe, it, expect, beforeAll, afterAll, appRoot: APP_ROOT, PAGES, app: "devsecops" };
 
 // The manifest, restated. app.js is the source (configureApp) and the navGroups contract
 // reads defaultRoute back out of it; these two are what the splash contract holds the copy to.
@@ -133,13 +147,15 @@ registerPageHeaderContract({
 
 registerParityContract({
   ...base,
-  // Two modules that are genuinely this register's, neither a fork of a shared one:
+  // One module that is genuinely this register's, and not a fork of a shared one:
   // `projectScope.js` reads src/domain/projectScope.ts and means nothing in a sibling with no
-  // repositories; `verdict.js` is the capacity dot-and-word `pages/program.js` and
-  // `pages/repos.js` both draw — promoted out of program.js in Wave C once a second page
-  // wanted the identical mark, but never pushed down into gas_shared because neither sibling
-  // register has a capacity verdict to draw it for.
-  localUiModules: ["projectScope.js", "verdict.js"],
+  // repositories.
+  //
+  // `verdict.js` HAS LEFT. It was kept local because "neither sibling register has a capacity
+  // verdict to draw it for" — true of CAPACITY, and overtaken by the cold zone, which gave
+  // `gas` a byte-identical copy of the same table, the same function and the same CSS. It is
+  // `gas_shared/ui/verdict.js` now and arrives through the wholesale re-export in ui.js.
+  localUiModules: ["projectScope.js"],
   sheetOrder: [
     "../../../gas_shared/styles/tokens.base.css",
     "./styles/tokens.css",
@@ -157,6 +173,7 @@ registerParityContract({
 });
 
 registerZScaleContract(base);
+registerCollapsibleSectionContract(base);
 
 // =========================================================================================
 //  This app's brand, pinned by value
@@ -195,13 +212,23 @@ describe("devsecops: the accent this register chose", () => {
 //
 // THE PAYLOAD TABLE IS WRITTEN DOWN FROM THE DELETED IMPLEMENTATION. `projectScopeControl`'s
 // `onChange` handed app.js a bare slug and `pickProjectScope` passed it to
-// `call("api_setProjectView", { projectView: slug })`. That object is what the one kind's
-// `payload(id)` builds now, and `renderAppbar` unwraps `.projectView` from it so
-// `pickProjectScope`'s own signature — and its two tests — did not change.
+// `call("api_setProjectView", { projectView: slug })`. That object is what the project kind's
+// `payload(id)` builds now — with one addition, below.
 //
-// ONE KIND, SO IT IS THE BARE ONE. There is no second dimension for a slug to collide with,
-// and `settingsStore.projectView` holds an unprefixed slug, so a stored scope survives the
-// move to the shared model untouched.
+// EVERY PAYLOAD NOW CARRIES BOTH FIELDS, ALWAYS, and that is the change the domain axis made
+// to this table. A pick is not "set this scope", it is "make this the scope" — the other
+// dimension has to be cleared, or a project and a domain could both be live and the header
+// could no longer answer "what am I looking at" in one line. Spelling both fields on every
+// payload makes the exclusion structural rather than a rule two call sites remember; the
+// server enforces the same thing independently in `settingsLogic.withProjectView` /
+// `withDomainView`, because a payload is a client artefact and the stored settings are not.
+//
+// THE PROJECT KIND STAYS THE BARE ONE. `settingsStore.projectView` holds an unprefixed slug
+// and always has, so a stored project scope survives the arrival of a second dimension
+// untouched. The domain kind carries `d:`, which is what keeps a domain named `VALUE-CHAIN`
+// from colliding with the project slug of the same name — exactly the collision
+// `scopeModel.js`'s prefix rule exists for, and the first time this register has been able to
+// have one.
 registerScopeContract({
   ...base,
   model: SCOPE_MODEL,
@@ -210,13 +237,21 @@ registerScopeContract({
   data: {
     filterOptions: {
       projectList: [{ slug: "value-chain", name: "VALUE-CHAIN", findings: 826, isFolder: false }],
+      domainList: [{ name: "SAP", findings: 412 }],
     },
-    scope: { register: 1204, shown: 826, projectView: "", unattributed: 17 },
+    scope: {
+      register: 1204, shown: 826, projectView: "", domainView: "", unattributed: 17,
+      noDomain: 233,
+    },
   },
   payloads: [
-    { kind: "project", id: "value-chain", payload: { projectView: "value-chain" } },
+    {
+      kind: "project", id: "value-chain",
+      payload: { projectView: "value-chain", domainView: "" },
+    },
+    { kind: "domain", id: "SAP", payload: { domainView: "SAP", projectView: "" } },
   ],
-  resetPayload: { projectView: "" },
+  resetPayload: { projectView: "", domainView: "" },
 });
 
 // =========================================================================================
@@ -258,6 +293,14 @@ registerSyncCaptionContract(base);
 // reads code rather than rendering.
 registerQuadContract({ ...base, quadModel });
 registerSparklineContract({ ...base, sparkPath, sparkLabel });
+registerBandBarContract({ ...base, bandBarModel });
+// The open-backlog isotype's arithmetic, which used to be test/executivePictogram.test.js
+// against this page's own exports. It moved wholesale when gas_shared/ui/unitChart.js took
+// the ladder: the cast-first perturbation is that file's, carried over intact, and the
+// three new ones hold the waffle half the tally never had.
+registerUnitChartContract({
+  ...base, unitScale, unitCounts, unitChartModel, COUNT_UNITS, MAX_MARKS, MAX_EXACT_CELLS,
+});
 registerFigureCardContract({ ...base, figureCardModel });
 
 // =========================================================================================
@@ -269,6 +312,16 @@ registerFigureCardContract({ ...base, figureCardModel });
 // exist because no `src/server/**` module here imports gas_shared (tsconfig has no `allowJs`),
 // and this table is what holds them to the same rule.
 registerHubUrlContract({ ...base, normalizeHubUrl });
+
+// The Wiz console link's rule. No per-app boundary to hand in — the ingestion copy is one
+// shared TypeScript module — so what this register contributes is its own finding sheet's
+// source, for the wiring half of the contract.
+registerWizUrlContract({
+  ...base,
+  sheetSrc: readFileSync(
+    new URL("../src/client/js/pages/findingSheet.js", import.meta.url), "utf8",
+  ),
+});
 
 // =========================================================================================
 //  The scope-walk chip: one mark per register, not two

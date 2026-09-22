@@ -163,6 +163,31 @@ var Server = (() => {
     wizAuthUrl: "WIZ_AUTH_URL",
     wizApiUrl: "WIZ_API_URL",
     wizProjectIdV2: "WIZ_PROJECT_ID_V2",
+    // The repository tag key whose VALUE is a business domain. Unset means `domain`, the bare
+    // word this tenant writes on the repository itself; a property rather than a setting because
+    // it is a fact about the tenant's tagging convention, not a per-operator view preference —
+    // the same tier WIZ_PROJECT_ID_V2 sits in. See domain/domainTag.ts for why it is resolved on
+    // READ: a key baked into the ledger would make correcting a typo cost a full re-scan. A
+    // tenant whose repositories carry the namespaced `Wiz/Domain` instead sets it here.
+    wizDomainTagKey: "WIZ_DOMAIN_TAG_KEY",
+    // The repository tag key whose VALUE is where that repository is in its life
+    // (`END_OF_LIFE`, `IN_PRODUCTION`, …). Unset means `lifecycle`. Same tier and same reasoning
+    // as the domain key above it, and the same standing of default: BOTH tags reach Wiz from the
+    // tenant's own catalogue under whatever key that system already used, so both defaults are
+    // GUESSES rather than facts about Wiz. That is why `repoTags.mapHealth` publishes how many
+    // repositories each key actually placed, SEPARATELY — a wrong guess shows up as a zero on the
+    // Settings page rather than as a quietly empty column, and the two keys can be wrong alone.
+    wizLifecycleTagKey: "WIZ_LIFECYCLE_TAG_KEY",
+    // The two keys the PERSISTED repository-tag map was actually built under, as
+    // `{"domain":"…","lifecycle":"…"}`, written by repoTags.setRepoTagMap on every refresh.
+    //
+    // WHY A MAP NEEDS TO REMEMBER ITS OWN PROVENANCE. `domain_map` outlives the keys above: a
+    // deployment that changes one — or takes a release that changes a DEFAULT — keeps serving
+    // values fetched under the old key until somebody presses Refresh, and the Settings card
+    // would print the new key over them and look perfectly healthy. That is the one picture
+    // `settings.js`'s domainMapCard exists to prevent, so the card compares the two and says so.
+    // Not a column on the tab: this is one fact about the whole map, not a fact per token.
+    repoTagMapKeys: "REPO_TAG_MAP_KEYS",
     ledgerSpreadsheetId: "LEDGER_SPREADSHEET_ID",
     archiveFolderId: "ARCHIVE_FOLDER_ID",
     // Who may open the web app, on top of the deployment's own "anyone within <domain>" fence.
@@ -381,7 +406,7 @@ var Server = (() => {
     welcomeHtml: () => welcomeHtml
   });
 
-  // src/domain/sha1.ts
+  // ../gas_shared/domain/sha1.ts
   function utf8Bytes(s2) {
     const out = [];
     for (let i = 0; i < s2.length; i++) {
@@ -457,8 +482,8 @@ var Server = (() => {
     return [h0, h1, h2, h3, h4].map((x) => x.toString(16).padStart(8, "0")).join("");
   }
 
-  // src/server/buildInfo.ts
-  var BUILD_ID = true ? "1e645e1b2db4" : "dev";
+  // ../gas_shared/server/buildInfo.ts
+  var BUILD_ID = true ? "3e2c83c1c64f" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -633,6 +658,17 @@ var Server = (() => {
     LOW: 90,
     INFO: 180
   };
+  var DEFAULT_COLD_AFTER_DAYS = 90;
+  var COLD_AFTER_DAYS_MIN = 7;
+  var COLD_AFTER_DAYS_MAX = 365;
+  var COLD_ZONE_MODES = ["fixed", "relative"];
+  var DEFAULT_COLD_ZONE_MODE = "fixed";
+  var DEFAULT_COLD_TARGET_SHARE_PCT = 20;
+  var COLD_TARGET_SHARE_PCT_MIN = 1;
+  var COLD_TARGET_SHARE_PCT_MAX = 50;
+  var DEFAULT_COLD_FLOOR_DAYS = 14;
+  var COLD_FLOOR_DAYS_MIN = 1;
+  var COLD_FLOOR_DAYS_MAX = COLD_AFTER_DAYS_MAX;
   var SCOPES = ["sca", "sast", "secrets"];
   var DEFAULT_FETCH_SEVERITIES = {
     sca: ["CRITICAL", "HIGH"],
@@ -644,6 +680,18 @@ var Server = (() => {
     sast: "Code",
     secrets: "Secrets"
   };
+  var ORG_WIDE_PROJECTS = ["GITHUB-DKTUNITED"];
+  var ORG_WIDE_KEYS = new Set(
+    ORG_WIDE_PROJECTS.map((p) => p.trim().toUpperCase())
+  );
+  function isOrgWideProject(...labels) {
+    for (const label of labels) {
+      if (typeof label !== "string") continue;
+      const key = label.trim().toUpperCase();
+      if (key !== "" && ORG_WIDE_KEYS.has(key)) return true;
+    }
+    return false;
+  }
   var RESOLVED_STATUSES = /* @__PURE__ */ new Set(["RESOLVED", "REMEDIATED", "FIXED", "CLOSED"]);
   var STATUS_OPEN = "OPEN";
   var STATUS_RESOLVED = "RESOLVED";
@@ -893,6 +941,21 @@ var Server = (() => {
     return v === null || v === void 0 || typeof v === "number" && Number.isNaN(v);
   }
 
+  // ../gas_shared/domain/wizUrl.ts
+  var PORTAL_PREFIXES = [
+    ["https:", "", "app.wiz.io", ""].join("/"),
+    ["https:", "", "app.wiz.us", ""].join("/")
+  ];
+  function isLegal(url) {
+    return PORTAL_PREFIXES.some((prefix) => url.indexOf(prefix) === 0);
+  }
+  function normalizeWizUrl(raw) {
+    if (typeof raw !== "string") return null;
+    const url = raw.trim();
+    if (!url) return null;
+    return isLegal(url) ? url : null;
+  }
+
   // src/domain/metrics.ts
   var DAY_MS = 864e5;
   function summarize(workIn, now, scope, slaTargets = SLA_TARGETS) {
@@ -977,6 +1040,41 @@ var Server = (() => {
       scope: "scope" in r ? r["scope"] : void 0
     }));
     return summarize(work, opts.now, opts.scope, opts.slaTargets);
+  }
+
+  // src/domain/projectGrain.ts
+  function firstSegment(name) {
+    var _a;
+    return (_a = String(name != null ? name : "").trim().split(/[-_\s]/)[0]) != null ? _a : "";
+  }
+  var SUPPORT_GROUP_PREFIXES = ["CS", "CE", "LU"];
+  var PRODUCT_SEGMENT = "product";
+  function isSupportGroup(name) {
+    const first = firstSegment(name).toUpperCase();
+    return first !== "" && SUPPORT_GROUP_PREFIXES.indexOf(first) >= 0;
+  }
+  function isProduct(name) {
+    return firstSegment(name).toLowerCase() === PRODUCT_SEGMENT;
+  }
+  function lowestName(names) {
+    if (!names.length) return null;
+    return [...names].sort((a, b) => a.localeCompare(b))[0];
+  }
+  function supportGroupOf(projects, ownerPath2) {
+    const named = lowestName(projects.filter((p) => isSupportGroup(p.name)).map((p) => p.name));
+    if (named !== null) return named;
+    if (typeof ownerPath2 !== "string" || ownerPath2.trim() === "") return null;
+    return lowestName(
+      ownerPath2.split("/").map((seg) => seg.trim()).filter((seg) => isSupportGroup(seg))
+    );
+  }
+  function productOf(projects, ownerProject2) {
+    const named = lowestName(projects.filter((p) => isProduct(p.name)).map((p) => p.name));
+    if (named !== null) return named;
+    if (typeof ownerProject2 !== "string") return null;
+    const owner = ownerProject2.trim();
+    if (owner === "" || isSupportGroup(owner)) return null;
+    return owner;
   }
 
   // src/domain/reconcile.ts
@@ -1073,15 +1171,19 @@ var Server = (() => {
     return `[${parts.join(", ")}]`;
   }
   function ownerProject(record) {
-    var _a;
-    const projects = projectList(record);
+    var _a, _b;
+    const projects = projectList(record).filter(
+      (p) => !isOrgWideProject(p["slug"], p["id"], p["name"])
+    );
+    const product = projects.find((p) => isProduct(p["name"]));
     const leaf = projects.find((p) => p["isFolder"] !== true);
-    return str((_a = leaf != null ? leaf : projects[0]) != null ? _a : {}, "name");
+    return str((_b = (_a = product != null ? product : leaf) != null ? _a : projects[0]) != null ? _b : {}, "name");
   }
   function ownerPath(record) {
     const names = [];
     for (const p of projectList(record)) {
       if (p["isFolder"] !== true) continue;
+      if (isOrgWideProject(p["slug"], p["id"], p["name"])) continue;
       const n2 = str(p, "name");
       if (n2 !== null) names.push(n2);
     }
@@ -1142,17 +1244,23 @@ var Server = (() => {
       tags_json: (_a = projectsJson(rec)) != null ? _a : tagsJson(rec),
       // The flat projects[] list, uncollapsed — see projectsListJson's own comment for why this
       // is additive alongside tags_json rather than a replacement for it.
-      projects_json: projectsListJson(rec)
+      projects_json: projectsListJson(rec),
+      // Wiz's own console link. IN THE SHARED DEFAULT RATHER THAN THE sca BRANCH, even though
+      // only Q_SCA selects it: `normalizeWizUrl` reads a key the other two scopes' nodes simply
+      // do not have and answers null, which is the same answer a per-scope branch would give
+      // with one more place to forget. If sast or secrets later gain the field, selecting it in
+      // their query is the whole change.
+      portal_url: normalizeWizUrl(rec["portalUrl"])
     };
     if (scope === "sast") {
       const parts2 = splitRepoBranch(str(rec, "resource.name"), str(rec, "resource.type"));
       return {
         ...empty,
-        // brick/devsecops/metrics.py:365 puts the weakness TITLE here ("SQL Injection"), not
+        // brick/metrics.py:365 puts the weakness TITLE here ("SQL Injection"), not
         // an identifier — it is what every panel groups on to answer "what kind of thing is
         // this". The identifier-shaped value lives in `cwe`.
         identifier: (_b = clean(rec["name"])) != null ? _b : null,
-        // DIVERGENCE (brick): brick/devsecops/metrics.py:362 aliases `filePath` as `component`
+        // DIVERGENCE (brick): brick/metrics.py:362 aliases `filePath` as `component`
         // for SAST. This register has a dedicated `file_path` column, so writing the path into
         // both would store the same string twice under two names; `component` stays null for
         // sast and secrets per the D2 brief. Reported, not papered over.
@@ -1198,7 +1306,7 @@ var Server = (() => {
     return {
       ...empty,
       identifier: (_f = clean(rec["name"])) != null ? _f : null,
-      // The package, per brick/devsecops/metrics.py:269 — `detailedName` is "braces" on the
+      // The package, per brick/metrics.py:269 — `detailedName` is "braces" on the
       // live probe sample where `name` is "CVE-2024-4068".
       component: str(rec, "detailedName"),
       repo_id: str(rec, "vulnerableAsset.id"),
@@ -1369,7 +1477,8 @@ var Server = (() => {
       owner_project: attrs.owner_project,
       owner_path: attrs.owner_path,
       tags_json: attrs.tags_json,
-      projects_json: attrs.projects_json
+      projects_json: attrs.projects_json,
+      portal_url: attrs.portal_url
     };
   }
   function applyValidation(row, rec, scanTsIso) {
@@ -1388,7 +1497,7 @@ var Server = (() => {
     }
   }
   function reconcile(currentRecords, existingLedger, scanId, scanTs, prevScanId, options) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E;
     const {
       scope,
       disappearanceMode = "scan_ts",
@@ -1484,6 +1593,7 @@ var Server = (() => {
       row.owner_path = (_z = attrs.owner_path) != null ? _z : row.owner_path;
       row.tags_json = (_A = attrs.tags_json) != null ? _A : row.tags_json;
       row.projects_json = (_B = attrs.projects_json) != null ? _B : row.projects_json;
+      row.portal_url = (_D = (_C = attrs.portal_url) != null ? _C : row.portal_url) != null ? _D : null;
       if (apiSaysResolved && row.status === STATUS_OPEN) {
         row.status = STATUS_RESOLVED;
         row.resolved_at = present(apiResolved) ? toIso(parseTs(apiResolved)) : scanTsIso;
@@ -1507,7 +1617,7 @@ var Server = (() => {
         if (inScope !== null && (sevRow === null || !inScope.has(sevRow))) {
           continue;
         }
-        const expectedPrev = (_C = (prevScanIdBySeverity2 != null ? prevScanIdBySeverity2 : {})[sevRow != null ? sevRow : ""]) != null ? _C : prevScanId;
+        const expectedPrev = (_E = (prevScanIdBySeverity2 != null ? prevScanIdBySeverity2 : {})[sevRow != null ? sevRow : ""]) != null ? _E : prevScanId;
         if (row.last_scan_id !== expectedPrev) continue;
         if (disappearanceMode === "midpoint" && prevScanTs) {
           row.resolved_at = midpointIso(prevScanTs, scanTsIso);
@@ -1742,7 +1852,10 @@ var Server = (() => {
       // EpisodeRow carries no projects_json (compaction.ts's EpisodeRow has no such column, and
       // a sealed episode's owner_path is already null above for the same reason) — nothing to
       // expand it from.
-      projects_json: null
+      projects_json: null,
+      // No link either, for the same reason and with the same consequence: a sealed episode
+      // has dropped the per-finding detail it summarizes, so the sheet draws no Wiz row.
+      portal_url: null
     };
   }
   function baseRows(state, options = {}) {
@@ -2102,7 +2215,15 @@ var Server = (() => {
       }
     }
     if (!parsed.length) {
-      return { months: [], mmcrMean: null, oneInN: null, netTotal: 0, verdict: null, monthsCounted: 0 };
+      return {
+        months: [],
+        mmcrMean: null,
+        oneInN: null,
+        closedPerMonthMean: null,
+        netTotal: 0,
+        verdict: null,
+        monthsCounted: 0
+      };
     }
     const earliest = minNum(parsed.map((p) => p.first));
     const months = [];
@@ -2139,6 +2260,7 @@ var Server = (() => {
     }
     const counted = months.filter((m) => !m.partial && !m.reconstructed && m.mmcr !== null);
     const mmcrMean = counted.length ? counted.reduce((a, m) => a + m.mmcr, 0) / counted.length : null;
+    const closedPerMonthMean = counted.length ? counted.reduce((a, m) => a + m.closed, 0) / counted.length : null;
     const netTotal = months.reduce((a, m) => a + m.net, 0);
     const netPctOverall = counted.length ? counted.reduce((a, m) => {
       var _a2;
@@ -2149,6 +2271,7 @@ var Server = (() => {
       months: trimmed,
       mmcrMean,
       oneInN: mmcrMean !== null && mmcrMean > 0 ? 100 / mmcrMean : null,
+      closedPerMonthMean,
       netTotal,
       verdict: counted.length ? verdictOf(netPctOverall) : null,
       monthsCounted: counted.length
@@ -2274,13 +2397,16 @@ var Server = (() => {
   }
   function oldestOpen(rows, topN = 7, scope) {
     const scoped = byScope(rows, scope);
-    const findings = scoped.map((r) => ({ r, age: openAge(r) })).filter((x) => x.age !== null).sort((a, b) => b.age - a.age).slice(0, topN).map(({ r, age }) => ({
-      identifier: r.identifier,
-      repo: r.repo_name,
-      ownerProject: r.owner_project,
-      severity: normalizeSeverity(r.severity),
-      ageDays: age
-    }));
+    const findings = scoped.map((r) => ({ r, age: openAge(r) })).filter((x) => x.age !== null).sort((a, b) => b.age - a.age).slice(0, topN).map(({ r, age }) => {
+      var _a;
+      return {
+        identifier: r.identifier,
+        repo: r.repo_name,
+        product: (_a = r._product) != null ? _a : null,
+        severity: normalizeSeverity(r.severity),
+        ageDays: age
+      };
+    });
     return {
       findings,
       byRepo: rankGroups(scoped, (r) => {
@@ -2289,7 +2415,7 @@ var Server = (() => {
       }, topN, (r) => {
         var _a;
         return {
-          ownerProject: String((_a = r.owner_project) != null ? _a : "")
+          product: String((_a = r._product) != null ? _a : "")
         };
       })
     };
@@ -2318,6 +2444,9 @@ var Server = (() => {
     repo: "repo_name",
     language: "language",
     owner_project: "owner_project",
+    product: "_product",
+    support_group: "_supportGroup",
+    domain: "_domain",
     secret_kind: "secret_kind",
     cwe: "cwe"
   };
@@ -3525,11 +3654,18 @@ var Server = (() => {
       secrets: [...DEFAULT_FETCH_SEVERITIES.secrets]
     },
     slaTargets: { ...SLA_TARGETS },
+    coldAfterDays: DEFAULT_COLD_AFTER_DAYS,
+    coldZoneMode: DEFAULT_COLD_ZONE_MODE,
+    coldTargetSharePct: DEFAULT_COLD_TARGET_SHARE_PCT,
+    coldFloorDays: DEFAULT_COLD_FLOOR_DAYS,
+    excludeEndOfLifeFromColdZone: false,
+    excludeEndOfLifeFromMttr: false,
     showExperimental: false,
     syncSchedule: DEFAULT_SYNC_HOUR,
     autoCompact: false,
     retentionDays: DEFAULT_RETENTION_DAYS,
-    projectView: ""
+    projectView: "",
+    domainView: ""
   };
   function asList(v, allowed) {
     if (!Array.isArray(v)) return null;
@@ -3574,7 +3710,27 @@ var Server = (() => {
     if (n2 === null) return DEFAULT_RETENTION_DAYS;
     return Math.max(Math.floor(n2), RETENTION_MIN_DAYS);
   }
-  function cleanProjectView(v) {
+  function cleanColdAfterDays(v) {
+    const n2 = numericOrNull(v);
+    if (n2 === null) return DEFAULT_COLD_AFTER_DAYS;
+    return Math.min(COLD_AFTER_DAYS_MAX, Math.max(COLD_AFTER_DAYS_MIN, Math.floor(n2)));
+  }
+  function cleanColdZoneMode(v) {
+    if (typeof v !== "string") return DEFAULT_COLD_ZONE_MODE;
+    const m = v.trim().toLowerCase();
+    return COLD_ZONE_MODES.includes(m) ? m : DEFAULT_COLD_ZONE_MODE;
+  }
+  function cleanColdTargetSharePct(v) {
+    const n2 = numericOrNull(v);
+    if (n2 === null) return DEFAULT_COLD_TARGET_SHARE_PCT;
+    return Math.min(COLD_TARGET_SHARE_PCT_MAX, Math.max(COLD_TARGET_SHARE_PCT_MIN, Math.floor(n2)));
+  }
+  function cleanColdFloorDays(v) {
+    const n2 = numericOrNull(v);
+    if (n2 === null) return DEFAULT_COLD_FLOOR_DAYS;
+    return Math.min(COLD_FLOOR_DAYS_MAX, Math.max(COLD_FLOOR_DAYS_MIN, Math.floor(n2)));
+  }
+  function cleanViewScope(v) {
     return typeof v === "string" ? v.trim() : "";
   }
   function cleanSlaTargets(raw) {
@@ -3595,20 +3751,55 @@ var Server = (() => {
       scopes: scopes.length ? scopes : [...SCOPES],
       fetchSeverities: cleanFetchSeverities(r.fetchSeverities),
       slaTargets: { ...SLA_TARGETS, ...cleanSlaTargets(r.slaTargets) },
+      coldAfterDays: cleanColdAfterDays(r.coldAfterDays),
+      coldZoneMode: cleanColdZoneMode(r.coldZoneMode),
+      coldTargetSharePct: cleanColdTargetSharePct(r.coldTargetSharePct),
+      coldFloorDays: cleanColdFloorDays(r.coldFloorDays),
+      // Junk (a string, a number, undefined) coerces to false, same as the two booleans below —
+      // only a literal `true` removes repositories from a measurement. Two independent switches,
+      // two independent reads: neither is a default for the other.
+      excludeEndOfLifeFromColdZone: r.excludeEndOfLifeFromColdZone === true,
+      excludeEndOfLifeFromMttr: r.excludeEndOfLifeFromMttr === true,
       showExperimental: r.showExperimental === true,
       syncSchedule: cleanHourOfDay(r.syncSchedule, DEFAULT_SYNC_HOUR),
       // Junk (a string, a number, undefined) coerces to false, same as showExperimental above —
       // only a literal boolean true turns compaction on.
       autoCompact: r.autoCompact === true,
       retentionDays: cleanRetentionDays(r.retentionDays),
-      projectView: cleanProjectView(r.projectView)
+      projectView: cleanViewScope(r.projectView),
+      // The same coercion, and deliberately the same function: both hold an opaque operator-
+      // chosen string whose only invalid form is "not a string". Two copies of that rule is how
+      // one of them later grows a difference nobody intended.
+      domainView: cleanViewScope(r.domainView)
     };
   }
   function withSettings(current, patch) {
     return cleanSettings({ ...current, ...patch });
   }
+  function withProjectView(current, projectView) {
+    return withSettings(current, { projectView, domainView: "" });
+  }
+  function withDomainView(current, domainView) {
+    return withSettings(current, { domainView, projectView: "" });
+  }
   function effectiveSlaTargets(settings) {
     return { ...SLA_TARGETS, ...cleanSlaTargets(settings == null ? void 0 : settings.slaTargets) };
+  }
+  function effectiveColdZoneSettings(settings) {
+    return {
+      mode: cleanColdZoneMode(settings == null ? void 0 : settings.coldZoneMode),
+      coldAfterDays: cleanColdAfterDays(settings == null ? void 0 : settings.coldAfterDays),
+      targetSharePct: cleanColdTargetSharePct(settings == null ? void 0 : settings.coldTargetSharePct),
+      floorDays: cleanColdFloorDays(settings == null ? void 0 : settings.coldFloorDays),
+      // THROUGH THE SAME DOOR AS THE OTHER FOUR, and it is not symmetry for its own sake: this
+      // decides which repositories the line is derived FROM, so a caller that read the mode here
+      // and this flag from the settings row directly could derive a relative line over one
+      // population and then draw the table over another.
+      excludeEndOfLife: (settings == null ? void 0 : settings.excludeEndOfLifeFromColdZone) === true
+    };
+  }
+  function effectiveExcludeEndOfLifeFromMttr(settings) {
+    return (settings == null ? void 0 : settings.excludeEndOfLifeFromMttr) === true;
   }
 
   // src/server/sheetsDb.ts
@@ -3624,6 +3815,13 @@ var Server = (() => {
     scans: "scans",
     // Repositories and their owning project hierarchy — the register's asset dimension.
     repos: "repos",
+    // The repository-identity → repository-tag join (business domain and lifecycle), refreshed
+    // from Wiz separately from any scan (src/server/repoTags.ts). ITS OWN TAB rather than a
+    // settings cell, for gas/'s
+    // measured reason: a settings value is one 50k cell, and a tenant with a few thousand
+    // repositories indexed under several identity tokens each overruns it. Lazily created —
+    // see `ensureTab` — so a deployment that has not re-run setup() still gets it on first use.
+    domainMap: "domain_map",
     compactions: "compactions",
     settings: "settings",
     jobs: "jobs",
@@ -3631,7 +3829,7 @@ var Server = (() => {
   };
   var TAB_HEADERS = {
     // Three update disciplines coexist here and they are NOT interchangeable — the same
-    // split brick/devsecops arrived at, and the reason its ledger tests read the way they do:
+    // split brick/ arrived at, and the reason its ledger tests read the way they do:
     //   latest-wins            severity, status, the asset columns
     //   sticky-first-wins      fix_date / fix_observed_at, reset only by a reopen
     //   monotone, never reset  has_kev / has_exploit (null -> false -> true), epss keeps the peak
@@ -3774,7 +3972,12 @@ var Server = (() => {
       "owner_project",
       "owner_path",
       "tags_json",
-      "projects_json"
+      "projects_json",
+      // sca only in practice — Q_SCA is the one query that selects `portalUrl` — but a column
+      // of the ONE ledger all three scopes share, so it exists structurally and reads null for
+      // sast and secrets. Last, which is where a newly-added column is appended on an existing
+      // deployment.
+      "portal_url"
     ],
     [TABS.episodes]: [
       "finding_key",
@@ -3829,6 +4032,16 @@ var Server = (() => {
       "first_seen",
       "last_seen"
     ],
+    // One row per identity token, not per repository: the join indexes a repository under every
+    // id/name/externalId it carries, because nothing here can verify which of them a finding's
+    // `repo_id` will turn out to be. See repoTags.ts.
+    //
+    // TWO TAG COLUMNS UNDER A TAB STILL NAMED `domain_map`. The tab predates the lifecycle tag
+    // and renaming it would orphan every deployed map to no gain; `ensureHeaders` appends the
+    // new column on the next write, and a row written before it existed reads `lifecycle` as
+    // absent and still places its domain. Either column may be blank — a repository can carry
+    // one tag and not the other — and a row with neither is skipped on read.
+    [TABS.domainMap]: ["token", "domain", "lifecycle"],
     [TABS.compactions]: [
       "compaction_id",
       "ts",
@@ -3859,7 +4072,7 @@ var Server = (() => {
     ],
     [TABS.meta]: ["version"]
   };
-  var SCHEMA_VERSION = 3;
+  var SCHEMA_VERSION = 4;
   var spreadsheetCache = null;
   function ledgerSpreadsheet() {
     if (spreadsheetCache === null) {
@@ -3870,6 +4083,21 @@ var Server = (() => {
   function sheet(tab) {
     const sh = ledgerSpreadsheet().getSheetByName(tab);
     if (!sh) throw new Error(`Missing tab ${tab} \u2014 run setup().`);
+    return sh;
+  }
+  function ensureTab(tab) {
+    const headers = TAB_HEADERS[tab];
+    if (!headers) throw new Error(`Tab "${tab}" is not declared in TAB_HEADERS.`);
+    const ss = ledgerSpreadsheet();
+    const existing = ss.getSheetByName(tab);
+    if (existing) {
+      ensureHeaders(existing, tab);
+      return existing;
+    }
+    const sh = ss.insertSheet(tab);
+    sh.getRange(1, 1, sh.getMaxRows(), sh.getMaxColumns()).setNumberFormat("@");
+    sh.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sh.setFrozenRows(1);
     return sh;
   }
   function ensureTabs(ss) {
@@ -4261,6 +4489,7 @@ var Server = (() => {
   vulnerabilityFindings(filterBy: $filterBy, first: $first, after: $after) {
     nodes {
       id
+      portalUrl
       name
       detailedName
       severity
@@ -4749,6 +4978,7 @@ var Server = (() => {
     cancelSync: () => cancelSync2,
     compact: () => compact,
     deleteScans: () => deleteScans2,
+    domainMapHealth: () => domainMapHealth,
     getAccess: () => getAccess,
     getChartsBundle: () => getChartsBundle,
     getExecutivePage: () => getExecutivePage,
@@ -4766,11 +4996,13 @@ var Server = (() => {
     getSettingsImpact: () => getSettingsImpact,
     getStorageStats: () => getStorageStats,
     putSettings: () => putSettings,
+    refreshDomains: () => refreshDomains,
     resetLedger: () => resetLedger2,
     runSync: () => runSync,
     saveAccess: () => saveAccess,
     saveAdmins: () => saveAdmins,
     saveHubUrl: () => saveHubUrl,
+    setDomainView: () => setDomainView,
     setProjectView: () => setProjectView,
     testWizConnection: () => testWizConnection
   });
@@ -4792,6 +5024,7 @@ var Server = (() => {
       const slug = rec["slug"];
       const name = rec["name"];
       if (typeof slug !== "string" || slug === "" || typeof name !== "string") continue;
+      if (isOrgWideProject(slug, name)) continue;
       const ref = { slug, name };
       if (typeof rec["isFolder"] === "boolean") ref.isFolder = rec["isFolder"];
       out.push(ref);
@@ -4800,16 +5033,40 @@ var Server = (() => {
   }
   function projectCatalogue(rows) {
     const bySlug = /* @__PURE__ */ new Map();
+    const parentsOf = /* @__PURE__ */ new Map();
     for (const row of rows) {
-      for (const p of parseProjects(row.projects_json)) {
+      const projects = parseProjects(row.projects_json);
+      const groups = projects.filter((p) => isSupportGroup(p.name)).map((p) => p.name);
+      for (const p of projects) {
+        if (groups.length && isProduct(p.name)) {
+          let parents = parentsOf.get(p.slug);
+          if (!parents) {
+            parents = /* @__PURE__ */ new Set();
+            parentsOf.set(p.slug, parents);
+          }
+          for (const g of groups) parents.add(g);
+        }
         const seen = bySlug.get(p.slug);
         if (!seen) {
-          bySlug.set(p.slug, { slug: p.slug, name: p.name, isFolder: p.isFolder, findings: 1 });
+          bySlug.set(p.slug, {
+            slug: p.slug,
+            name: p.name,
+            isFolder: p.isFolder,
+            findings: 1,
+            supportGroup: null,
+            supportGroupCount: 0
+          });
           continue;
         }
         seen.findings += 1;
         if (seen.isFolder === void 0 && p.isFolder !== void 0) seen.isFolder = p.isFolder;
       }
+    }
+    for (const [slug, parents] of parentsOf) {
+      const entry = bySlug.get(slug);
+      if (!entry) continue;
+      entry.supportGroupCount = parents.size;
+      entry.supportGroup = parents.size === 1 ? [...parents][0] : null;
     }
     return [...bySlug.values()].sort(
       (a, b) => a.isFolder === b.isFolder ? a.name.localeCompare(b.name) : a.isFolder ? -1 : 1
@@ -4826,23 +5083,448 @@ var Server = (() => {
     }
     return count;
   }
+  function attachProjectGrain(rows) {
+    for (const row of rows) {
+      const projects = parseProjects(row.projects_json);
+      const group = supportGroupOf(projects, row.owner_path);
+      const product = productOf(projects, row.owner_project);
+      if (group !== null) row._supportGroup = group;
+      if (product !== null) row._product = product;
+      const groups = projects.filter((p) => isSupportGroup(p.name)).length;
+      if (groups > 1) row._supportGroups = groups;
+    }
+  }
+
+  // src/domain/domainScope.ts
+  var DOMAIN_FIELD = "_domain";
+  function domainOfRow(row) {
+    const v = row ? row._domain : null;
+    return typeof v === "string" ? v.trim() : "";
+  }
+  function domainCatalogue(rows) {
+    const byName = /* @__PURE__ */ new Map();
+    for (const row of rows) {
+      const name = domainOfRow(row);
+      if (!name) continue;
+      const seen = byName.get(name);
+      if (seen) seen.findings += 1;
+      else byName.set(name, { name, findings: 1 });
+    }
+    return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }
+  function inDomain(row, name) {
+    if (!name) return false;
+    return domainOfRow(row) === name;
+  }
+  function noDomainCount(rows) {
+    let count = 0;
+    for (const row of rows) {
+      if (!domainOfRow(row)) count += 1;
+    }
+    return count;
+  }
+
+  // src/domain/domainTag.ts
+  var DEFAULT_DOMAIN_TAG_KEY = "domain";
+  function resolveDomainTagKey(configured) {
+    const k = (configured != null ? configured : "").trim();
+    return k || DEFAULT_DOMAIN_TAG_KEY;
+  }
+  function recordTags(record) {
+    if (!record) return {};
+    return { ...tagsJsonColumn(record), ...carriedTags(record) };
+  }
+  function tagsJsonColumn(record) {
+    const out = {};
+    const raw = record["tags_json"];
+    if (typeof raw === "string" && raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          for (const [k, v] of Object.entries(parsed)) out[k] = v;
+        }
+      } catch {
+      }
+    }
+    return out;
+  }
+  function carriedTags(record) {
+    if (!record) return {};
+    const out = {};
+    for (const asset of ["vulnerableAsset", "resource"]) {
+      const node = record[asset];
+      if (node && typeof node === "object" && !Array.isArray(node)) {
+        const nested = node["tags"];
+        if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+          for (const [k, v] of Object.entries(nested)) out[k] = v;
+        }
+      }
+      const flatBag = record[`${asset}.tags`];
+      if (flatBag && typeof flatBag === "object" && !Array.isArray(flatBag)) {
+        for (const [k, v] of Object.entries(flatBag)) out[k] = v;
+      }
+      const prefix = `${asset}.tags.`;
+      for (const [k, v] of Object.entries(record)) {
+        if (k.startsWith(prefix)) out[k.slice(prefix.length)] = v;
+      }
+    }
+    addTagList(out, record["tags"]);
+    for (const [k, v] of Object.entries(record)) {
+      if (k.startsWith("tag:")) out[k.slice(4)] = v;
+    }
+    return out;
+  }
+  function addTagList(out, tags) {
+    if (Array.isArray(tags)) {
+      for (const t of tags) {
+        if (!t || typeof t !== "object" || Array.isArray(t)) continue;
+        const key = t["key"];
+        if (!present(key)) continue;
+        out[String(key)] = t["value"];
+      }
+      return;
+    }
+    if (tags && typeof tags === "object") {
+      for (const [k, v] of Object.entries(tags)) out[k] = v;
+    }
+  }
+  function tagValue(tags, key) {
+    const want = String(key != null ? key : "").trim().toLowerCase();
+    if (!want || !tags) return null;
+    for (const [k, v] of Object.entries(tags)) {
+      if (String(k).trim().toLowerCase() !== want) continue;
+      if (!present(v)) continue;
+      const value = String(v).trim();
+      if (value) return value;
+    }
+    return null;
+  }
+  function domainOfTags(tags, key = DEFAULT_DOMAIN_TAG_KEY) {
+    return tagValue(tags, key);
+  }
+
+  // src/domain/lifecycleTag.ts
+  var DEFAULT_LIFECYCLE_TAG_KEY = "lifecycle";
+  function resolveLifecycleTagKey(configured) {
+    const k = (configured != null ? configured : "").trim();
+    return k || DEFAULT_LIFECYCLE_TAG_KEY;
+  }
+  var LIFECYCLE_FIELD = "_lifecycle";
+  function lifecycleOfTags(tags, key = DEFAULT_LIFECYCLE_TAG_KEY) {
+    return tagValue(tags, key);
+  }
+  var END_OF_LIFE_VALUES = ["END_OF_LIFE"];
+  function foldLifecycle(value) {
+    if (typeof value !== "string") return "";
+    return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+  }
+  var END_OF_LIFE_KEYS = new Set(END_OF_LIFE_VALUES.map(foldLifecycle));
+  function isEndOfLife(value) {
+    const folded = foldLifecycle(value);
+    return folded !== "" && END_OF_LIFE_KEYS.has(folded);
+  }
+
+  // src/server/wizReposQuery.ts
+  var PAGE_SIZE2 = 100;
+  var MAX_PAGES2 = 50;
+  function isSafeTagKey(key) {
+    return /^[\w/.:-]{1,120}$/.test(key);
+  }
+  function reposByTagQuery(tagKey) {
+    if (!isSafeTagKey(tagKey)) {
+      throw new Error(
+        `Unsafe repository tag key ${JSON.stringify(tagKey)} \u2014 allowed: letters, digits, _ . : / - (max 120 chars).`
+      );
+    }
+    return 'query GetRepositoriesByTag($first: Int, $after: String) {\n  graphSearch(\n    query: {\n      type: [REPOSITORY, REPOSITORY_BRANCH]\n      select: true\n      where: { tags: { CONTAINS: [{ key: "' + tagKey + '" }] } }\n    }\n    first: $first\n    after: $after\n  ) {\n    pageInfo { hasNextPage endCursor }\n    nodes { entities { id name properties } }\n  }\n}\n';
+  }
+
+  // src/server/repoTags.ts
+  function configuredDomainTagKey() {
+    return resolveDomainTagKey(getProp(PROP_KEYS.wizDomainTagKey));
+  }
+  function configuredLifecycleTagKey() {
+    return resolveLifecycleTagKey(getProp(PROP_KEYS.wizLifecycleTagKey));
+  }
+  function configuredTagKeys() {
+    return { domain: configuredDomainTagKey(), lifecycle: configuredLifecycleTagKey() };
+  }
+  function foldToken(v) {
+    return String(v).trim().toLowerCase();
+  }
+  var RECORD_ID_COLS = ["repo_id", "repo_name"];
+  var FRAME_ID_COLS = [
+    "vulnerableAsset.id",
+    "vulnerableAsset.name",
+    "resource.id",
+    "resource.name",
+    "resource.externalId"
+  ];
+  function recordIdentityTokens(record) {
+    const out = [];
+    for (const col of RECORD_ID_COLS) {
+      const v = record[col];
+      if (present(v)) out.push(String(v));
+    }
+    for (const col of FRAME_ID_COLS) {
+      const v = record[col];
+      if (present(v)) {
+        out.push(String(v));
+        continue;
+      }
+      const [head, leaf] = col.split(".");
+      const node = record[head];
+      if (node && typeof node === "object" && !Array.isArray(node)) {
+        const nested = node[leaf];
+        if (present(nested)) out.push(String(nested));
+      }
+    }
+    return out;
+  }
+  function resolveRepoTags(record, map, keys) {
+    const own = carriedTags(record);
+    let domain = domainOfTags(own, keys.domain);
+    let lifecycle = lifecycleOfTags(own, keys.lifecycle);
+    if (domain !== null && lifecycle !== null) return { domain, lifecycle };
+    for (const token of recordIdentityTokens(record)) {
+      const hit = map[foldToken(token)];
+      if (!hit) continue;
+      if (domain === null && hit.domain) domain = hit.domain;
+      if (lifecycle === null && hit.lifecycle) lifecycle = hit.lifecycle;
+      if (domain !== null && lifecycle !== null) break;
+    }
+    return { domain, lifecycle };
+  }
+  function attachRepoTags(records) {
+    const map = getRepoTagMap();
+    if (!Object.keys(map).length) return;
+    const keys = configuredTagKeys();
+    for (const r of records) {
+      const { domain, lifecycle } = resolveRepoTags(r, map, keys);
+      if (domain) r[DOMAIN_FIELD] = domain;
+      if (lifecycle) r[LIFECYCLE_FIELD] = lifecycle;
+    }
+  }
+  var mapMemo;
+  function getRepoTagMap() {
+    var _a, _b, _c;
+    if (mapMemo !== void 0) return mapMemo;
+    const map = {};
+    try {
+      ensureTab(TABS.domainMap);
+      for (const row of readAll(TABS.domainMap)) {
+        const token = String((_a = row["token"]) != null ? _a : "");
+        const domain = String((_b = row["domain"]) != null ? _b : "");
+        const lifecycle = String((_c = row["lifecycle"]) != null ? _c : "");
+        if (!token || !domain && !lifecycle) continue;
+        map[token] = { domain: domain || null, lifecycle: lifecycle || null };
+      }
+    } catch (e) {
+      console.warn(`Repository tag map unreadable \u2014 no tags attached this execution: ${String(e)}`);
+    }
+    mapMemo = map;
+    return map;
+  }
+  function setRepoTagMap(map) {
+    ensureTab(TABS.domainMap);
+    const rows = Object.entries(map).sort((a, b) => a[0].localeCompare(b[0])).map(([token, tags]) => {
+      var _a, _b;
+      return {
+        token,
+        domain: (_a = tags.domain) != null ? _a : null,
+        lifecycle: (_b = tags.lifecycle) != null ? _b : null
+      };
+    });
+    overwrite(TABS.domainMap, rows);
+    setProp(PROP_KEYS.repoTagMapKeys, JSON.stringify(configuredTagKeys()));
+    mapMemo = { ...map };
+    bumpDataVersion();
+  }
+  function builtUnderKeys() {
+    const raw = getProp(PROP_KEYS.repoTagMapKeys);
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+      const rec = parsed;
+      const domain = typeof rec["domain"] === "string" ? rec["domain"] : "";
+      const lifecycle = typeof rec["lifecycle"] === "string" ? rec["lifecycle"] : "";
+      if (!domain && !lifecycle) return null;
+      return { domain, lifecycle };
+    } catch {
+      return null;
+    }
+  }
+  function entityProperties(entity) {
+    const p = entity["properties"];
+    if (p && typeof p === "object" && !Array.isArray(p)) return p;
+    if (typeof p === "string" && p) {
+      try {
+        const parsed = JSON.parse(p);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+      } catch {
+      }
+    }
+    return {};
+  }
+  var PROP_ID_KEYS = [
+    "id",
+    "externalId",
+    "providerUniqueId",
+    "repositoryId",
+    "repositoryName",
+    "fullName",
+    "name",
+    "cloudProviderURL"
+  ];
+  function parseRepoEntity(entity, keys) {
+    const props = entityProperties(entity);
+    const bag = recordTags(props);
+    const domain = domainOfTags(bag, keys.domain);
+    const lifecycle = lifecycleOfTags(bag, keys.lifecycle);
+    const tokens = [];
+    if (domain || lifecycle) {
+      for (const k of PROP_ID_KEYS) {
+        const v = props[k];
+        if (present(v) && String(v).trim()) tokens.push(foldToken(v));
+      }
+      for (const k of ["id", "name"]) {
+        const v = entity[k];
+        if (present(v) && String(v).trim()) tokens.push(foldToken(v));
+      }
+    }
+    return { domain, lifecycle, tokens };
+  }
+  function fetchRepoTags() {
+    var _a, _b, _c;
+    const keys = configuredTagKeys();
+    const map = {};
+    const domains = /* @__PURE__ */ new Set();
+    const lifecycles = /* @__PURE__ */ new Set();
+    const seen = /* @__PURE__ */ new Set();
+    let logged = false;
+    const passKeys = keys.domain.trim().toLowerCase() === keys.lifecycle.trim().toLowerCase() ? [keys.domain] : [keys.domain, keys.lifecycle];
+    for (const passKey of passKeys) {
+      const query = reposByTagQuery(passKey);
+      let cursor = null;
+      for (let page = 0; page < MAX_PAGES2; page++) {
+        const result = queryPage(query, { first: PAGE_SIZE2, after: cursor });
+        for (const node of result.nodes) {
+          const entities = (_a = node["entities"]) != null ? _a : [];
+          for (const entity of entities) {
+            if (!logged) {
+              console.log(`Repository-tag sample entity: ${JSON.stringify(entity).slice(0, 800)}`);
+              logged = true;
+            }
+            const { domain, lifecycle, tokens } = parseRepoEntity(entity, keys);
+            if (!tokens.length) continue;
+            for (const token of tokens) {
+              const prev = map[token];
+              map[token] = {
+                // LATEST NON-NULL WINS ACROSS PASSES, never an erase. The lifecycle pass sees a
+                // repository the domain pass already placed and must not blank its domain
+                // because this entity's bag answered nothing for that key.
+                domain: (_b = domain != null ? domain : prev == null ? void 0 : prev.domain) != null ? _b : null,
+                lifecycle: (_c = lifecycle != null ? lifecycle : prev == null ? void 0 : prev.lifecycle) != null ? _c : null
+              };
+            }
+            if (!seen.has(tokens[0])) seen.add(tokens[0]);
+            if (domain) domains.add(domain);
+            if (lifecycle) lifecycles.add(lifecycle);
+          }
+        }
+        if (!result.pageInfo.hasNextPage || !result.pageInfo.endCursor) break;
+        cursor = result.pageInfo.endCursor;
+      }
+    }
+    return {
+      map,
+      stats: {
+        repos: seen.size,
+        keys: Object.keys(map).length,
+        domains: domains.size,
+        lifecycles: lifecycles.size,
+        tagKey: keys.domain,
+        lifecycleTagKey: keys.lifecycle
+      }
+    };
+  }
+  function refreshRepoTags() {
+    const { map, stats } = fetchRepoTags();
+    setRepoTagMap(map);
+    return stats;
+  }
+  var SAMPLE = 5;
+  function mapHealth() {
+    var _a, _b;
+    const map = getRepoTagMap();
+    const keys = configuredTagKeys();
+    const tokens = Object.keys(map);
+    let repos = 0;
+    let placed = 0;
+    let lifecyclePlaced = 0;
+    const sampleUnplaced = [];
+    try {
+      for (const row of readAll(TABS.repos)) {
+        repos += 1;
+        const tags = resolveRepoTags(row, map, keys);
+        if (tags.lifecycle) lifecyclePlaced += 1;
+        if (tags.domain) {
+          placed += 1;
+          continue;
+        }
+        if (sampleUnplaced.length < SAMPLE) {
+          sampleUnplaced.push(String((_b = (_a = row["repo_name"]) != null ? _a : row["repo_id"]) != null ? _b : "(blank)"));
+        }
+      }
+    } catch (e) {
+      console.warn(`Repos tab unreadable \u2014 repository tag map health is partial: ${String(e)}`);
+    }
+    const domains = /* @__PURE__ */ new Set();
+    const lifecycles = /* @__PURE__ */ new Set();
+    for (const t of Object.values(map)) {
+      if (t.domain) domains.add(t.domain);
+      if (t.lifecycle) lifecycles.add(t.lifecycle);
+    }
+    const builtUnder = builtUnderKeys();
+    return {
+      keys: tokens.length,
+      domains: domains.size,
+      lifecycles: lifecycles.size,
+      tagKey: keys.domain,
+      lifecycleTagKey: keys.lifecycle,
+      builtUnder,
+      staleKeys: keysAreStale(tokens.length, builtUnder, keys),
+      repos,
+      placed,
+      lifecyclePlaced,
+      sampleTokens: tokens.slice(0, SAMPLE),
+      sampleUnplaced
+    };
+  }
+  function keysAreStale(keyCount, built, inForce) {
+    if (keyCount <= 0) return false;
+    if (!built) return true;
+    const same = (a, b) => a.trim().toLowerCase() === b.trim().toLowerCase();
+    return !same(built.domain, inForce.domain) || !same(built.lifecycle, inForce.lifecycle);
+  }
 
   // src/domain/settingsImpact.ts
-  function severityCensus(rows, severityOf, isOpen8) {
+  function severityCensus(rows, severityOf, isOpen9) {
     var _a, _b;
     const out = { all: {}, open: {} };
     for (const r of rows) {
       const s2 = severityOf(r);
       out.all[s2] = ((_a = out.all[s2]) != null ? _a : 0) + 1;
-      if (isOpen8(r)) out.open[s2] = ((_b = out.open[s2]) != null ? _b : 0) + 1;
+      if (isOpen9(r)) out.open[s2] = ((_b = out.open[s2]) != null ? _b : 0) + 1;
     }
     return out;
   }
-  function ageHistogram(rows, severityOf, isOpen8, ageDaysOf, capDays = AGE_HISTOGRAM_CAP_DAYS) {
+  function ageHistogram(rows, severityOf, isOpen9, ageDaysOf, capDays = AGE_HISTOGRAM_CAP_DAYS) {
     var _a, _b, _c;
     const perSev = {};
     for (const r of rows) {
-      if (!isOpen8(r)) continue;
+      if (!isOpen9(r)) continue;
       const sev2 = severityOf(r);
       const bucket = (_a = perSev[sev2]) != null ? _a : perSev[sev2] = { deltas: /* @__PURE__ */ new Map(), overCap: 0, unaged: 0 };
       const raw = ageDaysOf(r);
@@ -5040,7 +5722,12 @@ var Server = (() => {
       "has_exploit",
       "epss",
       "mttr_days",
-      "age_days"
+      "age_days",
+      // Wiz's own console link — NOT a drawn column, but the finding sheet reads it, and a
+      // sheet may only touch keys on its scope's list. sca ONLY: `vulnerabilityFindings` is
+      // the one root known to carry `portalUrl`, so listing it for sast or secrets would
+      // promise a column their queries never fetch.
+      "portal_url"
     ],
     sast: [
       "identifier",
@@ -5378,6 +6065,18 @@ var Server = (() => {
     const num2 = Number(v);
     return Number.isFinite(num2) ? num2 : null;
   }
+  function ownerOf(r) {
+    const owner = s(r, "owner_project");
+    return isOrgWideProject(owner) ? null : owner;
+  }
+  function scrubOrgWideOwners(state) {
+    for (const row of Object.values(state.ledger)) {
+      if (isOrgWideProject(row.owner_project)) row.owner_project = null;
+    }
+    for (const episode of state.episodes) {
+      if (isOrgWideProject(episode.owner_project)) episode.owner_project = null;
+    }
+  }
   function scopeOf(key, raw) {
     if (raw === "sca" || raw === "sast" || raw === "secrets") return raw;
     const head = key.slice(0, key.indexOf(":"));
@@ -5441,10 +6140,15 @@ var Server = (() => {
       validation_state: s(r, "validation_state"),
       validated_at: s(r, "validated_at"),
       confidence: s(r, "confidence"),
-      owner_project: s(r, "owner_project"),
+      owner_project: ownerOf(r),
       owner_path: s(r, "owner_path"),
       tags_json: s(r, "tags_json"),
-      projects_json: s(r, "projects_json")
+      projects_json: s(r, "projects_json"),
+      // NOT `s(r, ...)` like its neighbours: this one becomes an href, and this function is
+      // where a row of the ledger TAB — a Google Sheet an operator can type into — turns back
+      // into a LedgerRow. It is the only place a hand-edited link can be caught before it
+      // reaches the wire. See gas_shared/domain/wizUrl.ts.
+      portal_url: normalizeWizUrl(r["portal_url"])
     };
   }
   function rowToEpisode(r) {
@@ -5470,7 +6174,7 @@ var Server = (() => {
       epss: risk.epss,
       cwe: s(r, "cwe"),
       language: s(r, "language"),
-      owner_project: s(r, "owner_project")
+      owner_project: ownerOf(r)
     };
   }
   var scanRowsMemo;
@@ -5499,6 +6203,7 @@ var Server = (() => {
       if (snap) {
         state.ledger = snap.ledger;
         state.episodes = snap.episodes;
+        scrubOrgWideOwners(state);
         stateMemo = state;
         return state;
       }
@@ -5980,9 +6685,586 @@ var Server = (() => {
     warmReadModels: () => warmReadModels
   });
 
-  // src/domain/movementDecomposition.ts
+  // src/domain/coldZone.ts
   var DAY_MS7 = 864e5;
+  var COLD_PRODUCT_NONE = "(no product)";
   function isOpen4(status) {
+    return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
+  }
+  function blank(v) {
+    return !present(v);
+  }
+  function safePct(numerator, denominator) {
+    return denominator > 0 ? numerator / denominator * 100 : null;
+  }
+  function daysBetween(fromMs, toMs) {
+    return Math.max(0, (toMs - fromMs) / DAY_MS7);
+  }
+  function fmtDays(n2) {
+    return String(Number(n2.toFixed(1)));
+  }
+  var MOVEMENT_RANK = { resolved: 0, removed: 1, rotated: 2 };
+  var VERDICT_RANK = {
+    cold: 0,
+    unobserved: 1,
+    watching: 2,
+    warm: 3,
+    clear: 4
+  };
+  function newAcc(repoId) {
+    return {
+      repoId,
+      repoName: null,
+      product: null,
+      supportGroup: null,
+      supportGroupSplit: false,
+      lifecycle: null,
+      scopes: /* @__PURE__ */ new Set(),
+      rowsByScope: /* @__PURE__ */ new Map(),
+      open: 0,
+      openHigh: 0,
+      reopenedOpen: 0,
+      oldestOpenFirstSeen: null,
+      earliestFirstSeen: null,
+      lastSeen: null,
+      movementAt: null,
+      movementKind: null,
+      disappeared: /* @__PURE__ */ new Map()
+    };
+  }
+  function foldRow(acc, row, risk) {
+    var _a, _b;
+    if (acc.repoName === null && !blank(row.repo_name)) acc.repoName = String(row.repo_name);
+    if (acc.product === null && !blank(row._product)) acc.product = String(row._product);
+    if (acc.supportGroup === null && !blank(row._supportGroup)) {
+      acc.supportGroup = String(row._supportGroup);
+    }
+    if (Number(row._supportGroups) > 1) acc.supportGroupSplit = true;
+    if (acc.lifecycle === null && !blank(row._lifecycle)) acc.lifecycle = String(row._lifecycle);
+    acc.scopes.add(row.scope);
+    const bucket = acc.rowsByScope.get(row.scope);
+    if (bucket) bucket.push(row);
+    else acc.rowsByScope.set(row.scope, [row]);
+    const open = isOpen4(row.status);
+    const firstSeen = parseTs(row.first_seen);
+    if (firstSeen !== null && (acc.earliestFirstSeen === null || firstSeen < acc.earliestFirstSeen)) {
+      acc.earliestFirstSeen = firstSeen;
+    }
+    const lastSeen = parseTs(row.last_seen);
+    if (lastSeen !== null && (acc.lastSeen === null || lastSeen > acc.lastSeen)) acc.lastSeen = lastSeen;
+    if (open) {
+      acc.open += 1;
+      if (risk === "high") acc.openHigh += 1;
+      if (Number(row.reopened_count) > 0) acc.reopenedOpen += 1;
+      if (firstSeen !== null && (acc.oldestOpenFirstSeen === null || firstSeen < acc.oldestOpenFirstSeen)) {
+        acc.oldestOpenFirstSeen = firstSeen;
+      }
+    }
+    const moves = [
+      ["resolved", row.resolved_at],
+      ["removed", row.removed_at],
+      ["rotated", row.rotated_at]
+    ];
+    for (const [kind, value] of moves) {
+      const ms = parseTs(value);
+      if (ms === null) continue;
+      if (acc.movementAt === null || ms > acc.movementAt || ms === acc.movementAt && MOVEMENT_RANK[kind] < MOVEMENT_RANK[acc.movementKind]) {
+        acc.movementAt = ms;
+        acc.movementKind = kind;
+      }
+    }
+    if (String((_a = row.resolution_src) != null ? _a : "") === RESOLUTION_DISAPPEARED) {
+      const at = parseTs(row.resolved_at);
+      if (at !== null) acc.disappeared.set(at, ((_b = acc.disappeared.get(at)) != null ? _b : 0) + 1);
+    }
+  }
+  function isObserved(acc, newestByScope, scopesWithoutScan) {
+    var _a;
+    let observed = false;
+    for (const scope of acc.scopes) {
+      const newest = newestByScope[scope];
+      if (!newest) {
+        scopesWithoutScan.add(scope);
+        observed = true;
+        continue;
+      }
+      const rows = (_a = acc.rowsByScope.get(scope)) != null ? _a : [];
+      const newestTs = parseTs(newest.ts);
+      for (const row of rows) {
+        if (!blank(row.last_scan_id)) {
+          if (!blank(newest.scan_id) && String(row.last_scan_id) === String(newest.scan_id)) {
+            observed = true;
+            break;
+          }
+          continue;
+        }
+        const lastSeen = parseTs(row.last_seen);
+        if (newestTs !== null && lastSeen !== null && lastSeen >= newestTs) {
+          observed = true;
+          break;
+        }
+      }
+    }
+    return observed;
+  }
+  function bucketOf(readingDays, t) {
+    if (readingDays >= t) return 3;
+    if (readingDays >= 2 * t / 3) return 2;
+    if (readingDays >= t / 3) return 1;
+    return 0;
+  }
+  function coldZoneProfile(rows, opts) {
+    var _a, _b;
+    const nowMs = parseTs(opts.now);
+    if (nowMs === null) {
+      throw new Error(`coldZoneProfile: unparseable now (${JSON.stringify(opts.now)})`);
+    }
+    const observedFromOpt = (_a = opts.observedFrom) != null ? _a : null;
+    const observedFromMs = observedFromOpt === null ? null : parseTs(observedFromOpt);
+    if (observedFromOpt !== null && observedFromMs === null) {
+      throw new Error(
+        `coldZoneProfile: unparseable observedFrom (${JSON.stringify(observedFromOpt)})`
+      );
+    }
+    const t = Number(opts.coldAfterDays);
+    if (!Number.isFinite(t) || t <= 0) {
+      throw new Error(`coldZoneProfile: coldAfterDays must be a positive number (${String(opts.coldAfterDays)})`);
+    }
+    const mode = (_b = opts.mode) != null ? _b : DEFAULT_COLD_ZONE_MODE;
+    if (!COLD_ZONE_MODES.includes(mode)) {
+      throw new Error(
+        `coldZoneProfile: mode must be one of ${COLD_ZONE_MODES.join(" | ")} (${JSON.stringify(opts.mode)})`
+      );
+    }
+    const relative = mode === "relative";
+    const targetSharePct = relative ? Number(opts.targetSharePct) : null;
+    const floorDays = relative ? Number(opts.floorDays) : null;
+    if (relative && (!Number.isFinite(targetSharePct) || targetSharePct <= 0 || targetSharePct > 100)) {
+      throw new Error(
+        `coldZoneProfile: relative mode requires targetSharePct in (0, 100] (${String(opts.targetSharePct)})`
+      );
+    }
+    if (relative && (!Number.isFinite(floorDays) || floorDays <= 0)) {
+      throw new Error(
+        `coldZoneProfile: relative mode requires floorDays to be a positive number (${String(opts.floorDays)})`
+      );
+    }
+    let unclassifiedSecrets = 0;
+    const classified = [];
+    for (const row of rows) {
+      if (row.scope === "secrets") {
+        unclassifiedSecrets += 1;
+        classified.push({ row, risk: "unknown" });
+        continue;
+      }
+      classified.push({ row, risk: classifyRisk(row, opts.rule) });
+    }
+    let droppedNoRepo = 0;
+    const byRepo = /* @__PURE__ */ new Map();
+    for (const { row, risk } of classified) {
+      if (blank(row.repo_id)) {
+        droppedNoRepo += 1;
+        continue;
+      }
+      const id = String(row.repo_id).trim();
+      let acc = byRepo.get(id);
+      if (!acc) {
+        acc = newAcc(id);
+        byRepo.set(id, acc);
+      }
+      foldRow(acc, row, risk);
+    }
+    const excludeEol = opts.excludeEndOfLife === true;
+    const excludedIds = /* @__PURE__ */ new Set();
+    let endOfLifeRepos = 0;
+    let excludedOpenFindings = 0;
+    for (const acc of byRepo.values()) {
+      if (!isEndOfLife(acc.lifecycle)) continue;
+      endOfLifeRepos += 1;
+      if (!excludeEol) continue;
+      excludedIds.add(acc.repoId);
+      excludedOpenFindings += acc.open;
+    }
+    const excludedRepos = excludedIds.size;
+    const scopesWithoutScan = /* @__PURE__ */ new Set();
+    const observedById = /* @__PURE__ */ new Map();
+    for (const acc of byRepo.values()) {
+      observedById.set(acc.repoId, isObserved(acc, opts.newestScanByScope, scopesWithoutScan));
+    }
+    const scopesWithoutScanList = [...scopesWithoutScan].sort(cmp);
+    const base = {
+      observed_from: observedFromMs === null ? null : toIso(observedFromMs),
+      as_of: toIso(nowMs),
+      exclude_end_of_life: excludeEol,
+      end_of_life_repos: endOfLifeRepos,
+      excluded_end_of_life: excludedRepos,
+      excluded_open_findings: excludedOpenFindings,
+      row_count: rows.length,
+      dropped_no_repo: droppedNoRepo,
+      unclassified_secrets: unclassifiedSecrets,
+      scopes_without_scan: scopesWithoutScanList
+    };
+    const modeBase = {
+      mode,
+      fixed_after_days: t,
+      target_share_pct: targetSharePct,
+      floor_days: floorDays
+    };
+    if (observedFromMs === null) {
+      return {
+        measurable: false,
+        ...modeBase,
+        cold_after_days: relative ? floorDays : t,
+        achieved_share_pct: null,
+        floor_applied: false,
+        derived_days: null,
+        eligible_repos: null,
+        cold_bound_only: null,
+        ...base,
+        bucket_edges: null,
+        bucket_labels: null,
+        repos: null,
+        teams: null,
+        totals: null
+      };
+    }
+    const facts = [];
+    for (const acc of byRepo.values()) {
+      if (excludedIds.has(acc.repoId)) continue;
+      const observed = observedById.get(acc.repoId) === true;
+      const idleDays = acc.movementAt === null ? null : daysBetween(acc.movementAt, nowMs);
+      const boundStart = acc.earliestFirstSeen === null ? observedFromMs : Math.max(observedFromMs, acc.earliestFirstSeen);
+      const idleBoundDays = idleDays === null ? daysBetween(boundStart, nowMs) : null;
+      const idleReading = idleDays != null ? idleDays : idleBoundDays;
+      let disappearedAt = null;
+      let disappearedCount = 0;
+      for (const [at, count] of acc.disappeared) {
+        if (count > disappearedCount || count === disappearedCount && disappearedAt !== null && at > disappearedAt) {
+          disappearedAt = at;
+          disappearedCount = count;
+        }
+      }
+      facts.push({
+        acc,
+        observed,
+        idleDays,
+        idleBoundDays,
+        idleReading,
+        disappearedAt,
+        disappearedCount,
+        // Eligible for the share: still scanned, and something is still open on it. A repository
+        // the scanner lost is not evidence about engagement, and one with nothing open cannot be
+        // in a zone that measures unclosed work.
+        eligible: observed && acc.open > 0
+      });
+    }
+    const eligible = facts.filter((f) => f.eligible);
+    const eligibleRepos = eligible.length;
+    let derivedDays = null;
+    let floorApplied = false;
+    let effective = t;
+    if (relative) {
+      if (eligibleRepos > 0) {
+        const readings = eligible.map((f) => f.idleReading).sort((a, b) => b - a);
+        const k = Math.min(eligibleRepos, Math.max(1, Math.ceil(targetSharePct / 100 * eligibleRepos)));
+        derivedDays = Math.floor(readings[k - 1]);
+        effective = Math.max(derivedDays, floorDays);
+        floorApplied = derivedDays < floorDays;
+      } else {
+        effective = floorDays;
+        derivedDays = null;
+        floorApplied = false;
+      }
+    }
+    const bucketEdges = [0, effective / 3, 2 * effective / 3, effective];
+    const bucketLabels = [
+      `${fmtDays(0)}\u2013${fmtDays(effective / 3)} d`,
+      `${fmtDays(effective / 3)}\u2013${fmtDays(2 * effective / 3)} d`,
+      `${fmtDays(2 * effective / 3)}\u2013${fmtDays(effective)} d`,
+      `\u2265 ${fmtDays(effective)} d`,
+      "not yet measurable"
+    ];
+    const repos = [];
+    let coldBoundOnly = 0;
+    for (const f of facts) {
+      const { acc, observed, idleDays, idleBoundDays, idleReading, disappearedAt, disappearedCount } = f;
+      let verdict;
+      if (!observed) verdict = "unobserved";
+      else if (acc.open === 0) verdict = "clear";
+      else if (idleDays !== null && idleDays >= effective) verdict = "cold";
+      else if (idleDays === null && idleBoundDays !== null && idleBoundDays >= effective) verdict = "cold";
+      else if (idleDays !== null) verdict = "warm";
+      else verdict = "watching";
+      if (verdict === "cold" && idleDays === null) coldBoundOnly += 1;
+      const bucket = verdict === "unobserved" || verdict === "clear" ? null : verdict === "watching" ? 4 : bucketOf(idleReading, effective);
+      repos.push({
+        repo_id: acc.repoId,
+        repo_name: acc.repoName,
+        product: acc.product,
+        support_group: acc.supportGroup,
+        support_group_split: acc.supportGroupSplit,
+        lifecycle: acc.lifecycle,
+        open_findings: acc.open,
+        open_high_risk: acc.openHigh,
+        oldest_open_age_days: acc.oldestOpenFirstSeen === null ? null : daysBetween(acc.oldestOpenFirstSeen, nowMs),
+        last_movement_at: toIso(acc.movementAt),
+        last_movement_kind: acc.movementKind,
+        idle_days: idleDays,
+        idle_bound_days: idleBoundDays,
+        idle_is_bound: idleDays === null,
+        idle_reading_days: idleReading,
+        observed,
+        last_observed_at: toIso(acc.lastSeen),
+        disappeared_at: toIso(disappearedAt),
+        disappeared_at_last_observation: disappearedCount,
+        reopened_open: acc.reopenedOpen,
+        verdict,
+        cold: verdict === "cold",
+        bucket
+      });
+    }
+    repos.sort(
+      (a, b) => {
+        var _a2, _b2;
+        return VERDICT_RANK[a.verdict] - VERDICT_RANK[b.verdict] || b.open_findings - a.open_findings || cmp((_a2 = a.repo_name) != null ? _a2 : a.repo_id, (_b2 = b.repo_name) != null ? _b2 : b.repo_id);
+      }
+    );
+    const teams = rankTeams(rollUp(repos), mode, targetSharePct);
+    const totals = totalsOf(repos, teams);
+    return {
+      measurable: true,
+      ...modeBase,
+      cold_after_days: effective,
+      achieved_share_pct: totals.cold_repo_share_pct,
+      floor_applied: floorApplied,
+      derived_days: derivedDays,
+      eligible_repos: eligibleRepos,
+      cold_bound_only: coldBoundOnly,
+      ...base,
+      bucket_edges: bucketEdges,
+      bucket_labels: bucketLabels,
+      repos,
+      teams,
+      totals
+    };
+  }
+  function rollUp(repos) {
+    const byProduct = /* @__PURE__ */ new Map();
+    for (const r of repos) {
+      const list = byProduct.get(r.product);
+      if (list) list.push(r);
+      else byProduct.set(r.product, [r]);
+    }
+    const out = [];
+    for (const [product, list] of byProduct) {
+      const buckets = [0, 0, 0, 0, 0];
+      const bucketOpen = [0, 0, 0, 0, 0];
+      let observed = 0;
+      let unobserved = 0;
+      let unobservedOpen = 0;
+      let unobservedClear = 0;
+      let withOpen = 0;
+      let coldRepos = 0;
+      let watching = 0;
+      let warm = 0;
+      let clear = 0;
+      let openFindings = 0;
+      let openInCold = 0;
+      let highInCold = 0;
+      let openInUnobserved = 0;
+      let lastMovement = null;
+      for (const r of list) {
+        openFindings += r.open_findings;
+        if (r.observed) {
+          observed += 1;
+          const at = parseTs(r.last_movement_at);
+          if (at !== null && (lastMovement === null || at > lastMovement)) lastMovement = at;
+        } else {
+          unobserved += 1;
+          openInUnobserved += r.open_findings;
+          if (r.open_findings > 0) unobservedOpen += 1;
+          else unobservedClear += 1;
+        }
+        if (r.bucket !== null) {
+          buckets[r.bucket] += 1;
+          bucketOpen[r.bucket] += r.open_findings;
+        }
+        switch (r.verdict) {
+          case "cold":
+            coldRepos += 1;
+            withOpen += 1;
+            openInCold += r.open_findings;
+            highInCold += r.open_high_risk;
+            break;
+          case "warm":
+            warm += 1;
+            withOpen += 1;
+            break;
+          case "watching":
+            watching += 1;
+            withOpen += 1;
+            break;
+          case "clear":
+            clear += 1;
+            break;
+          default:
+            break;
+        }
+      }
+      const verdict = withOpen === 0 ? "clear" : coldRepos === withOpen ? "fully-cold" : coldRepos > 0 ? "partly-cold" : "warm";
+      const groups = /* @__PURE__ */ new Set();
+      let split = false;
+      for (const r of list) {
+        if (r.support_group !== null) groups.add(r.support_group);
+        if (r.support_group_split) split = true;
+      }
+      const groupCount = split ? Math.max(groups.size, 2) : groups.size;
+      out.push({
+        product,
+        label: product != null ? product : COLD_PRODUCT_NONE,
+        // One name only when they all agree — see the field's own comment.
+        support_group: groupCount === 1 ? [...groups][0] : null,
+        support_groups: groupCount,
+        repos: list.length,
+        repos_observed: observed,
+        repos_unobserved: unobserved,
+        repos_unobserved_open: unobservedOpen,
+        repos_unobserved_clear: unobservedClear,
+        repos_with_open: withOpen,
+        cold_repos: coldRepos,
+        watching_repos: watching,
+        warm_repos: warm,
+        clear_repos: clear,
+        open_findings: openFindings,
+        open_in_cold: openInCold,
+        high_risk_in_cold: highInCold,
+        open_in_unobserved: openInUnobserved,
+        cold_share_pct: safePct(coldRepos, withOpen),
+        last_movement_at: toIso(lastMovement),
+        verdict,
+        // Filled by `rankTeams`, which runs over the finished roll-up: the rank is a fact about
+        // the whole set of products, so no single product's fold can know it.
+        relative_rank: null,
+        in_coldest_share: false,
+        buckets,
+        bucket_open: bucketOpen
+      });
+    }
+    out.sort(
+      (a, b) => b.cold_repos - a.cold_repos || b.open_in_cold - a.open_in_cold || cmp(a.label, b.label)
+    );
+    return out;
+  }
+  function rankTeams(teams, mode, targetSharePct) {
+    var _a, _b;
+    const ranked = teams.filter((team) => team.repos_with_open > 0).sort(
+      (a, b) => {
+        var _a2, _b2;
+        return ((_a2 = b.cold_share_pct) != null ? _a2 : 0) - ((_b2 = a.cold_share_pct) != null ? _b2 : 0) || b.open_in_cold - a.open_in_cold || cmp(a.label, b.label);
+      }
+    );
+    const rankOf = /* @__PURE__ */ new Map();
+    ranked.forEach((team, i) => rankOf.set(team, i + 1));
+    const total = ranked.length;
+    const withCold = ranked.filter((team) => team.cold_repos > 0).length;
+    let want = 0;
+    if (mode === "relative" && withCold > 0 && targetSharePct !== null) {
+      want = Math.min(withCold, Math.max(1, Math.ceil(targetSharePct / 100 * total)));
+      while (want < withCold && ((_a = ranked[want].cold_share_pct) != null ? _a : 0) === ((_b = ranked[want - 1].cold_share_pct) != null ? _b : 0) && ranked[want].open_in_cold === ranked[want - 1].open_in_cold) {
+        want += 1;
+      }
+    }
+    return teams.map((team) => {
+      var _a2;
+      const rank = (_a2 = rankOf.get(team)) != null ? _a2 : null;
+      return { ...team, relative_rank: rank, in_coldest_share: rank !== null && rank <= want };
+    });
+  }
+  function totalsOf(repos, teams) {
+    const buckets = [0, 0, 0, 0, 0];
+    const bucketOpen = [0, 0, 0, 0, 0];
+    const t = {
+      repos: repos.length,
+      repos_observed: 0,
+      repos_unobserved: 0,
+      repos_unobserved_open: 0,
+      repos_unobserved_clear: 0,
+      repos_with_open: 0,
+      cold_repos: 0,
+      watching_repos: 0,
+      warm_repos: 0,
+      clear_repos: 0,
+      open_findings: 0,
+      open_in_cold: 0,
+      high_risk_in_cold: 0,
+      open_in_unobserved: 0,
+      cold_repo_share_pct: null,
+      cold_backlog_share_pct: null,
+      teams: teams.length,
+      teams_fully_cold: 0,
+      teams_partly_cold: 0,
+      teams_in_coldest_share: 0,
+      repos_no_product: 0,
+      buckets,
+      bucket_open: bucketOpen
+    };
+    for (const team of teams) {
+      t.repos_observed += team.repos_observed;
+      t.repos_unobserved += team.repos_unobserved;
+      t.repos_unobserved_open += team.repos_unobserved_open;
+      t.repos_unobserved_clear += team.repos_unobserved_clear;
+      t.repos_with_open += team.repos_with_open;
+      t.cold_repos += team.cold_repos;
+      t.watching_repos += team.watching_repos;
+      t.warm_repos += team.warm_repos;
+      t.clear_repos += team.clear_repos;
+      t.open_findings += team.open_findings;
+      t.open_in_cold += team.open_in_cold;
+      t.high_risk_in_cold += team.high_risk_in_cold;
+      t.open_in_unobserved += team.open_in_unobserved;
+      if (team.verdict === "fully-cold") t.teams_fully_cold += 1;
+      if (team.verdict === "partly-cold") t.teams_partly_cold += 1;
+      if (team.in_coldest_share) t.teams_in_coldest_share += 1;
+      if (team.product === null) t.repos_no_product = team.repos;
+      for (let i = 0; i < 5; i += 1) {
+        buckets[i] += team.buckets[i];
+        bucketOpen[i] += team.bucket_open[i];
+      }
+    }
+    t.cold_repo_share_pct = safePct(t.cold_repos, t.repos_with_open);
+    t.cold_backlog_share_pct = safePct(t.open_in_cold, t.open_findings);
+    return t;
+  }
+  function coldZoneHeadline(result) {
+    return {
+      measurable: result.measurable,
+      mode: result.mode,
+      cold_after_days: result.cold_after_days,
+      fixed_after_days: result.fixed_after_days,
+      target_share_pct: result.target_share_pct,
+      achieved_share_pct: result.achieved_share_pct,
+      floor_days: result.floor_days,
+      floor_applied: result.floor_applied,
+      derived_days: result.derived_days,
+      eligible_repos: result.eligible_repos,
+      cold_bound_only: result.cold_bound_only,
+      exclude_end_of_life: result.exclude_end_of_life,
+      end_of_life_repos: result.end_of_life_repos,
+      excluded_end_of_life: result.excluded_end_of_life,
+      excluded_open_findings: result.excluded_open_findings,
+      observed_from: result.observed_from,
+      as_of: result.as_of,
+      totals: result.totals,
+      row_count: result.row_count,
+      dropped_no_repo: result.dropped_no_repo,
+      unclassified_secrets: result.unclassified_secrets,
+      scopes_without_scan: result.scopes_without_scan
+    };
+  }
+
+  // src/domain/movementDecomposition.ts
+  var DAY_MS8 = 864e5;
+  function isOpen5(status) {
     return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
   }
   function addCount(total, v, refused) {
@@ -6046,7 +7328,7 @@ var Server = (() => {
         else if (src === RESOLUTION_DISAPPEARED) bounded += 1;
         else unattributed += 1;
       }
-      if (gateSet && isOpen4(row.status) && !gateSet.has(normalizeSeverity(row.severity))) {
+      if (gateSet && isOpen5(row.status) && !gateSet.has(normalizeSeverity(row.severity))) {
         outsideGate += 1;
       }
       if (first === null) {
@@ -6083,25 +7365,26 @@ var Server = (() => {
     const flat = scans.filter((s2) => s2["scope"] === scope).map((s2) => parseTs(s2["ts"])).filter((t) => t !== null).sort((a, b) => a - b);
     if (!flat.length) return { since: null, until: null, days: null, reason: "noScans" };
     const until = flat[flat.length - 1];
-    const spanDays = Math.round((until - flat[0]) / DAY_MS7 * 10) / 10;
+    const spanDays = Math.round((until - flat[0]) / DAY_MS8 * 10) / 10;
     if (flat.length === 1) return { since: null, until, days: 0, reason: "oneScan" };
-    const cutoff = until - minDays * DAY_MS7;
+    const cutoff = until - minDays * DAY_MS8;
     for (let i = flat.length - 2; i >= 0; i -= 1) {
       const t = flat[i];
       if (t <= cutoff) {
-        return { since: t, until, days: Math.round((until - t) / DAY_MS7 * 10) / 10, reason: null };
+        return { since: t, until, days: Math.round((until - t) / DAY_MS8 * 10) / 10, reason: null };
       }
     }
     return { since: null, until, days: spanDays, reason: "tooClose" };
   }
 
   // src/domain/assets.ts
-  var DAY_MS8 = 864e5;
+  var DAY_MS9 = 864e5;
   var DAYS_PER_MONTH = 30.4375;
-  function isOpen5(status) {
+  var ASSET_PRODUCT_NONE = "(no product)";
+  function isOpen6(status) {
     return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
   }
-  function safePct(numerator, denominator) {
+  function safePct2(numerator, denominator) {
     if (numerator === null || denominator === null) return null;
     return denominator > 0 ? numerator / denominator * 100 : null;
   }
@@ -6109,17 +7392,24 @@ var Server = (() => {
     if (Math.abs(netPct) <= NET_CAPACITY_BAND_PCT) return "keeping-up";
     return netPct > 0 ? "gaining" : "falling-behind";
   }
-  function blank(v) {
+  function blank2(v) {
     return v === null || v === void 0 || String(v).trim() === "";
   }
   function assetGroupOf(value) {
-    return blank(value) ? ASSET_GROUP_UNKNOWN : String(value);
+    return blank2(value) ? ASSET_GROUP_UNKNOWN : String(value);
+  }
+  function groupKeyOf(row, assetId, groupBy) {
+    if (groupBy === "repo") return assetId;
+    if (groupBy === "product") {
+      return blank2(row._product) ? ASSET_PRODUCT_NONE : String(row._product);
+    }
+    return assetGroupOf(row.language);
   }
   function perAsset(rows, windowStart, groupBy) {
     const byKey = /* @__PURE__ */ new Map();
     for (const { row, risk } of rows) {
       const assetId = String(row.repo_id).trim();
-      const group = groupBy === "repo" ? assetId : assetGroupOf(row.language);
+      const group = groupKeyOf(row, assetId, groupBy);
       const key = assetId + "\0" + group;
       let a = byKey.get(key);
       if (!a) {
@@ -6127,6 +7417,7 @@ var Server = (() => {
           assetId,
           group,
           label: null,
+          lifecycle: null,
           density: 0,
           hasFoothold: false,
           tp: 0,
@@ -6140,8 +7431,9 @@ var Server = (() => {
         };
         byKey.set(key, a);
       }
-      if (a.label === null && !blank(row.repo_name)) a.label = String(row.repo_name);
-      const open = isOpen5(row.status);
+      if (a.label === null && !blank2(row.repo_name)) a.label = String(row.repo_name);
+      if (a.lifecycle === null && !blank2(row._lifecycle)) a.lifecycle = String(row._lifecycle);
+      const open = isOpen6(row.status);
       const high = risk === "high";
       if (open) a.density += 1;
       if (high && open) {
@@ -6160,20 +7452,20 @@ var Server = (() => {
       }
     }
     for (const a of byKey.values()) {
-      a.coveragePct = safePct(a.tp, a.tp + a.fn);
-      a.netPct = a.closed === null || a.opened === null ? null : safePct(a.closed - a.opened, a.openAtStart);
+      a.coveragePct = safePct2(a.tp, a.tp + a.fn);
+      a.netPct = a.closed === null || a.opened === null ? null : safePct2(a.closed - a.opened, a.openAtStart);
       a.verdict = a.netPct === null ? null : verdictOf2(a.netPct);
     }
     return [...byKey.values()];
   }
-  function aggregate(group, label, assets, windowMonths, population, km) {
+  function aggregate(group, label, lifecycle, assets, windowMonths, population, km) {
     const densities = assets.map((a) => a.density);
     const coverages = [];
     for (const a of assets) if (a.coveragePct !== null) coverages.push(a.coveragePct);
     const mmcr = [];
     if (windowMonths !== null) {
       for (const a of assets) {
-        const rate = safePct(a.closed, a.openAtStart);
+        const rate = safePct2(a.closed, a.openAtStart);
         if (rate !== null) mmcr.push(rate / windowMonths);
       }
     }
@@ -6197,19 +7489,20 @@ var Server = (() => {
       density_p25: quantile(densities, 0.25),
       density_p50: quantile(densities, 0.5),
       density_p75: quantile(densities, 0.75),
-      assets_with_high_risk_pct: safePct(footholds, assets.length),
+      assets_with_high_risk_pct: safePct2(footholds, assets.length),
       assets_with_high_risk: coverages.length,
       asset_coverage_p50: quantile(coverages, 0.5),
       km_median_days: km.median,
       km_median_lower_bound: km.medianLowerBound,
       mmcr_p50: quantile(mmcr, 0.5),
-      falling_behind_pct: safePct(fallingBehind, flowing),
-      maintaining_pct: safePct(maintaining, flowing),
-      gaining_pct: safePct(gaining, flowing),
+      falling_behind_pct: safePct2(fallingBehind, flowing),
+      maintaining_pct: safePct2(maintaining, flowing),
+      gaining_pct: safePct2(gaining, flowing),
       assets_flowing: flowing,
       window_months: windowMonths,
       population,
-      asset_label: label
+      asset_label: label,
+      asset_lifecycle: lifecycle
     };
   }
   function halfLife(group, rows) {
@@ -6223,7 +7516,7 @@ var Server = (() => {
     return { median: km.median, medianLowerBound: km.medianLowerBound };
   }
   function assetProfile(rows, opts) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e;
     const groupBy = (_a = opts.groupBy) != null ? _a : "language";
     const highRiskOnly = opts.highRiskOnly === true;
     const population = highRiskOnly ? POPULATION_HIGH_RISK : POPULATION_ALL;
@@ -6236,7 +7529,7 @@ var Server = (() => {
     if (observedFrom !== null && windowStart === null) {
       throw new Error(`assetProfile: unparseable observedFrom (${JSON.stringify(observedFrom)})`);
     }
-    const windowMonths = windowStart === null ? null : Math.max((nowMs - windowStart) / (DAY_MS8 * DAYS_PER_MONTH), 1);
+    const windowMonths = windowStart === null ? null : Math.max((nowMs - windowStart) / (DAY_MS9 * DAYS_PER_MONTH), 1);
     let unclassifiedSecrets = 0;
     const classified = [];
     for (const row of rows) {
@@ -6251,7 +7544,7 @@ var Server = (() => {
     let droppedNoAsset = 0;
     const kept = [];
     for (const c of population_) {
-      if (blank(c.row.repo_id)) {
+      if (blank2(c.row.repo_id)) {
         droppedNoAsset += 1;
         continue;
       }
@@ -6260,15 +7553,17 @@ var Server = (() => {
     const assets = perAsset(kept, windowStart, groupBy);
     const assetsByGroup = /* @__PURE__ */ new Map();
     const labelByGroup = /* @__PURE__ */ new Map();
+    const lifecycleByGroup = /* @__PURE__ */ new Map();
     for (const a of assets) {
       const list = assetsByGroup.get(a.group);
       if (list) list.push(a);
       else assetsByGroup.set(a.group, [a]);
       if (groupBy === "repo" && !labelByGroup.get(a.group)) labelByGroup.set(a.group, a.label);
+      if (!lifecycleByGroup.get(a.group)) lifecycleByGroup.set(a.group, a.lifecycle);
     }
     const findingsByGroup = /* @__PURE__ */ new Map();
     for (const { row } of kept) {
-      const g = groupBy === "repo" ? String(row.repo_id).trim() : assetGroupOf(row.language);
+      const g = groupKeyOf(row, String(row.repo_id).trim(), groupBy);
       const list = findingsByGroup.get(g);
       if (list) list.push(row);
       else findingsByGroup.set(g, [row]);
@@ -6280,14 +7575,17 @@ var Server = (() => {
         aggregate(
           group,
           groupBy === "repo" ? (_c = labelByGroup.get(group)) != null ? _c : null : null,
+          groupBy === "repo" ? (_d = lifecycleByGroup.get(group)) != null ? _d : null : null,
           list,
           windowMonths,
           population,
-          halfLife(group, (_d = findingsByGroup.get(group)) != null ? _d : [])
+          halfLife(group, (_e = findingsByGroup.get(group)) != null ? _e : [])
         )
       );
     }
-    out.push(aggregate(OVERALL, null, assets, windowMonths, population, halfLife(OVERALL, allFindings)));
+    out.push(
+      aggregate(OVERALL, null, null, assets, windowMonths, population, halfLife(OVERALL, allFindings))
+    );
     out.sort((a, b) => {
       if (a.asset_group === OVERALL) return b.asset_group === OVERALL ? 0 : -1;
       if (b.asset_group === OVERALL) return 1;
@@ -6303,7 +7601,7 @@ var Server = (() => {
   }
 
   // src/domain/secretsLifecycle.ts
-  var DAY_MS9 = 864e5;
+  var DAY_MS10 = 864e5;
   var MEASURED_STATES = /* @__PURE__ */ new Set(["VALID", "INVALID"]);
   var SEGMENT_NONE = "(none)";
   var DEFAULT_REVOKE_SLA_DAYS = 7;
@@ -6371,7 +7669,7 @@ var Server = (() => {
       const entryDays = entryDaysFrom(opts.trackingStart, row.first_seen);
       const died = parseTs(row.rotated_at);
       if (died !== null) {
-        const days = (died - born) / DAY_MS9;
+        const days = (died - born) / DAY_MS10;
         if (!Number.isFinite(days) || days < 0) {
           excludedNoClock += 1;
           continue;
@@ -6390,7 +7688,7 @@ var Server = (() => {
         excludedNoClock += 1;
         continue;
       }
-      const age = (opts.now - born) / DAY_MS9;
+      const age = (opts.now - born) / DAY_MS10;
       if (!Number.isFinite(age) || age < 0) {
         excludedNoClock += 1;
         continue;
@@ -6489,7 +7787,7 @@ var Server = (() => {
     3: "Critical code weakness"
   };
   var TIER_SCOPES = { 1: "secrets", 2: "sca", 3: "sast" };
-  function isOpen6(status) {
+  function isOpen7(status) {
     return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
   }
   function pastSla(row, targets) {
@@ -6528,6 +7826,11 @@ var Server = (() => {
     const id = row.repo_id === null || row.repo_id === void 0 ? "" : String(row.repo_id);
     return id.trim() === "" ? null : id;
   }
+  function addGrain(into, value) {
+    if (value === null || value === void 0) return;
+    const name = String(value).trim();
+    if (name !== "") into.add(name);
+  }
   function fixNext(rows, opts = {}) {
     var _a;
     const now = opts.now === void 0 ? Date.now() : opts.now;
@@ -6539,7 +7842,7 @@ var Server = (() => {
     let openTotal = 0;
     let ranked = 0;
     for (const row of rows) {
-      if (!isOpen6(row.status)) continue;
+      if (!isOpen7(row.status)) continue;
       openTotal += 1;
       const verdict = classify(row, targets);
       if ("reason" in verdict) {
@@ -6552,7 +7855,14 @@ var Server = (() => {
       const key = verdict.tier + "\0" + (repo === null ? "" : repo);
       let bucket = buckets.get(key);
       if (!bucket) {
-        bucket = { tier: verdict.tier, repo, count: 0, oldestAgeDays: null, owners: /* @__PURE__ */ new Set() };
+        bucket = {
+          tier: verdict.tier,
+          repo,
+          count: 0,
+          oldestAgeDays: null,
+          products: /* @__PURE__ */ new Set(),
+          supportGroups: /* @__PURE__ */ new Set()
+        };
         buckets.set(key, bucket);
       }
       bucket.count += 1;
@@ -6560,8 +7870,8 @@ var Server = (() => {
       if (age !== null && age !== void 0 && Number.isFinite(age)) {
         if (bucket.oldestAgeDays === null || age > bucket.oldestAgeDays) bucket.oldestAgeDays = age;
       }
-      const owner = row.owner_project === null || row.owner_project === void 0 ? "" : String(row.owner_project);
-      if (owner.trim() !== "") bucket.owners.add(owner);
+      addGrain(bucket.products, row["_product"]);
+      addGrain(bucket.supportGroups, row["_supportGroup"]);
     }
     const all = [...buckets.values()].map((b) => {
       const scope = TIER_SCOPES[b.tier];
@@ -6570,7 +7880,8 @@ var Server = (() => {
         label: TIER_LABELS[b.tier],
         scope,
         repo: b.repo,
-        owner_project: b.owners.size === 1 ? [...b.owners][0] : null,
+        product: b.products.size === 1 ? [...b.products][0] : null,
+        supportGroup: b.supportGroups.size === 1 ? [...b.supportGroups][0] : null,
         count: b.count,
         // One decimal. `age_days` is a float carrying sub-second precision that no reader
         // wants and every group pays 14 bytes for; the page rounds it to whole days anyway.
@@ -6708,8 +8019,8 @@ var Server = (() => {
   }
 
   // src/server/readModels.ts
-  var DAY_MS10 = 864e5;
-  var WEEK_MS = 7 * DAY_MS10;
+  var DAY_MS11 = 864e5;
+  var WEEK_MS = 7 * DAY_MS11;
   var CLOCK_TTL_SEC = 3600;
   var OLDEST_TOP_N = 100;
   var WARM_BUDGET_MS = 27e4;
@@ -6722,33 +8033,52 @@ var Server = (() => {
     const settings = loadSettings();
     const projectRaw = settings.projectView;
     const project2 = projectRaw ? projectRaw : null;
+    const domainRaw = settings.domainView;
+    const domain = domainRaw ? domainRaw : null;
+    const cold = effectiveColdZoneSettings(settings);
     return {
       scope,
       severities,
       showNoFix: (p == null ? void 0 : p.showNoFix) !== false,
       project: project2,
-      slaTargets: effectiveSlaTargets(settings)
+      domain,
+      slaTargets: effectiveSlaTargets(settings),
+      coldAfterDays: cold.coldAfterDays,
+      coldZoneMode: cold.mode,
+      coldTargetSharePct: cold.targetSharePct,
+      coldFloorDays: cold.floorDays,
+      coldExcludeEndOfLife: cold.excludeEndOfLife,
+      // ITS OWN DOOR, not a sixth field on `effectiveColdZoneSettings`. That bundle exists
+      // because `coldZoneProfile`'s options must travel together; this one travels with none of
+      // them and governs a different family on five other pages.
+      mttrExcludeEndOfLife: effectiveExcludeEndOfLifeFromMttr(settings)
     };
   }
   function keyOf(n2) {
-    return { scope: n2.scope, severities: n2.severities, showNoFix: n2.showNoFix, project: n2.project };
+    return {
+      scope: n2.scope,
+      severities: n2.severities,
+      showNoFix: n2.showNoFix,
+      project: n2.project,
+      domain: n2.domain
+    };
   }
   var baseMemo;
   function baseSnapshot() {
     const version = dataVersion();
     if (!baseMemo || baseMemo.version !== version) {
       const now = Date.now();
-      baseMemo = {
-        version,
-        now,
-        rows: loadBaseRows({ now, trackingStartByScope: trackingStartByScopeMap() })
-      };
+      const rows = loadBaseRows({ now, trackingStartByScope: trackingStartByScopeMap() });
+      attachRepoTags(rows);
+      attachProjectGrain(rows);
+      baseMemo = { version, now, rows };
     }
     return baseMemo;
   }
   function __resetModelMemosForTest() {
     baseMemo = void 0;
     clockMemo = void 0;
+    newestScanMemo = void 0;
   }
   var clockMemo;
   function ledgerClock(scope) {
@@ -6794,13 +8124,33 @@ var Server = (() => {
     return out;
   }
   var KM_OPTS = { horizonDays: RMST_HORIZON_DAYS, minRisk: true };
-  function isOpen7(status) {
+  var newestScanMemo;
+  function newestScanByScope() {
+    const version = dataVersion();
+    if (!newestScanMemo || newestScanMemo.version !== version) {
+      const byScope3 = {};
+      const newestMs = {};
+      for (const s2 of loadScanRows()) {
+        const ms = parseTs(s2.ts);
+        if (ms === null) continue;
+        const scope = s2.scope;
+        const seen = newestMs[scope];
+        if (seen !== void 0 && ms <= seen) continue;
+        newestMs[scope] = ms;
+        byScope3[scope] = { scan_id: s2.scan_id, ts: s2.ts };
+      }
+      newestScanMemo = { version, byScope: byScope3 };
+    }
+    return newestScanMemo.byScope;
+  }
+  function isOpen8(status) {
     return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
   }
   function scopedRows(rows, n2) {
     let out = rows;
     if (n2.scope) out = out.filter((r) => r.scope === n2.scope);
     if (n2.project) out = out.filter((r) => inProject(parseProjects(r.projects_json), n2.project));
+    if (n2.domain) out = out.filter((r) => inDomain(r, n2.domain));
     if (n2.severities) {
       const keep = new Set(n2.severities);
       out = out.filter((r) => keep.has(normalizeSeverity(r.severity)));
@@ -6820,12 +8170,45 @@ var Server = (() => {
     }
     return { rows: kept, excludedSecrets };
   }
+  function liveRepoRows(rows, exclude) {
+    var _a;
+    const retired = /* @__PURE__ */ new Set();
+    const kept = [];
+    let excludedRows = 0;
+    for (const r of rows) {
+      if (!isEndOfLife(r._lifecycle)) {
+        kept.push(r);
+        continue;
+      }
+      const id = String((_a = r.repo_id) != null ? _a : "").trim();
+      if (id) retired.add(id);
+      if (!exclude) {
+        kept.push(r);
+        continue;
+      }
+      excludedRows += 1;
+    }
+    return {
+      rows: exclude ? kept : rows,
+      endOfLifeRepos: retired.size,
+      excludedRepos: exclude ? retired.size : 0,
+      excludedRows
+    };
+  }
+  function endOfLifeBlock(cut, exclude) {
+    return {
+      excluded: exclude,
+      repos: cut.endOfLifeRepos,
+      excludedRepos: cut.excludedRepos,
+      excludedRows: cut.excludedRows
+    };
+  }
   function atLedgerClock(rows, asOf) {
     return rows.map((r) => {
-      if (!isOpen7(r.status)) return r;
+      if (!isOpen8(r.status)) return r;
       const first = parseTs(r.first_seen);
       if (first === null) return r;
-      return { ...r, age_days: Math.max(0, asOf - first) / DAY_MS10 };
+      return { ...r, age_days: Math.max(0, asOf - first) / DAY_MS11 };
     });
   }
   function coverageOf2(rows, applies, measured) {
@@ -6902,8 +8285,9 @@ var Server = (() => {
   function buildMttr(n2) {
     var _a;
     const snap = baseSnapshot();
-    const scoped = scopedRows(snap.rows, n2);
-    const rows = visibleRows(snap.rows, n2);
+    const cut = liveRepoRows(visibleRows(snap.rows, n2), n2.mttrExcludeEndOfLife);
+    const scoped = liveRepoRows(scopedRows(snap.rows, n2), n2.mttrExcludeEndOfLife).rows;
+    const rows = cut.rows;
     const { perSev, overall } = mttrFromLedger(
       rows,
       { now: snap.now, slaTargets: n2.slaTargets }
@@ -6940,6 +8324,10 @@ var Server = (() => {
       severities: n2.severities,
       showNoFix: n2.showNoFix,
       rowCount: rows.length,
+      // WHO THIS PAGE MEASURED OVER, published whether or not anybody was removed — the figure
+      // that makes the setting discoverable rather than hidden, and the only way a reader can
+      // check a denominator that quietly shrank.
+      endOfLife: endOfLifeBlock(cut, n2.mttrExcludeEndOfLife),
       perSev,
       overall,
       slaPct,
@@ -7010,31 +8398,38 @@ var Server = (() => {
   }
   function mttrModel(p) {
     const n2 = norm(p);
-    return cached("dsMttr3", { ...keyOf(n2), slaTargets: n2.slaTargets }, () => buildMttr(n2), CLOCK_TTL_SEC);
+    return cached(
+      "dsMttr3",
+      { ...keyOf(n2), slaTargets: n2.slaTargets, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
+      () => buildMttr(n2),
+      CLOCK_TTL_SEC
+    );
   }
   function buildExecutive(n2) {
     var _a;
     const snap = baseSnapshot();
     const scoped = scopedRows(snap.rows, n2);
     const rows = visibleRows(snap.rows, n2);
+    const clock = ledgerClock(n2.scope);
     const counts = {};
     let open = 0;
     for (const r of rows) {
-      if (!isOpen7(r.status)) continue;
+      if (!isOpen8(r.status)) continue;
       open += 1;
       const s2 = normalizeSeverity(r.severity);
       counts[s2] = ((_a = counts[s2]) != null ? _a : 0) + 1;
     }
+    const execCut = liveRepoRows(rows, n2.mttrExcludeEndOfLife);
     const byScope3 = (n2.scope ? [n2.scope] : [...SCOPES]).map((scope) => {
       var _a2;
       const sub = rows.filter((r) => r.scope === scope);
-      const km = kaplanMeier(sub, KM_OPTS);
+      const km = kaplanMeier(execCut.rows.filter((r) => r.scope === scope), KM_OPTS);
       return {
         group: scope,
         dimension: "scope",
         total: sub.length,
-        open: sub.filter((r) => isOpen7(r.status)).length,
-        resolved: sub.filter((r) => !isOpen7(r.status)).length,
+        open: sub.filter((r) => isOpen8(r.status)).length,
+        resolved: sub.filter((r) => !isOpen8(r.status)).length,
         kmMedian: km.median,
         kmMedianLowerBound: km.medianLowerBound,
         // MTTR delayed-entry package: the "25% fixed within" figure — the honest thing to show
@@ -7051,13 +8446,43 @@ var Server = (() => {
       showNoFix: n2.showNoFix,
       severityCounts: { counts, open, total: rows.length },
       byScope: { dimension: "scope", rows: byScope3 },
-      weekTrend: weekTrend(scoped, n2, snap.now),
+      // The half-life half of this payload, and the count of what it left out. Named for the
+      // family rather than for the page, because the page draws both kinds of figure.
+      endOfLife: endOfLifeBlock(execCut, n2.mttrExcludeEndOfLife),
+      // The week-over-week half-life delta is a duration, so it is cut like the hero it sits
+      // beside — otherwise "half-life down 4 days" could be the exclusion rather than any work.
+      weekTrend: weekTrend(
+        liveRepoRows(scoped, n2.mttrExcludeEndOfLife).rows,
+        n2,
+        snap.now
+      ),
       // What to do next, and what the list left out. One call, one pass over the rows the
       // severity tiles already counted, so the ranked figure and the tiles cannot disagree.
       // `slaTargets` is the EFFECTIVE map so tier 2/3's "past SLA" gate — and therefore
       // `unranked.insideSla` — agree with the same windows `mttrModel` measures against.
       fixNext: fixNext(rows, { now: snap.now, slaTargets: n2.slaTargets }),
       movement: openMovement(rows, n2),
+      // The cold-zone HEADLINE — totals, clock and threshold, never the per-repo or per-team
+      // arrays (`coldZoneHeadline`'s own "capped in the model, not sliced at the edge" note).
+      // The Repositories page draws the tables; this page draws one figure out of the totals.
+      //
+      // MEASURED AT `ledgerClock(n.scope)`, NOT AT `snap.now`, and that is the whole care this
+      // block needs. Every number in it is "how long since something happened": dated by the
+      // wall clock it would grow by an hour every time this 1 h cache entry was rebuilt, so a
+      // register nobody had synced for a month would drift into the cold zone on its own, with
+      // no new observation behind the change. `coldZoneAsOfSource` publishes which clock that
+      // was — "wallClock" when there is no scan to date the register from.
+      coldZone: coldZoneHeadline(coldZoneProfile(rows, {
+        now: clock.asOf,
+        observedFrom: clock.observedFrom,
+        coldAfterDays: n2.coldAfterDays,
+        mode: n2.coldZoneMode,
+        targetSharePct: n2.coldTargetSharePct,
+        floorDays: n2.coldFloorDays,
+        excludeEndOfLife: n2.coldExcludeEndOfLife,
+        newestScanByScope: newestScanByScope()
+      })),
+      coldZoneAsOfSource: clock.asOfSource,
       tiers: riskTierStats(scopedTierRows(rows), void 0),
       signalCoverage: signalCoverage(rows),
       // MTTR delayed-entry package — see `mttrModel`'s matching field for the caption it feeds.
@@ -7131,7 +8556,7 @@ var Server = (() => {
     }
     let since = null;
     for (let i = instants.length - 2; i >= 0; i -= 1) {
-      if ((until.ms - instants[i].ms) / DAY_MS10 >= MOVEMENT_MIN_GAP_DAYS) {
+      if ((until.ms - instants[i].ms) / DAY_MS11 >= MOVEMENT_MIN_GAP_DAYS) {
         since = instants[i];
         break;
       }
@@ -7143,7 +8568,7 @@ var Server = (() => {
         syncs: instants.length,
         since: null,
         until: until.iso,
-        days: round12((until.ms - instants[0].ms) / DAY_MS10)
+        days: round12((until.ms - instants[0].ms) / DAY_MS11)
       };
     }
     const perScope = {};
@@ -7151,7 +8576,7 @@ var Server = (() => {
     let prevOpen = 0;
     for (const scope of scopes) {
       const sub = rows.filter((r) => r.scope === scope);
-      const nowOpen = sub.filter((r) => isOpen7(r.status)).length;
+      const nowOpen = sub.filter((r) => isOpen8(r.status)).length;
       const thenOpen = sub.filter((r) => openAsOf(r, since.ms)).length;
       perScope[scope] = { open: nowOpen, prevOpen: thenOpen, delta: nowOpen - thenOpen };
       open += nowOpen;
@@ -7163,7 +8588,7 @@ var Server = (() => {
       syncs: instants.length,
       since: since.iso,
       until: until.iso,
-      days: round12((until.ms - since.ms) / DAY_MS10),
+      days: round12((until.ms - since.ms) / DAY_MS11),
       perScope,
       total: { open, prevOpen, delta: open - prevOpen }
     };
@@ -7172,7 +8597,22 @@ var Server = (() => {
     const n2 = norm(p);
     return cached(
       "dsExecutive2",
-      { ...keyOf(n2), slaTargets: n2.slaTargets },
+      {
+        ...keyOf(n2),
+        slaTargets: n2.slaTargets,
+        coldAfterDays: n2.coldAfterDays,
+        coldZoneMode: n2.coldZoneMode,
+        coldTargetSharePct: n2.coldTargetSharePct,
+        coldFloorDays: n2.coldFloorDays,
+        // BOTH END-OF-LIFE SWITCHES JOIN THE KEY, on this file's standing rule that a param the
+        // compute reads has to be in the key. The cold-zone one was missing while its four
+        // siblings were present — `settingsStore.saveSettings` bumps the data version, so that
+        // was an invariant broken rather than a stale read anyone could observe, but an
+        // invariant that is true of four fields out of five is no rule at all for whoever adds
+        // the sixth.
+        coldExcludeEndOfLife: n2.coldExcludeEndOfLife,
+        mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife
+      },
       () => buildExecutive(n2),
       CLOCK_TTL_SEC
     );
@@ -7193,9 +8633,30 @@ var Server = (() => {
     // THIS COPY DOES NOT DECIDE WHAT RENDERS. `concentrationModel(payload, dims)` maps over the
     // dims the PAGE hands it, so removing a name here alone yields a card with zero rows rather
     // than no card; `pages/sca.js` and `pages/sast.js` carry the matching lists and say so.
-    sca: ["repo", "owner_project"],
-    sast: ["repo", "cwe", "owner_project"],
-    secrets: ["repo", "secret_kind", "owner_project"]
+    //
+    // `domain` IS ON ALL THREE, because unlike `language` it is not a restatement of another
+    // card: a domain cuts ACROSS the project hierarchy (a domain owns repositories that several
+    // projects file, and a project can hold repositories several domains own), and it is the
+    // axis a reader escalates along — a project is where Wiz files the work, a domain is who
+    // answers for it. It is also the one dimension here that can be empty for a legitimate
+    // reason (the join map has never been refreshed), and the card that results says `(none)`
+    // for every row rather than disappearing — which is the honest shape, and is why
+    // `concentrationModel` keeping zero-row cards is left alone rather than special-cased.
+    //
+    // `owner_project` IS GONE, REPLACED BY TWO CARDS, and that is the correction this list
+    // exists to record. The tenant files every repository under a CS/CE/LU SUPPORT GROUP and
+    // under a `product-…` PRODUCT (src/domain/projectGrain.ts), and `owner_project` held
+    // whichever of the two Wiz happened to return first — so a single card was ranking products
+    // against support groups and calling the mixture "By owning project".
+    //
+    // BOTH GRAINS ARE LISTED, and neither is a restatement of the other in `language`'s sense.
+    // One support group holds MANY products, so the group's total is a roll-up the product card
+    // cannot express: the product card names the worst single product, and only the group card
+    // can show that three mediocre products under one group add up to the largest backlog
+    // anyone owns. It is also the escalation grain — you tell a support group, not a product.
+    sca: ["repo", "product", "support_group", "domain"],
+    sast: ["repo", "cwe", "product", "support_group", "domain"],
+    secrets: ["repo", "secret_kind", "product", "support_group", "domain"]
   };
   function buildRegister(scope, n2) {
     const snap = baseSnapshot();
@@ -7210,8 +8671,8 @@ var Server = (() => {
       severities: isSecrets ? null : n2.severities,
       showNoFix: n2.showNoFix,
       rowCount: rows.length,
-      open: rows.filter((r) => isOpen7(r.status)).length,
-      resolved: rows.filter((r) => !isOpen7(r.status)).length,
+      open: rows.filter((r) => isOpen8(r.status)).length,
+      resolved: rows.filter((r) => !isOpen8(r.status)).length,
       // The severity axis, or the reason there is not one.
       severityAxis: isSecrets ? { supported: false, reason: SEVERITY_AXIS_REFUSAL } : { supported: true },
       counts: isSecrets ? null : countsOf(rows),
@@ -7309,7 +8770,7 @@ var Server = (() => {
     const severities = severityFilterSupported ? n2.severities : null;
     const scoped = visibleRows(snap.rows, { ...n2, scope, severities });
     const status = normRowStatus(p == null ? void 0 : p.status);
-    const byStatus = status === "all" ? scoped : scoped.filter((r) => isOpen7(r.status) === (status === "open"));
+    const byStatus = status === "all" ? scoped : scoped.filter((r) => isOpen8(r.status) === (status === "open"));
     const isSecrets = scope === "secrets";
     const validation = isSecrets ? normFilterList(p == null ? void 0 : p.validation).filter((v) => SECRET_VALIDATION_STATES.includes(v)) : [];
     const grades = isSecrets ? Array.from(new Set(scoped.map((r) => {
@@ -7393,6 +8854,7 @@ var Server = (() => {
     const snap = baseSnapshot();
     const rows = visibleRows(snap.rows, { ...n2, scope: "secrets", severities: null });
     const secretRows = rows;
+    const secretsCut = liveRepoRows(rows, n2.mttrExcludeEndOfLife);
     const fold = latestSecretsTwins();
     return {
       asOf: snap.now,
@@ -7403,16 +8865,18 @@ var Server = (() => {
       // refusal is a property of the register, so that is all it states.
       severityAxis: { supported: false, reason: SEVERITY_AXIS_REFUSAL },
       rowCount: rows.length,
-      open: rows.filter((r) => isOpen7(r.status)).length,
+      open: rows.filter((r) => isOpen8(r.status)).length,
       coverage: validationCoverage(secretRows),
       validity: postDetectionValidityRate(secretRows),
       // MTTR delayed-entry package: `trackingStart` is this register's own scan history, not
       // `snap.now` — `secretsLifecycle.ts`'s `TimeToRevokeOptions.trackingStart` note explains
-      // why the entry offset shares the detection clock's origin (`first_seen`) here too.
-      timeToRevoke: timeToRevoke(secretRows, {
+      // why the entry offset shares the detection clock's origin (`first_seen`) here too. Measured
+      // over `secretsCut`, the same end-of-life-excluded population `endOfLife` below reports.
+      timeToRevoke: timeToRevoke(secretsCut.rows, {
         now: snap.now,
         trackingStart: ledgerClock("secrets").observedFrom
       }),
+      endOfLife: endOfLifeBlock(secretsCut, n2.mttrExcludeEndOfLife),
       removalVsRotation: removalVsRotation(secretRows),
       segments: {
         validation_state: bySegment(secretRows, "validation_state"),
@@ -7433,7 +8897,9 @@ var Server = (() => {
     const n2 = norm(p);
     return cached(
       "dsSecrets2",
-      { scope: "secrets", showNoFix: n2.showNoFix },
+      // `mttrExcludeEndOfLife` is here because `timeToRevoke` reads it; `severities` is not
+      // because nothing does. One rule, both directions.
+      { scope: "secrets", showNoFix: n2.showNoFix, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => buildSecrets(n2),
       CLOCK_TTL_SEC
     );
@@ -7442,7 +8908,8 @@ var Server = (() => {
     const snap = baseSnapshot();
     const clock = ledgerClock(n2.scope);
     const visible = visibleRows(snap.rows, n2);
-    const { rows, excludedSecrets } = classifiableRows(visible);
+    const live = liveRepoRows(visible, n2.mttrExcludeEndOfLife);
+    const { rows, excludedSecrets } = classifiableRows(live.rows);
     const riskRows = rows;
     const scans = loadScanRows();
     const capacityRows = rows;
@@ -7469,6 +8936,7 @@ var Server = (() => {
       showNoFix: n2.showNoFix,
       rowCount: rows.length,
       excludedSecrets,
+      endOfLife: endOfLifeBlock(live, n2.mttrExcludeEndOfLife),
       rules: {
         sca: { rule: DEFAULT_RISK_RULE, sentence: ruleSentence(DEFAULT_RISK_RULE) },
         sast: { rule: DEFAULT_SAST_RISK_RULE, sentence: ruleSentence(DEFAULT_SAST_RISK_RULE) },
@@ -7504,7 +8972,9 @@ var Server = (() => {
     };
   }
   function programTrendFor(n2, all) {
-    const { rows } = classifiableRows(scopedRows(all, n2));
+    const { rows } = classifiableRows(
+      liveRepoRows(scopedRows(all, n2), n2.mttrExcludeEndOfLife).rows
+    );
     return loadProgramTrend(void 0, {
       severities: n2.severities,
       base: rows,
@@ -7513,7 +8983,11 @@ var Server = (() => {
   }
   function programModel(p) {
     const n2 = norm(p);
-    return durablyCached("dsProgram1", keyOf(n2), () => buildProgram(n2));
+    return durablyCached(
+      "dsProgram2",
+      { ...keyOf(n2), mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
+      () => buildProgram(n2)
+    );
   }
   function buildRepos(n2) {
     const snap = baseSnapshot();
@@ -7530,13 +9004,40 @@ var Server = (() => {
       showNoFix: n2.showNoFix,
       rowCount: visible.length,
       byRepo: assetProfilePopulations(rows, { ...opts, groupBy: "repo" }),
-      byLanguage: assetProfilePopulations(rows, { ...opts, groupBy: "language" }),
+      byProduct: assetProfilePopulations(rows, { ...opts, groupBy: "product" }),
+      // `visible`, NOT the re-censored `rows` copy: this module never reads `age_days`, so
+      // handing it the rewritten rows would only hide which population it actually measured.
+      coldZone: coldZoneProfile(visible, {
+        now: clock.asOf,
+        observedFrom: clock.observedFrom,
+        coldAfterDays: n2.coldAfterDays,
+        mode: n2.coldZoneMode,
+        targetSharePct: n2.coldTargetSharePct,
+        floorDays: n2.coldFloorDays,
+        excludeEndOfLife: n2.coldExcludeEndOfLife,
+        newestScanByScope: newestScanByScope()
+      }),
       signalCoverage: signalCoverage(visible)
     };
   }
   function reposModel(p) {
     const n2 = norm(p);
-    return durablyCached("dsRepos1", keyOf(n2), () => buildRepos(n2));
+    return durablyCached(
+      "dsRepos2",
+      {
+        ...keyOf(n2),
+        coldAfterDays: n2.coldAfterDays,
+        coldZoneMode: n2.coldZoneMode,
+        coldTargetSharePct: n2.coldTargetSharePct,
+        coldFloorDays: n2.coldFloorDays,
+        // The fifth cold-zone field, which belonged here from the day it shipped — see
+        // `executiveModel`'s key for the rule it was one field short of. This page draws no
+        // remediation-speed aggregate, so `mttrExcludeEndOfLife` is deliberately NOT here: a
+        // param the compute does not read never joins a key either.
+        coldExcludeEndOfLife: n2.coldExcludeEndOfLife
+      },
+      () => buildRepos(n2)
+    );
   }
   var MOVEMENT_WINDOW_DAYS = 28;
   function movementNoteFor(win) {
@@ -7549,7 +9050,11 @@ var Server = (() => {
     return `No scan of this register at least ${MOVEMENT_WINDOW_DAYS} days older than its latest` + (win.days === null ? "" : ` \u2014 its saved scans span ${win.days} days`) + ".";
   }
   function movementPopulation(rows, n2) {
-    const scoped = n2.project ? rows.filter((r) => inProject(parseProjects(r.projects_json), n2.project)) : rows;
+    let scoped = rows;
+    if (n2.project) {
+      scoped = scoped.filter((r) => inProject(parseProjects(r.projects_json), n2.project));
+    }
+    if (n2.domain) scoped = scoped.filter((r) => inDomain(r, n2.domain));
     return n2.showNoFix ? scoped : scoped.filter((r) => !baseRowNoFix(r));
   }
   function buildHistory(n2) {
@@ -7558,6 +9063,7 @@ var Server = (() => {
     const scansAll = loadScanRows();
     const scans = (n2.scope ? scansAll.filter((s2) => s2.scope === n2.scope) : scansAll).slice().reverse();
     const rows = visibleRows(snap.rows, n2);
+    const historyCut = liveRepoRows(rows, n2.mttrExcludeEndOfLife);
     const movementRows = movementPopulation(snap.rows, n2);
     const movement2 = {};
     const movementNote = {};
@@ -7587,8 +9093,8 @@ var Server = (() => {
       movementNote,
       kpis: {
         tracked: rows.length,
-        open: rows.filter((r) => isOpen7(r.status)).length,
-        resolvedAllTime: rows.filter((r) => !isOpen7(r.status)).length,
+        open: rows.filter((r) => isOpen8(r.status)).length,
+        resolvedAllTime: rows.filter((r) => !isOpen8(r.status)).length,
         // THE KM MEDIAN, AND NOTHING BESIDE IT — the comment above this block used to say
         // exactly that while the field below it shipped `medianMttr: overall.mttr_median`, the
         // plain median over resolved rows. The page drew THAT one, captioned with the
@@ -7600,23 +9106,30 @@ var Server = (() => {
         // reads is the next reader's trap (CLAUDE.md's "a settings key nothing reads is worse
         // than no key", applied to a payload field) — so `km` is the only median this page can
         // publish, and where the curve never reaches half `medianLowerBound` is what is true.
-        km: shipKM(kaplanMeier(rows, KM_OPTS))
+        //
+        // THE ONE SPEED FIGURE ON THIS PAGE, so the one thing the exclusion touches here. The
+        // three counts above it are what the register HOLDS and stay whole; this is how long a
+        // finding lived, and a repository nobody is meant to remediate has no business in it.
+        km: shipKM(kaplanMeier(historyCut.rows, KM_OPTS))
       },
+      endOfLife: endOfLifeBlock(historyCut, n2.mttrExcludeEndOfLife),
       // `mttrPageTrendSlice` reads both of these keys.
       history: listHistory(),
       trend: trendFor(n2, snap.rows),
       // See the block comment above: `scans`, `perScope` and `history` are per-scan/per-day
-      // facts with no project dimension and do NOT narrow with `n.project`; everything else in
-      // this payload does.
+      // facts with no project OR domain dimension and do NOT narrow with either view scope;
+      // everything else in this payload does. The note names whichever scope is actually live,
+      // because "scoped to the selected project" over a domain scope would be a wrong answer to
+      // the only question the note exists to answer.
       scanScopeApplies: false,
-      scanScopeNote: n2.project ? "scans, perScope and history describe the whole register \u2014 a sync and a daily snapshot carry no project dimension to narrow by. Only rows/kpis/trend above are scoped to the selected project." : null
+      scanScopeNote: n2.project || n2.domain ? "scans, perScope and history describe the whole register \u2014 a sync and a daily snapshot carry no " + (n2.project ? "project" : "domain") + " dimension to narrow by. Only rows/kpis/trend above are scoped to the selected " + (n2.project ? "project" : "domain") + "." : null
     };
   }
   function trendFor(n2, all) {
     return loadTrend({
       severities: n2.severities,
       showNoFix: n2.showNoFix,
-      base: scopedRows(all, n2),
+      base: liveRepoRows(scopedRows(all, n2), n2.mttrExcludeEndOfLife).rows,
       ...n2.scope ? { scope: n2.scope } : {},
       trackingStartByScope: trackingStartByScopeMap(),
       minRisk: true
@@ -7639,7 +9152,11 @@ var Server = (() => {
   }
   function historyModel(p) {
     const n2 = norm(p);
-    return durablyCached("dsHistory3", keyOf(n2), () => buildHistory(n2));
+    return durablyCached(
+      "dsHistory3",
+      { ...keyOf(n2), mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
+      () => buildHistory(n2)
+    );
   }
   function cellsByTab() {
     const tabs = [];
@@ -7836,7 +9353,10 @@ var Server = (() => {
       "fixedVersion",
       "hasExploit",
       "hasCisaKevExploit",
-      "epssProbability"
+      "epssProbability",
+      // Wiz's own console link. sca only — Q_SCA is the one document that selects it, and a
+      // field listed here that the query never returns is simply never present to copy.
+      "portalUrl"
     ],
     sast: [
       "id",
@@ -8411,8 +9931,10 @@ var Server = (() => {
       }
       const settings = loadSettings();
       const allRows = loadBaseRows();
+      attachRepoTags(allRows);
       const projectView = settings.projectView || null;
-      const shown = projectView ? allRows.filter((r) => inProject(parseProjects(r.projects_json), projectView)).length : allRows.length;
+      const domainView = settings.domainView || null;
+      const shown = projectView ? allRows.filter((r) => inProject(parseProjects(r.projects_json), projectView)).length : domainView ? allRows.filter((r) => inDomain(r, domainView)).length : allRows.length;
       return {
         product: "Wiz Sidekick DevSecOps",
         buildId: BUILD_ID,
@@ -8434,14 +9956,19 @@ var Server = (() => {
         settings,
         scope: {
           projectView: settings.projectView,
+          domainView: settings.domainView,
           shown,
           register: allRows.length,
           unattributed: unattributedCount(allRows),
+          noDomain: noDomainCount(allRows),
           // The FETCH scope, reported only — see `settingsLogic.ts`'s "TWO PROJECT SCOPES, TWO
           // HOMES". `projectScope()` is `[id] | null`; only the first element is ever set today.
           syncProjectId: (_f = (_e = projectScope()) == null ? void 0 : _e[0]) != null ? _f : null
         },
-        filterOptions: { projectList: projectCatalogue(allRows) }
+        filterOptions: {
+          projectList: projectCatalogue(allRows),
+          domainList: domainCatalogue(allRows)
+        }
       };
     });
   }
@@ -8509,7 +10036,16 @@ var Server = (() => {
     });
   }
   function setProjectView(p) {
-    return mutate(() => saveSettings(withSettings(loadSettings(), { projectView: p.projectView })));
+    return mutate(() => saveSettings(withProjectView(loadSettings(), p.projectView)));
+  }
+  function setDomainView(p) {
+    return mutate(() => saveSettings(withDomainView(loadSettings(), p.domainView)));
+  }
+  function refreshDomains(_p) {
+    return mutate(() => refreshRepoTags());
+  }
+  function domainMapHealth(_p) {
+    return run(() => mapHealth());
   }
   function getChartsBundle(_p) {
     return run(() => {
@@ -8556,6 +10092,20 @@ var Server = (() => {
         // page does not draw.
         fixNext: exec["fixNext"],
         movement: exec["movement"],
+        // The cold zone, already the HEADLINE rather than the profile — `executiveModel` calls
+        // `coldZoneHeadline`, so the per-repository and per-project arrays never enter this
+        // payload and there is nothing here to slice. `coldZoneAsOfSource` travels with it
+        // because this is the one block on the page dated by the LEDGER's clock rather than by
+        // `asOf` above, and a figure that is measured on a different clock has to say so.
+        coldZone: exec["coldZone"],
+        coldZoneAsOfSource: exec["coldZoneAsOfSource"],
+        // WHO THE HALF-LIFE WAS MEASURED OVER, and the one key on this payload that describes a
+        // NARROWER population than the keys around it. `severityCounts` and `tiers` cover every
+        // repository; the hero above them does not when the remediation-speed exclusion is on,
+        // and the page's one sentence is what stops a reader reading the two as one estate.
+        // ENUMERATED like everything else here — this payload is an allowlist, so a block that
+        // is not named is a block the page never sees.
+        endOfLife: exec["endOfLife"],
         tiers: exec["tiers"],
         signalCoverage: exec["signalCoverage"]
       };
@@ -8653,6 +10203,9 @@ var Server = (() => {
         movement: h["movement"],
         movementNote: h["movementNote"],
         trends: historyTrendSlice(h),
+        // Narrows `kpis.km` and `trends`, and NOTHING else on this payload — the same split
+        // `scanScopeApplies` below already describes for the view scope, one population over.
+        endOfLife: h["endOfLife"],
         // `scans` and `perScope` above are per-scan/per-day facts with no project dimension —
         // see `readModels.ts::buildHistory`'s own comment. `kpis` and `trends` DO narrow to the
         // view-project scope; these two flags name exactly which keys in THIS payload do not, so
@@ -8681,20 +10234,20 @@ var Server = (() => {
     const ageHistogramByScope = {};
     for (const scope of SCOPES) {
       const scoped = rows.filter((r) => r["scope"] === scope);
-      const isOpen8 = (r) => isOpenRow(r["status"]);
+      const isOpen9 = (r) => isOpenRow(r["status"]);
       byScope3[scope] = {
         total: scoped.length,
-        openTotal: scoped.filter(isOpen8).length,
+        openTotal: scoped.filter(isOpen9).length,
         bySeverity: severityCensus(
           scoped,
           (r) => normalizeSeverity(r["severity"]),
-          isOpen8
+          isOpen9
         )
       };
       ageHistogramByScope[scope] = ageHistogram(
         scoped,
         (r) => normalizeSeverity(r["severity"]),
-        isOpen8,
+        isOpen9,
         (r) => r["age_days"]
       );
     }
@@ -8824,6 +10377,7 @@ var Server = (() => {
   // src/server/devSeed.ts
   var devSeed_exports = {};
   __export(devSeed_exports, {
+    seedRepoTagMap: () => seedRepoTagMap,
     seedSampleLedger: () => seedSampleLedger
   });
 
@@ -8857,6 +10411,77 @@ var Server = (() => {
       (row) => scopesTouched.has(row.scope)
     ).length;
     return { seeded, syncs: SAMPLE_SYNCS.length, rows };
+  }
+  var DEV_DOMAINS = ["CROSS", "SAP", "VALUE-CHAIN", "RETAIL"];
+  var DEV_LIFECYCLE_SLOTS = [
+    "IN_PRODUCTION",
+    "IN_PRODUCTION",
+    "IN_PRODUCTION",
+    "IN_PRODUCTION",
+    "IN_DEVELOPMENT",
+    "IN_DEVELOPMENT",
+    "END_OF_LIFE",
+    "END_OF_LIFE",
+    null,
+    null
+  ];
+  var DEV_PINNED_LIFECYCLES = {
+    "dktunited/retired-mobile": "END_OF_LIFE",
+    "dktunited/warehouse-sync": "END_OF_LIFE",
+    "dktunited/legacy-batch": "IN_PRODUCTION"
+  };
+  function hashOf(identity, seed) {
+    let h = seed >>> 0;
+    for (let i = 0; i < identity.length; i++) h = h * 31 + identity.charCodeAt(i) >>> 0;
+    return h;
+  }
+  function seedRepoTagMap() {
+    var _a, _b, _c, _d, _e;
+    const empty = { repos: 0, domains: 0, unmapped: 0, lifecycles: 0, endOfLife: 0, noLifecycle: 0 };
+    if (SAMPLE_SYNCS.length === 0) {
+      return { ...empty, reason: "no sample data in this build" };
+    }
+    const repos = /* @__PURE__ */ new Map();
+    const nameOf = /* @__PURE__ */ new Map();
+    for (const row of Object.values(loadState().ledger)) {
+      const id = String((_a = row.repo_id) != null ? _a : "").trim();
+      const name = String((_b = row.repo_name) != null ? _b : "").trim();
+      const identity = id || name;
+      if (!identity) continue;
+      const tokens = (_c = repos.get(identity)) != null ? _c : [];
+      for (const t of [id, name]) {
+        if (t && tokens.indexOf(t) < 0) tokens.push(t);
+      }
+      repos.set(identity, tokens);
+      if (name) nameOf.set(identity, name);
+    }
+    const map = {};
+    const domains = /* @__PURE__ */ new Set();
+    const lifecycles = /* @__PURE__ */ new Set();
+    let unmapped = 0;
+    let endOfLife = 0;
+    let noLifecycle = 0;
+    for (const [identity, tokens] of [...repos.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+      const h = hashOf(identity, 0);
+      const lifecycle = (_e = DEV_PINNED_LIFECYCLES[(_d = nameOf.get(identity)) != null ? _d : ""]) != null ? _e : DEV_LIFECYCLE_SLOTS[hashOf(identity, 7) % DEV_LIFECYCLE_SLOTS.length];
+      const domain = h % 4 === 3 ? null : DEV_DOMAINS[h % DEV_DOMAINS.length];
+      if (domain === null) unmapped += 1;
+      if (lifecycle === null) noLifecycle += 1;
+      else if (lifecycle === "END_OF_LIFE") endOfLife += 1;
+      if (domain === null && lifecycle === null) continue;
+      for (const t of tokens) map[foldToken(t)] = { domain, lifecycle };
+      if (domain) domains.add(domain);
+      if (lifecycle) lifecycles.add(lifecycle);
+    }
+    setRepoTagMap(map);
+    return {
+      repos: repos.size - unmapped,
+      domains: domains.size,
+      unmapped,
+      lifecycles: lifecycles.size,
+      endOfLife,
+      noLifecycle
+    };
   }
   return __toCommonJS(index_exports);
 })();

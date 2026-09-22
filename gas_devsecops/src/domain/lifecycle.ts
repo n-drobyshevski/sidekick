@@ -20,7 +20,7 @@
 // instead collapses the twins into one row; sheetsDb.ts's TAB_HEADERS[TABS.ledger] comment is
 // the full argument and the ledger population this hash is read back against.
 
-import { sha1Hex } from "./sha1";
+import { sha1Hex } from "../../../gas_shared/domain/sha1";
 import type { Scope } from "./config";
 import { summarize, type MttrSummary } from "./metrics";
 import { normalizeSeverity } from "./severity";

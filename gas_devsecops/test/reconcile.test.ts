@@ -458,6 +458,101 @@ describe("ownership from projects[] (all three scopes)", () => {
     expect(row.owner_path).toBe("CE-TRANSPORT / VALUE-CHAIN");
     expect(row.tags_json).toContain('"value-chain": "VALUE-CHAIN"');
   });
+
+  // ------------------------------------------------------------------------- #
+  //  the PRODUCT is preferred over "the first leaf" (projectGrain.ts)
+  // ------------------------------------------------------------------------- #
+  //
+  // The tenant names a product `product-…` and files every repository under a CS/CE/LU
+  // support group too. "First non-folder" therefore decided the GRAIN by API order: the
+  // product on a node where Wiz called the support group a folder, the support group on one
+  // where it did not. The fixture above happens to get the right answer under both rules,
+  // which is exactly why it could not catch this.
+  //
+  // Perturbation, run and reverted: dropping the `product` preference from `ownerProject`
+  // fails the first two cases below with `expected 'CE-TRANSPORT' to be 'product-TATTOO-idp'`
+  // and `expected 'checkout-svc' to be 'product-KCONNECT'`, and leaves the other two green.
+
+  it("prefers the product even when a support group is reported as an EARLIER leaf", () => {
+    const supportFirst = [
+      { id: "p3", name: "CE-TRANSPORT", isFolder: false, slug: "ce-transport" },
+      { id: "p2", name: "product-TATTOO-idp", isFolder: false, slug: "product-tattoo-idp" },
+    ];
+    expect(ownerProject({ projects: supportFirst })).toBe("product-TATTOO-idp");
+  });
+
+  it("prefers the product even when Wiz omitted isFolder on it entirely", () => {
+    // Tri-state: a product with no flag used to lose to any leaf that had one.
+    const noFlag = [
+      { id: "p9", name: "checkout-svc", isFolder: false, slug: "checkout-svc" },
+      { id: "p2", name: "product-KCONNECT", slug: "product-kconnect" },
+    ];
+    expect(ownerProject({ projects: noFlag })).toBe("product-KCONNECT");
+  });
+
+  it("a repository OUTSIDE the convention keeps today's first-non-folder answer", () => {
+    const noProduct = [
+      { id: "f", name: "PLATFORM", isFolder: true, slug: "platform" },
+      { id: "l", name: "checkout-svc", isFolder: false, slug: "checkout-svc" },
+    ];
+    expect(ownerProject({ projects: noProduct })).toBe("checkout-svc");
+  });
+
+  it("a repository whose ONLY attribution is a support group still names it", () => {
+    // NOT nulled here: this column is what a sealed episode is attributed by, and compaction
+    // keeps nothing else. The read side refuses it instead — see projectGrain.productOf.
+    expect(ownerProject({ projects: [{ id: "p3", name: "CE-TRANSPORT", isFolder: true, slug: "ce-transport" }] }))
+      .toBe("CE-TRANSPORT");
+  });
+
+  // ------------------------------------------------------------------------- #
+  //  the organisation-wide tag is never an owner (config.ts's ORG_WIDE_PROJECTS)
+  // ------------------------------------------------------------------------- #
+  //
+  // GITHUB-DKTUNITED is a LEAF on every repository the connector ingests, so without the
+  // guard in ownerProject it wins the "first non-folder" pick on any node whose product
+  // project happens to sort after it — and on every node that has no product project at
+  // all. Either way the executive page and the concentration tables would grow one bucket
+  // named after the organisation that owns the whole register.
+
+  it("the org tag never wins the owner, even as the FIRST leaf in the array", () => {
+    const first = [
+      { id: "p4", name: "GITHUB-DKTUNITED", isFolder: false, slug: "github-dktunited" },
+      { id: "p1", name: "VALUE-CHAIN", isFolder: true, slug: "value-chain" },
+      { id: "p2", name: "product-TATTOO-idp", isFolder: false, slug: "product-tattoo-idp" },
+    ];
+    expect(ownerProject({ projects: first })).toBe("product-TATTOO-idp");
+  });
+
+  it("a node whose ONLY project is the org tag has NO owner — null, never the tag", () => {
+    const orgOnly = [
+      { id: "p4", name: "GITHUB-DKTUNITED", isFolder: false, slug: "github-dktunited" },
+    ];
+    expect(ownerProject({ projects: orgOnly })).toBeNull();
+    // Folder-shaped too: ownerProject falls back to the first project of ANY kind, and that
+    // fallback must not reintroduce what the leaf pick just excluded.
+    expect(ownerProject({ projects: [{ ...orgOnly[0]!, isFolder: true }] })).toBeNull();
+  });
+
+  it("owner_path skips it as well, should the API ever report it as a folder", () => {
+    const asFolder = [
+      { id: "p4", name: "GITHUB-DKTUNITED", isFolder: true, slug: "github-dktunited" },
+      { id: "p1", name: "VALUE-CHAIN", isFolder: true, slug: "value-chain" },
+    ];
+    expect(ownerPath({ projects: asFolder })).toBe("VALUE-CHAIN");
+  });
+
+  it("EXCLUDED FROM THE ANSWER, NOT FROM THE OBSERVATION — the stored columns keep it", () => {
+    const orgOnly = [
+      { id: "p4", name: "GITHUB-DKTUNITED", isFolder: false, slug: "github-dktunited" },
+    ];
+    const row = run("sast", [sastNode({ projects: orgOnly })], {}, S1).ledger["sast:id:sast-1"];
+    expect(row.owner_project).toBeNull();
+    expect(row.tags_json).toBe('{"github-dktunited": "GITHUB-DKTUNITED"}');
+    expect(row.projects_json).toBe(
+      '[{"isFolder": false, "name": "GITHUB-DKTUNITED", "slug": "github-dktunited"}]',
+    );
+  });
 });
 
 // --------------------------------------------------------------------------- #
@@ -809,7 +904,7 @@ describe("update disciplines (rule 6)", () => {
         cwe: null, ai_verdict: null, language: "JAVASCRIPT", file_path: null, start_line: null,
         origin: null, secret_kind: null, rotated_at: null, removed_at: null,
         validation_state: null, validated_at: null, confidence: null,
-        owner_project: null, owner_path: null, tags_json: null, projects_json: null,
+        owner_project: null, owner_path: null, tags_json: null, projects_json: null, portal_url: null,
       },
     };
     const { ledger, deltas } = run("sca", [scaNode()], resolved, S2);
@@ -971,7 +1066,7 @@ describe("validation is latest-wins among MEASURED states only (rule 7)", () => 
         rotated_at: "2026-03-05T00:00:00Z", removed_at: S1,
         validation_state: "INVALID", validated_at: "2026-03-05T00:00:00Z",
         confidence: "High", owner_project: null, owner_path: null, tags_json: null,
-        projects_json: null,
+        projects_json: null, portal_url: null,
       },
     };
     // The string is back in HEAD; nobody re-checked the credential (UNKNOWN).
@@ -1098,7 +1193,7 @@ describe("failure of absence: the severity-scope guard (rule 9)", () => {
       cwe: null, ai_verdict: null, language: null, file_path: null, start_line: null,
       origin: null, secret_kind: null, rotated_at: null, removed_at: null,
       validation_state: null, validated_at: null, confidence: null,
-      owner_project: null, owner_path: null, tags_json: null, projects_json: null,
+      owner_project: null, owner_path: null, tags_json: null, projects_json: null, portal_url: null,
     };
     const before = JSON.stringify(medium);
 

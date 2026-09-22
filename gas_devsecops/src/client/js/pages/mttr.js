@@ -41,7 +41,7 @@
 // chart on this page draws the two Kaplan-Meier markers and no closed-only comparison.
 
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
-import { chartUnavailable, loadCharts } from "../chartsLoader.js";
+import { chartUnavailable, loadCharts } from "../../../../../gas_shared/ui/chartsLoader.js";
 // The severity palette is READ OFF THE STYLESHEET, never retyped — CLAUDE.md's "byte-identical
 // across all four surfaces" rule. `sevPalette` is defined once in `sca.js`; `sast.js` already
 // imports it from there, and this is the same import rather than a second copy.
@@ -283,6 +283,60 @@ function earliestTrackingIso(map) {
 }
 
 /**
+ * What the end-of-life setting is doing to a remediation-speed figure, in one sentence — or
+ * null. THE ONE COPY, imported by every page that draws one.
+ *
+ * FIVE PAGES, ONE SENTENCE, and that is the point rather than a convenience. The MTTR page,
+ * the Executive, Scan history, Coverage & efficiency and Secrets each publish a figure the
+ * same switch narrows; five hand-written sentences is five chances for one of them to describe
+ * a different population than it measured. `mttr.js` is already this package's shared home for
+ * remediation view logic — `executive.js` and `history.js` both import `kmHalfLifeView` from
+ * here — so the note lives beside it.
+ *
+ * TWO SENTENCES FOR TWO SETTINGS, mirroring `repos.js`'s `endOfLifeNote` for the cold zone.
+ * Off, it says the retired repositories are in this figure and where the switch is — a reader
+ * cannot ask for a measurement they do not know is on offer. On, it says what left and how much
+ * went with it, because a share whose denominator quietly shrank is a share nobody can check.
+ *
+ * `what` NAMES THE FAMILY THIS PAGE DRAWS, and it is a parameter rather than a constant because
+ * the pages do not all reach the same figures. On the Executive the switch narrows the
+ * half-life and leaves every severity count whole, so a sentence saying "these figures" there
+ * would claim the tiles moved too. Naming the family is what lets the second clause — "still
+ * counted in every count of what is open" — be true on all five. It is subject-free on
+ * purpose: "they" would have to agree with a count that is sometimes one finding.
+ *
+ * NULL WHEN NO REPOSITORY HERE IS RETIRED, in either setting: `unmeasurableNote`'s rule, and
+ * the honest reading on a tenant whose lifecycle tag this register never learned. Nothing is
+ * known, so nothing is claimed — Settings > System is where THAT is diagnosable.
+ *
+ * @param {{excluded?: boolean, repos?: number, excludedRepos?: number,
+ *          excludedRows?: number}|null|undefined} block  a payload `endOfLife` block
+ * @param {string} what  the family this page draws, e.g. "the half-life figures"
+ * @returns {string|null}
+ */
+export function endOfLifeExclusionNote(block, what = "these figures") {
+  if (!block) return null;
+  // `num` — this package's ONE refuse-before-cast reader, not a bare `Number()`. `Number(null)`
+  // is 0 and 0 is finite, so a cast-first version would read a missing block as "zero retired
+  // repositories", which happens to be the right answer and for the wrong reason; `{}` and
+  // `NaN` it would get wrong outright.
+  const total = num(block.repos, 0);
+  if (total <= 0) return null;
+  // `pluralize` appends an -s, which "repository" does not take — the same explicit form
+  // `repos.js`'s own note uses.
+  const repos = (n) => fmtCount(n) + " " + (n === 1 ? "repository" : "repositories");
+  if (block.excluded !== true) {
+    return repos(total) + (total === 1 ? " here is" : " here are") + " end of life and still"
+      + " counted in " + what + ". Settings, under Deadlines, can leave them out.";
+  }
+  const cut = num(block.excludedRepos, 0);
+  const rows = num(block.excludedRows, 0);
+  return repos(cut) + " left out of " + what + " as end of life, with "
+    + fmtCount(rows) + " " + pluralize(rows, "finding") + ". Still counted in every count of"
+    + " what is open.";
+}
+
+/**
  * The half-life trend, as ONE array read by two things.
  *
  * `renderTrend` plots it as a line at the bottom of the page; `renderHero` draws the same
@@ -294,10 +348,35 @@ function earliestTrackingIso(map) {
  * own.
  *
  * A slot with no `date` is dropped rather than plotted: the x axis is the date.
+ *
+ * AND THE LEADING RUN OF NEVER-MEASURED SLOTS GOES WITH IT, BECAUSE THAT RUN IS AXIS RATHER
+ * THAN DATA — and because the ASIDE cannot drop it for itself. `trend.trendFromBase(...,
+ * {backfill: true})` seeds one synthetic point per DAY between the earliest `first_seen` and
+ * the first saved scan, and `trend.withKmMedian` marks every one of them null until the
+ * estimator has anything to say at all, so a register with a long pre-scan history opens with
+ * months of slots holding nothing. `sparkPath` positions by INDEX, not by date: that stretch
+ * held the aside's drawn run under the width of its own end dot and had the picture refused
+ * outright (`MIN_TREND_SPAN_PX`, `gas_shared/ui/sparkline.js`). The line chart escapes it a
+ * different way — `renderTrend` draws on `charts.trendLine`'s day axis and plots the
+ * readings alone — but the aside has only slots, so the trim has to happen here, on the array
+ * they share. The series STARTS at the first index carrying a reading.
+ *
+ * A NULL AFTER THAT POINT IS KEPT, INTERIOR AND TRAILING ALIKE, and the trailing case is the
+ * one worth stating. An interior null is a gap: dropping it HERE would compress time and get
+ * the aside's slope wrong, `ui/sparkline.js`'s rule applied one level up. A TRAILING null is
+ * not even that — `trendFromBase` only ever seeds synthetic days BEFORE the first real scan,
+ * so a null at the end is always a real, current scan date where survival has not reached half
+ * yet. That is a measured absence, the same one `kmHalfLifeView` publishes as "Not measured"
+ * further up this page rather than hiding, and trimming it would leave the newest thing the
+ * aside shows a stale reading standing where the current one should be.
  */
 export function halfLifeTrendPoints(trends) {
   const raw = trends && Array.isArray(trends.trend) ? trends.trend : [];
-  return raw.filter((p) => p && p.date);
+  const dated = raw.filter((p) => p && p.date);
+  // `num` rather than a bare `!== null`, for the reason every other reader on this page goes
+  // through it: "" and undefined are not readings either, and neither may anchor the axis.
+  const first = dated.findIndex((p) => num(p.km_median_days) !== null);
+  return first < 0 ? [] : dated.slice(first);
 }
 
 /** The restricted mean, and the "≥" it earns when survival never reached zero. */
@@ -1050,6 +1129,13 @@ export async function renderMttr(host, params, _ctx) {
     // `trackingSinceView`'s own comment for why it is not repeated under the fan/table below.
     const tracking = trackingSinceView(mttr);
     if (tracking.show) heroHost.append(el("p", { class: "small muted" }, tracking.text));
+    // WHO THIS PAGE MEASURED OVER, under the figure it measured. This page had no page-level
+    // population sentence at all before now — it does not even say when it is scoped to one
+    // register — so this is the first, and it stays one line for that reason. Every section
+    // below reads the same `rows`, so one sentence here covers the page rather than each
+    // section repeating it.
+    const eol = endOfLifeExclusionNote(mttr && mttr.endOfLife);
+    if (eol) heroHost.append(el("p", { class: "small muted" }, eol));
   }
 
   /**
@@ -1072,10 +1158,8 @@ export async function renderMttr(host, params, _ctx) {
         term: "sla-target",
         lines: [
           rate.baseEmpty
-            ? "Resolved inside the SLA window: not measured — nothing has closed yet, so there"
-              + " is no resolved population to compare against the target."
-            : "Taken over what CLOSED: of the findings that resolved, the share that resolved"
-              + " on or before their severity's target.",
+            ? "Not measured: nothing has closed yet, so there is no resolved population."
+            : "Taken over what CLOSED: of what resolved, the share inside its severity's target.",
           "The comparison is inclusive — on or before the target.",
         ],
       },
@@ -1105,14 +1189,12 @@ export async function renderMttr(host, params, _ctx) {
         term: "awaiting-fix",
         lines: [
           rate.baseEmpty
-            ? "Awaiting a vendor fix: not measured — no SCA finding is open, so there is no"
-              + " backlog to take a share of."
-            : "Open SCA findings with no published fix. Those sit outside every deadline until"
-              + " a fix exists.",
+            ? "Not measured: no SCA finding is open, so there is no backlog to share."
+            : "Open SCA findings with no published fix, outside every deadline until one exists.",
           ...(awaiting.notApplicable
             ? ["Refused: " + fmtCount(awaiting.notApplicable) + " open findings outside SCA"
-              + " carried the flag anyway. SAST and secrets have no vendor to wait on, so the"
-              + " flag cannot be true there and the rows were declined rather than counted."]
+              + " carried the flag anyway.",
+              "SAST and secrets have no vendor to wait on, so the flag cannot be true there."]
             : []),
         ],
       },
@@ -1176,14 +1258,14 @@ export async function renderMttr(host, params, _ctx) {
     const list = Array.isArray(points) ? points : [];
     const values = list.map((p) => p.km_median_days);
     const model = sparkPath(values, { w: 220, h: 40 });
-    // THE GAPS ARE IN THE CAPTION, NOT ONLY IN THE aria-label. Measured on the dev seed: 208
-    // evaluated dates, 3 of which carry a half-life — the register's curve does not reach half
-    // on any earlier date, so `km_median_days` is null there and the three readings sit
-    // adjacent at the right-hand edge. THE PICTURE IS NOW REFUSED FOR THAT SHAPE (2.09px of
-    // run under a 4px dot; see `sparkPath`'s header), which makes this caption the whole
-    // reading rather than a qualifier on one — a caption saying "3 readings" over a 220px box
-    // would let a reader take the empty 97% for a flat line rather than for dates nobody
-    // could measure. `sparkPath` counts the gaps; this prints them.
+    // THE GAPS ARE IN THE CAPTION, NOT ONLY IN THE aria-label — and they are the gaps that are
+    // LEFT. `halfLifeTrendPoints` has already dropped the leading run of dates nobody could
+    // measure, which is what gives this strip a run wide enough to draw at all (see its header:
+    // that stretch used to hold the run to 2.09px under a 4px end dot, and `sparkPath` refused
+    // the picture for it). What reaches here is the evaluated span, gaps and all, and those
+    // gaps are still a qualifier this caption has to carry: "N readings" over a 220px box would
+    // let a reader take an interior or trailing blank for a flat line rather than for a date
+    // where survival never reached half. `sparkPath` counts the gaps; this prints them.
     const measured = model.gaps
       ? fmtCount(model.n) + " of " + fmtCount(values.length) + " readings measured"
       : fmtCount(model.n) + " readings";
@@ -1201,6 +1283,7 @@ export async function renderMttr(host, params, _ctx) {
         lines: [
           "One reading per saved scan, plus one per day of pre-scan history reconstructed from"
           + " first-detection dates.",
+          "It starts where the first half-life could be measured, not where the register does.",
           "The full line, and which readings are reconstructed, is at the foot of this page.",
         ],
       })),
@@ -1228,10 +1311,8 @@ export async function renderMttr(host, params, _ctx) {
     curveHost.append(sectionLabel("Survival curve", {
       term: "censoring",
       lines: [
-        "Closed findings are events; open findings enter as right-censored observations at"
-        + " their current age.",
-        "The closed-only comparison markers are not in this payload, so the two markers drawn"
-        + " are both Kaplan-Meier.",
+        "Closed findings are events; open ones enter as censored observations at their age.",
+        "Both markers drawn are Kaplan-Meier: the closed-only pair is not in this payload.",
       ],
     }));
 
@@ -1413,8 +1494,8 @@ export async function renderMttr(host, params, _ctx) {
           help: {
             term: "sla-target",
             lines: [
-              "Taken over what CLOSED: of the findings that resolved, the share that resolved"
-              + " on or before the target. The comparison is inclusive.",
+              "Taken over what CLOSED: of what resolved, the share inside the target.",
+              "The comparison is inclusive — on or before.",
             ],
           },
           cell: (r) => withMeter(r.inSla),
@@ -1424,10 +1505,9 @@ export async function renderMttr(host, params, _ctx) {
           label: "Open past SLA",
           help: {
             lines: [
-              "Taken over what is still RUNNING: of the findings still open, the share already"
-              + " past the target.",
-              "The two denominators in this table are not interchangeable — a single SLA"
-              + " percentage over everything would be neither.",
+              "Taken over what is still RUNNING: of what is open, the share past target.",
+              "The two denominators here are not interchangeable.",
+              "A single SLA percentage over everything would be neither of them.",
             ],
           },
           // The count AND the rate AND the base. The count alone hides how big the backlog
@@ -1497,8 +1577,8 @@ export async function renderMttr(host, params, _ctx) {
     // form of the same two counts is under the canvas.
     agingHost.append(sectionLabel("Open findings by age", {
       lines: [
-        "Open findings only, aged from first_seen to now — a resolved finding stopped ageing"
-        + " and its lifetime is the survival curve's subject, not this one's.",
+        "Open findings only, aged from first_seen to now.",
+        "A resolved finding stopped ageing; its lifetime is the survival curve's subject.",
         vm.denominator,
       ],
     }));
@@ -1627,10 +1707,9 @@ export async function renderMttr(host, params, _ctx) {
       // in `slaConsumedCaption`, which is also where the two counts that are NOT drawn are
       // stated — so it is deliberately not restated here.
       lines: [
-        "A 3-day CRITICAL and a 39-day LOW stand in the same bar: each is placed by the"
-        + " fraction of its OWN deadline it has used, not by its age.",
-        "Every bar drawn is inside its own window, which is why this axis carries no SLA rule"
-        + " the way the age chart above can.",
+        "Each finding is placed by the fraction of its OWN deadline used, not by its age.",
+        "So a 3-day CRITICAL and a 39-day LOW stand in the same bar.",
+        "Every bar is inside its own window, so this axis carries no SLA rule.",
       ],
     }));
     // NO SECTION BODY AT ALL rather than an empty state: "no open findings with a window"
@@ -1703,8 +1782,8 @@ export async function renderMttr(host, params, _ctx) {
     bucketHost.append(sectionLabel("Time to close", {
       term: "censoring",
       lines: [
-        "Resolved lifecycles only. Open findings are not in this distribution at any bucket —"
-        + " they are in the curve above, as censored observations.",
+        "Resolved lifecycles only: open findings are in no bucket here.",
+        "They are in the curve above, as censored observations.",
       ],
     }));
     if (!view.show || !view.total) {
@@ -1832,10 +1911,9 @@ export async function renderMttr(host, params, _ctx) {
         tipLabel("How the vendor wait divides", {
           term: "awaiting-fix",
           lines: [
-            "The population the wait-for-a-vendor estimate was taken over, split by how each"
-            + " finding left it.",
-            "The hatched part is not a measurement: those rows carry no readable origin and"
-            + " sit outside the estimate rather than being counted as a zero-day wait.",
+            "The population the wait-for-a-vendor estimate was taken over, by how each left.",
+            "The hatched part is not a measurement: those rows carry no readable origin.",
+            "They sit outside the estimate rather than counting as a zero-day wait.",
           ],
         })),
       bar);
@@ -1854,21 +1932,33 @@ export async function renderMttr(host, params, _ctx) {
     trendHost.append(sectionLabel("Half-life over time", {
       term: "reconstructed",
       lines: [
-        "The Kaplan-Meier median re-evaluated as of each date — the same series the sparkline"
-        + " beside the hero draws.",
-        "One point per saved scan, plus one per day of pre-scan history rebuilt from"
-        + " first-detection dates, where closures are under-counted.",
+        "The Kaplan-Meier median re-evaluated as of each date.",
+        "The same series the sparkline beside the hero draws.",
+        "One point per saved scan, plus one per day of rebuilt pre-scan history.",
+        "Only the dates it could be measured on are drawn, spaced by the real interval.",
+        "So the axis starts at the first of them, not at the day the register began.",
+        "Closures are under-counted across that rebuilt stretch.",
       ],
     }));
-    if (points.length < 2) {
+    // THE LINE IS THE READINGS, AND THE DAY AXIS IS WHAT LETS IT BE. An unmeasured slot is
+    // kept in the shared array because `sparkPath` positions by index and dropping one there
+    // would compress time; `charts.trendLine` positions by the DATE, so leaving
+    // one out moves nothing and costs no width. That is what the backbone's shape demands
+    // here: its reconstructed stretch is one point per DAY and the estimator reports on very
+    // few of them, so plotted as slots the readings crush into the right-hand edge — and with
+    // `pointRadius` dropped above 40 points, an isolated reading between two gaps draws
+    // NOTHING AT ALL. The elided dates are not lost, they are counted in the note below.
+    const drawn = points.filter((p) => num(p.km_median_days) !== null);
+    const unmeasured = points.length - drawn.length;
+    if (drawn.length < 2) {
       trendHost.append(el("div", { class: "card" }, emptyState(
         "Not enough history to draw a line.",
-        "The backbone emits one point per saved scan plus one per day of pre-scan history;"
-        + " two points are the minimum.",
+        "The line is the dates a half-life could be measured, and two of them are the"
+        + " minimum — a register whose curve has never reached half has none.",
       )));
       return;
     }
-    const reconstructed = points.filter((p) => p.reconstructed).length;
+    const reconstructed = drawn.filter((p) => p.reconstructed).length;
     const canvas = el("canvas", { "aria-label": "Remediation half-life over time, in days" });
     trendHost.append(el("section", { class: "chart-card" },
       // THE LEGEND IS THE COUNT AND THE WORD, not the sentence. "reconstructed" is the
@@ -1876,27 +1966,37 @@ export async function renderMttr(host, params, _ctx) {
       // word MEANS — rebuilt rather than observed, closures under-counted, read as not
       // measured — is the `reconstructed` entry the trigger routes to.
       //
-      // NOT "shaded = reconstructed": `charts.trendLine` draws one flat series and shades
-      // nothing, so a legend claiming a shading nobody can see would be a picture described
-      // rather than a picture drawn. `charts.js`'s `hatchPattern()` is the hook that would
-      // make that legend true, and wiring it is a change to a shipped chart rather than to
-      // this page's words.
+      // AND NOW IT IS ALSO SHADED. This note used to say the opposite — "`charts.trendLine`
+      // draws one flat series and shades nothing, so a legend claiming a shading nobody can
+      // see would be a picture described rather than a picture drawn" — and it was right at
+      // the time. `trendLine` shades the rebuilt prefix now, the way `gas/`'s always did, so
+      // the sentence is true and the count keeps its place as the legend for the band rather
+      // than as a substitute for one.
       el("p", { class: "chart-note" },
         "Kaplan-Meier median days, as of each date. ",
         reconstructed
           ? tipLabel(
-            fmtCount(reconstructed) + " of " + fmtCount(points.length) + " points"
+            fmtCount(reconstructed) + " of " + fmtCount(drawn.length) + " points"
             + " reconstructed",
             { term: "reconstructed" },
           )
+          : null,
+        // WHAT THE AXIS LEAVES OFF, AS A FIGURE. PRODUCT.md's seventh principle and its
+        // "absent is never zero" corollary: an evaluated date with no measurable half-life
+        // is a third state, not a zero and not an absence of the date. It cannot be a mark
+        // on this chart, so it is a count beside it — otherwise a reader takes the axis's
+        // left edge for the day the register began.
+        unmeasured
+          ? (reconstructed ? ". " : "") + fmtCount(unmeasured) + " further "
+            + pluralize(unmeasured, "date") + " evaluated to no measurable half-life."
           : null),
       el("div", { class: "chart-box" }, canvas),
-      // `points` — the same array the wrapper below plots — read once, into both.
+      // `drawn` — the same array the wrapper below plots — read once, into both.
       chartTable({
         canvas,
-        caption: "The half-life the line above plots, one row per evaluated date. A"
-          + " reconstructed row is one dated before the first saved scan, where closures are"
-          + " under-counted.",
+        caption: "The half-life the line above plots, one row per date it could be measured"
+          + " on. A reconstructed row is one dated before the first saved scan, where"
+          + " closures are under-counted.",
         model: chartTableModel({
           columns: [
             {
@@ -1914,7 +2014,7 @@ export async function renderMttr(host, params, _ctx) {
               value: (p) => (p.reconstructed ? "yes" : "no"),
             },
           ],
-          rows: points,
+          rows: drawn,
         }),
       })));
 
@@ -1923,13 +2023,13 @@ export async function renderMttr(host, params, _ctx) {
       onPageTeardown(() => charts.destroyChart(canvas));
       charts.trendLine(
         canvas,
-        points.map((p) => ({ x: p.date, y: p.km_median_days })),
+        drawn.map((p) => ({ x: p.date, y: p.km_median_days })),
         {
           yLabel: "days",
           series: [{
             label: "Half-life (KM)",
             color: charts.ACCENT,
-            data: points.map((p) => p.km_median_days),
+            data: drawn.map((p) => p.km_median_days),
           }],
         },
       );

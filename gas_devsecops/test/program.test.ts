@@ -7,7 +7,7 @@
 //      READING the test rather than by trusting the code.
 //   2. Hand cases for the static-analysis rule, which gas/ does not have at all — it has no
 //      SAST register. Same discipline: the arithmetic is in the comment.
-//   3. Parity against brick/devsecops/metrics.py's own PySpark output
+//   3. Parity against brick/metrics.py's own PySpark output
 //      (test/fixtures/brick/confusion.json), at 1e-9. That is a SECOND, independent oracle:
 //      nothing in that file was typed by a human, it all came out of a DataFrame.collect().
 //
@@ -453,7 +453,7 @@ describe("ruleSensitivity", () => {
 
   it("shows the coverage/efficiency trade-off between a narrow and a broad rule", () => {
     // LABEL NOTE: gas/'s copy of this test looks up "KEV". This register takes brick's
-    // wording — "KEV only" — because brick/devsecops/metrics.py's RULE_SUBSETS is the
+    // wording — "KEV only" — because brick/metrics.py's RULE_SUBSETS is the
     // behavioural spec here and confusion.json pins the label as data. Same subset, same
     // numbers; only the display string moved.
     const pts = ruleSensitivity(rows, RULE);
@@ -596,7 +596,7 @@ describe("riskTier", () => {
 });
 
 // =======================================================================================
-//  brick/devsecops parity — the second oracle
+//  brick/ parity — the second oracle
 // =======================================================================================
 //
 // NAME MAPPING, brick snake_case -> this module's camelCase. Written out rather than derived,

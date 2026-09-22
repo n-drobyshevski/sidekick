@@ -5,7 +5,7 @@ import { appConfig } from "../appConfig.js";
 import { clampSheetWidth, recordCursor } from "./recordCursor.js";
 import { parseHash } from "../store.js";
 import { clear, el, motionOk } from "./dom.js";
-import { tipLabel } from "./tip.js";
+import { tipLabel, tipMark } from "./tip.js";
 import { portalsOpen } from "./portals.js";
 import { uiIcon } from "./uiIcons.js";
 
@@ -739,4 +739,111 @@ export function sheetRow(o) {
  */
 export function sectionLabel(text, help) {
   return el("h2", { class: "section-label" }, tipLabel(text, help));
+}
+
+/**
+ * A whole section behind one disclosure, with its own heading as the control.
+ *
+ * WHAT THIS IS FOR, AND WHAT `disclosure()` IS FOR. `disclosure()` (ui/settings.js) hides a
+ * PARAGRAPH under a line that stays visible — "Why the rest are not ranked" under a sentence
+ * that already said the headline. This hides a SECTION: its heading, its caret and whatever
+ * state word the caller passes stay on the page, and the table, the figures and the notes
+ * under them are what folds away. A reader who is not asking this section's question pays one
+ * line for it instead of a screenful, and the heading is still in the document's heading list,
+ * so a screen reader's outline does not lose a section just because it is shut.
+ *
+ * `<details>` RATHER THAN A HAND-ROLLED `aria-expanded` PAIR, which is the same call
+ * `chartTable`, `disclosure` and Program's methodology block already made: the element is a
+ * disclosure widget natively, it is keyboard-operable with nothing wired, and browser find-in-
+ * page opens it. The `<h2>` inside `<summary>` is heading content in a phrasing-content slot,
+ * which is exactly what that content model allows.
+ *
+ * THE DEFINITION IS A SEPARATE AFFORDANCE FROM THE TOGGLE, and that is the one thing this
+ * component exists to get right. `sectionLabel(text, help)` turns the WHOLE heading into a
+ * `.tip-trigger` button — so putting it in a summary would leave the most obvious click target
+ * on the page doing something other than opening the section, and, where `help` carries a
+ * `term`, a single click would both toggle the section AND navigate to the Help entry. So the
+ * heading here is plain text and IS the toggle, and the help rides on a `tipMark()` "?" beside
+ * it. The click guard below is what keeps those two apart: a click that landed on any tip
+ * anchor cancels the summary's own activation behaviour, and because it cancels the DEFAULT
+ * rather than stopping propagation, tip.js's document-level listener still runs and a
+ * term-backed "?" still reaches its entry.
+ *
+ * `open` IS THE CALLER'S STATE, NOT THE NODE'S. These sections are rebuilt on every paint, and
+ * a background refresh landing under a reader who had just expanded one would otherwise snap it
+ * shut. The caller keeps the flag and hands it back in; `onToggle` is how it learns.
+ *
+ * `remember` IS THE SAME ANSWER ONE LEVEL UP: a name under the host app's own storage prefix
+ * (`sheetWide`'s arrangement, and for `sheetWide`'s reason — two sidekicks served from the same
+ * origin must not share a key), so a reader who opened this section last week does not have to
+ * open it again. It only ever OVERRIDES `open`; a first visit, a cleared store or a browser
+ * that refuses localStorage all fall back to what the caller asked for.
+ *
+ * @param {string} label    the section's heading, as plain text
+ * @param {{help?: any, open?: boolean, hint?: string|Node|null, remember?: string|null,
+ *          onToggle?: (open: boolean) => void}} [o]
+ * @returns {{node: HTMLElement, body: HTMLElement}} `node` to append, `body` to fill
+ */
+export function collapsibleSection(label, o) {
+  const p = o || {};
+  const stored = p.remember ? readOpen(p.remember) : null;
+  const open = stored === null ? p.open === true : stored;
+  const summary = el(
+    "summary",
+    { class: "section-collapse__summary" },
+    // `uiIcon`, not the "▸" the other three disclosures in this system draw. Those are small
+    // muted controls sitting UNDER the thing they qualify, and a --fs-micro text triangle is
+    // the right weight for them; beside a --fs-lead section heading the same glyph reads as a
+    // stray mark, and it does not scale with the type the way a 16px stroked chevron does. The
+    // wrapper span owns the rotation so the transform never lands on a replaced element whose
+    // transform-box a browser could disagree about.
+    el("span", { class: "section-collapse__caret" }, uiIcon("chevron-right", 16)),
+    el("h2", { class: "section-label section-collapse__title" }, label),
+    p.help ? tipLabel(tipMark(), p.help) : null,
+    p.hint ? el("span", { class: "section-collapse__hint small muted" }, p.hint) : null,
+  );
+  // See the header: preventDefault, never stopPropagation. `[data-tip]` rather than
+  // `.tip-trigger` so an anchor tip.js attached in place is covered by the same guard.
+  summary.addEventListener("click", (e) => {
+    const t = e.target;
+    if (t && t.closest && t.closest("[data-tip]")) e.preventDefault();
+  });
+  const body = el("div", { class: "section-collapse__body" });
+  const node = el(
+    "details",
+    { class: "section-collapse", open },
+    summary,
+    body,
+  );
+  // Rotation only where the reader has not asked for less motion — the `chart-table--motion`
+  // arrangement, for the same reason: without it the caret still changes state, it just does
+  // not travel to get there.
+  if (motionOk()) node.classList.add("section-collapse--motion");
+  node.addEventListener("toggle", () => {
+    if (p.remember) writeOpen(p.remember, node.open);
+    if (typeof p.onToggle === "function") p.onToggle(node.open);
+  });
+  return { node, body };
+}
+
+/**
+ * `null` for "nothing stored", which is NOT the same as `false` — a store that has never been
+ * written, one the reader has cleared and a browser refusing localStorage all have to fall
+ * through to the caller's own default rather than forcing a section shut.
+ */
+function readOpen(name) {
+  try {
+    const raw = localStorage.getItem(storageKey("section:" + name));
+    return raw === null ? null : raw === "1";
+  } catch (e) {
+    return null;
+  }
+}
+
+function writeOpen(name, open) {
+  try {
+    localStorage.setItem(storageKey("section:" + name), open ? "1" : "0");
+  } catch (e) {
+    // A full or blocked store costs the memory, never the section. Nothing to report.
+  }
 }

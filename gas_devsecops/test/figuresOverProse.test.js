@@ -282,11 +282,15 @@ describe("halfLifeTrendPoints: the sparkline and the line chart read the SAME se
     expect(halfLifeTrendPoints({ trend: "not an array" })).toEqual([]);
   });
 
-  // PERTURBATION. The point of hoisting this was that the aside and the chart cannot disagree.
-  // Filtering independently in each renderer is what the page did before, and the two filters
-  // drift the moment one of them gains a condition — here, the obvious "only plot what was
-  // measured", which the sparkline would then draw over a compressed axis while the chart
-  // below it kept the gaps.
+  // PERTURBATION. The point of hoisting this was that the aside and the chart cannot disagree
+  // about WHICH READINGS EXIST, and that still holds: both start from this one array.
+  //
+  // What they may differ on is how each POSITIONS them, and that difference is earned rather
+  // than drifted into. `sparkPath` places a point by its index, so a gap there has to keep its
+  // slot or the run compresses and the slope lies. `renderTrend` draws on `charts.trendLine`'s
+  // day axis, where the x value IS the date — so it takes the measured subset of this same
+  // array and leaving a slot out moves nothing. Filtering HERE would be the drift: it would
+  // hand the sparkline a compressed axis to answer a question only the chart had.
   it("is not a vacuous guard — a second, tighter filter changes the picture's shape", () => {
     const measuredOnly = trends.trend.filter((p) => p && p.date && p.km_median_days !== null);
     expect(measuredOnly).toHaveLength(2);
@@ -327,6 +331,112 @@ describe("halfLifeTrendPoints: the sparkline and the line chart read the SAME se
     // And neither renderer re-derives it: two occurrences only — the declaration and the
     // one call in `paint`.
     expect((MTTR_SRC.match(/halfLifeTrendPoints\(/g) || []).length).toBe(2);
+  });
+
+  // =======================================================================================
+  //  THE AXIS IS THE MEASURED STRETCH, NOT THE BACKBONE
+  //
+  //  `trendFromBase` seeds one synthetic point per DAY from the earliest first_seen to the
+  //  first saved scan, and `withKmMedian` leaves every one of them null until the estimator
+  //  has anything to say. `charts.trendLine` draws on a CATEGORY axis — one equal-width slot
+  //  per element — so that run is axis spent on nothing, and it is also what `sparkPath`
+  //  measures its run against. Dropping the LEADING run is what gives both pictures their
+  //  width back; dropping any later null is what would make them lie.
+  // =======================================================================================
+
+  const leading = {
+    trend: [
+      { date: "2026-05-04", km_median_days: null },
+      { date: "2026-05-05", km_median_days: null },
+      { date: "2026-06-01", km_median_days: 199 },
+      { date: "2026-06-08", km_median_days: null },
+      { date: "2026-06-15", km_median_days: 204 },
+    ],
+  };
+
+  it("starts at the first date anything was measured, and keeps the gap after it", () => {
+    const points = halfLifeTrendPoints(leading);
+    expect(points.map((p) => p.date)).toEqual(["2026-06-01", "2026-06-08", "2026-06-15"]);
+    // The interior null is still a slot: two readings a fortnight apart are a different
+    // slope from two readings a week apart, which is the whole reason this is a SPAN and
+    // not `history.js`'s `kmMedianPoints` filter.
+    expect(points[1].km_median_days).toBeNull();
+  });
+
+  it("keeps a TRAILING null, because that one is a scan that reported nothing", () => {
+    // `trendFromBase` only ever seeds synthetic days BEFORE the first real scan, so a null
+    // at the end is a real, current evaluation whose curve has not reached half — the same
+    // state `kmHalfLifeView` publishes as "Not measured". Trimming it would leave the newest
+    // thing on the chart a stale reading standing where the current one should be.
+    const points = halfLifeTrendPoints({
+      trend: [
+        { date: "2026-06-01", km_median_days: 199 },
+        { date: "2026-06-15", km_median_days: 204 },
+        { date: "2026-06-22", km_median_days: null },
+      ],
+    });
+    expect(points).toHaveLength(3);
+    expect(points[2].km_median_days).toBeNull();
+  });
+
+  it("answers an empty series when no date in the history measured anything", () => {
+    expect(halfLifeTrendPoints({
+      trend: [{ date: "2026-05-04", km_median_days: null }, { date: "2026-05-05" }],
+    })).toEqual([]);
+  });
+
+  it("anchors on the READING, not on the `reconstructed` flag", () => {
+    // A real saved scan that reported nothing is as unmeasured as a synthetic day, and a
+    // reconstructed day that DID report is a reading the axis may start on. Keying the trim
+    // off the flag instead of the value would get both backwards.
+    const points = halfLifeTrendPoints({
+      trend: [
+        { date: "2026-05-04", km_median_days: null, reconstructed: false },
+        { date: "2026-05-05", km_median_days: 180, reconstructed: true },
+        { date: "2026-06-01", km_median_days: 199, reconstructed: false },
+      ],
+    });
+    expect(points.map((p) => p.date)).toEqual(["2026-05-05", "2026-06-01"]);
+  });
+
+  // PERTURBATION. Two rewrites are tempting here and both are wrong on the SAME input: the
+  // whole-array filter (what Scan History's dated line does, which has no slots to keep) and
+  // the symmetric trim that takes the trailing run too. Each gives a different answer.
+  it("is neither a whole-array filter nor a symmetric trim", () => {
+    const both = {
+      trend: [
+        { date: "2026-05-04", km_median_days: null },
+        { date: "2026-06-01", km_median_days: 199 },
+        { date: "2026-06-08", km_median_days: null },
+        { date: "2026-06-15", km_median_days: 204 },
+        { date: "2026-06-22", km_median_days: null },
+      ],
+    };
+    const dropAllNulls = both.trend.filter((p) => p.km_median_days !== null);
+    const symmetric = both.trend.slice(1, 4);
+    expect(halfLifeTrendPoints(both)).toHaveLength(4);
+    expect(dropAllNulls).toHaveLength(2); // compresses time: three slots become two
+    expect(symmetric).toHaveLength(3); // loses the scan that reported nothing
+  });
+
+  it("the chart takes the measured subset, and only because its axis is the DATE", () => {
+    // Derived once inside `renderTrend`, from the shared array, and handed to the canvas AND
+    // to the table beside it — `ui/chartTable.js`'s one rule, which a second filter for the
+    // table would break.
+    expect(MTTR_SRC).toMatch(
+      /const drawn = points\.filter\(\(p\) => num\(p\.km_median_days\) !== null\)/);
+    // The day axis is `trendLine`'s DEFAULT now (it was an opt-in when this page first took
+    // it), so what there is to pin here is the opposite: this caller must NOT opt out of it.
+    // `test/charts.test.js` owns the axis itself.
+    expect(MTTR_SRC).not.toMatch(/categoryAxis/);
+    expect(MTTR_SRC).toMatch(/drawn\.map\(\(p\) => \(\{ x: p\.date, y: p\.km_median_days \}\)\)/);
+    expect(MTTR_SRC).toMatch(/rows: drawn,/);
+    // The subset is the CHART's, never the aside's: `trendAside` still reads every slot it
+    // is handed, gaps included, because it positions by index.
+    expect(MTTR_SRC).toMatch(/const values = list\.map\(\(p\) => p\.km_median_days\);/);
+    // And what the subset leaves out is published as a figure rather than dropped in silence.
+    expect(MTTR_SRC).toMatch(/const unmeasured = points\.length - drawn\.length;/);
+    expect(MTTR_SRC).toContain("evaluated to no measurable half-life.");
   });
 });
 
@@ -442,8 +552,10 @@ describe("the honesty statements stayed on the page, not in a tip", () => {
     // The term staying put is only correct because the specific reading is still said first —
     // otherwise a censored register's hero would offer a general definition and nothing about
     // the bound it is actually showing.
-    expect(EXEC_SRC).toMatch(/The survival curve never falls to half within the observed/);
-    expect(EXEC_SRC).toMatch(/This is “not measured”, not zero/);
+    // Reworded by the tip-budget round and re-pinned rather than relaxed: the claim is that
+    // the SPECIFIC reading leads, not that it leads in any particular number of words.
+    expect(EXEC_SRC).toMatch(/The survival curve never falls to half within the observed window/);
+    expect(EXEC_SRC).toMatch(/“not measured”, not zero/);
     expect(MTTR_SRC).toMatch(/The curve never falls to half within the observed window/);
   });
 
@@ -462,7 +574,14 @@ describe("the honesty statements stayed on the page, not in a tip", () => {
   });
 
   it("the fix-next cap is still a line on the page", () => {
-    expect(EXEC_SRC).toMatch(/if \(view\.cutNote\) fixHost\.append/);
+    // `fix` IS THE SECTION'S OWN BODY, not a different surface: since the ranked list moved to
+    // the foot of the page and behind `collapsibleSection`, everything that was appended to
+    // `fixHost` is appended to `section.body` instead. The claim is unchanged — the cap is a
+    // `<p>` beside the list it qualifies, never a tip and never inside the disclosure — so the
+    // pin follows the host rename rather than being relaxed. `disclosure(` is named here too,
+    // so a cap that later slid inside the accounting still fails.
+    expect(EXEC_SRC).toMatch(/if \(view\.cutNote\) fix\.append/);
+    expect(EXEC_SRC).toMatch(/if \(view\.cutNote\) fix\.append\(el\("p", \{ class: "small muted" \}, view\.cutNote\)\);/);
   });
 
   it("the vendor-wait bar still states the zero-length waits in words", () => {

@@ -20,7 +20,7 @@
 import { bootstrap, buildHash, listJoin, navigate, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import { SAVED_VIEW_KEYS, readSavedViews } from "../savedViews.js";
 import { openAssetSheet } from "../detailSheets.js";
-import { chartUnavailable, loadCharts } from "../chartsLoader.js";
+import { chartUnavailable, loadCharts } from "../../../../../gas_shared/ui/chartsLoader.js";
 import {
   CATEGORY_LABELS, CATEGORY_ORDER, categoryOf, kindIconSvg, kindLabel,
 } from "../../../../../gas_shared/icons.js";
@@ -34,12 +34,14 @@ import {
   facetCounts, filterAssetRows, pageOf, resolveAssetQuery, sortAssetRows,
 } from "../assetQuery.js";
 import {
-  absent, absentText, chartTable, clear, closeActiveSheet, confirmDialog, dataTable, debounce,
-  el, errorState, firstRunNotice, heroStat, measuredEmpty, pageHeader,
+  absent, absentText, chartTable, clear, closeActiveSheet, confirmDialog,
+  dataTable, debounce, el, encodeColumnChoice, errorState, firstRunNotice, heroStat,
+  measuredEmpty, nextSort, pageHeader, parseColumnChoice,
   DEFAULT_PAGE_SIZE, PAGE_SIZES, fmtCount, fmtDate, kpiCard, num, pct1, plural,
   nameCell, sectionLabel, sevBadge, sevEntries, sevKeyRow,
   sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow, tableFooter, toast,
   trendScopeNote,
+  tipLabel,
 } from "../ui.js";
 import { trendTableModel } from "./_charts.js";
 
@@ -67,14 +69,27 @@ const FACET_LABELS = {
   flags: "Risk signals",
 };
 
-/** Which columns can be sorted, and what each one is called in the header. */
+/** What each column is called in the header, which can be sorted, and which the reader
+ *  is not offered a way to turn off. */
 const COLUMNS = [
-  { key: "name", label: "Name", sort: "name",
+  // `pinned`: the Columns control lists it and refuses to turn it off. Every other column
+  // here is a fact ABOUT the asset and a reader may not need it; this one is which asset the
+  // row is, and a register of counts attached to nothing is not a narrower table, it is an
+  // unreadable one. The graph workbench's own chooser pins the same column for the same
+  // reason. The Graph-button column at the foot of this list needs no flag — its heading is
+  // blank, and `hideableColumn` (gas_shared/ui/tableModel.js) will not offer a checkbox with
+  // no words beside it.
+  { key: "name", label: "Name", sort: "name", pinned: true,
     help: { lines: ["The asset's own name, as Wiz reports it."] } },
   { key: "kind", label: "Kind", sort: "kind", help: { term: "node-kind" } },
-  { key: "cloud", label: "Cloud", sort: "cloud",
+  // WHERE THE ASSET LIVES, off by default. Both are real facts and neither is what this
+  // register is FOR: it ranks AI assets by what is open on them, and a reader scanning for
+  // that reads the name, the kind and the counts. Cloud and Region are also both FACETS in
+  // the drawer, so the reader who cares about them is already filtering on them rather than
+  // scanning the column — and that reader gets the column back in one press.
+  { key: "cloud", label: "Cloud", sort: "cloud", defaultHidden: true,
     help: { lines: ["Which cloud provider hosts this asset."] } },
-  { key: "region", label: "Region", sort: "region",
+  { key: "region", label: "Region", sort: "region", defaultHidden: true,
     help: { lines: ["The cloud region this asset runs in."] } },
   // The two counts, and the column that says how bad the worst of them is. Three columns
   // rather than one graded verdict: "4 open issues, worst of them HIGH, and 2 failing
@@ -85,13 +100,32 @@ const COLUMNS = [
   { key: "severity", label: "Severity", sort: "severity", help: { term: "severity" } },
   { key: "issues", label: "Issues", sort: "issues", help: { term: "open-issues" } },
   { key: "findings", label: "Cloud findings", sort: "findings", help: { term: "cloud-findings" } },
+  // A COLUMN FOR A FACT THE ROW ALREADY CARRIED AND NOTHING DREW. `dataFindings` — how many
+  // classified findings this asset can REACH, its own if it is a datastore and whatever its
+  // execution identity can read if it is an agent — has been in the inventory payload all
+  // along (api.ts assetTableRow, pinned there by a test). The header counts it, the filter
+  // drawer facets on it ("Reaches classified data"), and the register had no way to show a
+  // reader WHICH assets or HOW MANY each. Off by default because data exposure is a second
+  // question rather than the first one this page answers, and because it is honestly blank
+  // for the identities Wiz never scores — see the note on the cell.
+  { key: "dataFindings", label: "Classified data", sort: null, defaultHidden: true,
+    help: { lines: [
+      "Classified findings this asset can reach.",
+      "Its own if it is a datastore, whatever its identity can read if it is an agent.",
+      "Service accounts are unscored, so nothing persists their reach: an identity reads " +
+      "as no answer rather than as zero.",
+    ] } },
   { key: "combos", label: "Toxic combo", sort: "combos", help: { term: "toxic-combination" } },
   { key: "guardrail", label: "Guardrail", sort: null, help: { term: "missing-guardrail" } },
   // The owning business domain, off the resource's own Wiz/Domain tag. Sortable because
   // it is an identity column like Cloud and Region, and read the same way: A-Z first.
   { key: "domain", label: "Domain", sort: "domain",
     help: { lines: ["Which Wiz/Domain tag owns this asset, read live from its own tags."] } },
-  { key: "projects", label: "Projects", sort: null,
+  // Off by default for a reason the other two do not share: a project list is the widest
+  // cell this table can draw (three names and a separator run past the 320px clip on a
+  // register where most rows carry the same two), and it is the one column whose value is
+  // nearly constant down the page. It is a facet too.
+  { key: "projects", label: "Projects", sort: null, defaultHidden: true,
     help: { lines: ["Which Wiz projects this asset belongs to."] } },
   // No `help`: the heading is blank (the Graph button inside it names its own action), so
   // there is no visible text for a dotted-underline trigger to sit beside — the same reason
@@ -103,7 +137,7 @@ const VIEWS_KEY = SAVED_VIEW_KEYS.inventory;
 /** Params a saved view carries. Never `page` (a view opens at the top) and never `panel`. */
 const VIEW_PARAMS = [
   "q", "severities", "kinds", "clouds", "regions", "projects", "domains", "flags",
-  "sort", "dir", "view", "size",
+  "sort", "dir", "view", "size", "cols",
 ];
 
 // -------------------------------------------------------------------- small helpers
@@ -215,6 +249,22 @@ export async function renderInventory(main, params) {
   let query = paramsToQuery(params);
   let view = params.view === "cards" ? "cards" : "table";
   let panelName = params.panel === "filters" ? "filters" : "";
+  // WHERE THIS READER DISAGREES WITH THE COLUMN DEFAULTS — and deliberately NOT part of
+  // `query`.
+  //
+  // `query` is what the register was ASKED (the filters, the sort, the page), it is what
+  // `assetQuery.js` computes an answer from, and that module is a hand-kept mirror of
+  // src/domain/assetTable.ts held to it by a test. Hiding the Region column changes no row,
+  // no count and no facet; folding it in there would put a reading preference inside the
+  // question and oblige the domain to carry it. It rides beside `view` instead, which is the
+  // other thing on this page that changes how the answer is drawn rather than what it is.
+  //
+  // It is a URL param and not storage because everything else on this page is: a filtered,
+  // sorted, narrowed table is shareable here, and a saved view carries `cols` with the rest
+  // (VIEW_PARAMS above). What the param holds is the DEVIATIONS from the defaults below,
+  // signed — gas_shared/ui/tableModel.js writes out why, but the short version is that a link
+  // holding the columns to keep would hide any column added after it was saved, silently.
+  let colChoice = parseColumnChoice(params.cols);
 
   function paramsToQuery(p) {
     return resolveAssetQuery({
@@ -244,6 +294,7 @@ export async function renderInventory(main, params) {
       sort: query.sort === "issues" ? "" : query.sort,
       dir: query.dir === DEFAULT_SORT_DIR[query.sort] ? "" : query.dir,
       view: view === "table" ? "" : view,
+      cols: encodeColumnChoice(colChoice),
       panel: panelName,
       page: query.page ? query.page + 1 : "",
       size: query.pageSize === DEFAULT_PAGE_SIZE ? "" : query.pageSize,
@@ -715,7 +766,7 @@ export async function renderInventory(main, params) {
           title: "Save this view",
           body: el("div", {},
             el("p", { class: "muted small" },
-              "Saves the current filters, sort and layout in this browser. " +
+              "Saves the current filters, sort, columns and layout in this browser. " +
               "To share the view, copy the page link instead."),
             input),
           confirmLabel: "Save",
@@ -867,11 +918,18 @@ export async function renderInventory(main, params) {
   }
 
   function setSort(key) {
-    if (query.sort === key) query.dir = query.dir === "asc" ? "desc" : "asc";
-    else {
-      query.sort = key;
-      query.dir = DEFAULT_SORT_DIR[key];
-    }
+    // The shared rule (gas_shared/ui/tableModel.js): the active column reverses, any other
+    // moves the sort and starts from that column's own first direction. WHICH direction that
+    // is stays here — `DEFAULT_SORT_DIR` says the worst issues first but names A-Z first —
+    // and the "asc"/"desc" spelling stays here too, because that is what this page's URL
+    // carries.
+    const next = nextSort(
+      query.sort ? { key: query.sort, descending: query.dir === "desc" } : null,
+      key,
+      DEFAULT_SORT_DIR[key] === "desc",
+    );
+    query.sort = next.key;
+    query.dir = next.descending ? "desc" : "asc";
     query.page = 0;
     persistParams();
     if (allMode) {
@@ -1067,6 +1125,14 @@ export async function renderInventory(main, params) {
             el("span", { class: "num" }, String(row.openFindings)),
             issueBars(row.findingsBySeverity, "cloud finding"))
         : el("span", { class: "muted small" }, "0")),
+      // `absent()`, not 0, for an asset the reach walk never covered — an identity, which
+      // Wiz does not score. A confident zero there would say "this agent's service account
+      // reaches nothing classified", which is the opposite of what is known: nothing looked.
+      // A scored asset that reaches nothing does read 0, because that IS the answer.
+      dataFindings: (row) => (row.kind === "SERVICE_ACCOUNT" || row.kind === "USER_ACCOUNT"
+        ? absent()
+        : el("span", { class: row.dataFindings ? "num" : "muted small" },
+            String(num(row.dataFindings)))),
       combos: (row) => (row.combos ? el("span", { class: "pill bad" }, `TC ×${row.combos}`) : absent()),
       guardrail: (row) => (row.guardrailMissing ? el("span", { class: "pill warn" }, "missing") : absent()),
       domain: (row) => (row.domain ? domainLink(row) : absent()),
@@ -1080,11 +1146,31 @@ export async function renderInventory(main, params) {
         key: col.sort || col.key,
         label: col.label,
         sortable: !!col.sort,
+        // Both carried, not re-derived. Dropping `pinned` would leave the chooser offering
+        // to hide the Name column while the table's own rules still refused — a checkbox
+        // that ticks itself back on, which is the one way this control can look broken.
+        // Dropping `defaultHidden` would ship every column on and quietly undo the editorial
+        // judgment COLUMNS above makes about what this register is for.
+        pinned: !!col.pinned,
+        defaultHidden: !!col.defaultHidden,
         className: col.key === "name" ? "inv-name-col" : null,
         help: col.help,
         cell: CELLS[col.key],
       })),
       rows,
+      // The reader's own column choice, and the cog in the heading row that edits it. The
+      // component owns both ends: it filters the header and every row together, and it
+      // repaints ITSELF when the cog is used — so this callback only has to remember the
+      // answer. Re-rendering the page from here would tear the cog out from under its own
+      // open popover, which is why it does not.
+      //
+      // The cards view below takes neither: a card is not a row of columns, and dropping a
+      // fact from one would leave a gap rather than a narrower reading.
+      columnChoice: colChoice,
+      onColumnChoice: (next) => {
+        colChoice = next;
+        persistParams();
+      },
       // `dir` is this page's own convention ("asc"/"desc", seeded from the URL); the shared
       // table only needs to know which way the active column currently reads.
       sort: query.sort ? { key: query.sort, descending: query.dir === "desc" } : null,
@@ -1160,8 +1246,29 @@ export async function renderInventory(main, params) {
       role: "img",
     });
 
+    // A GAP IS NOT A ZERO, and the two sentences that say which series have gaps and which
+    // are not charted at all are the HEADING's tip lines now rather than two chart-note
+    // paragraphs under the canvas. They are explanations of the picture; the "N syncs" line
+    // beneath the heading is the only surface note this card keeps.
+    const countNotes = [
+      trend.length >= 2 && partial.length
+        ? (partial.length === 1
+          ? `${partial[0].label} has`
+          : `${partial.map((s) => s.label).join(" and ")} have`) +
+          " no figure for every sync in this window — earlier syncs predate the column, " +
+          "and a sync that collected no framework posture records none. Those points " +
+          "are gaps, not zeros."
+        : null,
+      trend.length >= 2 && present.length < SERIES.length
+        ? SERIES.filter((s) => present.indexOf(s) < 0).map((s) => s.label).join(" and ") +
+          (present.length === SERIES.length - 1 ? " is" : " are") +
+          " not charted: no sync in this window recorded a figure."
+        : null,
+    ].filter(Boolean);
     const card = el("div", { class: "chart-card" },
-      el("h3", {}, "Counts over time"),
+      el("h3", {}, countNotes.length
+        ? tipLabel("Counts over time", { lines: countNotes })
+        : "Counts over time"),
       el("p", { class: "chart-note" },
         trend.length >= 2 ? `${trend.length} syncs` : "One point per sync"),
       // This series FOLLOWS the project view: sync_history carries a per-project blob
@@ -1180,25 +1287,6 @@ export async function renderInventory(main, params) {
                 ? "No sync has recorded totals for this project yet — the series starts at " +
                   "the next one."
                 : "No history yet. Each sync adds a point; earlier syncs can't be recovered."),
-      // A GAP IS NOT A ZERO, and this is where that distinction becomes visible. Two of the
-      // three counts were added to sync_history after the issue count, and history cannot
-      // be backfilled, so their lines simply begin later. Saying which ones stops a reader
-      // reading "the line starts here" as "this was zero until then".
-      trend.length >= 2 && partial.length
-        ? el("p", { class: "chart-note" },
-            (partial.length === 1
-              ? `${partial[0].label} has`
-              : `${partial.map((s) => s.label).join(" and ")} have`) +
-            " no figure for every sync in this window — earlier syncs predate the column, " +
-            "and a sync that collected no framework posture records none. Those points " +
-            "are gaps, not zeros.")
-        : null,
-      trend.length >= 2 && present.length < SERIES.length
-        ? el("p", { class: "chart-note" },
-            SERIES.filter((s) => present.indexOf(s) < 0).map((s) => s.label).join(" and ") +
-            (present.length === SERIES.length - 1 ? " is" : " are") +
-            " not charted: no sync in this window recorded a figure.")
-        : null,
       // THE SAME `trend`/`present` THE CHART WRAPPER READS BELOW, named once above and
       // handed to both — `gas_shared/ui/chartTable.js`'s one rule. Only where the chart
       // itself draws: below two points there is no line, and a table over a dangling,
@@ -1314,10 +1402,12 @@ export async function renderInventory(main, params) {
       capacityCard(readout),
     );
     return el("div", { class: "inv-history" },
-      sectionLabel("Posture over time"),
-      el("p", { class: "chart-note" },
-        "The whole register. These four are recorded per sync and have no project grain, so "
-        + "they do not follow the project view."),
+      sectionLabel("Posture over time", {
+        lines: [
+          "The whole register: these four are recorded per sync and have no project grain, so"
+          + " they do not follow the project view.",
+        ],
+      }),
       cards);
   }
 
@@ -1348,8 +1438,17 @@ export async function renderInventory(main, params) {
     const present = presentSeries(points, series);
     const gappy = gappySeries(points, present);
     const canvas = el("canvas", { "aria-label": label, role: "img" });
+    // The gap sentence and the card's own foot are EXPLANATIONS of the line, so they ride on
+    // the heading rather than sitting under the canvas as two more paragraphs per card.
+    const cardNotes = [
+      points.length >= 2 && gappy.length
+        ? `${labelList(gappy)} ${gappy.length === 1 ? "has" : "have"} no `
+          + "figure for every sync in this window. Those points are gaps, not zeros."
+        : null,
+      foot || null,
+    ].filter(Boolean);
     const card = el("div", { class: "chart-card" },
-      el("h3", {}, title),
+      el("h3", {}, cardNotes.length ? tipLabel(title, { lines: cardNotes }) : title),
       el("p", { class: "chart-note" },
         points.length >= 2 ? `${points.length} syncs` : "One point per sync"),
       points.length >= 2 && present.length
@@ -1360,13 +1459,6 @@ export async function renderInventory(main, params) {
               : points.length
                 ? "No sync in this window recorded a figure for any of these."
                 : "No sync has recorded this yet."),
-      // A GAP IS NOT A ZERO, said in words wherever a line breaks or begins in mid-air.
-      points.length >= 2 && gappy.length
-        ? el("p", { class: "chart-note" },
-            `${labelList(gappy)} ${gappy.length === 1 ? "has" : "have"} no `
-            + "figure for every sync in this window. Those points are gaps, not zeros.")
-        : null,
-      foot ? el("p", { class: "chart-note" }, foot) : null,
       // THE SAME `points`/`present` THE CHART WRAPPER READS BELOW, named once above and
       // handed to both — only where the chart actually draws (see trendSection's own note
       // on why a dangling canvas gets no disclosure).
@@ -1405,11 +1497,17 @@ export async function renderInventory(main, params) {
     const dotClass = readout.verdict ? `cap-dot cap-dot--${readout.verdict}` : "cap-dot";
     const recent = readout.rows.slice(-6).reverse();
     return el("div", { class: "chart-card" },
-      el("h3", {}, "Remediation capacity"),
+      el("h3", {}, tipLabel("Remediation capacity", {
+        lines: [
+          readout.detail,
+          "Opened counts new and reopened issues; closed counts disappearance-dated ones.",
+          "A sync that changed the register's scope, or resolved nothing by absence, is"
+          + " plotted but not compared.",
+        ].filter(Boolean),
+      })),
       el("p", { class: "cap-verdict" },
         el("span", { class: dotClass, "aria-hidden": "true" }),
         el("span", { class: "cap-verdict-word" }, readout.word)),
-      el("p", { class: "chart-note" }, readout.detail),
       recent.length
         ? el("table", { class: "cap-table" },
             el("thead", {},
@@ -1426,10 +1524,6 @@ export async function renderInventory(main, params) {
               el("td", { class: "num" }, r.net > 0 ? `+${r.net}` : String(r.net)),
               el("td", {}, r.verdict)))))
         : null,
-      el("p", { class: "chart-note" },
-        "Opened counts new and reopened issues; closed counts the ledger's own "
-        + "disappearance-dated resolutions. A sync that changed the register's scope, or "
-        + "resolved nothing by absence, is plotted but not compared."),
     );
   }
 }

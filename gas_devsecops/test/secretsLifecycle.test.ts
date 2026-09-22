@@ -1,6 +1,6 @@
 // D7 — secretsLifecycle. HAND-WRITTEN, with the arithmetic for every expectation written out
 // beside it, because there is no fixture and no second oracle to check against: gas/ has no
-// secrets register and brick/devsecops/ never modelled one. Every number below was computed
+// secrets register and brick/ never modelled one. Every number below was computed
 // by hand from the dates in the row builder, and a test whose expected value cannot be
 // derived in the comment above it does not belong in this file.
 

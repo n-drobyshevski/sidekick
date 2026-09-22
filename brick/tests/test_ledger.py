@@ -27,6 +27,8 @@ pytest.importorskip(
 from pyspark.sql import functions as F  # noqa: E402
 
 BRICK_DIR = Path(__file__).resolve().parents[1]
+#: brick/ is one hop below the repo root. Only the GAS golden fixture is read from there --
+#: everything else is beside these tests.
 REPO_ROOT = BRICK_DIR.parent
 sys.path.insert(0, str(BRICK_DIR))
 
@@ -69,7 +71,7 @@ def node(**over) -> dict:
     return base
 
 
-def observed(spark, nodes, scan_id=SCAN_1, scan_ts=TS_1, scope="os"):
+def observed(spark, nodes, scan_id=SCAN_1, scan_ts=TS_1, scope="sca"):
     """Nodes -> bronze -> silver -> keyed observations, exercising the real parse path."""
     rows = [(scan_id, scan_ts, scope, json.dumps(n)) for n in nodes]
     bronze = spark.createDataFrame(
@@ -90,7 +92,7 @@ def apply(spark, prior, nodes, *, scan_id, scan_ts, prev_scan_id=None, prev_scan
         observed(spark, nodes, scan_id=scan_id, scan_ts=scan_ts),
         scan_id=scan_id,
         scan_ts=scan_ts,
-        scope="os",
+        scope="sca",
         prev_scan_id=prev_scan_id,
         prev_scan_ts=prev_scan_ts,
         scanned_severities=scanned_severities,
@@ -174,7 +176,7 @@ def test_vuln_key_matches_the_reference_implementation(spark):
         reason="cross-check needs the repo root importable",
     )
     payload = json.loads(
-        (REPO_ROOT / "os_vulns_response_exemple.json").read_text(encoding="utf-8")
+        (BRICK_DIR / "fixtures" / "sca_findings_example.json").read_text(encoding="utf-8")
     )
     from ingest import extract_nodes
 
@@ -300,13 +302,14 @@ def _prior_from_fixture(spark, rows):
     df = spark.createDataFrame(payload, schema)
     for ts in ("first_seen", "last_seen", "resolved_at"):
         df = df.withColumn(ts, F.col(ts).cast("timestamp"))
-    # Columns the fixture does not carry, at their empty values.
-    for name, typ in (
-        ("scope", "string"), ("component", "string"), ("fix_date", "timestamp"),
-        ("fix_observed_at", "timestamp"), ("has_kev", "boolean"),
-        ("has_exploit", "boolean"), ("epss", "double"), ("risk_observed_at", "timestamp"),
-    ):
-        df = df.withColumn(name, F.lit(None).cast(typ))
+    # Columns the fixture does not carry, at their empty values. Derived from the schema rather
+    # than listed: GAS's fixture covers the lifecycle fields and brick's ledger has always held
+    # a few more (scope, component, the fix clock, the risk signals, and now the
+    # static-analysis inputs). A hand-written list here means every column added to the ledger
+    # breaks the golden-fixture replay with an UNRESOLVED_COLUMN a hundred lines long.
+    for field in ledger.LEDGER_SCHEMA.fields:
+        if field.name not in df.columns:
+            df = df.withColumn(field.name, F.lit(None).cast(field.dataType))
     return df.select(*[f.name for f in ledger.LEDGER_SCHEMA.fields])
 
 
@@ -331,7 +334,7 @@ def test_matches_the_gas_reconcile_fixture(spark, index):
         _observed_from_records(spark, inp["records"]),
         scan_id=inp["scan_id"],
         scan_ts=inp["scan_ts"],
-        scope="os",
+        scope="sca",
         prev_scan_id=inp.get("prev_scan_id"),
         prev_scan_ts=options.get("prev_scan_ts"),
         prev_scan_id_by_severity=options.get("prev_scan_id_by_severity"),
@@ -615,8 +618,8 @@ def test_untouched_rows_are_not_republished(spark):
 # ----------------------------------------------------------------- the scope refusal
 #
 # Absence is remediation in this reconciler, so a prior ledger from another population is not a
-# mislabelled input: it is a register that resolves itself. Every `all` row is missing from an
-# `os` scan by construction, and the reconciler cannot tell that from a week of good work.
+# mislabelled input: it is a register that resolves itself. Every `sast` row is missing from a
+# `sca` scan by construction, and the reconciler cannot tell that from a week of good work.
 #
 # Each scope writes its own tables (`default_table_prefix`), so today the separation is
 # structural and nothing here can fire in production. That is the reason to have it: a
@@ -625,8 +628,8 @@ def test_untouched_rows_are_not_republished(spark):
 # reconcile for exactly this; the lesson it wrote down is that reconcile must not trust its
 # caller for this, because the violation is silent and arrives dressed as remediation.
 
-FOREIGN_SCOPE = "all"  # brick's other register: same schema, different population
-NATIVE_SCOPE = "os"
+FOREIGN_SCOPE = "sast"  # this tree's other register: same ledger schema, different population
+NATIVE_SCOPE = "sca"
 #: How many OPEN rows the foreign prior holds -- the price of the missing guard, in rows.
 FOREIGN_PRIOR_ROWS = 6
 
@@ -636,6 +639,8 @@ def foreign_prior(spark, *, scope=FOREIGN_SCOPE, count=FOREIGN_PRIOR_ROWS):
 
     Built through the real parse and reconcile path, so the rows are a genuine ledger of that
     scope rather than hand-written ones that might not satisfy the disappearance conditions.
+    The payloads are SCA-shaped and merely STAMPED ``sast``: what reconcile reads is the stamp,
+    and a genuinely SAST-shaped ledger is exercised in ``test_code_scopes.py``.
     """
     touched = ledger.reconcile(
         ledger.empty_ledger(spark),
@@ -735,7 +740,7 @@ def test_without_the_scope_guard_a_foreign_prior_resolves_the_register_by_absenc
         (F.col("status") == STATUS_RESOLVED) & (F.col("resolution_src") == "disappeared")
     )
     assert resolved.count() == FOREIGN_PRIOR_ROWS, (
-        f"without the guard, an {FOREIGN_SCOPE!r} prior of {FOREIGN_PRIOR_ROWS} open rows "
+        f"without the guard, a {FOREIGN_SCOPE!r} prior of {FOREIGN_PRIOR_ROWS} open rows "
         f"meeting one {NATIVE_SCOPE!r} scan resolves ALL {FOREIGN_PRIOR_ROWS} as remediated, "
         "with real resolution dates -- the failure is not an error, it is a remediation "
         "programme that never happened"
@@ -986,9 +991,9 @@ def test_fix_observed_at_is_the_conservative_fallback(spark):
 def test_a_has_fix_scope_dates_a_blank_fix_clock_from_first_seen(first_scan):
     """THE FINDING that separates this port from the implementation it is ported from.
 
-    ``config._BASE`` pins ``hasFix: true`` and both of this register's scopes spread it, so
-    every row in this register had a vendor fix AT THE MOMENT IT WAS INGESTED -- that is what
-    the filter asked for. ``gas``'s ``baseRows`` reads a row like this
+    ``config._BASE`` pins ``hasFix: true`` and the ``sca`` scope spreads it (``sast`` does not
+    use ``_BASE`` at all), so every row in this register had a vendor fix AT THE MOMENT IT WAS
+    INGESTED -- that is what the filter asked for. ``gas``'s ``baseRows`` reads a row like this
     one, whose fix clock is empty because Wiz returned no fix detail, as "no fix available"
     and marks it awaiting a vendor: inside a population DEFINED by having one. The same
     category error CLAUDE.md records for SAST, arriving by a different route.
@@ -1011,7 +1016,7 @@ def test_a_has_fix_scope_dates_a_blank_fix_clock_from_first_seen(first_scan):
     # `hasFix` from `SCOPES` takes the claim with it.
     from config import scope_has_vendor_fix, scope_pins_has_fix
 
-    assert scope_pins_has_fix("os") and scope_has_vendor_fix("os")
+    assert scope_pins_has_fix("sca") and scope_has_vendor_fix("sca")
 
 
 def test_dropping_the_has_fix_fallback_puts_the_whole_register_on_a_vendor_watchlist(

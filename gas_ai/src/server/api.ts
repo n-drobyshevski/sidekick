@@ -135,10 +135,12 @@ import {
 } from "../domain/complianceOverview";
 import { dropUnselected, scopeFiveRs, withCountsFrom } from "../domain/complianceScope";
 import { fiveRsDerivedPosture } from "../domain/fiveRsPosture";
+import { landscapeDerivedPosture } from "../domain/landscapePosture";
 import { CANDIDATE_CATEGORIES, registerScopeSignature } from "../domain/registerScope";
 import * as settingsImpact from "../domain/settingsImpact";
 import { cleanFiveRsPins } from "../domain/settingsLogic";
 import { buildAllFrameworkTrees, complianceKpis } from "../domain/compliancePosture";
+import { compliancePostureTrendFromHistory } from "../domain/complianceTrend";
 import { graphCacheParams, resolveGraphParams, resolveLayoutParams } from "../domain/graphApiParams";
 import { conditionHolds, conditionState } from "../domain/riskConditions";
 import {
@@ -186,7 +188,7 @@ import { inProject } from "../domain/prunePlan";
 import { archiveBytes } from "./archiveStore";
 import { activeJob } from "./jobsStore";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
-import { buildInfo } from "./buildInfo";
+import { buildInfo } from "../../../gas_shared/server/buildInfo";
 import * as access from "./access";
 import { domainTagKey, hasWizCredentials, projectScope, PROP_KEYS, setProp } from "./props";
 import { readHubUrl, writeHubUrl } from "./hubUrl";
@@ -2144,9 +2146,10 @@ function cachedComplianceModel(): Rec {
       // never from Wiz), so passing the unmerged array would silently report every
       // framework as uncollected.
       const merged = catalogue.map((f) => ({ ...f, selected: selected.indexOf(f.id) >= 0 }));
+      const kpis = complianceKpis(posture, policies);
       return {
         trees,
-        kpis: complianceKpis(posture, policies),
+        kpis,
         selected,
         // The Overview's four bands. Computed here rather than in the browser because the
         // client bundle cannot import the domain layer at all — every client-side copy of
@@ -2174,7 +2177,38 @@ function cachedComplianceModel(): Rec {
         // payload is already shipped whole and cached, so there is no second scope for a
         // mirror to reconcile against — computing it here instead buys nothing but risk.
         fiveRsPosture,
+        // THE ASSURANCE HERO'S OWN PERCENTAGE — derived over the controls that apply to
+        // this landscape, rather than the mean of Wiz's per-framework scores `kpis`
+        // carries. landscapePosture.ts says at length why those are two different claims
+        // and why both ship: the mean is what has a history (the trend line beside the hero
+        // draws it) and what the Wiz Scans page reports, so it is carried INSIDE this object
+        // rather than replaced anywhere.
+        //
+        // Built from `trees`, which are the 5Rs-scoped ones this payload renders — the same
+        // population as the register below the hero, which is the entire point. Under a
+        // project view they are the project's trees, so this figure narrows with the rest of
+        // the page rather than being the one number left describing the register.
+        landscapePosture: landscapeDerivedPosture(trees, kpis),
         coverage: coverageSummary(trees, merged),
+        // POSTURE OVER TIME — one point per sync, every framework plus the cross-framework
+        // mean, read off `sync_history`'s own column (domain/complianceTrend.ts). It replaces
+        // the state strip that used to sit beside the hero: that strip drew the LATEST sync's
+        // subcategory states as a four-segment bar, which answers "what did Wiz score" and
+        // never "is this getting better", the question a compliance register is actually
+        // opened with.
+        //
+        // Shipped whole, with every framework's series in the same array, because the page
+        // switches framework client-side off one fetch (the `?framework=` control rebuilds
+        // from `data`, it does not re-call). One array of at most 90 points holding a handful
+        // of frameworks is smaller than the trees beside it.
+        //
+        // REGISTER-WIDE EVEN UNDER A PROJECT VIEW, and the card says so rather than quietly
+        // drawing the landscape's history under a project filter. `scopedPosture` re-asks Wiz
+        // for the project in view, which is how every OTHER figure on this page narrows — but
+        // the past cannot be re-asked, and a history row carries no asset id to re-slice by.
+        // `postureScope` beside it already carries the project and domain in force, so the
+        // card reads its disclaimer off the field the rest of the page already trusts.
+        complianceTrend: compliancePostureTrendFromHistory(syncStore.syncHistory()),
         // WHICH POPULATION every figure above describes, and — when a project view is set
         // but the numbers are still the register's — why. The page prints this beside the
         // hero rather than as a footnote, the discipline `registerWideNote` already keeps:

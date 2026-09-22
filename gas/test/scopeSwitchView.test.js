@@ -1,7 +1,7 @@
 // What the header's scope switcher CLAIMS: its label, its caption, and whether the scope in
 // force still exists.
 //
-// Plain .js for the reason navGroups.test.js writes out. scopeKinds.js is split so this file
+// Plain .js for the reason attributionPrefill.test.js writes out. scopeKinds.js is split so this file
 // can exist — `scopeSwitchView` is DOM-free, and every honesty rule the control carries is a
 // return value here rather than a pixel.
 //

@@ -484,8 +484,8 @@ export async function renderConfigFindings(main, params, ctx) {
           // Not a warning — a fact about where the control applies. It is the reason the
           // register's gap total and the inventory's per-asset counts differ.
           help: { lines: [
-            "How many of this control's failing evaluations are against a resource the AI " +
-            "inventory does not track — a region, an access policy, no asset to open.",
+            "How many failing evaluations are against a resource the inventory does not track.",
+            "A region, an access policy — no asset to open.",
           ] },
           cell: (g) => (g.unlinked
             ? tipAnchor(
@@ -504,18 +504,28 @@ export async function renderConfigFindings(main, params, ctx) {
             ? el("span", {}, g.domains.join(", "))
             : absent()),
         },
+        // THE TWO SECONDARY COLUMNS, off until asked for. This view's argument is that N
+        // near-identical rows are one piece of work, and the four columns above are what
+        // that argument is made of — which control, how many failing, out of how many, and
+        // how many of those are off the inventory. When the work started and where it was
+        // declared are facts about a control, not reasons to pick it up next, and IaC is
+        // absent on most rows here.
         {
-          key: "since", label: "Oldest", sortable: false, help: { term: "first-seen" },
+          key: "since", label: "Oldest", sortable: false, defaultHidden: true,
+          help: { term: "first-seen" },
           cell: (g) => (g.firstSeenAt
             ? el("span", { class: "small" }, fmtDate(g.firstSeenAt))
             : absent()),
         },
         {
-          key: "iac", label: "IaC", sortable: false,
+          key: "iac", label: "IaC", sortable: false, defaultHidden: true,
           help: { lines: ["Whether Wiz traced this finding back to an Infrastructure-as-Code source."] },
           cell: (g) => (g.iac ? statusPill("neutral", String(g.iac)) : absent()),
         },
       ],
+      // Per browser: this page's URL carries the filters, the mode and the page, and a
+      // column layout is not part of the question it asks.
+      columnStore: "sidekickai.config.controls.cols",
       rows: groups,
       rowLabel: (g) => (g.ruleName || g.ruleShortId) + ", " + g.severity + ", "
         + plural(g.resources, "resource"),
@@ -613,9 +623,8 @@ export async function renderConfigFindings(main, params, ctx) {
         {
           key: "linked", label: "AI asset", sortable: false,
           help: { lines: [
-            "Whether this finding's resource matches an asset in the AI inventory — most " +
-            "findings do not, because they are evaluated against a region or a policy no " +
-            "asset models.",
+            "Whether this finding's resource matches an asset in the AI inventory.",
+            "Most do not: they are evaluated against a region or a policy no asset models.",
           ] },
           cell: (r) => (r.linked
             ? statusPill("neutral", "On inventory")
@@ -629,13 +638,45 @@ export async function renderConfigFindings(main, params, ctx) {
             : statusPill("neutral", r.status || absentText)),
         },
         {
-          key: "firstSeen", label: "First seen", sortable: true, help: { term: "first-seen" },
+          // Off by default, and safe to leave off BECAUSE the component will not hide the
+          // column a table is ordered by: the register's own default sort is severity, and a
+          // `?sort=firstSeen` link brings this column back with the order it names rather
+          // than landing on rows arranged by something with no heading on screen.
+          key: "firstSeen", label: "First seen", sortable: true, defaultHidden: true,
+          help: { term: "first-seen" },
           cell: (r) => (r.firstSeenAt
             ? el("span", { class: "small" }, fmtDate(r.firstSeenAt))
             : absent()),
         },
+        // THREE FACTS THE ROW ALREADY CARRIED AND THIS TABLE NEVER DREW. `cloud`,
+        // `subscriptionName` and `projects` are on the finding projection
+        // (src/domain/configFindings.ts) and two of the three are already FACETS in this
+        // page's own filter drawer — so a reader could narrow the register to one cloud and
+        // then have no column telling them which cloud any row was in. Off by default for
+        // the same reason the inventory's are: they say where a finding lives, not what is
+        // wrong with it.
+        {
+          key: "cloud", label: "Cloud", sortable: false, defaultHidden: true,
+          help: { lines: ["Which cloud provider the evaluated resource belongs to."] },
+          cell: (r) => r.cloud || absent(),
+        },
+        {
+          key: "subscription", label: "Subscription", sortable: false, defaultHidden: true,
+          help: { lines: [
+            "The cloud account or subscription the evaluated resource lives in.",
+          ] },
+          cell: (r) => r.subscriptionName || absent(),
+        },
+        {
+          key: "projects", label: "Projects", sortable: false, defaultHidden: true,
+          help: { lines: ["Which Wiz projects the evaluated resource belongs to."] },
+          cell: (r) => ((r.projects || []).length ? r.projects.join(", ") : absent()),
+        },
       ],
       rows: slice,
+      // Per browser, as the controls table above. A shared link to this register carries the
+      // filters and the sort; which columns the reader keeps open is theirs, not the link's.
+      columnStore: "sidekickai.config.findings.cols",
       sort: { key: view.sort, descending: view.descending },
       onSort: (key) => {
         if (view.sort === key) view.descending = !view.descending;

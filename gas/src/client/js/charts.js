@@ -1123,6 +1123,28 @@ const CATEGORICAL = ["#2563eb", "#0d9488", "#90396a", "#7fba04", "#f66bb9"];
 // Neutral gray for the folded-in "Other" bucket — reads as "everything else", not a hue,
 // and never collides with a real group's color.
 const OTHER_COLOR = "#94a3b8";
+
+/**
+ * The share of its own ink a mark keeps when a selection elsewhere on the page does not reach
+ * it. 0.22 is not a taste: it is the value `.bandbar__seg[data-on="false"]` already uses in
+ * gas_shared/styles/components.css, so one press dims the band bars and a canvas by the same
+ * amount and the page speaks one language about "not what you asked for".
+ */
+const DIM_ALPHA = 0.22;
+
+/**
+ * A 6-digit hex fill, optionally faded to `DIM_ALPHA`.
+ *
+ * CANVAS CANNOT READ A CSS VARIABLE and it cannot inherit an opacity from a parent rule, so a
+ * dimmed mark has to be a colour rather than a state. Taking the LIT colour as the source
+ * keeps the one place each hue is written: nothing here introduces a literal, and a change to
+ * `CATEGORICAL[0]` moves both halves together.
+ */
+function fade(hex, dim) {
+  if (!dim) return hex;
+  const at = (i) => parseInt(hex.slice(1 + i * 2, 3 + i * 2), 16);
+  return "rgba(" + at(0) + "," + at(1) + "," + at(2) + "," + DIM_ALPHA + ")";
+}
 // One distinct marker per group series so each vertex carries a shape cue, not color alone
 // (mirrors SEV_POINT_STYLE). More styles than hues so the pooled "Other" series (a 6th line
 // past the 5 groups) still gets its own marker rather than reusing slot 1's.
@@ -1811,5 +1833,200 @@ export function coverageEfficiencyScatter(canvas, points) {
     },
     options: opts,
     plugins: [labels],
+  });
+}
+
+/**
+ * The cold zone as a scatter: idle days on x, open findings on y, a dashed rule at the
+ * threshold. Up-and-to-the-RIGHT is the worst quadrant here — a big backlog nobody has touched
+ * — which is the opposite of `coverageEfficiencyScatter` above and the reason the threshold
+ * rule is drawn at all: without it the reader has to know where 90 days is.
+ *
+ * Implemented as `type: "line"` with `showLine: false` **on purpose**, exactly as the coverage
+ * scatter is. chartsBundle.js registers only the controllers this file uses, and
+ * ScatterController is not among them; a genuine `type: "scatter"` would fail at runtime in the
+ * bundle. LineController + PointElement + LinearScale are all registered, and a line dataset
+ * with no line drawn is exactly a scatter. Do not "fix" this into type: "scatter" without also
+ * registering the controller.
+ *
+ * TWO CLASSES, AND THE SHAPE CARRIES THE SPLIT BEFORE THE COLOUR DOES. Cold assets are
+ * `rectRot` filled in this register's accent (`CATEGORICAL[0]` = `#2563eb`, which here IS the
+ * ink as well as the fill — DESIGN.md §1's Ink-Equals-Fill case, measured at 5.17:1 on white);
+ * every other asset is a hollow `circle` outlined in the neutral `OTHER_COLOR`. A filled
+ * diamond against a hollow circle survives greyscale, every CVD simulation and forced colors on
+ * its own, which is what DESIGN.md's non-colour-signal rule asks for. The neutral is
+ * deliberately below the chroma floor: it is "everything else", not a second category hue, and
+ * the `chartTable` twin every caller ships beside this canvas carries the readings in words.
+ *
+ * WHERE THE RULE CAME FROM IS PART OF THE RULE. One dashed line at 47 days is two different
+ * claims: an operator's standing window, or the idle time of the k-th idlest asset on this
+ * estate at this scan (`src/domain/coldZone.ts` — `cold_after_days` is the EFFECTIVE line in
+ * both modes, so the canvas receives one number either way). A derived line MOVES when the
+ * population moves, and a reader comparing two screenshots a week apart has to be able to see
+ * that from the picture. Hence "(relative)" on the label and the mode in the description — no
+ * second colour, no second line, no legend: one more word on a rule that was already labelled.
+ *
+ * ONE WORD MOVES WITH THE GRAIN, AND IT IS IN THE ALT TEXT ONLY. The page can plot the same two
+ * quantities per asset or per support group (`unit`), and a description that named assets over
+ * a canvas of support groups would be the one reader who cannot see the picture being told the
+ * wrong thing. Everything else is grain-blind on purpose: the axes are already "idle days" and
+ * "open findings", the dot rules read `cold`, and the caller's `chartTable` twin is where the
+ * row header is named. `unit` absent means assets — the older contract, unchanged.
+ *
+ * THE CROSS-FILTER HIGHLIGHTS, IT DOES NOT FILTER, and that is a decision about what this
+ * chart is FOR. A point may carry `on: false`, meaning the page's support-group/idle-band
+ * selection does not reach it; it is still in the dataset, so Chart.js still computes the
+ * scales over the whole estate and the dashed rule stays where it was. A reader pressing a
+ * support group is asking "where does this group sit against everyone else" — a chart that
+ * dropped the everyone-else and rescaled around the answer would have thrown away the
+ * comparison the press was making. `on` absent means lit, so every existing caller is
+ * unchanged.
+ *
+ * THE HIGHLIGHT'S LOAD-BEARING CHANNEL IS RADIUS, NOT OPACITY. The fade is 0.22, the same
+ * value `.bandbar__seg[data-on="false"]` uses in gas_shared/styles/components.css, so a press
+ * dims the same amount in the band bars and here. But that CSS rule is CANCELLED under
+ * `forced-colors: active` — an alpha is a hue claim, and the bars fall back to full opacity
+ * there — and a canvas gets no such rescue, because forced colors do not repaint canvas
+ * pixels at all. So the dim also SHRINKS the dot, from 5-7px to 3px, and that is the half of
+ * the cue that survives greyscale, every CVD simulation and any colour transform. The fade is
+ * what makes it comfortable; the radius is what makes it true.
+ *
+ * `pointStyle` NEVER MOVES WITH THE HIGHLIGHT. Cold-versus-not rides on the shape first (see
+ * two paragraphs up), so a dimmed cold asset is a small faint DIAMOND and a dimmed warm one a
+ * small faint CIRCLE. Spending the shape channel on the selection as well would collapse the
+ * two claims into one and leave the register's own verdict unreadable in exactly the mode the
+ * shape exists for.
+ *
+ * @param {*} canvas
+ * @param {Array<{label: string, idleDays: number, open: number, cold: boolean,
+ *                bounded: boolean, on?: boolean}>} points  one per observed asset with open
+ *                                            findings, or one per support group when `unit`
+ *                                            is `"group"`. `on: false` draws the point dimmed.
+ * @param {{thresholdDays: number, mode: string, unit: string,
+ *          selectionNote: string|null}} opts
+ */
+export function coldZoneScatter(
+  canvas, points, { thresholdDays, mode, unit, selectionNote } = {},
+) {
+  destroyExisting(canvas);
+  const plotted = (points || []).filter(
+    (p) => typeof p.idleDays === "number" && Number.isFinite(p.idleDays)
+      && typeof p.open === "number" && Number.isFinite(p.open),
+  );
+  const threshold =
+    typeof thresholdDays === "number" && Number.isFinite(thresholdDays) ? thresholdDays : null;
+  // Absent means the fixed window — the older contract — and only the exact word is relative.
+  const relative = mode === "relative";
+  const modeText = relative ? "relative mode" : "the fixed window";
+  const subject = unit === "group"
+    ? "each support group that still has an open finding"
+    : "each asset the newest scan still returns";
+  // A DIMMED POINT IS STILL A POINT, and the reader who cannot see the canvas is the one who
+  // most needs telling which of them the press reached. The note opens the sentence (it is
+  // the news), and each lit point is named as such inline — `dimming` is false when nothing
+  // is dimmed, so an unfiltered chart's description is byte-for-byte what it always was.
+  const dimming = plotted.some((p) => p.on === false);
+  const note = typeof selectionNote === "string" && selectionNote ? selectionNote : null;
+  describe(
+    canvas,
+    (note ? note + " " : "")
+      + "Idle days against open findings for " + subject + ": "
+      + plotted
+        .map(
+          (p) =>
+            // "at least" in prose, "≥" in a cell — the register's notation rule. An alt text
+            // is prose, so a bound reads the long way here and the short way in the table.
+            p.label + ", idle " + (p.bounded ? "at least " : "") + Math.round(p.idleDays)
+            + " days, " + localeNum(p.open) + " open" + (p.cold ? " (in the cold zone)" : "")
+            + (dimming && p.on !== false ? " (in this selection)" : ""),
+        )
+        .join("; ")
+      + "."
+      + (threshold === null
+        ? " The cold-zone line comes from " + modeText + "."
+        : " The cold-zone threshold is " + Math.round(threshold) + " days, from "
+          + modeText + "."),
+  );
+  const opts = baseOptions("");
+  opts.scales.x.type = "linear";
+  opts.scales.x.beginAtZero = true;
+  // THE AXIS ALWAYS REACHES THE LINE. `suggestedMax` only ever EXTENDS an axis, so this never
+  // truncates a dot; what it prevents is the rule being scaled off the canvas whenever nothing
+  // plotted has reached the threshold yet — the plugin below refuses to draw outside the chart
+  // area, and a scatter that quietly dropped its rule would put the reader back to knowing
+  // where 90 days is, which is the whole reason the rule is drawn. An estate sitting entirely
+  // left of the line is a reading, and it is one this chart should be able to show.
+  if (threshold !== null) opts.scales.x.suggestedMax = threshold;
+  opts.scales.x.title = { display: true, text: "idle days", font: FONT, color: INK2 };
+  opts.scales.y.title = { display: true, text: "open findings", font: FONT, color: INK2 };
+  opts.plugins.tooltip.callbacks.title = (items) =>
+    items.length ? plotted[items[0].dataIndex].label : "";
+  opts.plugins.tooltip.callbacks.label = (ctx) => {
+    const p = plotted[ctx.dataIndex];
+    return [
+      "Idle " + (p.bounded ? "at least " : "") + Math.round(p.idleDays) + " d",
+      localeNum(p.open) + " open",
+    ];
+  };
+  // The threshold as a dashed vertical rule, labelled in words. Dashed BECAUSE it is a
+  // threshold rather than data — the one place a dash is right on a canvas whose gridlines are
+  // all solid hairlines — and labelled because a rule with no label is a line a reader has to
+  // guess the meaning of. Drawn after the datasets so a point never hides it.
+  const rule = threshold === null ? null : {
+    id: "coldThreshold",
+    afterDatasetsDraw(chart) {
+      const { ctx, chartArea, scales } = chart;
+      const x = scales.x.getPixelForValue(threshold);
+      if (!Number.isFinite(x) || x < chartArea.left || x > chartArea.right) return;
+      ctx.save();
+      ctx.strokeStyle = HAIRLINE;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.moveTo(x, chartArea.top);
+      ctx.lineTo(x, chartArea.bottom);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = "600 11px " + FONT.family;
+      ctx.fillStyle = INK2;
+      ctx.textBaseline = "top";
+      // Flipped inside the plot near the right edge, so the label never clips.
+      const right = x > chartArea.right - 80;
+      ctx.textAlign = right ? "right" : "left";
+      // "(relative)" rather than a second rule or a second colour: the line is in the same
+      // place either way, and what changes is what it is a line OF.
+      const label = "cold at " + Math.round(threshold) + " d" + (relative ? " (relative)" : "");
+      ctx.fillText(label, x + (right ? -4 : 4), chartArea.top + 2);
+      ctx.restore();
+    },
+  };
+  return new ChartCtor(canvas, {
+    type: "line", // see the note above — NOT "scatter"
+    data: {
+      datasets: [
+        {
+          data: plotted.map((p) => ({ x: p.idleDays, y: p.open })),
+          showLine: false,
+          // RADIUS IS THE HIGHLIGHT'S HONEST CHANNEL (see the header): 3px against 5-7px is a
+          // difference in SIZE, which no colour transform, greyscale print or forced-colors
+          // mode can flatten.
+          pointRadius: plotted.map((p) => (p.on === false ? 3 : p.cold ? 7 : 5)),
+          pointHoverRadius: 9,
+          pointBackgroundColor: plotted.map(
+            (p) => fade(p.cold ? CATEGORICAL[0] : "#ffffff", p.on === false),
+          ),
+          pointBorderColor: plotted.map(
+            (p) => fade(p.cold ? CATEGORICAL[0] : OTHER_COLOR, p.on === false),
+          ),
+          pointBorderWidth: plotted.map((p) => (p.on === false ? 1 : 2)),
+          // The non-colour cue: a filled diamond is cold, a hollow circle is not. UNTOUCHED by
+          // the highlight — the shape says which verdict, the size says whether the press
+          // reached it, and the two never borrow each other's channel.
+          pointStyle: plotted.map((p) => (p.cold ? "rectRot" : "circle")),
+        },
+      ],
+    },
+    options: opts,
+    plugins: rule ? [rule] : [],
   });
 }

@@ -1,0 +1,33 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`normalizeSeverity (fixture parity) > "   " 1`] = `"UNKNOWN"`;
+
+exports[`normalizeSeverity (fixture parity) > " high " 1`] = `"HIGH"`;
+
+exports[`normalizeSeverity (fixture parity) > "" 1`] = `"UNKNOWN"`;
+
+exports[`normalizeSeverity (fixture parity) > "CRITICAL" 1`] = `"CRITICAL"`;
+
+exports[`normalizeSeverity (fixture parity) > "HIGHER" 1`] = `"UNKNOWN"`;
+
+exports[`normalizeSeverity (fixture parity) > "INFORMATIONAL" 1`] = `"INFO"`;
+
+exports[`normalizeSeverity (fixture parity) > "Info" 1`] = `"INFO"`;
+
+exports[`normalizeSeverity (fixture parity) > "LOW" 1`] = `"LOW"`;
+
+exports[`normalizeSeverity (fixture parity) > "MEDIUM" 1`] = `"MEDIUM"`;
+
+exports[`normalizeSeverity (fixture parity) > "UNKNOWN" 1`] = `"UNKNOWN"`;
+
+exports[`normalizeSeverity (fixture parity) > "bogus" 1`] = `"UNKNOWN"`;
+
+exports[`normalizeSeverity (fixture parity) > "critical" 1`] = `"CRITICAL"`;
+
+exports[`normalizeSeverity (fixture parity) > "critical\\n" 1`] = `"CRITICAL"`;
+
+exports[`normalizeSeverity (fixture parity) > "informational" 1`] = `"INFO"`;
+
+exports[`normalizeSeverity (fixture parity) > 42 1`] = `"UNKNOWN"`;
+
+exports[`normalizeSeverity (fixture parity) > null 1`] = `"UNKNOWN"`;

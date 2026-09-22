@@ -26,7 +26,7 @@
 // a column of dashes that would let a reader think the tenant is missing the data.
 
 import { bootstrapCached, listJoin, listSplit, navigate, swrCall } from "../../../../../gas_shared/store.js";
-import { chartUnavailable, loadCharts } from "../chartsLoader.js";
+import { chartUnavailable, loadCharts } from "../../../../../gas_shared/ui/chartsLoader.js";
 import { PROVENANCE_LABEL, populationLine, provenance } from "./registerModel.js";
 import { findingRowLabel, openFindingSheet } from "./findingSheet.js";
 import {
@@ -457,7 +457,18 @@ export function concentrationModel(concentration, dims) {
 const DIM_LABELS = {
   repo: "By repository",
   language: "By language",
-  owner_project: "By owning project",
+  // THE TENANT'S TWO WORDS, not one word for both. A repository is filed under a `product-…`
+  // product and under a CS/CE/LU support group that holds several products, and the card this
+  // pair replaces — "By owning project" — showed whichever of the two Wiz returned first.
+  // Each label says which grain it is, so two cards cannot read as two answers to one
+  // question. See src/domain/projectGrain.ts.
+  product: "By product",
+  support_group: "By support group",
+  // "Owning" is deliberately not used by any of these even though a product, a support group
+  // and a domain all own. The project hierarchy is where Wiz FILES a repository; the domain is
+  // the business the tenant tagged it with. Cards that all said "owning" would read as three
+  // answers to one question.
+  domain: "By business domain",
   cwe: "By weakness class",
   secret_kind: "By secret kind",
 };
@@ -563,9 +574,7 @@ export function oldestFindingsModel(oldest) {
   return (o.findings || []).map((f) => ({
     identifier: f.identifier === null || f.identifier === undefined ? null : String(f.identifier),
     repo: f.repo === null || f.repo === undefined ? null : String(f.repo),
-    ownerProject: f.ownerProject === null || f.ownerProject === undefined
-      ? null
-      : String(f.ownerProject),
+    product: f.product === null || f.product === undefined ? null : String(f.product),
     severity: String(f.severity || "UNKNOWN"),
     ageDays: num(f.ageDays, null),
   }));
@@ -579,7 +588,7 @@ export function oldestReposModel(oldest) {
     agedCount: num(g.agedCount),
     openCount: num(g.openCount),
     oldestDays: num(g.oldestDays, null),
-    ownerProject: g.ownerProject ? String(g.ownerProject) : null,
+    product: g.product ? String(g.product) : null,
   }));
 }
 
@@ -1132,7 +1141,7 @@ export function scaModel(payload, opts) {
     // empty one; both copies have to agree. (Passing no list at all falls back to
     // `Object.keys(perDim)` — the server's order — which would remove the duplication, but it
     // also hands the page's card order to the payload, so the explicit list stays.)
-    concentration: concentrationModel(p.concentration, ["repo", "owner_project"]),
+    concentration: concentrationModel(p.concentration, ["repo", "product", "support_group", "domain"]),
     oldest: oldestFindingsModel(p.oldest),
     oldestRepos: oldestReposModel(p.oldest),
     movement: movementModel(p.movement, p.latestScan),
@@ -1237,7 +1246,10 @@ function paintSca(host, vm, filters) {
   // register nobody has read is one more confident zero, and `firstRunNotice` below already
   // says what is missing.
   const population = vm.firstRun.show ? null : populationLine(vm);
-  if (population) host.append(el("p", { class: "small muted" }, population.text));
+  if (population) host.append(el("div", { class: "scope-chips", role: "group", "aria-label": population.text },
+          ...population.parts.map((part, i) => el("span", {
+            class: "scope-chip" + (i === 0 ? " scope-chip--lead" : ""),
+          }, part))));
 
   // FIRST RUN STOPS HERE. Every section below — the two clocks, the exploitation signals,
   // both charts (so neither canvas is ever created), the tier and funnel tables, every
@@ -1273,10 +1285,9 @@ function paintSca(host, vm, filters) {
   const clocks = sectionCard("The clock splits", {
     term: "two-clocks",
     lines: [
-      "An SCA finding cannot be fixed before somebody else publishes a fixed version, so the"
-      + " wait for a vendor and the wait for a team are counted separately.",
-      "This page publishes no figure that averages the two together — an average across both"
-      + " measures the vendor and the team at once and names neither.",
+      "Nothing is fixable before somebody else publishes a fixed version.",
+      "So the wait for a vendor and the wait for a team are counted separately.",
+      "No figure here averages them: one across both names neither.",
     ],
   },
     // ONE COLUMN, because this card is now half the page wide. `.kpi-row`'s default track is
@@ -1325,8 +1336,8 @@ function paintSca(host, vm, filters) {
     sectionCard("Exploitation signals", {
       term: "sca",
       lines: [
-        "Three states, never two: a signal Wiz never evaluated is unknown, not clean, and"
-        + " rendering it as a No is what makes an unassessed finding look assessed.",
+        "Three states, never two: a signal Wiz never evaluated is unknown, not clean.",
+        "Rendering it as a No is what makes an unassessed finding look assessed.",
       ],
     },
       el("div", { class: "signal-rows" },
@@ -1468,7 +1479,7 @@ function paintSca(host, vm, filters) {
         columns: [
           { key: "identifier", label: "CVE", cell: (r) => r.identifier || absent() },
           { key: "repo", label: "Repository", cell: (r) => r.repo || absent() },
-          { key: "owner", label: "Owning project", cell: (r) => r.ownerProject || absent() },
+          { key: "product", label: "Product", cell: (r) => r.product || absent() },
           { key: "sev", label: "Severity", cell: (r) => sevBadge(r.severity) },
           {
             key: "age",
@@ -1492,8 +1503,8 @@ function paintSca(host, vm, filters) {
   // than a paragraph below 18 columns of table nobody reads to the end of.
   host.append(sectionCard("Every finding in the register", {
     lines: [
-      "Click a column to ask the server for a different order rather than re-sorting what is"
-      + " already on screen; open a row for everything the register holds about that finding.",
+      "Open a row for everything the register holds about that finding.",
+      "A column asks the server for a different order, it does not re-sort the page.",
       vm.missingColumns,
     ],
   },

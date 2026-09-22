@@ -18,9 +18,11 @@ import { call } from "../../../../../gas_shared/api.js";
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import {
   DEFAULT_PAGE_SIZE, PAGE_SIZES, absent, absentText, bookTip, chartTable, clear, dataTable,
-  denomNote, downloadText, el, emptyState, errorState, figureCard, fmtDate, glossaryTip,
-  heroStat, meter, num, openSheet, pageHeader, pct1, quadModel, quadTable, scopeBar,
-  sectionLabel, sevBadge, skeleton, statRow, statusPill, tableFooter, tipLabel, toast,
+  denomNote, downloadText, el, emptyState, errorState, figureCard, fmtCount, fmtDate,
+  glossaryTip, heroStat, meter, num, openSheet, pageHeader, pct1, quadModel, quadTable,
+  scopeBar, sectionLabel, sevBadge, skeleton, statRow, statusPill, tableFooter, tipLabel,
+  toast,
+  disclosure,
 } from "../ui.js";
 
 // Matrix cells, in reading order. `key` matches the server's `matrix_cell` / cohort quadrant
@@ -97,6 +99,31 @@ function pct0(v) {
 function pct0Cell(v) {
   const n = num(v);
   return n === null ? absent() : pct0(n);
+}
+
+/**
+ * The capacity headline's other half: mean findings CLOSED per month, as a count.
+ *
+ * WHY IT IS HERE AT ALL. `mmcrMean` is a share of the starting backlog, and "about one in
+ * ten a month" is four findings on one register and four hundred on another — a reader
+ * staffing the work cannot tell those apart from the rate. `Capacity.closedPerMonthMean`
+ * averages the same months `mmcrMean` does, so the two always report the same denominator.
+ *
+ * THE GRAIN SHIFTS ONCE, AT TEN. A programme clearing hundreds a month has no use for a
+ * tenth of a finding, and the mean's own base is a handful of months, so a decimal up there
+ * is false precision — the same argument `pct0` above makes for the close rate. But rounding
+ * a mean of 0.4 to a flat "0" would say the programme closes nothing while the table below
+ * shows it closing things, and that is the one reading this figure must not produce. Below
+ * ten the tenth is what separates "barely moving" from "not moving at all", so it stays.
+ *
+ * Returns the shared `absentText`, which `statRow` turns into the muted dash itself
+ * (`valueOrAbsent`, gas_shared/ui/controls.js) and which concatenates into a sentence — the
+ * note under the capacity table needs the string form, so there is no Node variant.
+ */
+export function closedPerMonthText(v) {
+  const n = num(v);
+  if (n === null) return absentText;
+  return fmtCount(n < 10 ? Math.round(n * 10) / 10 : Math.round(n));
 }
 
 /**
@@ -545,8 +572,8 @@ export async function renderProgram(main, _params, ctx) {
           "Of everything remediated, the share that was actually high risk. TP / (TP + FP) —"
           + " here " + m.tp.toLocaleString() + " of " + (m.tp + m.fp).toLocaleString() + ".",
           m.prevalence !== null
-            ? "Picking findings at random would score about " + pct(m.prevalence) +
-              " here, because that is the share of classified findings that are high risk."
+            ? "Picking at random would score about " + pct(m.prevalence)
+              + " — the share of classified findings that are high risk."
             : null,
         ].filter(Boolean),
       },
@@ -584,6 +611,29 @@ export async function renderProgram(main, _params, ctx) {
               el("span", { class: "prog-range" }, "1 in " + capOverall.oneInN.toFixed(1)))
             : pct0Cell(capOverall.mmcrMean),
           null,
+        ),
+        // THE COUNT SITS DIRECTLY UNDER THE RATE, and the pair is the point: the rate says
+        // what share of the backlog moves, this says how much work that is. The two share
+        // `monthsCounted`, so the tip states the base once for both rather than each row
+        // carrying a different-looking denominator for the same set of months.
+        statRow(
+          "Closed per month",
+          closedPerMonthText(capOverall.closedPerMonthMean),
+          null,
+          null,
+          {
+            term: "closed-per-month",
+            lines: [
+              "Mean findings closed per calendar month — the close rate above, as a count.",
+              capOverall.monthsCounted
+                ? "Over " + capOverall.monthsCounted
+                  + " complete, directly-observed month(s)."
+                : "No complete, directly-observed month yet, so there is nothing to average.",
+              capOverall.monthsCounted
+                ? "The month in progress and anything before the first scan are excluded."
+                : null,
+            ],
+          },
         ),
         statRow("Net capacity (high risk)", verdictPill(capHigh.verdict), null),
       ],
@@ -683,12 +733,16 @@ export async function renderProgram(main, _params, ctx) {
         " ",
         denominatorNode(u.share))));
 
-    matrixHost.append(el("p", { class: "note" },
-      "Coverage reads across the top row (" + m.tp.toLocaleString() + " of " +
-      m.highRisk.toLocaleString() + "). Efficiency reads down the Remediated column (" +
-      m.tp.toLocaleString() + " of " + (m.tp + m.fp).toLocaleString() +
-      "). Select \"Open list\" on any corner, or the figures below it, for the findings " +
-      "behind them."));
+    // HOW TO READ THE CROSS, one level down. The two shares are already on the corners; the
+    // sentence that says which axis each one reads along is an explanation, and it sits in a
+    // closed disclosure a reader opens once rather than a 34-word paragraph under every visit.
+    matrixHost.append(disclosure("How to read the matrix",
+      el("p", { class: "note" },
+        "Coverage reads across the top row (" + m.tp.toLocaleString() + " of " +
+        m.highRisk.toLocaleString() + "). Efficiency reads down the Remediated column (" +
+        m.tp.toLocaleString() + " of " + (m.tp + m.fp).toLocaleString() +
+        "). Select \"Open list\" on any corner, or the figures below it, for the findings " +
+        "behind them.")));
 
     renderSeverityBreakdown(p);
   }
@@ -948,11 +1002,20 @@ export async function renderProgram(main, _params, ctx) {
         // The muted dash rather than a bold black one: with no rule sentence in the payload the
         // sentence has no predicate, and setting that absence in the same bold ink as a real
         // rule claims the register has one.
-        "A finding is high risk when ", el("strong", {}, p.ruleSentence || absent()), "."),
+        //
+        // THE OVERLAP CAVEAT RIDES ON THE RULE'S OWN WORDS. "The clauses overlap, so the counts
+        // do not sum" is a fact about how to read the three rows beneath — an explanation, on
+        // the rule they explain, rather than a fourth row of prose under them.
+        "High risk when ",
+        tipLabel(el("strong", {}, p.ruleSentence || absent()), {
+          lines: [
+            "The clauses overlap: a finding can satisfy several.",
+            "So these counts do not sum to the " + (s.anyOf || 0).toLocaleString()
+            + " findings flagged high risk overall.",
+          ],
+        }),
+        "."),
       clauses,
-      el("p", { class: "note" },
-        "The clauses overlap — a finding can satisfy several — so these counts do not sum to " +
-        "the " + (s.anyOf || 0).toLocaleString() + " findings flagged high risk overall."),
     ));
 
     const sens = (p.sensitivity || []).filter(
@@ -962,8 +1025,17 @@ export async function renderProgram(main, _params, ctx) {
       const box = el("div", { class: "chart-box chart-box--tall" }, el("canvas", {}));
       const canvas = box.querySelector("canvas");
       const card = el("div", { class: "chart-card" },
-        el("h3", {}, glossaryTip("How much the rule choice matters",
-          "rule-sensitivity")),
+        // The one caveat that must not depend on the chart: each point is scored against
+        // its OWN definition of high risk. It is the heading's tip, beside the glossary
+        // entry, rather than a 47-word paragraph after the table.
+        el("h3", {}, tipLabel("How much the rule choice matters", {
+          term: "rule-sensitivity",
+          lines: [
+            "Each point is scored against its own definition of high risk.",
+            "So they are not competing on a common yardstick.",
+            "Read it as how sensitive the headline is to the rule, not which rule is right.",
+          ],
+        })),
         box,
         // `sens` — the same array the wrapper below is handed — read once, into both.
         chartTable({
@@ -973,14 +1045,6 @@ export async function renderProgram(main, _params, ctx) {
           model: scatterTableModel(sens),
         }));
       ruleHost.append(card);
-      // The one caveat that must not depend on a hover: each point is scored against its OWN
-      // definition of high risk, so a narrow rule can post high coverage simply by flagging
-      // few findings. Without this the chart invites the reading that KEV-only "wins".
-      ruleHost.append(el("p", { class: "note" },
-        "Each point is scored against its own definition of high risk, so the points are not " +
-        "competing on a common yardstick: a narrow rule reaches high coverage by flagging " +
-        "little. Read this as how sensitive the headline is to the rule, not as which rule " +
-        "is right."));
       loadCharts().then((charts) => {
         charts.coverageEfficiencyScatter(canvas, sens);
       }).catch((e) => {
@@ -999,11 +1063,18 @@ export async function renderProgram(main, _params, ctx) {
     const months = (cap.months || []).slice(-12);
     if (!months.length) return;
 
-    capacityHost.append(sectionLabel("Remediation capacity", { term: "capacity" }));
-    capacityHost.append(el("p", { class: "note" },
-      "How much of the open backlog the program closes per month, and whether high-risk work " +
-      "is arriving faster than it is being cleared. The research benchmark is that a typical " +
-      "organization closes about one in ten open findings per month, largely regardless of size."));
+    // Built once here and REPLACED once the table is drawn, when the base of the two means is
+    // known (`capacityBase`, below): the label's tip then carries definition, benchmark and
+    // base in one card.
+    const CAPACITY_LINES = [
+      "How much of the open backlog the program closes per month.",
+      "And whether high-risk work arrives faster than it is cleared.",
+      "The research benchmark is that a typical organization closes about one in ten open"
+      + " findings per month, largely regardless of size.",
+    ];
+    const capacityBase = [];
+    const capacityLabel = sectionLabel("Remediation capacity", { term: "capacity", lines: CAPACITY_LINES });
+    capacityHost.append(capacityLabel);
 
     const highByMonth = {};
     for (const m of capHigh.months || []) highByMonth[m.month] = m;
@@ -1105,23 +1176,28 @@ export async function renderProgram(main, _params, ctx) {
       ],
       rows: months,
     }));
-    if (cap.monthsCounted) {
-      capacityHost.append(el("p", { class: "note" },
-        "Mean close rate " + pct(cap.mmcrMean) +
-        (cap.oneInN ? " (about one in " + cap.oneInN.toFixed(1) + ")" : "") +
-        " over " + cap.monthsCounted + " complete month(s). Months still in progress, and " +
-        "months before the first saved scan, are excluded from that mean."));
-    } else {
-      // Say why the headline figure is absent rather than leaving an em dash to be
-      // misread as zero. Every month here is either still running or predates the scan
-      // history, and a mean over reconstructed months would understate the close rate
-      // (closures before the first scan are systematically under-counted).
-      capacityHost.append(el("p", { class: "note" },
-        "No complete month has been fully observed yet, so there is no mean close rate. " +
-        "Months marked reconstructed predate the first saved scan and under-count closures; " +
-        "the month in progress is not over. The per-month figures above are still exact for " +
-        "what was observed."));
-    }
+    // THE TWO MEANS ARE ALREADY THE HEADER'S. "Monthly close rate" (with its one-in-N) and
+    // "Closed per month" are stat rows in the page header, so the 44-word sentence that
+    // restated them here was a second copy of two figures plus the one fact the header does
+    // not carry — the base they are taken over, and what is excluded from it. That fact is
+    // the section label's tip now, beside the section's two definition lines, rather than a
+    // paragraph or (the first attempt at this) a second stat card duplicating the header.
+    capacityBase.push(...(cap.monthsCounted
+      ? [
+        "Both means are taken over " + cap.monthsCounted + " complete month(s). Months still"
+        + " in progress, and months before the first saved scan, are excluded from both.",
+      ]
+      : [
+        "No complete month has been fully observed yet, so there is no mean close rate and no"
+        + " mean monthly count.",
+        "Months marked reconstructed predate the first saved scan and under-count closures;"
+        + " the month in progress is not over. The per-month figures above are still exact for"
+        + " what was observed.",
+      ]));
+    capacityLabel.replaceWith(sectionLabel("Remediation capacity", {
+      term: "capacity",
+      lines: [...CAPACITY_LINES, ...capacityBase],
+    }));
     renderHindcast(p);
   }
 
@@ -1136,11 +1212,14 @@ export async function renderProgram(main, _params, ctx) {
    */
   function renderHindcast(p) {
     const view = capacityHindcastView(p.capacityHindcast);
-    capacityHost.append(sectionLabel("Verdict track record"));
-    capacityHost.append(el("p", { class: "note" },
-      "For each saved scan, the verdict this page would have shown that day, beside what the " +
-      "following month actually did. The verdict is the net capacity figure in the header — " +
-      "high-risk findings closed against high-risk findings arriving."));
+    capacityHost.append(sectionLabel("Verdict track record", {
+      lines: [
+        "For each saved scan, the verdict that day beside what the following month did.",
+        "The verdict is the net capacity figure in the header.",
+        "High-risk findings closed against high-risk findings arriving.",
+        view.capNote,
+      ],
+    }));
     if (view.empty) {
       capacityHost.append(emptyState(view.empty));
       return;
@@ -1177,7 +1256,9 @@ export async function renderProgram(main, _params, ctx) {
       ],
       rows: view.rows,
     }));
-    capacityHost.append(el("p", { class: "note" }, view.sentence + " " + view.capNote));
+    // The accounting stays on the surface; how many scans it was checked over is on the
+    // heading's tip with the section's other two lines.
+    capacityHost.append(el("p", { class: "note" }, view.sentence));
   }
 
   // ------------------------------------------------------------------ methodology

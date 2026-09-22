@@ -139,6 +139,8 @@ describe("devSeed.seedSampleLedger — the real battery, through the real pipeli
         },
         dataRowCount: (tab: string) => (tables[tab] ?? []).length,
         trimSurplusRows: () => 0,
+        // The domain map's tab is created lazily in the real module; `tables` needs no creating.
+        ensureTab: () => null,
       };
     });
 
@@ -174,7 +176,8 @@ describe("devSeed.seedSampleLedger — the real battery, through the real pipeli
 
     const devSeed = await import("../src/server/devSeed");
     const ledgerStore = await import("../src/server/ledgerStore");
-    return { devSeed, ledgerStore };
+    const repoTags = await import("../src/server/repoTags");
+    return { devSeed, ledgerStore, repoTags, tables };
   }
 
   it("walks all three SAMPLE_SYNCS through slimRecord -> persistSync and reports the counts", async () => {
@@ -183,16 +186,138 @@ describe("devSeed.seedSampleLedger — the real battery, through the real pipeli
     const result = devSeed.seedSampleLedger();
 
     // Measured independently against the real dev/sampleData.dev.ts battery (not hand-derived
-    // arithmetic — see this describe block's header): 3 syncs, 1436 raw nodes fed through
+    // arithmetic — see this describe block's header): 3 syncs, 1430 raw nodes fed through
     // slimRecord across them, folding to 400 sca + 40 sast + 114 secrets = 554 ledger rows
     // (secrets: 120 nodes / 6 twin-key collisions -> 114 keys, pinned separately by
     // test/sampleData.test.ts; no scope's key population grows after this seed's first scan).
-    expect(result).toEqual({ seeded: 554, syncs: 3, rows: 1436 });
+    // The raw-node count moved from 1436 to 1430 (WP4, cold-zone dev seed): three sca specs
+    // (dev/sampleData.dev.ts's UNOBSERVED_REPO_STAYS_IDX, repo-10 "retired-mobile") are now
+    // flagged scan-A-only so the harness has an `unobserved` repo — each is emitted at scan A
+    // but not at scan B or scan C, so the battery carries 3 fewer nodes at each of those two
+    // syncs: 1436 - 3*2 = 1430. `seeded`/`rows` folds to the same 554 live ledger rows either
+    // way, because these 3 findings are resolved by disappearance rather than counted twice.
+    // A second cold-zone repo (SLOW_REPO_STAYS_IDX / SLOW_REPO_RESOLVED_IDX, repo-11
+    // "warehouse-sync") was added later so relative mode has two repositories to rank instead
+    // of one — it reassigns three ordinary STAYS indices and two ordinary API_RESOLVED indices
+    // to a different repo, present at every scan exactly as the unmodified specs were, so it
+    // moves no raw-node count and 1430/554 are unchanged.
+    expect(result).toEqual({ seeded: 554, syncs: 3, rows: 1430 });
 
     const ledger = ledgerStore.loadState().ledger;
     const byScope: Record<string, number> = {};
     for (const row of Object.values(ledger)) byScope[row.scope] = (byScope[row.scope] ?? 0) + 1;
     expect(byScope).toEqual({ sca: 400, sast: 40, secrets: 114 });
+  });
+
+  // THE ORGANISATION-WIDE TAG, END TO END OVER THE REAL SEED. dev/sampleData.dev.ts puts
+  // `GITHUB-DKTUNITED` on every node exactly as the tenant's connector does, so this is the
+  // one place the rule is asked of the whole pipeline rather than of a hand-built row: the
+  // observation keeps it, the two answers derived from it do not.
+  it("the seeded connector tag is stored but never offered as a scope or an owner", async () => {
+    const { devSeed, ledgerStore } = await mockSeamsAndImportDevSeed();
+    const { projectCatalogue } = await import("../src/domain/projectScope");
+    devSeed.seedSampleLedger();
+
+    const rows = Object.values(ledgerStore.loadState().ledger);
+    // THE OBSERVATION IS INTACT — this is an exclusion from the analysis, not from the ledger.
+    expect(rows.every((r) => (r.projects_json ?? "").includes("GITHUB-DKTUNITED"))).toBe(true);
+
+    const slugs = projectCatalogue(rows).map((c) => c.slug);
+    expect(slugs.length).toBeGreaterThan(1); // or there is nothing to have excluded it from
+    expect(slugs).not.toContain("github-dktunited");
+    expect(rows.some((r) => r.owner_project === "GITHUB-DKTUNITED")).toBe(false);
+    // And the seed still files every row under a real owner, so the exclusion cost nothing.
+    expect(rows.every((r) => r.owner_project !== null)).toBe(true);
+  });
+
+  // THE TWO PROJECT GRAINS, END TO END OVER THE REAL SEED. dev/sampleData.dev.ts models the
+  // tenant's shape — every repository under a CS/CE/LU support group, most under a
+  // `product-…` product, one support group covering TWO products, one repository with no
+  // product and one product filed under two groups. That last pair is why this is worth
+  // asserting here rather than only against hand-built rows: those are the branches a seed
+  // that modelled the happy path alone would leave permanently unexercised.
+  it("the seed resolves both grains, and one support group covers several products", async () => {
+    const { devSeed, ledgerStore } = await mockSeamsAndImportDevSeed();
+    const { attachProjectGrain, projectCatalogue } = await import("../src/domain/projectScope");
+    devSeed.seedSampleLedger();
+
+    // The two grains are attached IN MEMORY, so a ledger row does not declare them — which is
+    // the point of the design and the reason for this cast.
+    const rows = Object.values(ledgerStore.loadState().ledger) as unknown as Array<{
+      projects_json: string | null;
+      owner_project: string | null;
+      owner_path: string | null;
+      _supportGroup?: string | null;
+      _product?: string | null;
+    }>;
+    attachProjectGrain(rows);
+
+    // EVERY repository names a support group — that is the tenant's claim, and the seed's.
+    expect(rows.every((r) => typeof r._supportGroup === "string" && r._supportGroup)).toBe(true);
+
+    // ONE GROUP, MANY PRODUCTS. Without this the support-group breakdown would be a second
+    // spelling of the product breakdown and no test would notice.
+    const byGroup = new Map<string, Set<string>>();
+    for (const r of rows) {
+      if (typeof r._supportGroup !== "string" || typeof r._product !== "string") continue;
+      const set = byGroup.get(r._supportGroup) ?? new Set<string>();
+      set.add(r._product);
+      byGroup.set(r._supportGroup, set);
+    }
+    expect([...byGroup.values()].some((products) => products.size > 1)).toBe(true);
+
+    // AND THE TWO REFUSALS ARE REACHABLE. A repository the tenant filed under no product
+    // answers none rather than borrowing its support group's name…
+    expect(rows.some((r) => r._product === undefined)).toBe(true);
+    // …and a product two groups claim names neither, which the catalogue reports as a count.
+    const cat = projectCatalogue(rows);
+    expect(cat.some((c) => c.supportGroupCount > 1 && c.supportGroup === null)).toBe(true);
+    // The org-wide connector tag is in none of it — parseProjects drops it first.
+    expect(cat.every((c) => c.slug !== "github-dktunited")).toBe(true);
+  });
+
+  // THE DOMAIN AXIS, END TO END OVER THE REAL SEED. Everything else about the join is held in
+  // test/repoTags.test.ts against hand-built rows; what those cannot prove is the thing the
+  // join actually risks — that the tokens a map is built under OVERLAP the ones the ledger's
+  // rows carry. Here the map is derived from the seeded repositories and then asked to place
+  // those same rows, which is the one arrangement where a mismatch would show up as silence.
+  it("seedRepoTagMap builds a map that actually places the seeded rows", async () => {
+    const { devSeed, ledgerStore, repoTags } = await mockSeamsAndImportDevSeed();
+    devSeed.seedSampleLedger();
+
+    const result = devSeed.seedRepoTagMap();
+    expect(result.reason).toBeUndefined();
+    expect(result.domains).toBeGreaterThan(1); // or the switcher has no choice to offer
+    expect(result.repos).toBeGreaterThan(0);
+    // A QUARTER LEFT UNTAGGED ON PURPOSE — the harness has to show the `noDomain` caption and
+    // the `(none)` breakdown bucket, not a fiction in which everything is attributed.
+    expect(result.unmapped).toBeGreaterThan(0);
+    // AND THE LIFECYCLE IS DRAWN SEPARATELY, so all four combinations exist. Without the
+    // END_OF_LIFE slot the cold zone's exclusion has nothing to exclude on the harness and is
+    // never looked at locally; without the untagged slot the column's absence mark never draws.
+    expect(result.lifecycles).toBeGreaterThan(1);
+    expect(result.endOfLife).toBeGreaterThan(0);
+    expect(result.noLifecycle).toBeGreaterThan(0);
+
+    const rows = Object.values(ledgerStore.loadState().ledger) as unknown as Record<string, unknown>[];
+    repoTags.resetRepoTagMapMemo();
+    repoTags.attachRepoTags(rows);
+
+    const placed = rows.filter((r) => typeof r["_domain"] === "string" && r["_domain"]);
+    // THE ASSERTION THAT MATTERS: the join placed rows at all. A token mismatch — the failure
+    // mode the map's several-identities indexing exists to survive — reads as exactly zero.
+    expect(placed.length).toBeGreaterThan(0);
+    const names = new Set(placed.map((r) => r["_domain"]));
+    expect(names.size).toBe(result.domains);
+    // And it did NOT place everything, so both halves of the picture are exercised.
+    expect(placed.length).toBeLessThan(rows.length);
+
+    // ONE PASS ATTACHES BOTH TAGS. A row placed by the lifecycle half proves the second half
+    // of the join is wired, and the end-of-life population proves the exclusion has a subject.
+    const lifed = rows.filter((r) => typeof r["_lifecycle"] === "string" && r["_lifecycle"]);
+    expect(lifed.length).toBeGreaterThan(0);
+    expect(lifed.length).toBeLessThan(rows.length);
+    expect(lifed.some((r) => r["_lifecycle"] === "END_OF_LIFE")).toBe(true);
   });
 
   it("a second call is idempotent — persistSync replays per (scan_id, scope), seeded stays 554", async () => {
@@ -203,7 +328,7 @@ describe("devSeed.seedSampleLedger — the real battery, through the real pipeli
     const second = devSeed.seedSampleLedger();
     const after = Object.values(ledgerStore.loadState().ledger).length;
 
-    expect(first).toEqual({ seeded: 554, syncs: 3, rows: 1436 });
+    expect(first).toEqual({ seeded: 554, syncs: 3, rows: 1430 });
     expect(second).toEqual(first);
     expect(after).toBe(before);
   });

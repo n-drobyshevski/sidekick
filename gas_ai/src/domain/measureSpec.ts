@@ -639,7 +639,58 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
     responsibleParties: "Compliance/GRC stakeholders; the operator who selects which frameworks sync.",
     dataSource: "ai_framework_posture.posture_pct, ai_framework_posture.level, "
       + "ai_framework_posture.empty_posture_reason",
-    reportingFormat: "Compliance Posture page's headline strip.",
+    // NO LONGER THE HERO. The Compliance Posture page's headline figure is
+    // `landscape-applicable-posture` below; this mean is what the header's trend line draws
+    // (it is the reading `sync_history` records and therefore the only one with a history)
+    // and what the Wiz Scans page reports. Stating both places is what keeps this record
+    // from describing a slot it lost.
+    reportingFormat: "Compliance Posture page's 'Posture over time' line and the hero's own "
+      + "disclosure; Wiz Scans page KPI.",
+    measurementMethod: "Objective",
+    revisionDue: REVISION_DUE,
+  },
+  {
+    id: "landscape-applicable-posture",
+    goal:
+      "Give leadership one number for 'how compliant is the landscape' that describes the "
+      + "SAME controls the register below it lists. The framework mean above answers a "
+      + "related question badly for this purpose: it weights a four-control framework and a "
+      + "four-hundred-control framework equally, and each of its inputs is computed by Wiz "
+      + "over everything that framework maps — including the rules this app's register drops "
+      + "as never-evaluated or as outside the 5Rs AI scope. A page listing one population "
+      + "under a number describing a larger one is the implied confidence PRODUCT.md "
+      + "forbids, and this measure is that gap closed at landscape scope (fiveRsPosture.ts "
+      + "closed it for one framework first).",
+    scope: "Every DISTINCT control (policy_id) the built framework trees carry, across all "
+      + "collected frameworks: Wiz evaluated it against something (isAssessedPolicy), it "
+      + "survived the 5Rs AI-scope review (dropUnselected), and it is not switched off in "
+      + "Wiz (enabled !== false). One control mapped by several frameworks counts once, at "
+      + "the MAX of its repeated counts, never the sum.",
+    measure: "posturePct: checks passing over checks evaluated across the applicable "
+      + "controls, rounded; null when no applicable control has evaluated anything. Shipped "
+      + "beside controlPassPct, the control-weighted reading of the same population.",
+    type: "effectiveness",
+    formula: "landscapePosture.ts's landscapeDerivedPosture(): "
+      + "Math.round(100 * passCount / (passCount + failCount)) over the deduped applicable "
+      + "controls, clamped off a false 100 or 0 while the other side is non-empty.",
+    target: "No numeric target set by this app — a compliance target is a policy decision "
+      + "for the operator's own framework mappings, not a number this deployment asserts.",
+    implementationEvidence: "Every input is a count Wiz sent, stored as received; this "
+      + "measure re-aggregates them rather than re-deriving any score. The population it "
+      + "aggregates over is exactly the one the register renders — same trees, one walk — "
+      + "so the hero and the rows beneath it cannot describe different landscapes. Wiz's "
+      + "own mean travels with it (wizAveragePosture) so neither figure can be read as a "
+      + "correction of the other.",
+    timeBasedReference: "Computed at read time, not snapshotted: it is a share of TODAY's "
+      + "AI scope, which an operator's pin moves, so it cannot be attributed to a past "
+      + "sync. The header's trend line draws the framework mean instead, which "
+      + "sync_history does record. " + NO_PER_ENTITY_HISTORY,
+    responsibleParties: "Compliance/GRC stakeholders; the operator who maintains the 5Rs AI "
+      + "scope in Settings.",
+    dataSource: "ai_framework_policies.pass_count, ai_framework_policies.fail_count, "
+      + "ai_framework_policies.enabled, ai_framework_policies.policy_id",
+    reportingFormat: "Compliance Posture page's hero ('Compliance posture'), with "
+      + "'Controls clean' beside it as the control-weighted reading.",
     measurementMethod: "Objective",
     revisionDue: REVISION_DUE,
   },

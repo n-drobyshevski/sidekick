@@ -27,7 +27,7 @@
 // published beside it so the sample can be checked.
 
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
-import { chartUnavailable, loadCharts } from "../chartsLoader.js";
+import { chartUnavailable, loadCharts } from "../../../../../gas_shared/ui/chartsLoader.js";
 // `fmtPct`, `denominatorNode`, `rateCell` and `scopeParam` used to be DEFINED here — see
 // `./_rates.js`'s header for why one copy now serves this page and mttr.js both.
 import { denominatorNode, fmtPct, rateCell, scopeParam } from "./_rates.js";
@@ -38,7 +38,7 @@ import {
   pageHeader, pluralize, quadModel, quadTable, sectionLabel, skeleton, statRow, statusPill,
   tipLabel,
 } from "../ui.js";
-import { fmtCount, fmtDays } from "./mttr.js";
+import { endOfLifeExclusionNote, fmtCount, fmtDays } from "./mttr.js";
 // `chartCard` — the chart-card shell with its eager data-table alternative and its
 // bundle-refused fallback — is `pages/sca.js`'s, the same way `fmtCount`/`fmtDays` above are
 // `pages/mttr.js`'s. The capacity section is the first chart on this page that has a table
@@ -47,9 +47,10 @@ import { fmtCount, fmtDays } from "./mttr.js";
 import { chartCard } from "./sca.js";
 // `verdictMark` moved out to its own module in Wave C: `pages/repos.js` needed the identical
 // dot-and-word for its own Capacity column, and two pages wanting the same shape is what
-// promotes a helper. See ui/verdict.js's header for the DOM and the tone mapping this page no
+// promotes a helper. It has since moved again, to gas_shared/ui/verdict.js, once a second
+// APP wanted it. See that module's header for the DOM and the tone mapping this page no
 // longer carries a private copy of.
-import { verdictMark } from "../ui/verdict.js";
+import { verdictMark } from "../ui.js";
 
 // ---------------------------------------------------------------------------- formatting
 
@@ -392,6 +393,28 @@ export function signalBreakdownView(signals, coverage, rowCount) {
 }
 
 /**
+ * The capacity headline's other half: mean findings CLOSED per month, as a count.
+ *
+ * WHY IT EXISTS. `mmcrMean` is a share of the starting backlog, and "about one in ten a
+ * month" is four findings on one register and four hundred on another — a reader staffing
+ * the work cannot tell those apart from the rate. `Capacity.closedPerMonthMean` averages the
+ * same months `mmcrMean` does, so both figures always report the same base.
+ *
+ * THE GRAIN SHIFTS ONCE, AT TEN. A register clearing hundreds a month has no use for a tenth
+ * of a finding, and the mean's own base is a handful of months, so a decimal up there is
+ * false precision. But rounding a mean of 0.4 to a flat "0" would say the register closes
+ * nothing while the chart beside it shows closures, and that is the one reading this figure
+ * must not produce — below ten the tenth separates "barely moving" from "not moving at all".
+ *
+ * Returns `absentText`, never a zero: no fully observed month means nothing to average.
+ */
+function closedPerMonthText(v) {
+  const n = num(v);
+  if (n === null) return absentText;
+  return fmtCount(n < 10 ? Math.round(n * 10) / 10 : Math.round(n));
+}
+
+/**
  * Capacity month by month, with every month that was not directly observed marked as such.
  *
  * `marks` is what a row is NOT: "partial" (the current month, still running) or
@@ -435,6 +458,10 @@ export function capacityView(capacity) {
       fmtCount(monthsCounted) + " fully observed " + pluralize(monthsCounted, "month"),
     ),
     oneInN: c.oneInN === null || c.oneInN === undefined ? null : Number(c.oneInN),
+    // `num`, not `Number(… || 0)`: this one is genuinely null on a register with no fully
+    // observed month, and a zero there would claim the register closes nothing.
+    closedPerMonthMean: num(c.closedPerMonthMean),
+    closedPerMonthText: closedPerMonthText(c.closedPerMonthMean),
     netTotal: Number(c.netTotal || 0),
     verdict: c.verdict || null,
     verdictLabel: VERDICT_LABELS[c.verdict] || absentText,
@@ -640,13 +667,10 @@ export async function renderProgram(host, params, _ctx) {
         {
           term: "coverage",
           lines: [
-            "Of everything that deserved remediation, the share that was remediated — taken"
-            + " over " + view.coverage.denominatorLabel + ".",
-            "The bounds are the two extreme re-labellings of the unclassified rows, so the"
-            + " WIDTH of the interval is the size of the doubt.",
-            "Coverage and efficiency are published together because either one alone can be"
-            + " bought by moving the rule — widen it and coverage climbs while efficiency"
-            + " falls.",
+            "Of what deserved remediation, the share remediated — over "
+            + view.coverage.denominatorLabel + ".",
+            "The bounds re-label the unclassified rows both ways: the WIDTH is the doubt.",
+            "Published together: widen the rule and coverage climbs while efficiency falls.",
           ],
         },
       ),
@@ -688,13 +712,20 @@ export async function renderProgram(host, params, _ctx) {
           lines: [
             fmtCount(excluded) + " secret " + pluralize(excluded, "finding")
             + " are outside every figure on this page.",
-            "The risk rule refuses to score them rather than inventing a classification —"
-            + " severity on that register grades a detection, not whether a credential is"
-            + " live.",
+            "The rule refuses to score them rather than inventing a classification.",
+            "Severity there grades a detection, not whether a credential is live.",
           ],
         },
       )));
     }
+    // THE SECOND POPULATION THIS PAGE MAY NOT MEASURE, said in the same place as the first.
+    // Secrets are refused because the rule cannot score them; retired repositories are left
+    // out because the operator asked. Two exclusions, one spot on the page, so a reader
+    // checking a denominator finds both or neither.
+    const eol = endOfLifeExclusionNote(
+      program && program.endOfLife, "the coverage and capacity figures",
+    );
+    if (eol) heroHost.append(el("p", { class: "small muted" }, eol));
   }
 
   /**
@@ -747,11 +778,10 @@ export async function renderProgram(host, params, _ctx) {
         tipLabel("Unclassified", {
           term: "unclassified",
           lines: [
-            "Held outside the four corners above, never folded into one: those sum to "
-            + fmtCount(view.cellTotal) + " classified findings, and these "
+            "Held outside the four corners above, never folded into one.",
+            "The coverage and efficiency bounds re-label exactly these rows.",
+            "The corners sum to " + fmtCount(view.cellTotal) + " classified findings; these "
             + fmtCount(view.unclassified.total) + " are the rows the rule could not place.",
-            "They are what the coverage and efficiency bounds are computed from — the two"
-            + " extreme re-labellings are of exactly these rows.",
           ],
         })),
       el("div", { class: "kpi-value num" }, fmtCount(view.unclassified.total)),
@@ -802,10 +832,10 @@ export async function renderProgram(host, params, _ctx) {
           help: {
             term: "signal-coverage",
             lines: [
-              "How much of the column this clause rests on was ever captured, over the rows"
-              + " the signal applies to.",
-              "A bar is drawn only where a share was measured: \"always present\" and"
-              + " \"not applicable\" are not zeroes and get no track.",
+              "How much of the column this clause rests on was captured, over the rows it"
+              + " applies to.",
+              "A bar is drawn only where a share was measured.",
+              "\"Always present\" and \"not applicable\" are not zeroes and get no track.",
             ],
           },
           cell: (r) => el("span", { class: "rate-with-meter" },
@@ -856,10 +886,9 @@ export async function renderProgram(host, params, _ctx) {
     // the rule in force is the direct-labelled one, is a definition of the whole section.
     sensitivityHost.append(sectionLabel("Rule sensitivity", {
       lines: [
-        "Every non-empty subset of that register's risk signals, scored exactly the way the"
-        + " headline pair above is — one point per candidate rule.",
-        "The rule actually in force is direct-labelled on the chart and marked “active” in"
-        + " the table behind it.",
+        "Every non-empty subset of that register's risk signals, one point per rule.",
+        "Each is scored exactly the way the headline pair above is.",
+        "The rule in force is direct-labelled on the chart and marked “active” in the table.",
       ],
     }));
     const view = sensitivityView(program && program.sensitivity);
@@ -1000,6 +1029,26 @@ export async function renderProgram(host, params, _ctx) {
       view.oneInN === null ? absentText : "1 in " + Math.round(view.oneInN),
       "of what was open at the start of a month gets closed in it",
     ));
+    // THIRD, AND THE ORDER IS THE ARGUMENT. The first two cards are one rate written twice —
+    // a percentage and the P2P idiom — and the question the second one raises is "one in ten
+    // of WHAT, exactly?". This is that answer, so it reads immediately after the idiom rather
+    // than between the two spellings of the rate it qualifies. Same `monthsCounted` as the
+    // rate, so the denominator sentence below is the same claim in the same words.
+    row.append(figureCard({
+      label: "Closed per month",
+      value: view.closedPerMonthText,
+      sub: view.monthsCounted
+        ? "findings, on average, over the same "
+          + pluralize(view.monthsCounted, "month")
+        : "no month was fully observed, so there is nothing to average",
+      help: { term: "closed-per-month" },
+      denominator: view.closedPerMonthMean === null
+        ? "Not measured: no complete, directly-observed month yet."
+        : "Averaged over " + fmtCount(view.monthsCounted) + " fully observed "
+          + pluralize(view.monthsCounted, "month")
+          + " — the same months as the rate beside it, so the two figures describe one"
+          + " population rather than two.",
+    }));
     // THE VERDICT IS A WORD, AND THE DOT ONLY REPEATS IT — gas_ai's `.cap-verdict` rule,
     // ported. Three states told apart by hue alone survive neither greyscale nor a dichromat,
     // and this is the one figure on the card a reader takes away.
@@ -1082,10 +1131,9 @@ export async function renderProgram(host, params, _ctx) {
           {
             term: "reconstructed",
             lines: [
-              "Those months are excluded from the headline close rate above rather than"
-              + " averaged into it.",
-              "A reconstructed month ended before this register started watching, so its"
-              + " backlog is real but nobody was looking in real time; a partial month is"
+              "Excluded from the headline close rate above rather than averaged into it.",
+              "A reconstructed month ended before this register started watching.",
+              "Its backlog is real but nobody was looking in real time; a partial month is"
               + " simply not over yet.",
             ],
           },
@@ -1105,10 +1153,9 @@ export async function renderProgram(host, params, _ctx) {
     trendHost.append(sectionLabel("Coverage and efficiency over time", {
       term: "reconstructed",
       lines: [
-        "Both rates on one axis, because the trade-off between them is the story: a coverage"
-        + " line climbing while efficiency falls is legible only when they share a scale.",
-        "The shaded band marks the reconstructed prefix — one point per day of pre-scan"
-        + " history rebuilt from first-detection dates, where closures are under-counted.",
+        "Both rates on one axis, because the trade-off between them is the story.",
+        "The shaded band marks the reconstructed prefix, where closures are under-counted.",
+        "The prefix is one point per day of pre-scan history, from first-detection dates.",
       ],
     }));
     if (program && program.trendSupported === false) {

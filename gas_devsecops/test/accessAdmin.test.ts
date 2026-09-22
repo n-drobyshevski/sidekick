@@ -41,6 +41,7 @@ vi.spyOn(console, "log").mockImplementation(() => {});
 vi.mock("../src/server/sheetsDb", () => ({
   TABS: { scans: "scans", settings: "settings", ledger: "finding_ledger", jobs: "jobs" },
   TAB_HEADERS: { finding_ledger: [] }, SCHEMA_VERSION: 1,
+  ensureTab: () => null,
   readAll: () => [], readTail: () => [], overwrite: () => {}, appendRows: () => {},
   updateWhere: () => false, dataRowCount: () => 0, ensureTabs: () => {},
   __resetMemosForTest: () => {},

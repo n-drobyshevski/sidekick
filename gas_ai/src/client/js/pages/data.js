@@ -62,7 +62,9 @@ export async function renderData(main, _params, ctx) {
     // whose own rows are the raw material that precedence is derived from.
     sectionLabel("Sync history", { term: "rail-status" }),
     historyHost,
-    sectionLabel("Storage"),
+    // "Space in use", not "Storage": the page's own h1 is Storage now. Named to match
+    // both sibling registers.
+    sectionLabel("Space in use"),
     statsHost,
   );
 
@@ -173,9 +175,9 @@ export async function renderData(main, _params, ctx) {
         {
           key: "status", label: "Status",
           help: { lines: [
-            "Whether this one sync committed (Success) or was interrupted before it could " +
-            "write its row (Failed). The sync-history row is written LAST, so a sync that " +
-            "never reached Success also never appears here at all.",
+            "Whether this sync committed (Success) or was interrupted (Failed).",
+            "The history row is written LAST, so a sync that never reached Success never " +
+            "appears here at all.",
           ] },
           cell: (r) => (r.status === "SUCCESS"
             ? statusPill("ok", "Success")

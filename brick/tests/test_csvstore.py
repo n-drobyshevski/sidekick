@@ -28,6 +28,8 @@ pytest.importorskip("pyspark")
 pytest.importorskip("delta")
 
 BRICK_DIR = Path(__file__).resolve().parents[1]
+#: brick/ is one hop below the repo root. Only the GAS golden fixture is read from there --
+#: everything else is beside these tests.
 REPO_ROOT = BRICK_DIR.parent
 sys.path.insert(0, str(BRICK_DIR))
 
@@ -47,7 +49,7 @@ import run_pipeline  # noqa: E402
 from config import DEFAULT_RISK_RULE  # noqa: E402
 from ingest import extract_nodes  # noqa: E402
 
-SCOPE = "os"
+SCOPE = "sca"
 SEVERITIES = ["CRITICAL", "HIGH"]
 
 
@@ -55,12 +57,12 @@ SEVERITIES = ["CRITICAL", "HIGH"]
 def register(spark, tmp_path, request):
     """A small real register in its own database, with two scans so lifecycles are real."""
     nodes = extract_nodes(
-        json.loads((REPO_ROOT / "os_vulns_response_exemple.json").read_text())
+        json.loads((BRICK_DIR / "fixtures" / "sca_findings_example.json").read_text())
     )
     database = f"csv_{abs(hash(request.node.name)) % 10**8}"
     spark.sql(f"DROP DATABASE IF EXISTS {database} CASCADE")
     spark.sql(f"CREATE DATABASE {database}")
-    tables = run_pipeline.resolve_tables(database, SCOPE, argv=[])
+    tables = run_pipeline.resolve_tables(database, argv=[])
     run_pipeline.ensure_tables(spark, tables)
 
     def scan(scan_id, scan_ts, payload):
@@ -95,6 +97,16 @@ def rows_of(frame, order):
     return [r.asDict() for r in frame.orderBy(*order).collect()]
 
 
+def sorted_rows(frame) -> list:
+    """Every row of a frame, ordered deterministically by its own string form.
+
+    Used where the columns differ from row to row -- ``metrics`` is one table holding every
+    family, so there is no single ``order`` tuple every row can be sorted by -- rather than
+    naming a per-family column list here too.
+    """
+    return sorted(str(r.asDict()) for r in frame.collect())
+
+
 # ------------------------------------------------------------------ the property that matters
 
 
@@ -108,7 +120,7 @@ def test_the_confusion_matrix_survives_the_round_trip(spark, register):
     """
     tables, target = register
     csvstore.export(spark, tables, target)
-    loaded = csvstore.load(spark, target, "wiz_os_")
+    loaded = csvstore.load(spark, target, "wiz_")
 
     def matrix(reference):
         frame = metrics.classify_risk(
@@ -227,26 +239,24 @@ def test_an_empty_field_is_the_only_null_a_boolean_accepts(spark):
 
 
 def test_every_gold_frame_survives_the_round_trip(spark, register):
-    """Not just the ledger: MTTR, program, capacity and sensitivity, row for row.
+    """Not just the ledger: the scan commit record and every gold family, row for row.
 
-    The gold tables carry the timestamps, the doubles and the NULL rates, so this is where a
+    ``metrics`` is one wide table now -- the commit record and every gold family (mttr, program,
+    capacity, assets) together, told apart by ``family`` -- so there is no longer one table per
+    family to compare. Comparing the whole thing, sorted (which sorts on every column, ``family``
+    included, since rows from different families share no other column to order by), is what
+    actually pins that nothing about the union is lost or reshuffled on the round trip;
+    per-family reads would only prove each family survives in isolation. This is also where a
     ``mmcr`` of NULL coming back as 0.0 -- "we closed nothing" rather than "there was nothing
     open" -- would surface.
     """
     tables, target = register
     csvstore.export(spark, tables, target)
-    loaded = csvstore.load(spark, target, "wiz_os_")
+    loaded = csvstore.load(spark, target, "wiz_")
 
-    for attr, order in (
-        ("mttr", ["scan_id", "severity"]),
-        ("program", ["scan_id", "severity"]),
-        ("capacity", ["scan_id", "population", "month"]),
-        ("sensitivity", ["scan_id", "rule_label"]),
-        ("scans", ["scan_id"]),
-    ):
-        expected = rows_of(spark.table(getattr(tables, attr)), order)
-        actual = rows_of(spark.table(getattr(loaded, attr)), order)
-        assert actual == expected, f"{attr} did not round-trip"
+    expected = sorted_rows(spark.table(tables.metrics))
+    actual = sorted_rows(spark.table(loaded.metrics))
+    assert actual == expected, "metrics did not round-trip"
 
 
 def test_bronze_is_excluded_unless_asked_for(spark, register):
@@ -254,10 +264,10 @@ def test_bronze_is_excluded_unless_asked_for(spark, register):
     it from CSV. Opting in is one argument; paying for it by default is not."""
     tables, target = register
     csvstore.export(spark, tables, target)
-    assert not (Path(target) / "wiz_os_findings_raw.csv").exists()
+    assert not (Path(target) / "wiz_findings_raw.csv").exists()
 
     csvstore.export(spark, tables, target, include_bronze=True)
-    assert (Path(target) / "wiz_os_findings_raw.csv").exists()
+    assert (Path(target) / "wiz_findings_raw.csv").exists()
 
 
 def test_load_names_its_views_after_the_tables(spark, register):
@@ -265,19 +275,19 @@ def test_load_names_its_views_after_the_tables(spark, register):
     wants a table, so a CSV register substitutes for a catalog-backed one."""
     tables, target = register
     csvstore.export(spark, tables, target)
-    loaded = csvstore.load(spark, target, "wiz_os_")
+    loaded = csvstore.load(spark, target, "wiz_")
 
-    assert loaded.mttr == "wiz_os_metrics_mttr"
-    assert loaded.ledger == "wiz_os_vuln_ledger"
+    assert loaded.metrics == "wiz_metrics"
+    assert loaded.ledger == "wiz_vuln_ledger"
     # And it is readable by that name through plain SQL, which is what a notebook cell does.
-    assert spark.sql("SELECT count(*) AS n FROM wiz_os_metrics_mttr").first()["n"] > 0
+    assert spark.sql("SELECT count(*) AS n FROM wiz_metrics").first()["n"] > 0
 
 
 def test_load_refuses_a_directory_that_is_not_a_register(spark, tmp_path):
     """A wrong `scope` or `table_prefix` widget points at an export that does not exist, and
     the useful failure names the widgets rather than the first missing view."""
     with pytest.raises(RuntimeError, match="No CSV register"):
-        csvstore.load(spark, str(tmp_path), "wiz_sast_")
+        csvstore.load(spark, str(tmp_path), "wiz_")
 
 
 def test_a_csv_edited_apart_from_its_sidecar_is_refused(spark, register):
@@ -285,12 +295,12 @@ def test_a_csv_edited_apart_from_its_sidecar_is_refused(spark, register):
     guessing which column is which is how a rate ends up computed over the wrong column."""
     tables, target = register
     csvstore.export(spark, tables, target)
-    path = Path(target) / "wiz_os_metrics_mttr.csv"
+    path = Path(target) / "wiz_metrics.csv"
     lines = path.read_text().splitlines()
     path.write_text("\n".join(["not,the,right,header"] + lines[1:]))
 
     with pytest.raises(RuntimeError, match="sidecar declares"):
-        csvstore.load(spark, target, "wiz_os_")
+        csvstore.load(spark, target, "wiz_")
 
 
 def test_restore_rebuilds_a_register_the_pipeline_can_continue(spark, register, tmp_path):
@@ -304,8 +314,8 @@ def test_restore_rebuilds_a_register_the_pipeline_can_continue(spark, register, 
     csvstore.export(spark, tables, target)
 
     root = str(tmp_path / "restored")
-    fresh = run_pipeline.resolve_tables("", SCOPE, argv=[], data_path=root)
-    csvstore.restore(spark, target, fresh, "wiz_os_")
+    fresh = run_pipeline.resolve_tables("", argv=[], data_path=root)
+    csvstore.restore(spark, target, fresh, "wiz_")
 
     expected = rows_of(spark.table(tables.ledger), ["vuln_key"])
     assert rows_of(spark.table(fresh.ledger), ["vuln_key"]) == expected
@@ -326,7 +336,7 @@ def test_restore_rebuilds_a_register_the_pipeline_can_continue(spark, register, 
                 F.lit(True).alias("is_open"),
                 "fix_date",
                 F.lit(None).cast("string").alias("fixed_version"),
-                "has_kev", "has_exploit", "epss",
+                "has_kev", "has_exploit", "epss", "cwe", "language", "ai_verdict",
                 F.lit(0).cast("long").alias("seq"),
             )
         ),
@@ -342,7 +352,7 @@ def test_a_timestamp_comes_back_as_a_timestamp(spark, register):
     and a string column would make ``unix_timestamp`` return NULL for all of them."""
     tables, target = register
     csvstore.export(spark, tables, target)
-    loaded = csvstore.load(spark, target, "wiz_os_")
+    loaded = csvstore.load(spark, target, "wiz_")
 
     fields = dict(spark.table(loaded.ledger).dtypes)
     assert fields["first_seen"] == "timestamp"
@@ -354,10 +364,10 @@ def test_a_timestamp_comes_back_as_a_timestamp(spark, register):
 
 def test_table_basename_reads_both_reference_forms():
     """One export directory has to be readable whichever storage mode wrote it."""
-    assert csvstore.table_basename("cat.sch.wiz_sca_metrics_mttr") == "wiz_sca_metrics_mttr"
+    assert csvstore.table_basename("cat.sch.wiz_metrics") == "wiz_metrics"
     assert (
-        csvstore.table_basename("delta.`/Volumes/c/s/v/reg/wiz_sca_metrics_mttr`")
-        == "wiz_sca_metrics_mttr"
+        csvstore.table_basename("delta.`/Volumes/c/s/v/reg/wiz_metrics`")
+        == "wiz_metrics"
     )
 
 
@@ -384,15 +394,15 @@ def test_two_scans_reconcile_through_csv_alone(spark, tmp_path, monkeypatch):
     import shutil
 
     nodes = extract_nodes(
-        json.loads((REPO_ROOT / "os_vulns_response_exemple.json").read_text())
+        json.loads((BRICK_DIR / "fixtures" / "sca_findings_example.json").read_text())
     )
     register = str(tmp_path / "csv")
     scratch = str(tmp_path / "scratch")
     monkeypatch.setattr(run_pipeline.dbx, "widget", lambda name: "")
 
     def scan(scan_id, scan_ts, payload):
-        tables = run_pipeline.resolve_tables("", SCOPE, argv=[], data_path=scratch)
-        csvstore.restore(spark, register, tables, "wiz_os_", missing_ok=True)
+        tables = run_pipeline.resolve_tables("", argv=[], data_path=scratch)
+        csvstore.restore(spark, register, tables, "wiz_", missing_ok=True)
         run_pipeline.ensure_tables(spark, tables)
         run_pipeline.create_clustered(
             spark, tables.bronze, run_pipeline.BRONZE_TABLE_SCHEMA, "bronze"
@@ -414,7 +424,7 @@ def test_two_scans_reconcile_through_csv_alone(spark, tmp_path, monkeypatch):
         return tables
 
     scan("scan-1", "2026-06-01T00:00:00Z", nodes)
-    first = csvstore.load(spark, register, "wiz_os_")
+    first = csvstore.load(spark, register, "wiz_")
     seen_first = {r["vuln_key"]: r for r in spark.table(first.ledger).collect()}
     assert seen_first, "the first scan exported no lifecycles"
 
@@ -423,15 +433,14 @@ def test_two_scans_reconcile_through_csv_alone(spark, tmp_path, monkeypatch):
 
     # Drop one finding that is **in the severity scope and still OPEN**, so disappearance is the
     # only way it can close -- the inference that only works if the previous scan's ledger AND
-    # its scan log both came back. Named rather than sliced: the committed response holds one
-    # finding per severity, so taking half of it can drop only out-of-scope rows and prove
-    # nothing. And OPEN, because a finding the response already marks RESOLVED closes through
-    # `resolvedAt` with `resolution_src = "api"` and would pass without the round-trip working.
+    # its scan log both came back. Both conditions matter: an out-of-scope finding was never in
+    # the population, and one the fixture already marks RESOLVED closes through `resolvedAt`
+    # with `resolution_src = "api"`, which would pass this test without the round-trip working.
     dropped = next(
         n for n in nodes if n["severity"] in SEVERITIES and n["status"] == "OPEN"
     )
     scan("scan-2", "2026-07-01T00:00:00Z", [n for n in nodes if n is not dropped])
-    after = csvstore.load(spark, register, "wiz_os_")
+    after = csvstore.load(spark, register, "wiz_")
     rows = {r["vuln_key"]: r for r in spark.table(after.ledger).collect()}
 
     # Same lifecycles, not a second set: identity survived the round-trip.
@@ -440,18 +449,20 @@ def test_two_scans_reconcile_through_csv_alone(spark, tmp_path, monkeypatch):
     for key, row in rows.items():
         assert row["first_seen"] == seen_first[key]["first_seen"], key
     # And the tail actually resolved, by the inference that needs the previous scan log. Keyed
-    # on `vuln_key` rather than on the CVE: one CVE can sit on several assets, so a CVE is not
-    # an identity here even where this fixture happens to make it look like one.
+    # on `vuln_key` rather than on the CVE: seven rows in this fixture carry CVE-2021-44228 on
+    # different repositories, so a CVE is not an identity here.
     disappeared = [key for key, r in rows.items() if r["resolution_src"] == "disappeared"]
     assert disappeared == [f"id:{dropped['id']}"], (
         "the dropped finding did not resolve by disappearance -- the previous scan's log or "
         "its last_scan_id did not survive the round-trip"
     )
 
-    # Two scans on the log, and the gold tables accumulated rather than being replaced.
-    assert spark.table(after.scans).count() == 2
+    # Two scans on the log, and the gold rows accumulated rather than being replaced.
+    scan_rows = spark.table(after.metrics).where(F.col("family") == run_pipeline.FAMILY_SCAN)
+    assert scan_rows.count() == 2
+    mttr_rows = spark.table(after.metrics).where(F.col("family") == run_pipeline.FAMILY_MTTR)
     assert (
-        spark.table(after.mttr).select("scan_id").distinct().count() == 2
+        mttr_rows.select("scan_id").distinct().count() == 2
     ), "the gold trend did not survive the round-trip"
 
 
@@ -465,13 +476,13 @@ def test_a_torn_export_is_refused_rather_than_read(spark, register):
     csvstore.export(spark, tables, target)
 
     # A ledger truncated the way a killed process would leave it.
-    path = Path(target) / "wiz_os_vuln_ledger.csv"
+    path = Path(target) / "wiz_vuln_ledger.csv"
     lines = path.read_text().splitlines()
     assert len(lines) > 2
     path.write_text("\n".join(lines[:2]) + "\n")
 
     with pytest.raises(RuntimeError, match="torn"):
-        csvstore.load(spark, target, "wiz_os_")
+        csvstore.load(spark, target, "wiz_")
 
 
 def test_an_export_with_no_manifest_is_read_unverified(spark, register):
@@ -484,7 +495,7 @@ def test_an_export_with_no_manifest_is_read_unverified(spark, register):
     # No manifest means no verification is possible; `load` still reads it, because a register
     # exported by an older version is not automatically torn. What must not happen is silence
     # about a register that IS torn, and that is the test above.
-    loaded = csvstore.load(spark, target, "wiz_os_")
+    loaded = csvstore.load(spark, target, "wiz_")
     assert spark.table(loaded.ledger).count() > 0
 
 
@@ -492,11 +503,11 @@ def test_restore_tolerates_an_absent_register_only_when_asked(spark, tmp_path):
     """The first run in `--csv_path` mode has nothing to restore, and that is normal. Every
     other caller passing a path with no register there has a wrong path, and should hear so."""
     empty = str(tmp_path / "nothing")
-    tables = run_pipeline.resolve_tables("", SCOPE, argv=[], data_path=str(tmp_path / "d"))
+    tables = run_pipeline.resolve_tables("", argv=[], data_path=str(tmp_path / "d"))
 
-    assert csvstore.restore(spark, empty, tables, "wiz_os_", missing_ok=True) == []
+    assert csvstore.restore(spark, empty, tables, "wiz_", missing_ok=True) == []
     with pytest.raises(RuntimeError, match="No CSV register"):
-        csvstore.restore(spark, empty, tables, "wiz_os_")
+        csvstore.restore(spark, empty, tables, "wiz_")
 
 
 def test_missing_ok_does_not_mistake_a_manifestless_export_for_an_empty_one(spark, register):
@@ -512,7 +523,7 @@ def test_missing_ok_does_not_mistake_a_manifestless_export_for_an_empty_one(spar
     csvstore.export(spark, tables, target)
     (Path(target) / csvstore.MANIFEST).unlink()
 
-    restored = csvstore.restore(spark, target, tables, "wiz_os_", missing_ok=True)
+    restored = csvstore.restore(spark, target, tables, "wiz_", missing_ok=True)
     assert restored, "a manifest-less export was skipped as though it were empty"
     assert spark.table(tables.ledger).count() > 0
 

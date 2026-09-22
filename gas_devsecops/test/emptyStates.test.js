@@ -265,7 +265,12 @@ describe("no sentence glues \"not measured\" to a count", () => {
   });
 
   it("is not a vacuous sweep — both fixed sentences are still on the page, rewritten", () => {
-    expect(CODE.mttr).toMatch(/Resolved inside the SLA window: not measured — nothing has closed/);
-    expect(CODE.mttr).toMatch(/Awaiting a vendor fix: not measured — no SCA finding is open/);
+    // The tip-budget round dropped each sentence's opening label ("Resolved inside the SLA
+    // window:", "Awaiting a vendor fix:"): the tip hangs on the row that already says it, and
+    // a card that opens by repeating the label under the pointer spends a line on nothing.
+    // The claim this file makes is unchanged — "not measured" still carries no count — and
+    // the sweep stays non-vacuous because both sentences are still pinned here.
+    expect(CODE.mttr).toMatch(/Not measured: nothing has closed yet/);
+    expect(CODE.mttr).toMatch(/Not measured: no SCA finding is open/);
   });
 });

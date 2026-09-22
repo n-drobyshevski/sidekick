@@ -65,6 +65,7 @@ vi.mock("../src/server/sheetsDb", async (importOriginal) => {
   return {
     TABS: real.TABS,
     TAB_HEADERS: real.TAB_HEADERS,
+    ensureTab: () => null,
     readAll: (tab: string) => tables[tab] ?? [],
     readTail: (tab: string, n: number) => (tables[tab] ?? []).slice(-n),
     overwrite: (tab: string, rows: Row[]) => {
@@ -532,6 +533,40 @@ describe("readers", () => {
     const noSnap = await load();
     expect(noSnap.ledger.loadState().ledger["sca:id:A"]!.severity).toBe("TABS");
   });
+
+  // The read-side half of config.ts's ORG_WIDE_PROJECTS rule. Fixing the DERIVATION
+  // (reconcile.ts::ownerProject) does nothing for a row already on the sheet: the merge is
+  // latest-wins-NEVER-ERASED, so the corrected `null` reads as "this scan saw nothing" and
+  // the stale connector tag rides forward through every future sync. BOTH load paths are
+  // asserted because only one of them normally answers — `loadState` prefers the snapshot,
+  // which never goes through `rowToLedger` at all.
+  it("an organisation-wide owner_project reads back as NO owner, snapshot and tabs alike",
+    async () => {
+      const { ledger, jobs, TABS } = await load();
+      seedJob(jobs, "job-1");
+      ledger.persistSync("job-1", "2026-06-01T00:00:00Z", battery());
+
+      // Doctor both sources the way a sync written before the rule existed left them.
+      const snap = drive.snapshot as { ledger: Record<string, Rec> };
+      snap.ledger["sca:id:A"]!["owner_project"] = "GITHUB-DKTUNITED";
+      snap.ledger["sast:id:S1"]!["owner_project"] = "product-TATTOO-idp";
+      for (const row of tables[TABS.ledger]!) {
+        if (row["finding_key"] === "sca:id:A") row["owner_project"] = "GITHUB-DKTUNITED";
+        if (row["finding_key"] === "sast:id:S1") row["owner_project"] = "product-TATTOO-idp";
+      }
+
+      const fresh = await load();
+      const fromSnapshot = fresh.ledger.loadState().ledger;
+      expect(fromSnapshot["sca:id:A"]!.owner_project).toBeNull();
+      // A real owner beside it is untouched — this scrubs one name, it does not blank a column.
+      expect(fromSnapshot["sast:id:S1"]!.owner_project).toBe("product-TATTOO-idp");
+
+      drive.snapshot = null;
+      const noSnap = await load();
+      const fromTabs = noSnap.ledger.loadState().ledger;
+      expect(fromTabs["sca:id:A"]!.owner_project).toBeNull();
+      expect(fromTabs["sast:id:S1"]!.owner_project).toBe("product-TATTOO-idp");
+    });
 
   it("latestScanRow answers per scope and ignores another register's scans", async () => {
     const { ledger, jobs } = await load();

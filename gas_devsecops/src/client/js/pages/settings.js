@@ -28,7 +28,7 @@
 // as "None" — see history.js's `isAllSeverities`/`severitiesLabel` for the same predicate
 // applied to a scan row instead of a draft.
 //
-// showExperimental IS ONE OF THE SEVEN Settings FIELDS AND DELIBERATELY GETS NO CONTROL TIED
+// showExperimental IS ONE OF THE PAGE-EDITABLE Settings FIELDS AND DELIBERATELY GETS NO CONTROL TIED
 // TO api_putSettings. The rail's actual "show experimental content" gate
 // (app.js: "`experimental` gates a route behind Settings -> show experimental content.") is
 // `experimental.js`'s own browser-local flag — nothing in this codebase reads
@@ -53,8 +53,9 @@ import { call } from "../../../../../gas_shared/api.js";
 import { bootstrapCached, invalidateBootstrap, setParams } from "../../../../../gas_shared/store.js";
 import { setShowExperimental, showExperimental } from "../experimental.js";
 import {
-  clear, confirmDialog, diagnosticCard, diagnosticsPanel, el, errorState, fmtCount, fmtDateTime,
-  glossaryTip, heroLines, pageHeader, skeletonStack, statusPill, tipLabel, toast, togglePills,
+  clear, confirmDialog, denomNote, diagnosticCard, diagnosticsPanel, el, errorState, fmtCount,
+  fmtDateTime, glossaryTip, heroLines, pageHeader, segmented, skeletonStack, statusPill,
+  tipLabel, toast, togglePills,
 } from "../ui.js";
 import { disclosure, saveBar, settingRow, settingsPanel, switchToggle, tabList } from "../../../../../gas_shared/ui/settings.js";
 import { hubUrlPanel } from "../../../../../gas_shared/ui/hubPanel.js";
@@ -88,12 +89,36 @@ const LOCAL_SCOPES = ["sca", "sast", "secrets"]; // mirrors domain/config.ts SCO
 export const RETENTION_FLOOR_DAYS = 30; // domain/maintenance.ts::RETENTION_MIN_DAYS
 export const DEFAULT_SYNC_HOUR = 5; // domain/settingsLogic.ts::DEFAULT_SYNC_HOUR
 
+// domain/config.ts::DEFAULT_COLD_AFTER_DAYS / COLD_AFTER_DAYS_MIN / COLD_AFTER_DAYS_MAX,
+// mirrored here for the same reason the two constants above are (the client never imports
+// domain/*.ts — see the module header) and held equal to them by test/pagesSettings.test.js.
+// They paint a hint BEFORE a save; what the server actually stored, clamp included, is what
+// `saveReconciliation` reports from api_putSettings's own response.
+export const DEFAULT_COLD_AFTER_DAYS = 90;
+export const COLD_WINDOW_MIN_DAYS = 7;
+export const COLD_WINDOW_MAX_DAYS = 365;
+
+// The relative cold-zone mode's own three mirrors, for the same reason and under the same
+// test: domain/config.ts::COLD_ZONE_MODES / DEFAULT_COLD_ZONE_MODE,
+// DEFAULT_COLD_TARGET_SHARE_PCT / COLD_TARGET_SHARE_PCT_MIN / _MAX, and
+// DEFAULT_COLD_FLOOR_DAYS / COLD_FLOOR_DAYS_MIN / _MAX. The mode is a CLOSED SET rather than
+// a range, which is the one place the pattern differs: an unrecognized string has no nearest
+// legal value to be clamped toward, so both this page and the server FALL BACK to "fixed".
+export const COLD_MODES = ["fixed", "relative"]; // domain/config.ts::COLD_ZONE_MODES
+export const PAGE_DEFAULT_COLD_ZONE_MODE = "fixed";
+export const COLD_TARGET_MIN_PCT = 1;
+export const COLD_TARGET_MAX_PCT = 50;
+export const PAGE_DEFAULT_COLD_TARGET_SHARE_PCT = 20;
+export const COLD_FLOOR_MIN_DAYS = 1;
+export const COLD_FLOOR_MAX_DAYS = 365;
+export const PAGE_DEFAULT_COLD_FLOOR_DAYS = 14;
+
 // Settings also carries `projectView` — the VIEW scope, which project the pages SHOW —
 // and it is DELIBERATELY ABSENT from SETTINGS_KEYS, from FIELD_TABS, from BATCHED_KEYS and
 // from draftFromSettings below. It is app-header chrome, not a settings-page field: a later
 // package puts a header control on it that reads and writes it directly through its own
 // `api_setProjectView` endpoint, one field at a time, without loading or resending the other
-// seven. Adding it here would (a) draw a control for it on the wrong page and (b) put it in
+// others. Adding it here would (a) draw a control for it on the wrong page and (b) put it in
 // this page's draft, so an ordinary Register/Deadlines/System save — which never touches
 // `api_setProjectView` — would round-trip it through `api_putSettings` right alongside
 // `showExperimental`'s pass-through problem below, except worse: showExperimental's control
@@ -101,11 +126,13 @@ export const DEFAULT_SYNC_HOUR = 5; // domain/settingsLogic.ts::DEFAULT_SYNC_HOU
 // would have no source at all to forward and would silently save back whatever stale value
 // this page happened to load with. `test/pagesSettings.test.js` pins the exclusion.
 export const SETTINGS_KEYS = [
-  "scopes", "fetchSeverities", "slaTargets", "showExperimental",
+  "scopes", "fetchSeverities", "slaTargets", "coldAfterDays", "coldZoneMode",
+  "coldTargetSharePct", "coldFloorDays", "excludeEndOfLifeFromColdZone",
+  "excludeEndOfLifeFromMttr", "showExperimental",
   "syncSchedule", "autoCompact", "retentionDays",
 ];
 
-// Which of the seven fields the save bar batches, and which tab owns each — showExperimental
+// Which of the ten batched fields the save bar owns, and which tab owns each — showExperimental
 // is deliberately absent, see the module header. projectView is absent for the separate
 // reason given above SETTINGS_KEYS: it has no tab on this page at all.
 //
@@ -126,8 +153,8 @@ export { DEFAULT_TAB, changeCountText, changeSummary, changedFields, normalizeTa
 // ============================================================================ pure view model
 
 /**
- * Lift api_getSettings's payload into a flat draft over exactly the seven Settings fields,
- * defensively — a malformed cell must not crash the page (the server's own `cleanSettings`
+ * Lift api_getSettings's payload into a flat draft over every page-editable
+ * Settings field, defensively — a malformed cell must not crash the page (the server's own `cleanSettings`
  * carries the same never-throw contract; this is its client-side mirror, not a replacement
  * for it). Arrays and per-scope records are copied, never aliased, so editing the draft can
  * never mutate a payload a background revalidation is still holding.
@@ -142,6 +169,34 @@ export function draftFromSettings(settings) {
       LOCAL_SCOPES.map((scope) => [scope, Array.isArray(fs[scope]) ? [...fs[scope]] : []]),
     ),
     slaTargets: { ...sla },
+    // Defensively, exactly like the two scalars below it: a settings cell holding a string, an
+    // object or nothing at all must paint the default rather than put NaN in a number input.
+    // The server's own `cleanColdAfterDays` is what CLAMPS a real out-of-range number into
+    // [7, 365] — this fallback only covers "not a number at all".
+    coldAfterDays: Number.isFinite(Number(s.coldAfterDays))
+      ? Number(s.coldAfterDays)
+      : DEFAULT_COLD_AFTER_DAYS,
+    // The MODE is lifted through `coldModeFieldView` rather than by a second copy of "is it
+    // one of the two words": an unrecognized string (or a number, or nothing at all) has to
+    // land on "fixed" here exactly as the server's own `cleanColdZoneMode` lands it there, and
+    // one function is how that stays true. A genuine string is trimmed and lowercased on the
+    // way, so a hand-edited cell holding " RELATIVE " opens the panel in the mode it means.
+    coldZoneMode: coldModeFieldView(s.coldZoneMode).value,
+    // The two relative-mode numbers, lifted exactly as `coldAfterDays` above is — junk paints
+    // the default rather than putting NaN in a number input, and a REAL out-of-range number is
+    // carried as typed, because clamping it is the server's job and `saveReconciliation` is
+    // what reports the clamp afterwards.
+    coldTargetSharePct: Number.isFinite(Number(s.coldTargetSharePct))
+      ? Number(s.coldTargetSharePct)
+      : PAGE_DEFAULT_COLD_TARGET_SHARE_PCT,
+    coldFloorDays: Number.isFinite(Number(s.coldFloorDays))
+      ? Number(s.coldFloorDays)
+      : PAGE_DEFAULT_COLD_FLOOR_DAYS,
+    // Only a literal `true`, mirroring the server's own `cleanSettings`: a settings cell
+    // holding a string or a number is not consent to delete repositories from a measurement.
+    // Two independent reads — neither switch is a default for the other.
+    excludeEndOfLifeFromColdZone: s.excludeEndOfLifeFromColdZone === true,
+    excludeEndOfLifeFromMttr: s.excludeEndOfLifeFromMttr === true,
     showExperimental: s.showExperimental === true,
     syncSchedule: Number.isFinite(Number(s.syncSchedule)) ? Number(s.syncSchedule) : DEFAULT_SYNC_HOUR,
     autoCompact: s.autoCompact === true,
@@ -219,6 +274,104 @@ export function retentionFieldView(days) {
   };
 }
 
+/**
+ * The cold-zone window, read the same honest way `retentionFieldView` reads the retention
+ * floor — and BOUNDED AT BOTH ENDS, which is the one difference. The retention window has a
+ * floor and no ceiling; this one has both, so a value outside the range is reported as
+ * `belowFloor` or `aboveCeiling` (with `outOfRange` for the callers that only need to know
+ * that something will move) and `displayValue` is what a save would actually store.
+ *
+ * The RAW typed value is always carried beside them, so a caller can tell "the reader typed
+ * 400" from "the register will use 365" — the same distinction the retention view keeps.
+ */
+export function coldWindowFieldView(days) {
+  const n = Number(days);
+  const value = Number.isFinite(n) ? n : DEFAULT_COLD_AFTER_DAYS;
+  const belowFloor = value < COLD_WINDOW_MIN_DAYS;
+  const aboveCeiling = value > COLD_WINDOW_MAX_DAYS;
+  return {
+    value,
+    floor: COLD_WINDOW_MIN_DAYS,
+    ceiling: COLD_WINDOW_MAX_DAYS,
+    belowFloor,
+    aboveCeiling,
+    outOfRange: belowFloor || aboveCeiling,
+    displayValue: Math.min(COLD_WINDOW_MAX_DAYS, Math.max(COLD_WINDOW_MIN_DAYS, value)),
+  };
+}
+
+/**
+ * The cold-zone MODE, read the way the server reads it: a genuine string, trimmed and
+ * lowercased, that is one of the two known modes — anything else is "nothing was chosen" and
+ * falls back to fixed.
+ *
+ * A FALLBACK, NOT A CLAMP, and `known` is what makes that visible to a caller. The two views
+ * below this one report `outOfRange` because a number outside a range still points at an end
+ * of it; a string outside a two-member set points at nothing, so the honest report is "this
+ * was not a mode" and the page shows fixed. `saveReconciliation` uses the same distinction —
+ * the clamp notes name a range, the mode note names the string it could not read.
+ *
+ * `options` is carried here rather than built at the control, so the two labels the segmented
+ * control shows are part of the tested view model and not a literal buried in the DOM half.
+ */
+export function coldModeFieldView(mode) {
+  const raw = typeof mode === "string" ? mode.trim().toLowerCase() : "";
+  const known = COLD_MODES.indexOf(raw) >= 0;
+  const value = known ? raw : PAGE_DEFAULT_COLD_ZONE_MODE;
+  return {
+    value,
+    isRelative: value === "relative",
+    known,
+    options: [
+      { value: "fixed", label: "Fixed window" },
+      { value: "relative", label: "Relative" },
+    ],
+  };
+}
+
+/**
+ * The relative mode's target share, in per cent — `coldWindowFieldView`'s shape exactly,
+ * because it is the same kind of field: bounded at both ends, clamped by the server, and
+ * worth reporting honestly rather than silently redrawing. 1..50: a "cold zone" that is more
+ * than half the estate is not a zone, and a share of zero would name nobody.
+ */
+export function coldTargetFieldView(pct) {
+  const n = Number(pct);
+  const value = Number.isFinite(n) ? n : PAGE_DEFAULT_COLD_TARGET_SHARE_PCT;
+  const belowFloor = value < COLD_TARGET_MIN_PCT;
+  const aboveCeiling = value > COLD_TARGET_MAX_PCT;
+  return {
+    value,
+    floor: COLD_TARGET_MIN_PCT,
+    ceiling: COLD_TARGET_MAX_PCT,
+    belowFloor,
+    aboveCeiling,
+    outOfRange: belowFloor || aboveCeiling,
+    displayValue: Math.min(COLD_TARGET_MAX_PCT, Math.max(COLD_TARGET_MIN_PCT, value)),
+  };
+}
+
+/**
+ * The relative mode's floor, in days — the same shape again, 1..365. This is the number that
+ * stops a derived line from calling a healthy estate cold: the share always names somebody,
+ * and on a landscape where the idlest fifth has been quiet for nine days, nobody should be.
+ */
+export function coldFloorFieldView(days) {
+  const n = Number(days);
+  const value = Number.isFinite(n) ? n : PAGE_DEFAULT_COLD_FLOOR_DAYS;
+  const belowFloor = value < COLD_FLOOR_MIN_DAYS;
+  const aboveCeiling = value > COLD_FLOOR_MAX_DAYS;
+  return {
+    value,
+    floor: COLD_FLOOR_MIN_DAYS,
+    ceiling: COLD_FLOOR_MAX_DAYS,
+    belowFloor,
+    aboveCeiling,
+    outOfRange: belowFloor || aboveCeiling,
+    displayValue: Math.min(COLD_FLOOR_MAX_DAYS, Math.max(COLD_FLOOR_MIN_DAYS, value)),
+  };
+}
+
 export const AUTO_COMPACT_OFF_NOTE =
   "Off by default. This preserves the behaviour that shipped before this setting existed — "
   + "turning it on is a choice this page leaves to you, not one it steers you toward.";
@@ -246,6 +399,40 @@ export function saveReconciliation(sent, saved) {
   if (Number.isFinite(Number(s.retentionDays)) && Number(s.retentionDays) !== Number(r.retentionDays)) {
     notes.push(
       `Retention window saved as ${r.retentionDays} day(s) — raised to the ${RETENTION_FLOOR_DAYS}-day floor.`,
+    );
+  }
+  // The cold-zone window is the third field the server may silently rewrite, and it is CLAMPED
+  // (into a range, at either end) rather than defaulted — so the note names the range and the
+  // stored value, never "it was rejected".
+  if (Number.isFinite(Number(s.coldAfterDays)) && Number(s.coldAfterDays) !== Number(r.coldAfterDays)) {
+    notes.push(
+      `Cold-zone window saved as ${r.coldAfterDays} days — clamped into the `
+      + `${COLD_WINDOW_MIN_DAYS}–${COLD_WINDOW_MAX_DAYS} range.`,
+    );
+  }
+  // The relative mode's two numbers are clamped exactly as the window above is, so they are
+  // reported exactly as it is — the range and the stored value, never "it was rejected".
+  if (
+    Number.isFinite(Number(s.coldTargetSharePct))
+    && Number(s.coldTargetSharePct) !== Number(r.coldTargetSharePct)
+  ) {
+    notes.push(
+      `Cold-zone target share saved as ${r.coldTargetSharePct}% — clamped into the `
+      + `${COLD_TARGET_MIN_PCT}–${COLD_TARGET_MAX_PCT}% range.`,
+    );
+  }
+  if (Number.isFinite(Number(s.coldFloorDays)) && Number(s.coldFloorDays) !== Number(r.coldFloorDays)) {
+    notes.push(
+      `Cold-zone floor saved as ${r.coldFloorDays} days — clamped into the `
+      + `${COLD_FLOOR_MIN_DAYS}–${COLD_FLOOR_MAX_DAYS}-day range.`,
+    );
+  }
+  // The MODE is the one rewrite that is a FALLBACK rather than a clamp (see coldModeFieldView),
+  // so its note names the string the server could not read instead of a range it was pulled
+  // into — "clamped into the fixed–relative range" would be nonsense.
+  if (typeof s.coldZoneMode === "string" && s.coldZoneMode !== r.coldZoneMode) {
+    notes.push(
+      `Cold-zone mode saved as ${r.coldZoneMode} — "${s.coldZoneMode}" is not a mode.`,
     );
   }
   if (Number.isFinite(Number(s.syncSchedule)) && Number(s.syncSchedule) !== Number(r.syncSchedule)) {
@@ -750,6 +937,261 @@ export async function renderSettings(host, params, ctx) {
       const cutline = slaCutlines[r.sev];
       return el("div", {}, row, divergenceEl, cutline ? cutline.node : null);
     });
+
+    // ---- who the remediation-speed figures are measured over, under the windows they are
+    // measured against.
+    //
+    // HERE AND NOT BESIDE ITS TWIN AT THE BOTTOM OF THE PANEL, deliberately. The two switches
+    // read almost identically and reach completely different families, so the thing that keeps
+    // them apart is not their wording — it is that each one sits with the figures it governs.
+    // This one closes the SLA block, whose windows these figures are measured against; the
+    // cold-zone one closes the cold-zone block. Stacked together they would read as one
+    // decision with two checkboxes.
+    const mttrEolSwitch = switchToggle({
+      checked: draft.excludeEndOfLifeFromMttr,
+      id: "settings-exclude-eol-mttr",
+      ariaLabel: "Exclude end-of-life repositories from the remediation-speed figures",
+      onChange: (on) => { draft.excludeEndOfLifeFromMttr = on; syncDirty(); },
+    });
+    body.push(settingRow({
+      // THE LABEL NAMES THE FAMILY, because the two switches are otherwise the same words
+      // twice on one tab. Their descriptions differ and their positions differ, but a reader
+      // scanning bold labels down the panel would see "End-of-life repositories" twice and
+      // have no idea which one they were about to flip. The parenthetical is the disambiguator
+      // that survives that scan; the glossary term stays on the leading phrase.
+      label: glossaryTip("End-of-life repositories (remediation speed)", "end-of-life"),
+      htmlFor: "settings-exclude-eol-mttr",
+      description: "Leave repositories the tenant has retired out of the half-life, the SLA "
+        + "attainment and the open-age distribution. A finished repository distorts them from "
+        + "both ends: its closes are archival rather than work, and its open findings will "
+        + "never be fixed, so they age inside the backlog forever. Their findings stay in "
+        + "every count of what is open. Read off each repository's lifecycle tag — if System "
+        + "reports no lifecycles placed, this excludes nothing.",
+      control: mttrEolSwitch.node,
+    }));
+
+    // ---- the cold zone, AFTER the per-severity rows and inside the same panel.
+    //
+    // Same tab, not the same kind of deadline: the rows above promise a window for ONE
+    // finding, these set how long a whole repository may go with nothing closing before the
+    // Repositories page calls it cold. They are last because they are the coarser reading, and
+    // here rather than on System because they are deadlines a reader sets, not a maintenance
+    // knob.
+    //
+    // A MODE AND ITS OWN NUMBERS, SHOWN AND HIDDEN RATHER THAN DISABLED. Fixed mode reads one
+    // number (the window) and relative mode reads two (the target share and the floor), and
+    // the ones the current mode does not read are not merely inert — they are not what the
+    // register is measuring at all. A disabled control still says "this is part of the answer,
+    // you just may not touch it", which would be a lie in whichever mode is off; a control
+    // that is absent says the truth, that this reading has no such number. The draft still
+    // carries all three either way, so flipping back and forth never loses a value.
+    //
+    // Two labels route to the glossary, like the panel's own title routes to `sla-target`:
+    // the mode to `cold-zone-mode` and the window to `cold-zone`. A window is a setting whose
+    // NAME is a measurement decision, and the entries are where those decisions are written
+    // (movement is resolved/removed/rotated, measured at the last scan; the mode entry says
+    // what "relative" ranks and against what). The two relative-mode NUMBERS take plain-text
+    // labels: they are parameters OF the mode, and the entry that explains them is the one
+    // its own label already points at.
+    const modeView = coldModeFieldView(draft.coldZoneMode);
+
+    body.push(settingRow({
+      label: glossaryTip("Cold-zone mode", "cold-zone-mode"),
+      description: "Fixed window calls a repository cold after a set number of idle days. "
+        + "Relative draws the line wherever the idlest share of the estate begins, so a chosen "
+        + "share of the repositories with open findings is cold whatever the idle times are.",
+      control: segmented({
+        options: modeView.options,
+        value: modeView.value,
+        ariaLabel: "Cold-zone mode",
+        onChange: (v) => {
+          draft.coldZoneMode = v;
+          // A field that has just left the screen cannot be corrected, so its in-progress
+          // error must not keep doSave()'s first gate closed from behind a control nobody can
+          // see. The draft itself is always legal here — an oninput below only ever writes a
+          // value it could parse — so the rebuilt inputs come back valid.
+          if (v === "relative") {
+            setFieldError("coldAfterDays", null);
+          } else {
+            setFieldError("coldTargetSharePct", null);
+            setFieldError("coldFloorDays", null);
+          }
+          // REBUILD, THEN syncDirty() — the same order buildPanels() uses. syncDirty()
+          // repaints live readouts into whichever hosts are attached right now, so painting
+          // before the rebuild would write into nodes this call is about to throw away.
+          buildDeadlinesPanel();
+          syncDirty();
+        },
+      }),
+    }));
+
+    if (!modeView.isRelative) {
+      const coldId = "settings-cold-after-days";
+      const coldErrorId = `${coldId}-error`;
+      const coldWarn = el("span", { class: "small settings-retention-warn", hidden: true });
+      const coldError = el(
+        "span", { id: coldErrorId, class: "small settings-field-error", role: "alert", hidden: true },
+        "Enter a number of days.",
+      );
+      const coldInput = el("input", {
+        type: "number", id: coldId, min: String(COLD_WINDOW_MIN_DAYS), max: String(COLD_WINDOW_MAX_DAYS),
+        step: "1", value: String(draft.coldAfterDays), "aria-describedby": coldErrorId,
+        oninput: (ev) => {
+          const raw = ev.target.value;
+          // The same "Number('') is 0, and 0 is finite" trap the two System handlers guard: a
+          // blank field is NO INPUT, never "cold immediately", so it is refused before the cast.
+          const blank = raw.trim() === "";
+          const n = Number(raw);
+          const ok = !blank && Number.isFinite(n);
+          // Out-of-range-but-real is a WARN, not an error — the server clamps it into the range
+          // on save, exactly as a below-floor retention window is clamped up. Only a value that
+          // does not parse as a number at all is invalid.
+          if (ok) {
+            draft.coldAfterDays = Math.floor(n);
+            const v = coldWindowFieldView(draft.coldAfterDays);
+            coldWarn.hidden = !v.outOfRange;
+            coldWarn.textContent = v.outOfRange
+              ? `Outside the ${v.floor}–${v.ceiling}-day range — saving will store ${v.displayValue}.`
+              : "";
+          }
+          coldInput.setAttribute("aria-invalid", ok ? "false" : "true");
+          coldError.hidden = ok;
+          setFieldError("coldAfterDays", ok ? null : "The cold-zone window must be a number.");
+          syncDirty();
+        },
+      });
+      body.push(settingRow({
+        label: glossaryTip("Cold-zone window", "cold-zone"), htmlFor: coldId,
+        description: "Days a repository may sit with open findings and no remediation movement "
+          + "before it is called cold. Movement is any finding resolved, removed or rotated.",
+        control: el("div", {}, coldInput, coldWarn, coldError),
+      }));
+    } else {
+      // The two relative-mode numbers. Both oninput handlers are the cold-window handler above
+      // with the field name changed, deliberately rather than by a shared helper: each one
+      // names its own draft field, its own view and its own error sentence, and the three
+      // differ in exactly those words.
+      const targetId = "settings-cold-target-share";
+      const targetErrorId = `${targetId}-error`;
+      const targetWarn = el("span", { class: "small settings-retention-warn", hidden: true });
+      const targetError = el(
+        "span", { id: targetErrorId, class: "small settings-field-error", role: "alert", hidden: true },
+        "Enter a percentage.",
+      );
+      const targetInput = el("input", {
+        type: "number", id: targetId, min: String(COLD_TARGET_MIN_PCT), max: String(COLD_TARGET_MAX_PCT),
+        step: "1", value: String(draft.coldTargetSharePct), "aria-describedby": targetErrorId,
+        oninput: (ev) => {
+          const raw = ev.target.value;
+          const blank = raw.trim() === "";
+          const n = Number(raw);
+          const ok = !blank && Number.isFinite(n);
+          if (ok) {
+            draft.coldTargetSharePct = Math.floor(n);
+            const v = coldTargetFieldView(draft.coldTargetSharePct);
+            targetWarn.hidden = !v.outOfRange;
+            targetWarn.textContent = v.outOfRange
+              ? `Outside the ${v.floor}–${v.ceiling}% range — saving will store ${v.displayValue}.`
+              : "";
+          }
+          targetInput.setAttribute("aria-invalid", ok ? "false" : "true");
+          targetError.hidden = ok;
+          setFieldError("coldTargetSharePct", ok ? null : "The cold-zone target share must be a number.");
+          syncDirty();
+        },
+      });
+      // THE DENOMINATOR, AND IT IS NOT DECORATION. This field is a RATE — a share of something
+      // — and on every other page in this app a rate travels with the population it is a share
+      // OF (`denomNote`, swept by test/pagesLit.test.js's exit gate 3/7). A target share is no
+      // exception just because the reader types it rather than reading it: "20%" means nothing
+      // until the estate it counts against is named, and the population here is a NARROW one
+      // that the profile decides before any line is drawn — a repository the scanner stopped
+      // returning is not evidence about engagement, and one with nothing open cannot be in a
+      // zone that measures unclosed work. Saying so here is what stops an operator reading
+      // "20%" as a fifth of every repository they own.
+      body.push(el("div", {},
+        settingRow({
+          label: "Cold-zone target share", htmlFor: targetId,
+          description: "The share of the eligible repositories the line aims to put in the "
+            + "cold zone, in %. The idlest ones go first, and ties at the line are all cold, "
+            + "so the share actually reached can come out larger.",
+          control: el("div", {}, targetInput, targetWarn, targetError),
+        }),
+        denomNote(
+          "A share of the repositories the scanner still returns that have at least one open "
+          + "finding; unobserved and clear repositories are not in it. The Repositories page "
+          + "reports the share actually reached against this target.",
+        ),
+      ));
+
+      const floorId = "settings-cold-floor-days";
+      const floorErrorId = `${floorId}-error`;
+      const floorWarn = el("span", { class: "small settings-retention-warn", hidden: true });
+      const floorError = el(
+        "span", { id: floorErrorId, class: "small settings-field-error", role: "alert", hidden: true },
+        "Enter a number of days.",
+      );
+      const floorInput = el("input", {
+        type: "number", id: floorId, min: String(COLD_FLOOR_MIN_DAYS), max: String(COLD_FLOOR_MAX_DAYS),
+        step: "1", value: String(draft.coldFloorDays), "aria-describedby": floorErrorId,
+        oninput: (ev) => {
+          const raw = ev.target.value;
+          const blank = raw.trim() === "";
+          const n = Number(raw);
+          const ok = !blank && Number.isFinite(n);
+          if (ok) {
+            draft.coldFloorDays = Math.floor(n);
+            const v = coldFloorFieldView(draft.coldFloorDays);
+            floorWarn.hidden = !v.outOfRange;
+            floorWarn.textContent = v.outOfRange
+              ? `Outside the ${v.floor}–${v.ceiling}-day range — saving will store ${v.displayValue}.`
+              : "";
+          }
+          floorInput.setAttribute("aria-invalid", ok ? "false" : "true");
+          floorError.hidden = ok;
+          setFieldError("coldFloorDays", ok ? null : "The cold-zone floor must be a number.");
+          syncDirty();
+        },
+      });
+      body.push(settingRow({
+        label: "Cold-zone floor", htmlFor: floorId,
+        description: "The fewest idle days the derived line may ever sit at. A share always "
+          + "names somebody, and on an estate where nothing has been quiet for long, this is "
+          + "what stops the zone being filled anyway.",
+        control: el("div", {}, floorInput, floorWarn, floorError),
+      }));
+    }
+
+    // ---- who the cold zone measures, under where its line falls.
+    //
+    // LAST IN THE PANEL AND OUTSIDE THE MODE BRANCH, because it is the only cold-zone control
+    // both readings share: fixed and relative disagree about where the line goes and agree
+    // completely about whether a repository the tenant retired should be behind it.
+    //
+    // A SWITCH, NOT A THRESHOLD, so it takes `switchToggle` and the System tab's phrasing
+    // rather than a number input — and the description carries the one caveat that decides
+    // whether it does anything at all: the exclusion reads a repository TAG, so a deployment
+    // whose tag key this register never learned excludes nothing. Settings > System's
+    // repository-tag card is where that is diagnosable, and the sentence points at it rather
+    // than leaving an operator to conclude the switch is broken.
+    const eolSwitch = switchToggle({
+      checked: draft.excludeEndOfLifeFromColdZone,
+      id: "settings-exclude-eol",
+      ariaLabel: "Exclude end-of-life repositories",
+      onChange: (on) => { draft.excludeEndOfLifeFromColdZone = on; syncDirty(); },
+    });
+    body.push(settingRow({
+      label: glossaryTip("End-of-life repositories (cold zone)", "end-of-life"),
+      htmlFor: "settings-exclude-eol",
+      description: "Leave repositories the tenant has retired out of the cold zone. Nobody is "
+        + "closing findings on a finished repository because nobody is meant to, so counting "
+        + "them as cold crowds out the ones that really have gone quiet. This reaches the cold "
+        + "zone only — the remediation-speed switch above is separate. Read off each "
+        + "repository's lifecycle tag — if System reports no lifecycles placed, this excludes "
+        + "nothing.",
+      control: eolSwitch.node,
+    }));
+
     const panel = settingsPanel({
       title: glossaryTip("Remediation windows", "sla-target"),
       description: "The same window applies to every register: a CRITICAL finding gets the "
@@ -857,6 +1299,174 @@ export async function renderSettings(host, params, ctx) {
       wrap.append(btn);
     };
     paint(null);
+    return wrap;
+  }
+
+  /**
+   * The repository → tags join, and whether it is actually joining.
+   *
+   * TWO TAGS, ONE MAP, TWO PLACEMENT FIGURES. The register joins a business domain (`domain`)
+   * and a lifecycle (`lifecycle`) off the same repository entities in one refresh, and this
+   * card reports each one's reach SEPARATELY, because they fail separately: both keys are the
+   * tenant's own catalogue vocabulary rather than anything Wiz writes, and a tenant is free to
+   * have named one of them something else — so a perfectly healthy domain half can sit beside a
+   * lifecycle half that matches nothing, or the reverse. A single collapsed "placed" would hide
+   * exactly that, and a column would just be quietly blank with nothing on screen saying why.
+   *
+   * WHY THIS CARD EXISTS AT ALL. The domain scope in the app header and the "By business
+   * domain" breakdowns are drawn from a map this register fetches SEPARATELY from any sync —
+   * the three finding documents cannot select an asset's tags, so the tag comes from its own
+   * graphSearch over repository entities (src/domain/domainTag.ts records why). That makes the
+   * map a thing that can be silently absent, and an absent map and an untagged tenant look
+   * identical from every other screen: no domain rows in the switcher, `(none)` everywhere in
+   * the breakdown. This is the one place those two are told apart.
+   *
+   * THREE STATES, AND THE THIRD IS THE ONE WORTH DRAWING A CARD FOR:
+   *
+   *   zero keys                   never refreshed — press the button
+   *   keys, but places nothing    fetched, and the map reaches none of this register's repos
+   *   keys, and places some       working; the switcher should be offering these domains
+   *
+   * THE MIDDLE ONE IS WHY THIS CARD REPORTS `placed` RATHER THAN A KEY COUNT. A map can hold
+   * thousands of tokens and three domains and still place zero findings, because the identity
+   * a repository ENTITY carries in Wiz's graph need not be the one a FINDING carries — nothing
+   * in the tree can verify that overlap without the tenant (`repoTags.recordIdentityTokens`
+   * says so at length). Reported as keys alone, that state reads as perfect health while every
+   * domain figure in the app is empty, which is exactly the confident lie this card exists to
+   * prevent.
+   *
+   * When it happens, the card prints BOTH SIDES OF THE MISMATCH — what the map is keyed on,
+   * and what this register calls its repositories. That is the one thing that turns "the
+   * domains do not appear" into something an operator can act on or report, and it is why the
+   * samples are on screen rather than in an execution log nobody opens.
+   *
+   * The tag key is printed in every state, because a map that found nothing and a map built
+   * against the wrong `WIZ_DOMAIN_TAG_KEY` are the same picture with different causes, and the
+   * key is the fact that separates them.
+   */
+  function domainMapCard() {
+    const wrap = el("div", { class: "settings-inline" });
+    const paint = (state) => {
+      clear(wrap);
+      if (state && state.pending) {
+        wrap.append(statusPill("neutral", "Refreshing…"));
+        return;
+      }
+      if (state && state.error) {
+        wrap.append(statusPill("bad", "Refresh failed"),
+          el("span", { class: "muted small" }, state.error));
+      } else if (state && state.health) {
+        const h = state.health;
+        const keys = Number(h.keys) || 0;
+        const domains = Number(h.domains) || 0;
+        const repos = Number(h.repos) || 0;
+        const placed = Number(h.placed) || 0;
+        if (!keys) {
+          // NEUTRAL, NOT BAD. Nothing is broken — the map has simply never been fetched, which
+          // is every deployment's state until someone presses the button once.
+          wrap.append(statusPill("neutral", "Never refreshed"));
+        } else if (!domains) {
+          wrap.append(statusPill("bad", "No domains found"));
+        } else if (!placed) {
+          // THE STATE THE KEY COUNT USED TO HIDE. The fetch worked and the map is real; it
+          // simply does not reach anything this register holds.
+          wrap.append(
+            statusPill("bad", `${fmtCount(domains)} domain(s), matching none of your repositories`),
+            el("span", { class: "muted small" },
+              "The map was fetched, but the identities Wiz reports on the tagged repositories "
+              + "do not match the ones this register's findings carry, so no finding can be "
+              + "placed in a domain. The two lists below are that mismatch."),
+            el("div", { class: "settings-remedy" },
+              el("div", { class: "muted small" },
+                `Map is keyed on: ${(h.sampleTokens || []).join(", ") || "—"}`),
+              el("div", { class: "muted small" },
+                `This register's repositories: ${(h.sampleUnplaced || []).join(", ") || "—"}`)),
+          );
+        } else {
+          wrap.append(statusPill("ok",
+            `${fmtCount(domains)} domain(s) over ${fmtCount(placed)} of `
+            + `${fmtCount(repos)} repositories`));
+        }
+        wrap.append(el("span", { class: "muted small" }, `Domain tag key: ${h.tagKey}`));
+        // THE SECOND TAG, ON ITS OWN LINE AND WITH ITS OWN PLACEMENT FIGURE. A zero here
+        // beside a healthy domain count is the one state the default key is allowed to be in
+        // (it is a guess about the tenant's own vocabulary — see domain/lifecycleTag.ts), and
+        // it is the state that makes the Lifecycle column and the end-of-life exclusion do
+        // nothing. Said here, once, rather than left for someone to deduce from an empty
+        // column on another page.
+        const lifePlaced = Number(h.lifecyclePlaced) || 0;
+        const lifeKey = h.lifecycleTagKey || "lifecycle";
+        wrap.append(el("span", { class: "muted small" },
+          keys && !lifePlaced
+            ? `No repository lifecycle placed — nothing matches the ${lifeKey} tag, so the `
+              + "Lifecycle column is empty and the end-of-life exclusion removes nothing."
+            : `Lifecycle tag key: ${lifeKey}`
+              + (keys ? ` — placed on ${fmtCount(lifePlaced)} of ${fmtCount(repos)} repositories` : "")));
+        // WHAT THE MAP ON THE TAB WAS ACTUALLY BUILT UNDER, when that is not what is being
+        // read now. Every state above describes the map as though it answered under the keys
+        // printed beside it, and a persisted map outlives a key: change one Script Property,
+        // or take a release that changes a DEFAULT, and the pills would go on reporting a
+        // healthy join over values fetched under a key this register no longer reads. That is
+        // the confident lie this card's header sets out to prevent, so it is said here — with
+        // the remedy, which is the button directly below.
+        //
+        // `staleKeys` IS THE MODEL'S ANSWER, not a comparison redone here (repoTags.keysAreStale).
+        // A map with no recorded provenance — every sheet written before the stamp existed —
+        // is stale by that rule, and the wording says what is actually known rather than
+        // naming a key nobody recorded.
+        if (h.staleKeys) {
+          const under = h.builtUnder;
+          wrap.append(el("span", { class: "settings-remedy muted small" },
+            under
+              ? `This map was built under ${under.domain || "—"} and ${under.lifecycle || "—"}.`
+                + " Refresh to rebuild it under the keys above."
+              : "This map predates the record of which keys it was built under. Refresh to"
+                + " rebuild it under the keys above."));
+        }
+      } else {
+        wrap.append(statusPill("neutral", "Not checked"));
+      }
+      const btn = el("button", {
+        class: "linklike",
+        disabled: !boot.hasCredentials || (state && state.pending) ? true : null,
+        onclick: async () => {
+          btn.disabled = true;
+          paint({ pending: true });
+          try {
+            const res = await call("api_refreshDomains", {});
+            // Re-read HEALTH rather than painting the refresh stats. `DomainRefresh` says what
+            // the fetch SAW (repositories tagged, domains found); only `mapHealth` says whether
+            // any of it reaches this register — and that is the whole question this card
+            // answers. The toast keeps the fetch's own figures, because "what came back from
+            // Wiz" and "what this register can do with it" are two facts and the card would be
+            // hiding the first if the toast restated the second.
+            const health = await call("api_domainMapHealth", {});
+            paint({ health });
+            toast(!res.repos
+              ? `No repository carries a ${res.tagKey} or ${res.lifecycleTagKey} tag.`
+              : health.placed || health.lifecyclePlaced
+                ? `${fmtCount(res.repos)} tagged repository(s), ${fmtCount(res.domains)} `
+                  + `domain(s), ${fmtCount(res.lifecycles)} lifecycle(s).`
+                : `${fmtCount(res.repos)} tagged repository(s) fetched, but none match this `
+                  + "register's repositories — see the card.");
+            // The map moved, so every domain figure the shell is holding is stale — including
+            // the header switcher's own list, which is built from the bootstrap payload.
+            invalidateBootstrap();
+            if (ctx && ctx.refresh) ctx.refresh();
+          } catch (e) {
+            paint({ error: String(e.message || e).slice(0, 200) });
+          }
+        },
+      }, "Refresh repository tags");
+      wrap.append(btn);
+    };
+    paint(null);
+    // The CURRENT state, fetched without touching Wiz — `api_domainMapHealth` reads the stored
+    // map and nothing else, so opening Settings costs no tenant call. Fired after the first
+    // paint for `loadImpact`'s reason: the control already works, this only adds a caption.
+    call("api_domainMapHealth", {})
+      .then((health) => paint({ health }))
+      .catch(() => { /* the neutral "Not checked" pill above is already true */ });
     return wrap;
   }
 
@@ -1037,6 +1647,13 @@ export async function renderSettings(host, params, ctx) {
     // beside each other under the one "Deployment" heading.
     diagnostics.grid.append(diagnosticCard({
       key: "wizConnection", label: "Wiz connection", body: connectionCard(),
+    }));
+    // Beside the connection rather than on the Register tab: like the two credential facts
+    // above it, this is a statement about what the deployment can currently REACH, not a knob
+    // a reader sets. It is also the only card here whose button costs a tenant call, which is
+    // why it sits next to the other one that does.
+    diagnostics.grid.append(diagnosticCard({
+      key: "domainMap", label: "Repository tags", body: domainMapCard(),
     }));
 
     clear(panels.system).append(

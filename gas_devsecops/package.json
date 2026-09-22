@@ -9,6 +9,7 @@
     "which-build": "node whichBuild.mjs",
     "check-dist-fresh": "node checkDistFresh.mjs",
     "dev": "node dev/serve.mjs",
+    "density": "node dev/density.mjs --root . --port 8787",
     "probe": "node probe.mjs",
     "test": "vitest run",
     "test:watch": "vitest",

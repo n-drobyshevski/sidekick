@@ -1,6 +1,7 @@
 // What the two-tier rail draws, from the PAGES table alone.
 //
-// Plain .js for the same reason navGroups.test.js is, and importing the nav model directly is
+// Plain .js for the reason attributionPrefill.test.js writes out, and importing the nav model
+// directly is
 // the whole point of that module existing: every decision the rail makes is there, DOM-free,
 // and the panel's own module is then only timers, listeners and nodes.
 //
@@ -10,10 +11,16 @@
 //
 // THE MODULE IS `gas_shared/shell/navModel.js` NOW — one copy for three registers, where it
 // was three copies of the same arithmetic. This file stays in THIS package rather than moving
-// into a shared contract, and that is deliberate: it exercises the shared module against THIS
-// register's lane shape (a four-page Security lane, a three-page Data lane, a one-page tail),
-// which is a different set of cases from the fixture gas_ai's copy uses. Two apps' worth of
-// shapes over one module is worth more than one contract run three times over one fixture.
+// into a shared contract, and that is deliberate: it exercises the shared module against a
+// different set of cases from the fixture gas_ai's copy uses. Two apps' worth of shapes over
+// one module is worth more than one contract run three times over one fixture.
+//
+// THE FIXTURE BELOW IS SYNTHETIC, NOT THIS REGISTER'S TABLE, and that is the point rather
+// than an oversight. It opens with a labelled lane holding ONE page — the shape whose
+// collapse is the single most consequential rule here — and this register's real table no
+// longer has one, precisely because the rule caught it. A fixture that restated the shipped
+// table could not test the case the shipped table was fixed to avoid. shared.test.js imports
+// the real table; this file holds the shapes.
 
 import { describe, expect, it } from "vitest";
 
@@ -21,14 +28,14 @@ import {
   hasPanel, itemForRoute, panelBlocks, railItems,
 } from "../../gas_shared/shell/navModel.js";
 
-/** A PAGES-shaped fixture: the real map's shape, without importing app.js (it touches DOM). */
+/** A PAGES-shaped fixture. Deliberately not this register's own table — see the banner. */
 const PAGES = {
   executive: { title: "Executive", group: "Overview" },
   mttr: { title: "MTTR & SLA", group: "Security" },
-  program: { title: "Program performance", group: "Security" },
+  program: { title: "Coverage & efficiency", group: "Security" },
   overview: { title: "OS vulnerabilities", group: "Security" },
-  data: { title: "Data", group: "Data" },
-  scan_history: { title: "Scan History", group: "Data" },
+  data: { title: "Storage", group: "Data" },
+  history: { title: "Scan history", group: "Data" },
   attribution: { title: "Attribution", group: "Data" },
   settings: { title: "Settings", group: null },
 };

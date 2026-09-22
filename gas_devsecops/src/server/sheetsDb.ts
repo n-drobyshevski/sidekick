@@ -24,6 +24,13 @@ export const TABS = {
   scans: "scans",
   // Repositories and their owning project hierarchy — the register's asset dimension.
   repos: "repos",
+  // The repository-identity → repository-tag join (business domain and lifecycle), refreshed
+  // from Wiz separately from any scan (src/server/repoTags.ts). ITS OWN TAB rather than a
+  // settings cell, for gas/'s
+  // measured reason: a settings value is one 50k cell, and a tenant with a few thousand
+  // repositories indexed under several identity tokens each overruns it. Lazily created —
+  // see `ensureTab` — so a deployment that has not re-run setup() still gets it on first use.
+  domainMap: "domain_map",
   compactions: "compactions",
   settings: "settings",
   jobs: "jobs",
@@ -32,7 +39,7 @@ export const TABS = {
 
 export const TAB_HEADERS: Record<string, string[]> = {
   // Three update disciplines coexist here and they are NOT interchangeable — the same
-  // split brick/devsecops arrived at, and the reason its ledger tests read the way they do:
+  // split brick/ arrived at, and the reason its ledger tests read the way they do:
   //   latest-wins            severity, status, the asset columns
   //   sticky-first-wins      fix_date / fix_observed_at, reset only by a reopen
   //   monotone, never reset  has_kev / has_exploit (null -> false -> true), epss keeps the peak
@@ -146,6 +153,11 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // by slug — owner_project/owner_path are the two strings it was collapsed to; this is what
     // src/domain/projectScope.ts builds its catalogue and membership predicate from.
     "owner_project", "owner_path", "tags_json", "projects_json",
+    // sca only in practice — Q_SCA is the one query that selects `portalUrl` — but a column
+    // of the ONE ledger all three scopes share, so it exists structurally and reads null for
+    // sast and secrets. Last, which is where a newly-added column is appended on an existing
+    // deployment.
+    "portal_url",
   ],
   [TABS.episodes]: [
     "finding_key", "scope", "identifier", "component", "severity",
@@ -168,6 +180,16 @@ export const TAB_HEADERS: Record<string, string[]> = {
     "repo_id", "repo_name", "branch", "platform", "default_branch",
     "owner_project", "owner_path", "projects_json", "first_seen", "last_seen",
   ],
+  // One row per identity token, not per repository: the join indexes a repository under every
+  // id/name/externalId it carries, because nothing here can verify which of them a finding's
+  // `repo_id` will turn out to be. See repoTags.ts.
+  //
+  // TWO TAG COLUMNS UNDER A TAB STILL NAMED `domain_map`. The tab predates the lifecycle tag
+  // and renaming it would orphan every deployed map to no gain; `ensureHeaders` appends the
+  // new column on the next write, and a row written before it existed reads `lifecycle` as
+  // absent and still places its domain. Either column may be blank — a repository can carry
+  // one tag and not the other — and a row with neither is skipped on read.
+  [TABS.domainMap]: ["token", "domain", "lifecycle"],
   [TABS.compactions]: [
     "compaction_id", "ts", "floor_scan_id", "floor_ts", "scans_sealed",
     "episodes_created", "archive_bytes_freed", "checkpoint_ref",
@@ -201,8 +223,12 @@ export const TAB_HEADERS: Record<string, string[]> = {
  * for every row written before it, which is the honest record of when the register started
  * measuring it. A RENAME is the case that does destroy data (the old column stops being
  * written and the new one starts empty), so rename by adding and migrating, never in place.
+ *
+ * 4 — `lifecycle` on the tag map: the second repository tag this register joins on read
+ * (src/domain/lifecycleTag.ts), beside the business domain the tab was built for. A deployed
+ * map keeps every domain it already held and starts carrying lifecycles on the next refresh.
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 let spreadsheetCache: GoogleAppsScript.Spreadsheet.Spreadsheet | null = null;
 
@@ -229,6 +255,39 @@ export function ledgerSpreadsheet(): GoogleAppsScript.Spreadsheet.Spreadsheet {
 export function sheet(tab: string): GoogleAppsScript.Spreadsheet.Sheet {
   const sh = ledgerSpreadsheet().getSheetByName(tab);
   if (!sh) throw new Error(`Missing tab ${tab} — run setup().`);
+  return sh;
+}
+
+/**
+ * Create ONE declared tab if it is missing, with its frozen header row (idempotent).
+ *
+ * `ensureTabs` above runs from `setup()` only, which is right for a schema every sync already
+ * depends on: a tab that the scan walk writes to is a tab a deployment cannot be without, and
+ * finding out at setup is better than finding out mid-scan. A tab a LATER feature introduces
+ * is a different case — an existing deployment is entitled to keep working without re-running
+ * setup, and the only alternative to this is `sheet()` throwing "run setup()" at an operator
+ * who has done nothing wrong. So the feature that needs such a tab ensures it at its own first
+ * touch, and nothing else changes.
+ *
+ * Refuses a tab `TAB_HEADERS` does not declare, rather than creating a headerless one: every
+ * read and write here maps columns by header NAME, so a tab with no declared headers is a tab
+ * whose every access misfiles, and a typo'd name must fail where it is written.
+ */
+export function ensureTab(tab: string): GoogleAppsScript.Spreadsheet.Sheet {
+  const headers = TAB_HEADERS[tab];
+  if (!headers) throw new Error(`Tab "${tab}" is not declared in TAB_HEADERS.`);
+  const ss = ledgerSpreadsheet();
+  const existing = ss.getSheetByName(tab);
+  if (existing) {
+    ensureHeaders(existing, tab); // append any headers a newer schema added
+    return existing;
+  }
+  const sh = ss.insertSheet(tab);
+  // Plain-text format everywhere, for `ensureTabs`' reason unchanged: ISO timestamps and JSON
+  // blobs round-trip byte-stable instead of becoming Date cells in the sheet's locale.
+  sh.getRange(1, 1, sh.getMaxRows(), sh.getMaxColumns()).setNumberFormat("@");
+  sh.getRange(1, 1, 1, headers.length).setValues([headers]);
+  sh.setFrozenRows(1);
   return sh;
 }
 

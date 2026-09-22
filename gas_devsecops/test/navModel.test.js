@@ -6,9 +6,11 @@
 // NOT gas_ai's fixture, restated. The point of a third test is a third lane shape: three
 // programme-level pages (Program), three registers (Registers), four data pages (Data), and
 // a one-page chrome tail (settings) — a 3/3/4/1 split neither sibling has. The fixture below
-// restates src/client/js/app.js's real PAGES table (titles and groups only; navModel never
-// reads `render`), not a copy of it, because importing app.js touches DOM at module load —
-// see PAGES's own header there for why the lane composition is what it is.
+// restates src/client/js/pages.js's real PAGES table (titles and groups only; navModel never
+// reads `render`). It is deliberately synthetic rather than the imported table — which
+// shared.test.js does import — because the two flags below are what this file exists to
+// exercise and the production table sets neither. See PAGES's own header for why the lane
+// composition is what it is.
 //
 // TWO FLAGS THIS REGISTER SUPPORTS BUT HAS NEVER USED: `hidden` and `experimental` (app.js's
 // own PAGES comment says so). Its production table exercises neither, so this file is the

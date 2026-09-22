@@ -81,7 +81,7 @@ describe("key parity with the L1 cache", () => {
   // every push — the exact trap KEY_PREFIX closes for L1.
   it("carries the build stamp, so a deploy is treated like a data change", async () => {
     const { cache } = await mods();
-    const { BUILD_ID } = await import("../src/server/buildInfo");
+    const { BUILD_ID } = await import("../../gas_shared/server/buildInfo");
     expect(cache.currentStamp()).toContain(BUILD_ID);
   });
 });

@@ -13,7 +13,7 @@ read it.
 ## Status: Phase 2 complete — all ten pages lit, never deployed
 
 **What is real:** everything from the shell to the screen. The domain layer (19 modules
-ported from `brick/devsecops/` against golden fixtures), the transport, the archives, the
+ported from `brick/` against golden fixtures), the transport, the archives, the
 journaled ledger commit, the sync battery, eight read models behind twenty RPCs, the standing
 triggers, and all ten pages rendering real figures. `test/pagesLit.test.js` is the phase's
 exit gate — seven criteria, and it passes.
@@ -48,9 +48,96 @@ reporting new/resolved/reopened of 0/0/0. See [PROBE_FINDINGS.md](PROBE_FINDINGS
   lands, this series will disagree with every other SLA figure in the app the moment an
   operator overrides a window.
 - Several page sections are **honestly empty** because the read models do not publish the
-  data: repos ownership (nothing aggregates `owner_project`), the history open-past-SLA trend,
-  and per-severity KM curves. Each page says which figure it cannot draw instead of drawing a
-  zero.
+  data: the history open-past-SLA trend and per-severity KM curves. Each page says which
+  figure it cannot draw instead of drawing a zero.
+
+**Two ways to slice it, and neither is nested inside the other.** The app header carries one
+scope control with two dimensions: a **project** (where Wiz files the repository — business
+units, support groups and leaves, read off `projects_json`) and a **business domain** (who the
+tenant says owns it, from the repository's `domain` tag). Picking either clears the other,
+because a header that carries two scopes cannot answer "what am I looking at" in one line.
+
+**The project axis has two grains, and the app keeps them apart.** The tenant files every
+repository under a **support group** — a project whose name's first segment is `CS`, `CE` or
+`LU` — and under a **product**, one whose first segment is `product`. One support group holds
+many products. Wiz reports all of them in a flat `projects[]` with no parent links, so that
+containment lives in the tenant's naming and never in the payload: `src/domain/projectGrain.ts`
+is the one place both rules are written down, and the client keeps a mirror of it that a test
+holds equal.
+
+Both grains are attached on read — `_supportGroup` and `_product`, beside `_domain`, at
+`readModels.baseSnapshot` — rather than stored. A prefix rule is vocabulary, and vocabulary
+changes; baked into the ledger a fourth prefix would cost a re-scan to correct, and because
+reconcile merges those columns latest-wins-never-erased a stale value would keep winning even
+then. Each falls back so rows already on the sheet still answer, and the product one refuses
+the single case it can prove wrong: it takes `owner_project` unless that value is itself a
+support group.
+
+That column, `owner_project`, is what this replaced. It took "the first non-folder project",
+which under this convention usually lands on the product — but not always: where Wiz reported
+the support group as a leaf and returned it first, the same column held a support group. One
+column, two grains, decided by API order, and every table on it headed "Owning project". The
+three register pages now break down **By product** and **By support group**; the Repositories
+cold zone rolls up by product with the support group as a column (the verdicts and the
+coldest-share badge are calibrated on the finer population, so the roll-up stays there and the
+group is the escalation path beside it); and the switcher gives each support group its own
+heading with its products under it. Where a product's repositories name two different support
+groups, nothing names one — a summary that hides a disagreement is worse than one that reports
+it.
+
+**One project is excluded from both, because it reaches everything.** Wiz files a repository
+under every project that touches it, and the tenant's GitHub connector puts `GITHUB-DKTUNITED`
+on all of them. As a switcher row that is "everything synced" under another name; as an
+`owner_project` it is a bucket named after the organisation that owns the whole register. So
+`src/domain/config.ts`'s `ORG_WIDE_PROJECTS` names it, `projectScope.ts::parseProjects` drops
+it before the catalogue, the membership predicate or the unattributed count see it, and
+`reconcile.ts::ownerProject` will not file a repository under it — a repository carrying only
+that tag reads as **no owning project**, and is counted in the header's `have no project`
+figure rather than quietly attributed to the organisation. The stored `projects_json` and
+`tags_json` keep it, whole: this is an exclusion from the analysis, not from the observation.
+A second connector tag is one edit to that list; it is spelled out rather than inferred from a
+`GITHUB-` prefix, so a business unit named after a tool is never hidden by accident.
+
+The domain arrives by a different route than the project, and the difference is the whole
+design: `projects[]` is in all three query documents, so it rides in on every finding, but
+**none of the three can select an asset's tags**. `VulnerableAssetRepositoryBranch` is the one
+member of the `vulnerableAsset` union that Wiz's own console query omits `tags` from — it is
+on the other twelve — and a field the schema lacks fails the whole document, so asking anyway
+would stop SCA syncing. So `src/server/repoTags.ts` graphSearches the tenant's tagged
+repository entities separately, builds a repository-identity → tags map on the `domain_map`
+tab, and attaches those tags to rows **on read**, never baked into the ledger. That is the same
+shape `gas/src/server/supportGroups.ts` already uses for a `Wiz/provisioning` tag that lives on
+a subscription findings carry without its tags.
+
+**Two tags travel that road, not one.** The domain itself is read off the repository's bare
+`domain` tag (`WIZ_DOMAIN_TAG_KEY` overrides the key), and beside it the same fetch carries each
+repository's **lifecycle** — `END_OF_LIFE`, `IN_PRODUCTION`, whatever the tenant writes, read
+off its `lifecycle` tag (`WIZ_LIFECYCLE_TAG_KEY` overrides the key). It is attached as
+`_lifecycle` at the same point, appears as a **Lifecycle** column on the Repositories tables,
+and is the one thing an operator can ask the cold zone to act on — see below. The query filters
+on one tag key at a time, so the refresh pages it **once per key** and merges; each pass reads
+both tags off every entity it sees, so a repository carrying only one of the two is still
+reached. Whether a widened `where` would mean "carries both" or "carries either" is not
+verifiable without the tenant, and a wrong guess there is a silent under-fetch.
+
+Two consequences a reader meets on screen. The map is refreshed from **Settings → System →
+Repository tags**, on its own clock rather than with a sync — tagging changes when tagging
+changes, not when findings do. And until it is refreshed there are no domains and no
+lifecycles: the switcher simply has no Domains group, the caption counts the rows as `have no
+domain`, the Lifecycle column is empty, and the Settings card says *Never refreshed* rather
+than letting an unrefreshed map look like an untagged tenant. An unreachable map degrades the
+same way rather than taking the pages down with it. The card reports the **two tags'
+placements separately**, because they fail separately: both keys are whatever the tenant's own
+catalogue used — neither is a key Wiz's console writes — so both defaults are guesses, and a
+zero beside a healthy count on the other is how an operator finds out which one missed.
+
+The card also says when the **persisted map answers under an older key**. A map outlives the
+key that built it, so changing `WIZ_DOMAIN_TAG_KEY` — or taking a release that changes a
+default — would otherwise leave the tab serving the old attribution with the new key printed
+over it, looking perfectly healthy. `setRepoTagMap` records the pair it was built under and the
+card compares them; a map written before that record existed reads as *unknown* rather than as
+agreement, because that is exactly the population a key change strands. Pressing Refresh clears
+it either way.
 
 **The registers page server-side**, because SCA is 17,991 rows and the reader looks at fifty.
 `src/server/readModels.ts`'s `registerRowsModel` (through `serverCache.ts`'s durable, 1-hour
@@ -65,7 +152,7 @@ that first stopped seeing the finding — an upper bound whose error is the scan
 SAST that is *every* closed row; on SCA and secrets it is most of them.
 
 **The design that carried the risk.** Neither source register does three scopes in one
-ledger: `gas/` has one, and `brick/devsecops`'s reconcile takes a `scope` but only stamps it,
+ledger: `gas/` has one, and `brick/`'s reconcile takes a `scope` but only stamps it,
 because its caller hands it a prior already filtered down. Here the prior is one tab holding
 all three, and every row of the other two is absent from any given scan by construction — so
 a disappearance pass that did not filter by scope would resolve 19,949 findings as
@@ -74,7 +161,7 @@ convention, and a mutation check in the suite confirms that removing the guard d
 that.
 
 **Where the domain comes from.** Not greenfield.
-[`../brick/devsecops/`](../brick/devsecops/) implements this product as a tested Spark
+[`../brick/`](../brick/) implements this product as a tested Spark
 pipeline: real captured Wiz queries, a cross-scan lifecycle reconciler, Kaplan–Meier with
 censoring and RMST, the P2P coverage/efficiency/capacity family, and ~6,400 lines of tests.
 `test/reconcile.test.js` replays the behaviours its `test_ledger.py` names. The statistics
@@ -107,10 +194,61 @@ here and `test/vocabulary.test.js` holds the copy to it.
 | `sca` | Dependencies | Registers | Which third-party CVEs are open, and is there anything to upgrade to? |
 | `sast` | Code | Registers | Which weaknesses are in our own code, and where? |
 | `secrets` | Secrets | Registers | Which credentials are in the repository, and are they dead yet? |
-| `repos` | Repositories | Data | Where does the backlog sit, which repos are footholds, who owns them? |
+| `repos` | Repositories | Data | Where does the backlog sit, which repos have gone cold, who owns them? |
 | `history` | Scan history | Data | What was actually measured, when? |
 | `data` | Storage | Data | What is stored, what can be exported, what can be reset? |
-| `settings` | Settings | — | Register, SLA windows, access, system. |
+| `help` | Key sheet | Data | What does this word, mark or figure mean? |
+| `settings` | Settings | — | Register, SLA windows, the cold-zone mode, the two end-of-life exclusions, access, system. |
+
+### Retired repositories, and the two places an operator may remove them
+
+The Repositories page's cold zone answers **where has remediation stopped** rather than how
+much is open: a repository with open findings and no close, removal or rotation for at least
+the window. The line is drawn either as a **fixed** number of idle days or **relative**, as the
+idlest share of the estate with a floor under it; both produce one effective threshold and
+nothing downstream branches on which.
+
+**End-of-life repositories can be left out of it.** A repository the tenant has retired answers
+this question with a silence that means the opposite of what the section reads into it — nobody
+is closing findings on it because nobody is meant to — so counting it as cold describes a
+decision rather than a team, and crowds out the repositories that really have gone quiet.
+**Settings → Deadlines** turns it on; it is **off by default**, and off the retired repositories
+stay in the table with their lifecycle printed beside the verdict so a reader can dismiss them
+without the app deciding for them.
+
+**A second, independent switch does the same for the remediation-speed figures** — the
+half-life and its survival curve, the SLA attainment, the open-age distribution, the capacity
+rates and the time to revoke, on **MTTR & SLA**, **Executive**, **Coverage & efficiency**,
+**Scan history** and **Secrets**. The argument is a different one: the cold zone measures
+*silence*, while these measure *how long a finding lived*, and a retired repository distorts
+them from both ends at once — its closes are archival rather than work, and its open findings
+will never be fixed, so they age inside the backlog forever. It is a separate setting because
+either is useful without the other, and because the two make separate claims. `PRODUCT.md`'s
+seventh principle already makes the neighbouring argument for the vendor wait: *waiting for a
+vendor is not remediation time*.
+
+Both are **aggregates only**. A per-repository half-life on the Repositories page is that
+repository's own fact rather than a claim about the estate, so that table is untouched — which
+is also what keeps its Lifecycle column able to show the retired repositories it was added for.
+
+Three refusals keep each of them honest. Neither **ever guesses**: only a positively recognised
+end-of-life value excludes, so a missing tag, an unfamiliar word, or a lifecycle key that
+matches nothing excludes nothing at all. Neither **ever happens silently**: each surface says
+how many repositories left and how much went with them, because a share whose denominator
+quietly shrank is a share nobody can check — and with a switch off it says how many retired
+repositories are being counted, which is how an operator finds it. And **neither touches a
+count of what is open**: a retired repository's findings stay in every backlog, density and
+severity figure the register publishes, in every combination of the two. What is removed is a
+reading, never a finding.
+
+Where they live in the code is the one asymmetry worth knowing. The cold zone owns its own
+exclusion inside `domain/coldZone.ts`, because relative mode *derives* its line from the
+surviving population and a cut applied afterwards would move the line and then hide what moved
+it. The remediation-speed one is a row filter at the read-model boundary
+(`readModels.ts`'s `liveRepoRows`), because nothing in that family has such a feedback loop —
+and because `remediation.ts`'s Kaplan–Meier and `program.ts`'s capacity are pinned
+byte-for-byte against brick's PySpark output, so a filter inside either would break the port's
+parity with the pipeline over a setting the pipeline does not have.
 
 ### Why SAST, SCA and secrets are three pages
 
@@ -123,7 +261,7 @@ measured and which is estimated.
 That question — whether SAST can carry an MTTR at all, or only an age — was open across
 three probe passes and is now settled: it is a **genuine MTTR**. `createdAt` gives a real
 birth date, and the ledger dates the death by disappearance with no guard on how the
-resolution was learned (`brick/devsecops/ledger.py`, pinned by
+resolution was learned (`brick/ledger.py`, pinned by
 `test_mttr_is_measured_from_the_ledgers_own_dates`). The one caveat is that the death side is
 observation-bounded — the scan that noticed overstates by up to one scan interval — so a
 ledger started today reads near-zero until disappearances accrue. A secret leaves the register when the string leaves HEAD,
@@ -172,7 +310,23 @@ about at least two of them, and the clock is the product.
       editor runs; the `/exec` URL keeps serving the version it was pinned to.
    4. Check the daily sync trigger still fires. A scope change is the one thing that can
       suspend an installable trigger with nothing in the UI to say so.
-6. Run `deploymentDiagnostic()` if anything looks wrong; it reports every check at once
+6. Optionally, set the two **repository tag keys** in Project Settings → Script Properties.
+   Both are the tenant's own vocabulary rather than anything Wiz writes, so both defaults are
+   guesses and both are matched case-insensitively:
+
+   - `WIZ_DOMAIN_TAG_KEY` — the repository tag whose value is the owning **business domain**.
+     Defaults to `domain`. A tenant whose repositories carry the Wiz-namespaced `Wiz/Domain`
+     instead — which is what `gas/` reads, on cloud resources — sets that here.
+   - `WIZ_LIFECYCLE_TAG_KEY` — the repository tag whose value is where the repository is in
+     its **life** (`END_OF_LIFE`, `IN_PRODUCTION`, …). Defaults to `lifecycle`.
+
+   Both are resolved **on read**, so correcting one repaints on the next request rather than
+   needing a re-scan. **Press Refresh repository tags after changing either**: the join map on
+   the `domain_map` tab was built under the old key and keeps answering until it is rebuilt.
+   The card under Settings → System says so when they disagree, and reports how many
+   repositories each key actually placed — a default that matches nothing shows up there as a
+   zero rather than as a quietly empty column.
+7. Run `deploymentDiagnostic()` if anything looks wrong; it reports every check at once
    rather than stopping at the first failure. `wizDiagnostic()` is its network-touching
    sibling: it does the real token exchange and one query, and names which of the two failed
    — they look identical from the app and have different remedies.
@@ -213,6 +367,10 @@ Credentials go in `.env.local` or `dev/.env.local` (both git-ignored; `dev/` win
 WIZ_API_URL=https://api.<dc>.app.wiz.io/graphql
 WIZ_API_TOKEN=...          # or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET
 WIZ_PROJECT_ID_V2=...      # optional; scopes every query
+WIZ_DOMAIN_TAG_KEY=...     # optional; the repository tag whose value is a business domain
+                           # (default domain) — see "Two ways to slice it" below
+WIZ_LIFECYCLE_TAG_KEY=...  # optional; the repository tag whose value is a lifecycle
+                           # (default lifecycle) — read beside the domain, in one refresh
 ```
 
 **The two questions it exists to answer.**

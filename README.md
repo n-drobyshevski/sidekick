@@ -1,7 +1,8 @@
 # Wiz registers
 
-This repository's maintained product surfaces are the Google Apps Script apps
-and the shared Python domain/spec code they are tested against.
+This repository's maintained product surfaces are the Google Apps Script apps.
+`gas/` is the reference implementation of the register domain; its own
+`gas/test/` verifies domain ports with vitest snapshots.
 
 ## Active apps
 
@@ -13,21 +14,15 @@ and the shared Python domain/spec code they are tested against.
 
 ## Python code that remains
 
-The root Python package is still used as domain/spec infrastructure:
-
-- `wiz_dashboard/domain/` — Python behavioral spec and analytics logic
-- `wiz_dashboard/data/` — supporting data transforms, cache, history, and ledger helpers
-- `wiz_dashboard/models/` — schema/model helpers
-- `brick/` and `brick/devsecops/` — Databricks/Delta pipelines over the same registers
-- `devlake/` — local harness for the `brick/*` pipelines
-
-Do not remove the remaining Python domain layer without also updating the GAS
-fixture export flow and related tests. As documented in `CLAUDE.md`, the GAS
-ports use the Python domain layer as a behavioral spec.
+- `os_vulns.py` — the Wiz GraphQL query and client spec; `gas/test/extract_query.py`
+  generates `gas/src/server/wizQuery.ts` from it, and `tests/test_client.py` is the
+  behavioral spec behind `gas/src/server/wizClient.ts`
+- `brick/` — the Databricks/Delta pipeline over the same registers (scopes `os`, `sca`, `sast`)
+- `devlake/` — local harness for the `brick/` pipeline
 
 ## Root Python setup
 
-The root Python environment is for the shared/spec code and tests, not for a
+The root Python environment is for `os_vulns.py` and its tests, not for a
 local web app.
 
 ```bash

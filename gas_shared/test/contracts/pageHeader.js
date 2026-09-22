@@ -44,15 +44,16 @@
 // architecture — what the rail draws from PAGES — and this says nothing about the rail.
 // `parity.js` is the seam: which files an app may still keep a local copy of. This is a
 // COMPONENT contract, the shape `brandMark.js` and `emptyStates.js` already have: one shared
-// component, the rule for using it, held per app. It reads PAGES through `parsePages`
-// EXPORTED FROM navGroups.js rather than parsing app.js a second time — one parser, two
-// contracts.
+// component, the rule for using it, held per app. It reads PAGES through `pageList`
+// EXPORTED FROM navGroups.js rather than re-deriving the table a second time — one shape,
+// two contracts. (`pageList` replaced a regex over app.js when the table moved into its own
+// importable `pages.js`; see its own comment for what the text parser could not see.)
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { relative, resolve } from "node:path";
 
-import { parsePages } from "./navGroups.js";
+import { pageList } from "./navGroups.js";
 
 /**
  * Blank out the comment prose so a page DESCRIBING `el("h1", …)` is not read as one
@@ -163,6 +164,7 @@ function jsFilesUnder(dir) {
  * @param {Function} ctx.expect
  * @param {URL}      ctx.appRoot
  * @param {string}   ctx.app
+ * @param {object}   ctx.PAGES  the route table, imported from the app's pages.js
  * @param {string}   [ctx.skipReason]  Register the rule as a NAMED skip instead of running
  *                                 it, for an app that legitimately differs (client modules
  *                                 not under src/client/js/, routes whose modules are not
@@ -193,8 +195,7 @@ export function registerPageHeaderContract(ctx) {
     }
 
     const jsDir = resolve(root, "src/client/js");
-    const APP = readFileSync(resolve(jsDir, "app.js"), "utf8");
-    const PAGES = parsePages(APP);
+    const PAGES = pageList(ctx.PAGES);
     // The route modules that ARE allowed a heading, by absolute path.
     const exempt = new Map(PAGES.filter((p) => p.fullBleed)
       .map((p) => [resolve(jsDir, "pages", p.route + ".js"), p.route]));

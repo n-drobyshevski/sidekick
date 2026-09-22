@@ -1,6 +1,6 @@
 // D4 (Kaplan–Meier) ported the KM-relevant sections of gas/test/remediation.test.ts
 // (describe blocks: kmMedian, kaplanMeier, kmQuantileFromCurve — ~186 of gas/'s 785 lines),
-// plus a brick-fixture parity suite gas/'s file has no equivalent of (brick/devsecops is a
+// plus a brick-fixture parity suite gas/'s file has no equivalent of (brick/ is a
 // second, independently-implemented oracle — see test/fixtures/brick/km.json).
 //
 // D4b ports the rest: mttrPercentiles, resolutionBuckets, openPastSla/openPastSlaFromRecords,
@@ -336,9 +336,9 @@ describe("kmQuantileFromCurve", () => {
 
 // ------------------------------------------------------------------- brick second-oracle parity
 //
-// brick/devsecops/metrics.py::kaplan_meier is itself "a port of gas/'s kaplanMeier" (its own
+// brick/metrics.py::kaplan_meier is itself "a port of gas/'s kaplanMeier" (its own
 // docstring), independently implemented in PySpark and exported by
-// brick/devsecops/export_fixtures.py to test/fixtures/brick/km.json: 12 hand-derived cases
+// brick/tools/export_fixtures.py to test/fixtures/brick/km.json: 12 hand-derived cases
 // (brick/tests/test_km.py), each carrying per-severity rows AND an OVERALL row pooling every
 // severity. brick's fixture rows are the shape "silver_findings produces" — {severity,
 // mttr_days, age_days}, no status — so toRemediationRow below infers status the same way
@@ -391,7 +391,7 @@ function toRemediationRow(r: BrickKmInput): RemediationRow {
   };
 }
 
-describe("kaplanMeier against the brick/devsecops PySpark oracle (test/fixtures/brick/km.json)", () => {
+describe("kaplanMeier against the brick/ PySpark oracle (test/fixtures/brick/km.json)", () => {
   const fx = brickFixture<BrickKmFixture>("km");
 
   it("fixture shape: 12 cases, each carrying an OVERALL row", () => {

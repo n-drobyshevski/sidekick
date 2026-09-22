@@ -24,7 +24,7 @@
 // PORT PROVENANCE, because this module has two upstreams and they do not agree everywhere:
 //   gas/src/domain/program.ts   the TypeScript shape — export names, the Rate bracket, the
 //                               scan-delta cross-check, `maxMonths`.
-//   brick/devsecops/metrics.py  the BEHAVIOURAL SPEC for this register (CLAUDE.md), and the
+//   brick/metrics.py            the BEHAVIOURAL SPEC for this register (CLAUDE.md), and the
 //                               only source for the static-analysis rule, the six-signal
 //                               breakdown, `cwe_unmapped`, and the `observed_from` /
 //                               `closed_observed` capacity parameters.
@@ -81,7 +81,7 @@ export function isSastRule(rule: AnyRiskRule): rule is SastRiskRule {
 
 /**
  * Every signal either rule can carry, in the order the breakdown reports them.
- * brick/devsecops/metrics.py's `SIGNAL_NAMES`, and fixed for the same reason: a disabled
+ * brick/metrics.py's `SIGNAL_NAMES`, and fixed for the same reason: a disabled
  * clause reports 0, never a missing field, so the shape does not change when an operator
  * turns a clause off.
  */
@@ -101,7 +101,7 @@ export function ruleIsEmpty(rule: AnyRiskRule): boolean {
 /**
  * The rule as a sentence, for the page and the CSV header — a classifier you cannot read is
  * one you cannot audit. Byte-identical to `RiskRule.sentence()` / `SastRiskRule.sentence()`
- * in brick/devsecops/config.py, which the `rule_sentence` column of confusion.json pins.
+ * in brick/config.py, which the `rule_sentence` column of confusion.json pins.
  */
 export function ruleSentence(rule: AnyRiskRule): string {
   const parts: string[] = [];
@@ -603,7 +603,7 @@ export interface RuleSensitivityPoint {
  * The seven non-empty signal subsets of the CVE rule.
  *
  * DIVERGENCE from gas/: the single-signal labels read "KEV only" / "Exploit only" /
- * "EPSS only" where gas/ says "KEV" / "Exploit" / "EPSS". brick/devsecops/metrics.py's
+ * "EPSS only" where gas/ says "KEV" / "Exploit" / "EPSS". brick/metrics.py's
  * `RULE_SUBSETS` states the difference in its own comment and its notebook layer walks this
  * exact tuple, so the labels are part of what confusion.json pins. brick is this register's
  * behavioural spec (CLAUDE.md), and "KEV only" is the clearer wording besides — a bare "KEV"
@@ -724,6 +724,26 @@ export interface Capacity {
   mmcrMean: number | null;
   /** "1 in N" phrasing of mmcrMean — the P2P v3 idiom. Null when mmcrMean is null or 0. */
   oneInN: number | null;
+  /**
+   * Mean findings CLOSED per month, over exactly the months `mmcrMean` averages. Null when
+   * there are none.
+   *
+   * The rate's absolute counterpart, and it shares `monthsCounted` on purpose. "About one in
+   * ten a month" is four findings on one register and four hundred on another, and the rate
+   * alone cannot tell them apart — which is the figure a reader needs to staff against. A
+   * count averaged over a DIFFERENT set of months than the rate printed beside it would be
+   * two figures nobody can reconcile, so this is computed here rather than on the page: the
+   * returned `months` are trimmed by `maxMonths` AFTER `counted` is taken, and a caller
+   * averaging what ships would quietly be using a narrower denominator than it published.
+   *
+   * Unrounded. Rounding is a display decision, the same split `gas_ai`'s rankEval makes
+   * between `closedPerHorizonMean` and its rounded `capacityK`.
+   *
+   * GAS-ONLY. brick's capacity frame has no counterpart column — it is a display derivation
+   * over figures brick already emits, not a change to the metric. See the name-mapping note
+   * in `test/capacity.test.ts`.
+   */
+  closedPerMonthMean: number | null;
   netTotal: number;
   verdict: CapacityVerdict | null;
   monthsCounted: number;
@@ -862,7 +882,15 @@ export function capacityByMonth(
   }
 
   if (!parsed.length) {
-    return { months: [], mmcrMean: null, oneInN: null, netTotal: 0, verdict: null, monthsCounted: 0 };
+    return {
+      months: [],
+      mmcrMean: null,
+      oneInN: null,
+      closedPerMonthMean: null,
+      netTotal: 0,
+      verdict: null,
+      monthsCounted: 0,
+    };
   }
 
   // minNum, not Math.min(...): `parsed` holds one entry per finding, so the spread/apply
@@ -910,6 +938,10 @@ export function capacityByMonth(
   const mmcrMean = counted.length
     ? counted.reduce((a, m) => a + (m.mmcr as number), 0) / counted.length
     : null;
+  // The same months, counted rather than rated — see `Capacity.closedPerMonthMean`.
+  const closedPerMonthMean = counted.length
+    ? counted.reduce((a, m) => a + m.closed, 0) / counted.length
+    : null;
   const netTotal = months.reduce((a, m) => a + m.net, 0);
   const netPctOverall = counted.length
     ? counted.reduce((a, m) => a + (m.netPct ?? 0), 0) / counted.length
@@ -924,6 +956,7 @@ export function capacityByMonth(
     months: trimmed,
     mmcrMean,
     oneInN: mmcrMean !== null && mmcrMean > 0 ? 100 / mmcrMean : null,
+    closedPerMonthMean,
     netTotal,
     verdict: counted.length ? verdictOf(netPctOverall) : null,
     monthsCounted: counted.length,

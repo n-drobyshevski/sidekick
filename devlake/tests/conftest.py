@@ -1,8 +1,8 @@
 """One local lake, one Spark session, for the whole ``devlake`` test suite.
 
 Excluded from the root ``pyproject.toml``'s ``testpaths = ["tests"]`` on purpose -- this
-directory is a harness for developing the two forks, not part of either fork's own suite -- so
-it is run explicitly: ``python3 -m pytest devlake/tests -q``.
+directory is a harness for developing ``brick/``, not part of its own suite -- so it is run
+explicitly: ``python3 -m pytest devlake/tests -q``.
 """
 
 from __future__ import annotations
@@ -38,18 +38,19 @@ def lake_dir(tmp_path_factory):
 
 @pytest.fixture(scope="session")
 def spark(lake_dir):
-    """The one shared local session, with ``brick`` (not ``devsecops``) on ``sys.path``.
+    """The one shared local session, with ``brick`` on ``sys.path``.
 
-    Session-scoped like the fork suites' own ``spark`` fixture, for the same reason: Delta's
-    extensions and jars can only be set when the JVM launches, so whichever test asked for a
-    session first would otherwise decide whether the whole run has Delta at all.
+    Session-scoped like ``brick/tests/conftest.py``'s own ``spark`` fixture, for the same
+    reason: Delta's extensions and jars can only be set when the JVM launches, so whichever
+    test asked for a session first would otherwise decide whether the whole run has Delta at
+    all.
 
     ``test_a_table_survives_a_session_restart`` deliberately does **not** use this fixture --
     it builds and stops its own sessions to test the restart itself, and does so before this
     fixture is first requested (pytest collects this module top-to-bottom and fixtures are
     lazy), so there is never a live session for it to collide with.
     """
-    devlake_session.put_fork_on_path("brick")
+    devlake_session.put_brick_on_path()
     session = devlake_session.build(lake_dir, driver_memory="2g")
     yield session
     session.stop()

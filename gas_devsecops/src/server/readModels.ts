@@ -33,7 +33,13 @@
 //                                  KM medians are all as-of NOW. `kmMedianAsOf(base, …, now)`
 //                                  moves every time it is called; a durable copy would say
 //                                  "measured now" and mean "measured whenever the file was
-//                                  written".
+//                                  written". ITS ONE TIME-INVARIANT BLOCK SAYS SO: `coldZone`
+//                                  is measured at `ledgerClock(n.scope)`, not at `snap.now`
+//                                  like everything else here, and publishes
+//                                  `coldZoneAsOfSource` — an idle time is "how long since
+//                                  something happened", so dating it by the wall clock would
+//                                  grow it by an hour every time this entry was rebuilt while
+//                                  the ledger stood still.
 //   mttr          cached, 1 h      SLA arithmetic. `openPastSla` breaches on
 //                                  `age_days > target` with a strict `>`, so a single day
 //                                  moves individual rows across the threshold; the open-age
@@ -65,7 +71,33 @@
 //                                  (for KM censoring), so the rows are re-censored at the
 //                                  ledger clock first — `atLedgerClock()` below. Without that
 //                                  re-censoring the half-life column would be the one
-//                                  wall-clock read hiding inside a durable file.
+//                                  wall-clock read hiding inside a durable file. `coldZone`
+//                                  is durable on the same terms and needs no re-censoring at
+//                                  all: it never reads `age_days`, deriving every duration
+//                                  from `first_seen` and the three movement columns against
+//                                  the ledger clock it is handed. The operator's threshold
+//                                  joins the CACHE KEY (`dsRepos2`), because a saved window
+//                                  changes every verdict in the block — and so do the three
+//                                  RELATIVE-MODE fields (`coldZoneMode`, `coldTargetSharePct`,
+//                                  `coldFloorDays`) added beside it, on the identical
+//                                  argument. NO NAMESPACE BUMP CAME WITH THEM, and the
+//                                  reasoning belongs here beside the `dsRepos1 -> dsRepos2`
+//                                  note (on `reposModel` itself) rather than in a commit
+//                                  message: that bump was needed because the PAYLOAD grew a
+//                                  block under an UNCHANGED key, so a warm file was still
+//                                  addressable and still answered — with a page section
+//                                  missing. This change is the opposite shape. The durable
+//                                  filename is `rm-<name>-<sha1(JSON(params))>`
+//                                  (readModelStore.ts's `readModelFileName` over
+//                                  serverCache.ts's `paramsHash`), so three new fields in the
+//                                  params object move the hash and every pre-existing file
+//                                  becomes UNREACHABLE by the new key: there is nothing stale
+//                                  left to serve, and a bump would only orphan the fixed-mode
+//                                  files an operator who never switches modes is still
+//                                  hitting. The two other staleness guards are unchanged and
+//                                  still hold: `currentStamp()` carries `BUILD_ID`, and
+//                                  `MAX_AGE_MS` is 7 days. The same three fields join
+//                                  `dsExecutive1` below, in the same order.
 //   history       durablyCached    The scan log is a stored fact; the KPI band counts rows and
 //                                  reads `mttr_days`, which is `resolved_at − first_seen` off
 //                                  the ledger. The trend backbone emits one point per saved
@@ -110,13 +142,22 @@ import {
   SCOPES,
   SEVERITY_ORDER,
   ruleForScope,
+  type ColdZoneMode,
   type Scope,
 } from "../domain/config";
-import { effectiveSlaTargets } from "../domain/settingsLogic";
+import {
+  effectiveColdZoneSettings,
+  effectiveExcludeEndOfLifeFromMttr,
+  effectiveSlaTargets,
+} from "../domain/settingsLogic";
+import { coldZoneHeadline, coldZoneProfile, type NewestScan } from "../domain/coldZone";
 import type { BaseRow, ScanRow } from "../domain/ledgerTypes";
 import { normalizeSeverity } from "../domain/severity";
 import { parseSeverities } from "../domain/compaction";
-import { inProject, parseProjects } from "../domain/projectScope";
+import { attachProjectGrain, inProject, parseProjects } from "../domain/projectScope";
+import { inDomain } from "../domain/domainScope";
+import { isEndOfLife } from "../domain/lifecycleTag";
+import { attachRepoTags } from "./repoTags";
 import { clampInt, parseTs, type Rec } from "../domain/util";
 import {
   REGISTER_ROWS_DEFAULT_PAGE_SIZE,
@@ -231,6 +272,18 @@ interface NormParams {
    */
   project: string | null;
   /**
+   * The OTHER view scope — a business-domain tag value, or null for the whole register. Read
+   * from `settingsStore.loadSettings().domainView` below and absent from `ModelParams` for
+   * every reason `project` above is: it is app-header chrome, and a page that set it directly
+   * could disagree with what the header shows.
+   *
+   * AT MOST ONE OF `project` AND `domain` IS EVER SET — `settingsLogic.withProjectView` /
+   * `withDomainView` clear each other on the way in. `scopedRows` still applies both, because
+   * a filter that is null is a no-op and writing it as a chain rather than a branch means a
+   * stored pair carrying both narrows to the intersection instead of silently ignoring one.
+   */
+  domain: string | null;
+  /**
    * The SLA windows actually in force — `settingsLogic.effectiveSlaTargets`, read off
    * `settingsStore.loadSettings()` exactly once here, same as `project` above. NEVER a
    * `ModelParams` field for the same reason `project` is not one: a per-page override would
@@ -240,6 +293,66 @@ interface NormParams {
    * `lifecycle.mttrFromLedger` and `fixNext`'s matching parameters.
    */
   slaTargets: Record<string, number>;
+  /**
+   * The cold-zone threshold actually in force — `settingsLogic.effectiveColdAfterDays`, read
+   * off the SAME `loadSettings()` call as `project`, `domain` and `slaTargets` above, and NOT
+   * a `ModelParams` field for their reason unchanged: a per-page override would let one caller
+   * publish a cold-repository count no other page on this register would agree with.
+   *
+   * Read through `effectiveColdZoneSettings` rather than off the field directly because
+   * `coldZoneProfile` REFUSES a non-positive threshold (it derives its buckets as thirds of
+   * this number), so a settings row that never went through `cleanSettings` would take the
+   * Repositories page down rather than degrade to the shared default.
+   *
+   * IN FIXED MODE THIS IS THE LINE; IN RELATIVE MODE IT IS NOT. The profile publishes
+   * `cold_after_days` as the EFFECTIVE line whichever mode drew it, and keeps this number as
+   * `fixed_after_days`. Nothing here needs to know which: all four fields go in, one line
+   * comes out.
+   */
+  coldAfterDays: number;
+  /**
+   * Which definition draws the line — `settingsLogic.effectiveColdZoneSettings().mode`, read
+   * off the SAME `loadSettings()` call as everything above it, and NOT a `ModelParams` field
+   * for `slaTargets`' and `coldAfterDays`' reason unchanged: a per-page override would let one
+   * caller publish a cold-repository count no other page on this register would agree with.
+   */
+  coldZoneMode: ColdZoneMode;
+  /**
+   * The share relative mode aims at, per cent. Not a `ModelParams` field, same argument.
+   *
+   * TRAVELS WITH THE MODE, ALWAYS — `coldZoneProfile` THROWS in relative mode when this is
+   * absent, so `norm()` takes it and `floorDays` below from the same
+   * `effectiveColdZoneSettings()` call that produced `coldZoneMode`, never from three separate
+   * reads that could disagree about whether a target was stored. Carried (and keyed) in fixed
+   * mode too, where the profile ignores it: a params object whose shape depends on the mode
+   * would make the two cache keys below mode-shaped as well.
+   */
+  coldTargetSharePct: number;
+  /** The floor the derived line may not go below, in days. Not a `ModelParams` field, same
+   *  argument; travels with the mode for the same reason `coldTargetSharePct` does. */
+  coldFloorDays: number;
+  /**
+   * Whether retired repositories are left out of the cold zone. Not a `ModelParams` field, for
+   * the same argument as the four above and with more force: this one changes WHO IS COUNTED,
+   * so a per-page override would let the Executive card and the Repositories page report cold
+   * shares of two different estates.
+   */
+  coldExcludeEndOfLife: boolean;
+  /**
+   * Whether the REMEDIATION-SPEED figures leave retired repositories out — the half-life and
+   * its curve, the SLA attainment, the open-age distribution, the capacity rates, the time to
+   * revoke. `settingsLogic.effectiveExcludeEndOfLifeFromMttr`, off the same `loadSettings()`
+   * call as everything above it.
+   *
+   * NOT A `ModelParams` FIELD, for `coldExcludeEndOfLife`'s reason with the same force: this
+   * changes WHO IS MEASURED, and the Executive's hero half-life and the MTTR page's are the
+   * same number read twice. A per-page override is exactly how they would stop being.
+   *
+   * ITS OWN FIELD, NOT THE COLD-ZONE ONE REUSED. The two settings are independent by design
+   * (see `Settings.excludeEndOfLifeFromMttr`); collapsing them here would make the page that
+   * reads one silently obey the other.
+   */
+  mttrExcludeEndOfLife: boolean;
 }
 
 /**
@@ -253,26 +366,48 @@ function norm(p?: ModelParams): NormParams {
   const severities = Array.isArray(sevRaw) && sevRaw.length
     ? sevRaw.map((s) => normalizeSeverity(s)).filter((s, i, a) => a.indexOf(s) === i).sort()
     : null;
-  // One `loadSettings()` for both fields it feeds below — `project` and `slaTargets` are two
-  // independent readings of the same settings row, not two separate reasons to fetch it twice.
+  // One `loadSettings()` for every field it feeds below — `project`, `slaTargets` and the five
+  // cold-zone fields are independent readings of the same settings row, not eight separate
+  // reasons to fetch it eight times.
   const settings = loadSettings();
   // `cleanProjectView` already collapses anything that is not a genuine string to "" — this
   // is just the last step, turning that "no scope stored" value into the `null` every other
   // knob here uses for "not narrowed".
   const projectRaw = settings.projectView;
   const project = projectRaw ? projectRaw : null;
+  // The same last step for the domain scope, through the same `cleanViewScope` guarantee.
+  const domainRaw = settings.domainView;
+  const domain = domainRaw ? domainRaw : null;
+  // ALL FIVE COLD-ZONE FIELDS THROUGH ONE DOOR, off the same settings object. See
+  // `effectiveColdZoneSettings`'s own header: reading the mode from one place and the two
+  // relative-mode numbers from another is exactly how `coldZoneProfile` ends up handed a
+  // relative mode with nothing to aim at, which it throws on.
+  const cold = effectiveColdZoneSettings(settings);
   return {
     scope,
     severities,
     showNoFix: p?.showNoFix !== false,
     project,
+    domain,
     slaTargets: effectiveSlaTargets(settings),
+    coldAfterDays: cold.coldAfterDays,
+    coldZoneMode: cold.mode,
+    coldTargetSharePct: cold.targetSharePct,
+    coldFloorDays: cold.floorDays,
+    coldExcludeEndOfLife: cold.excludeEndOfLife,
+    // ITS OWN DOOR, not a sixth field on `effectiveColdZoneSettings`. That bundle exists
+    // because `coldZoneProfile`'s options must travel together; this one travels with none of
+    // them and governs a different family on five other pages.
+    mttrExcludeEndOfLife: effectiveExcludeEndOfLifeFromMttr(settings),
   };
 }
 
 /** The key a cached model is stored under. Spelled out so the field order is stable. */
 function keyOf(n: NormParams): Rec {
-  return { scope: n.scope, severities: n.severities, showNoFix: n.showNoFix, project: n.project };
+  return {
+    scope: n.scope, severities: n.severities, showNoFix: n.showNoFix,
+    project: n.project, domain: n.domain,
+  };
 }
 
 // --------------------------------------------------------------------------------------- //
@@ -295,6 +430,28 @@ let baseMemo: BaseSnapshot | undefined;
  * bumps that version on every write, so a mutate-then-read inside a single execution rebuilds
  * rather than serving the rows it had just invalidated — the same hazard `serverCache`'s own
  * memos guard, for the same reason.
+ *
+ * THE REPOSITORY-TAG JOIN HAPPENS HERE, ONCE, AND THIS IS THE ONLY PLACE IT CAN. `_domain` and
+ * `_lifecycle` are resolved on read and never persisted (see domain/domainTag.ts and
+ * domain/lifecycleTag.ts), so a row that has not been through `attachRepoTags` carries neither
+ * — and every model below takes its rows from this one snapshot. Attaching anywhere further
+ * down would mean one model answering by domain while another silently reported the whole
+ * register; attaching further up, inside `loadBaseRows`, would put a server-side join inside
+ * the store that every pure test constructs rows through.
+ *
+ * `refreshRepoTags` bumps the data version, so a refreshed map invalidates this memo by the
+ * same mechanism a sync does — the map is never joined against stale rows, nor rows against a
+ * stale map.
+ *
+ * THE TWO PROJECT GRAINS ATTACH HERE TOO, for exactly the argument above — `_supportGroup` and
+ * `_product` are derived on read, so a model reading rows that never passed through
+ * `attachProjectGrain` would report the whole register where another reported one product.
+ *
+ * ONE DIFFERENCE WORTH STATING, because it changes what an unset field MEANS. The tag join
+ * is gated on a map that may never have been refreshed, so `attachRepoTags` can legitimately
+ * be a whole-register no-op. `attachProjectGrain` is a pure function of the row and never is:
+ * a row without `_product` is a row the tenant filed under no product, not a row the plumbing
+ * has not reached yet.
  */
 function baseSnapshot(): BaseSnapshot {
   const version = dataVersion();
@@ -303,10 +460,10 @@ function baseSnapshot(): BaseSnapshot {
     // MTTR delayed-entry package: every row's DETECTION-clock entry age is computed HERE, once,
     // off each scope's OWN tracking start — never Date.now() (see `ledgerClock`'s own header on
     // why a stored fact and the wall clock must not be mixed).
-    baseMemo = {
-      version, now,
-      rows: loadBaseRows({ now, trackingStartByScope: trackingStartByScopeMap() }),
-    };
+    const rows = loadBaseRows({ now, trackingStartByScope: trackingStartByScopeMap() });
+    attachRepoTags(rows as unknown as Rec[]);
+    attachProjectGrain(rows);
+    baseMemo = { version, now, rows };
   }
   return baseMemo;
 }
@@ -315,6 +472,7 @@ function baseSnapshot(): BaseSnapshot {
 export function __resetModelMemosForTest(): void {
   baseMemo = undefined;
   clockMemo = undefined;
+  newestScanMemo = undefined;
 }
 
 interface LedgerClock {
@@ -408,6 +566,45 @@ function trackingSinceFor(n: NormParams): Partial<Record<Scope, string>> {
  */
 const KM_OPTS = { horizonDays: RMST_HORIZON_DAYS, minRisk: true } as const;
 
+let newestScanMemo: { version: string; byScope: Partial<Record<Scope, NewestScan>> } | undefined;
+
+/**
+ * The newest scan OF EACH SCOPE — what `coldZone` tests "the scanner still returns this
+ * repository" against.
+ *
+ * PER SCOPE, NOT ONE NEWEST SCAN. A sync that collected sca alone writes one scan row; testing
+ * every row of every register against it would mark every sast and secrets finding in the
+ * estate as having vanished, which is the single worst thing that block could say.
+ *
+ * A SCOPE WITH NO SCAN ON RECORD IS LEFT OUT OF THIS MAP ON PURPOSE. Its absence is the input
+ * `coldZone` reads as "observation is undecidable here" — it keeps those repositories observed
+ * and names the scope in `scopes_without_scan`. Filling the gap with a placeholder (a null
+ * `scan_id`, or the whole-register newest) would turn "we cannot tell" into a claim, and the
+ * claim it would make is the accusing one.
+ *
+ * Memoised beside `clockMemo` and keyed on `dataVersion()` for its reason unchanged: a
+ * mutate-then-read inside one execution must rebuild rather than serve what it just
+ * invalidated.
+ */
+function newestScanByScope(): Partial<Record<Scope, NewestScan>> {
+  const version = dataVersion();
+  if (!newestScanMemo || newestScanMemo.version !== version) {
+    const byScope: Partial<Record<Scope, NewestScan>> = {};
+    const newestMs: Partial<Record<Scope, number>> = {};
+    for (const s of loadScanRows()) {
+      const ms = parseTs(s.ts);
+      if (ms === null) continue;
+      const scope = s.scope;
+      const seen = newestMs[scope];
+      if (seen !== undefined && ms <= seen) continue;
+      newestMs[scope] = ms;
+      byScope[scope] = { scan_id: s.scan_id, ts: s.ts };
+    }
+    newestScanMemo = { version, byScope };
+  }
+  return newestScanMemo.byScope;
+}
+
 // --------------------------------------------------------------------------------------- //
 //  Row pipelines
 // --------------------------------------------------------------------------------------- //
@@ -425,11 +622,18 @@ function isOpen(status: unknown): boolean {
  * (`parseProjects` returns `[]`) matches no slug and so drops out of every scoped view,
  * which is `unattributedCount`'s population and is reported at `bootstrap`, not silently
  * redistributed into "no scope selected".
+ *
+ * THE DOMAIN FILTER GOES THROUGH `inDomain`, FOR THE SAME REASON AND WITH THE SAME
+ * CONSEQUENCE. A row whose repository carries no domain tag — or whose repository the join map
+ * has not seen — has no `_domain` and matches no name, so it drops out of every domain-scoped
+ * view. That population is `noDomainCount`'s and is reported at `bootstrap` as `scope.noDomain`,
+ * where the switcher's caption says it out loud.
  */
 function scopedRows(rows: BaseRow[], n: NormParams): BaseRow[] {
   let out = rows;
   if (n.scope) out = out.filter((r) => r.scope === n.scope);
   if (n.project) out = out.filter((r) => inProject(parseProjects(r.projects_json), n.project!));
+  if (n.domain) out = out.filter((r) => inDomain(r, n.domain!));
   if (n.severities) {
     const keep = new Set(n.severities);
     out = out.filter((r) => keep.has(normalizeSeverity(r.severity)));
@@ -460,6 +664,97 @@ function classifiableRows(rows: BaseRow[]): { rows: BaseRow[]; excludedSecrets: 
     else kept.push(r);
   }
   return { rows: kept, excludedSecrets };
+}
+
+/**
+ * What the remediation-speed figures measure over: the rows handed in, minus the ones on
+ * repositories the tenant has RETIRED — and the counts that say what happened.
+ *
+ * `classifiableRows`' TWIN, above, and deliberately the same shape: *"secrets are removed and
+ * counted, never coerced"* is the rule this file already keeps for a population an estimator
+ * must not see, and this is a second population with a second reason.
+ *
+ * WHY THE FILTER IS HERE AND NOT INSIDE THE ESTIMATORS, which is the design decision this
+ * function embodies rather than merely implements:
+ *
+ *   * `remediation.kaplanMeier` is pinned byte-for-byte against brick's PySpark output
+ *     (`test/fixtures/brick/km.json`), and `program.capacityByMonth` against `capacity.json`.
+ *     A population filter inside either would break the port's parity with the pipeline over a
+ *     setting the pipeline does not have.
+ *   * `insights.ts` states the convention outright at `slaConsumedDeciles`: its only caller
+ *     "hands it rows `visibleRows` has ALREADY narrowed… A caller wanting one register filters
+ *     before the call."
+ *   * It is possible here and was not in the cold zone. `coldZoneProfile` had to own its own
+ *     exclusion because relative mode DERIVES its line from the surviving population, so a cut
+ *     applied afterwards would move the line and then hide what moved it. Nothing in this
+ *     family has that feedback loop: every figure is a function of the rows it is given.
+ *
+ * COUNTED IN BOTH SETTINGS. `endOfLifeRepos` is the retired population whether or not the
+ * caller asked for it to go, which is what makes the setting discoverable instead of hidden —
+ * `coldZone.ts` publishes the same figure for the same reason, and `remediation.ts`'s
+ * `LatencySegments` states the general rule: what a population lost is "reported beside the
+ * estimate rather than inferred from it", because a reader cannot otherwise tell a small
+ * register from a badly-measured one.
+ *
+ * NEVER GUESSES. Only a positively recognised end-of-life reading removes anything
+ * (`lifecycleTag.isEndOfLife`): a row whose repository carries no lifecycle tag, or one in a
+ * vocabulary this register has not been taught, stays in. Absence is never retirement.
+ *
+ * REPOSITORIES ARE COUNTED DISTINCTLY, by `repo_id`, because the sentence this feeds says "N
+ * repositories" and a register has thousands of rows across tens of them. Rows with a blank
+ * `repo_id` belong to no repository and can never be retired, so they pass through untouched.
+ */
+function liveRepoRows(
+  rows: BaseRow[],
+  exclude: boolean,
+): { rows: BaseRow[]; endOfLifeRepos: number; excludedRepos: number; excludedRows: number } {
+  const retired = new Set<string>();
+  const kept: BaseRow[] = [];
+  let excludedRows = 0;
+  for (const r of rows) {
+    if (!isEndOfLife(r._lifecycle)) {
+      kept.push(r);
+      continue;
+    }
+    const id = String(r.repo_id ?? "").trim();
+    if (id) retired.add(id);
+    if (!exclude) {
+      kept.push(r);
+      continue;
+    }
+    excludedRows += 1;
+  }
+  return {
+    rows: exclude ? kept : rows,
+    endOfLifeRepos: retired.size,
+    excludedRepos: exclude ? retired.size : 0,
+    excludedRows,
+  };
+}
+
+/** The `liveRepoRows` result as the five payloads carry it. Spelled once, so the client's one
+ *  shared sentence reads the same keys wherever it is drawn. */
+interface EndOfLifeBlock {
+  /** The setting, echoed — the note says a different thing in each state. */
+  excluded: boolean;
+  /** Retired repositories these rows touched, counted in BOTH settings. */
+  repos: number;
+  /** Of those, how many actually left: `repos` when the switch is on, 0 when it is off. */
+  excludedRepos: number;
+  /** Findings that went with them — the measurement this read is no longer about. */
+  excludedRows: number;
+}
+
+function endOfLifeBlock(
+  cut: { endOfLifeRepos: number; excludedRepos: number; excludedRows: number },
+  exclude: boolean,
+): EndOfLifeBlock {
+  return {
+    excluded: exclude,
+    repos: cut.endOfLifeRepos,
+    excludedRepos: cut.excludedRepos,
+    excludedRows: cut.excludedRows,
+  };
 }
 
 /**
@@ -653,8 +948,13 @@ function latencySummary(rows: BaseRow[], now: number, scope: Scope | undefined):
  */
 function buildMttr(n: NormParams): Rec {
   const snap = baseSnapshot();
-  const scoped = scopedRows(snap.rows, n);
-  const rows = visibleRows(snap.rows, n);
+  // EVERY BLOCK ON THIS PAGE IS A REMEDIATION-SPEED FIGURE, so the cut is taken once here and
+  // the two row variables below are what it produced — there is no figure on this page the
+  // exclusion should reach and does not, and none it should spare. `scoped` is cut too: it
+  // feeds the vendor-latency estimate, which is a duration like the rest.
+  const cut = liveRepoRows(visibleRows(snap.rows, n), n.mttrExcludeEndOfLife);
+  const scoped = liveRepoRows(scopedRows(snap.rows, n), n.mttrExcludeEndOfLife).rows;
+  const rows = cut.rows;
 
   const { perSev, overall } = mttrFromLedger(
     rows as unknown as Rec[],
@@ -720,6 +1020,10 @@ function buildMttr(n: NormParams): Rec {
     severities: n.severities,
     showNoFix: n.showNoFix,
     rowCount: rows.length,
+    // WHO THIS PAGE MEASURED OVER, published whether or not anybody was removed — the figure
+    // that makes the setting discoverable rather than hidden, and the only way a reader can
+    // check a denominator that quietly shrank.
+    endOfLife: endOfLifeBlock(cut, n.mttrExcludeEndOfLife),
     perSev,
     overall,
     slaPct,
@@ -809,7 +1113,16 @@ export function mttrModel(p?: ModelParams): Rec {
   // would keep serving the OLD attainment figures for up to `CLOCK_TTL_SEC`, off a cache entry
   // whose params look identical to the one now in effect. `secretsModel`'s own key (below)
   // shows the mirror rule: a param the compute does not read never joins a key either.
-  return cached("dsMttr3", { ...keyOf(n), slaTargets: n.slaTargets }, () => buildMttr(n), CLOCK_TTL_SEC);
+  //
+  // `mttrExcludeEndOfLife` joins it on the identical argument one clause later: it decides
+  // which repositories every figure below is measured over, so an operator flipping it and
+  // reloading would otherwise read the OLD half-life off an entry whose params look the same.
+  return cached(
+    "dsMttr3",
+    { ...keyOf(n), slaTargets: n.slaTargets, mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
+    () => buildMttr(n),
+    CLOCK_TTL_SEC,
+  );
 }
 
 // --------------------------------------------------------------------------------------- //
@@ -834,6 +1147,8 @@ function buildExecutive(n: NormParams): Rec {
   const snap = baseSnapshot();
   const scoped = scopedRows(snap.rows, n);
   const rows = visibleRows(snap.rows, n);
+  // The one block on this page that is NOT measured at `snap.now`. See `coldZone` below.
+  const clock = ledgerClock(n.scope);
 
   const counts: Record<string, number> = {};
   let open = 0;
@@ -844,9 +1159,18 @@ function buildExecutive(n: NormParams): Rec {
     counts[s] = (counts[s] ?? 0) + 1;
   }
 
+  // THE CUT REACHES THE HALF-LIFE AND NOTHING ELSE ON THIS PAGE, and that asymmetry is the
+  // whole care this block needs. `severityCounts`, `tiers`, `movement` and `fixNext` below are
+  // counts of what is OPEN, and a retired repository's open findings are real — removing them
+  // would shrink the backlog this page reports, which is the one thing the exclusion promises
+  // not to do. So it is applied here, to the KM input, and the page says so in one sentence.
+  //
+  // `total` / `open` / `resolved` / `awaiting` stay over the whole `sub` for the same reason:
+  // they are states, not durations.
+  const execCut = liveRepoRows(rows, n.mttrExcludeEndOfLife);
   const byScope = (n.scope ? [n.scope] : [...SCOPES]).map((scope) => {
     const sub = rows.filter((r) => r.scope === scope);
-    const km = kaplanMeier(sub, KM_OPTS);
+    const km = kaplanMeier(execCut.rows.filter((r) => r.scope === scope), KM_OPTS);
     return {
       group: scope,
       dimension: "scope",
@@ -870,13 +1194,41 @@ function buildExecutive(n: NormParams): Rec {
     showNoFix: n.showNoFix,
     severityCounts: { counts, open, total: rows.length },
     byScope: { dimension: "scope", rows: byScope },
-    weekTrend: weekTrend(scoped, n, snap.now),
+    // The half-life half of this payload, and the count of what it left out. Named for the
+    // family rather than for the page, because the page draws both kinds of figure.
+    endOfLife: endOfLifeBlock(execCut, n.mttrExcludeEndOfLife),
+    // The week-over-week half-life delta is a duration, so it is cut like the hero it sits
+    // beside — otherwise "half-life down 4 days" could be the exclusion rather than any work.
+    weekTrend: weekTrend(
+      liveRepoRows(scoped, n.mttrExcludeEndOfLife).rows, n, snap.now,
+    ),
     // What to do next, and what the list left out. One call, one pass over the rows the
     // severity tiles already counted, so the ranked figure and the tiles cannot disagree.
     // `slaTargets` is the EFFECTIVE map so tier 2/3's "past SLA" gate — and therefore
     // `unranked.insideSla` — agree with the same windows `mttrModel` measures against.
     fixNext: fixNext(rows, { now: snap.now, slaTargets: n.slaTargets }) as unknown as Rec,
     movement: openMovement(rows, n),
+    // The cold-zone HEADLINE — totals, clock and threshold, never the per-repo or per-team
+    // arrays (`coldZoneHeadline`'s own "capped in the model, not sliced at the edge" note).
+    // The Repositories page draws the tables; this page draws one figure out of the totals.
+    //
+    // MEASURED AT `ledgerClock(n.scope)`, NOT AT `snap.now`, and that is the whole care this
+    // block needs. Every number in it is "how long since something happened": dated by the
+    // wall clock it would grow by an hour every time this 1 h cache entry was rebuilt, so a
+    // register nobody had synced for a month would drift into the cold zone on its own, with
+    // no new observation behind the change. `coldZoneAsOfSource` publishes which clock that
+    // was — "wallClock" when there is no scan to date the register from.
+    coldZone: coldZoneHeadline(coldZoneProfile(rows, {
+      now: clock.asOf,
+      observedFrom: clock.observedFrom,
+      coldAfterDays: n.coldAfterDays,
+      mode: n.coldZoneMode,
+      targetSharePct: n.coldTargetSharePct,
+      floorDays: n.coldFloorDays,
+      excludeEndOfLife: n.coldExcludeEndOfLife,
+      newestScanByScope: newestScanByScope(),
+    })),
+    coldZoneAsOfSource: clock.asOfSource,
     tiers: riskTierStats(scopedTierRows(rows), undefined),
     signalCoverage: signalCoverage(rows),
     // MTTR delayed-entry package — see `mttrModel`'s matching field for the caption it feeds.
@@ -1044,9 +1396,37 @@ export function executiveModel(p?: ModelParams): Rec {
   // `kmQ25` and their `kmMedian`/`kmMedianLowerBound` now read a reliability-cut curve; the
   // payload gained `trackingSince`. Same "silently wrong beats silently missing" reasoning as
   // `mttrModel`'s own bump.
+  //
+  // `coldAfterDays` joins it beside them on the identical argument, one block later: the
+  // cold-zone headline is computed from it, so an operator saving a new window and reloading
+  // would otherwise keep reading the OLD cold count for up to `CLOCK_TTL_SEC` off an entry
+  // whose params look identical to the one now in force.
+  //
+  // AND THE THREE RELATIVE-MODE FIELDS JOIN IT FOR THE SAME REASON, IN A FIXED ORDER matching
+  // `reposModel`'s. The mode is the sharpest case of the rule: flipping fixed -> relative
+  // changes nothing about `coldAfterDays`, so without `coldZoneMode` in the key the params
+  // would be byte-identical across a change that moves every verdict in the block. They are
+  // keyed in BOTH modes rather than only in the one that reads them, so that a params object
+  // never changes SHAPE with the mode — a key that sometimes carries three fewer fields makes
+  // "same params" mean two different things.
   return cached(
     "dsExecutive2",
-    { ...keyOf(n), slaTargets: n.slaTargets },
+    {
+      ...keyOf(n),
+      slaTargets: n.slaTargets,
+      coldAfterDays: n.coldAfterDays,
+      coldZoneMode: n.coldZoneMode,
+      coldTargetSharePct: n.coldTargetSharePct,
+      coldFloorDays: n.coldFloorDays,
+      // BOTH END-OF-LIFE SWITCHES JOIN THE KEY, on this file's standing rule that a param the
+      // compute reads has to be in the key. The cold-zone one was missing while its four
+      // siblings were present — `settingsStore.saveSettings` bumps the data version, so that
+      // was an invariant broken rather than a stale read anyone could observe, but an
+      // invariant that is true of four fields out of five is no rule at all for whoever adds
+      // the sixth.
+      coldExcludeEndOfLife: n.coldExcludeEndOfLife,
+      mttrExcludeEndOfLife: n.mttrExcludeEndOfLife,
+    },
     () => buildExecutive(n),
     CLOCK_TTL_SEC,
   );
@@ -1090,9 +1470,30 @@ const CONCENTRATION_DIMS: Record<Scope, string[]> = {
   // THIS COPY DOES NOT DECIDE WHAT RENDERS. `concentrationModel(payload, dims)` maps over the
   // dims the PAGE hands it, so removing a name here alone yields a card with zero rows rather
   // than no card; `pages/sca.js` and `pages/sast.js` carry the matching lists and say so.
-  sca: ["repo", "owner_project"],
-  sast: ["repo", "cwe", "owner_project"],
-  secrets: ["repo", "secret_kind", "owner_project"],
+  //
+  // `domain` IS ON ALL THREE, because unlike `language` it is not a restatement of another
+  // card: a domain cuts ACROSS the project hierarchy (a domain owns repositories that several
+  // projects file, and a project can hold repositories several domains own), and it is the
+  // axis a reader escalates along — a project is where Wiz files the work, a domain is who
+  // answers for it. It is also the one dimension here that can be empty for a legitimate
+  // reason (the join map has never been refreshed), and the card that results says `(none)`
+  // for every row rather than disappearing — which is the honest shape, and is why
+  // `concentrationModel` keeping zero-row cards is left alone rather than special-cased.
+  //
+  // `owner_project` IS GONE, REPLACED BY TWO CARDS, and that is the correction this list
+  // exists to record. The tenant files every repository under a CS/CE/LU SUPPORT GROUP and
+  // under a `product-…` PRODUCT (src/domain/projectGrain.ts), and `owner_project` held
+  // whichever of the two Wiz happened to return first — so a single card was ranking products
+  // against support groups and calling the mixture "By owning project".
+  //
+  // BOTH GRAINS ARE LISTED, and neither is a restatement of the other in `language`'s sense.
+  // One support group holds MANY products, so the group's total is a roll-up the product card
+  // cannot express: the product card names the worst single product, and only the group card
+  // can show that three mediocre products under one group add up to the largest backlog
+  // anyone owns. It is also the escalation grain — you tell a support group, not a product.
+  sca: ["repo", "product", "support_group", "domain"],
+  sast: ["repo", "cwe", "product", "support_group", "domain"],
+  secrets: ["repo", "secret_kind", "product", "support_group", "domain"],
 };
 
 function buildRegister(scope: Scope, n: NormParams): Rec {
@@ -1497,6 +1898,10 @@ function buildSecrets(n: NormParams): Rec {
   // its fields, for the same reason `registerRowsModel` does — see that call's comment.
   const rows = visibleRows(snap.rows, { ...n, scope: "secrets", severities: null });
   const secretRows = rows as unknown as SecretRow[];
+  // ONE FIGURE ON THIS PAGE IS A DURATION, and it is the only one the exclusion reaches. The
+  // coverage, the validity rate, the removal-vs-rotation split and every segment are counts of
+  // what the register HOLDS — a leaked credential in a retired repository is still leaked.
+  const secretsCut = liveRepoRows(rows, n.mttrExcludeEndOfLife);
   const fold = latestSecretsTwins();
 
   return {
@@ -1513,11 +1918,13 @@ function buildSecrets(n: NormParams): Rec {
     validity: postDetectionValidityRate(secretRows),
     // MTTR delayed-entry package: `trackingStart` is this register's own scan history, not
     // `snap.now` — `secretsLifecycle.ts`'s `TimeToRevokeOptions.trackingStart` note explains
-    // why the entry offset shares the detection clock's origin (`first_seen`) here too.
-    timeToRevoke: timeToRevoke(secretRows, {
+    // why the entry offset shares the detection clock's origin (`first_seen`) here too. Measured
+    // over `secretsCut`, the same end-of-life-excluded population `endOfLife` below reports.
+    timeToRevoke: timeToRevoke(secretsCut.rows as unknown as SecretRow[], {
       now: snap.now,
       trackingStart: ledgerClock("secrets").observedFrom,
     }),
+    endOfLife: endOfLifeBlock(secretsCut, n.mttrExcludeEndOfLife),
     removalVsRotation: removalVsRotation(secretRows),
     segments: {
       validation_state: bySegment(secretRows, "validation_state"),
@@ -1547,7 +1954,9 @@ export function secretsModel(p?: ModelParams): Rec {
   // anywhere else in the product, so a warm dsSecrets1 entry would be the most misleading one.
   return cached(
     "dsSecrets2",
-    { scope: "secrets", showNoFix: n.showNoFix },
+    // `mttrExcludeEndOfLife` is here because `timeToRevoke` reads it; `severities` is not
+    // because nothing does. One rule, both directions.
+    { scope: "secrets", showNoFix: n.showNoFix, mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
     () => buildSecrets(n),
     CLOCK_TTL_SEC,
   );
@@ -1580,7 +1989,12 @@ function buildProgram(n: NormParams): Rec {
   const snap = baseSnapshot();
   const clock = ledgerClock(n.scope);
   const visible = visibleRows(snap.rows, n);
-  const { rows, excludedSecrets } = classifiableRows(visible);
+  // TWO POPULATIONS THIS PAGE MAY NOT MEASURE, COMPOSED IN ORDER. Secrets are refused because
+  // `program.resolveRule` throws on them; retired repositories are refused because the operator
+  // asked. Both are counted and published beside the rates they changed — `excludedSecrets` has
+  // always been, and the second one joins it rather than hiding behind it.
+  const live = liveRepoRows(visible, n.mttrExcludeEndOfLife);
+  const { rows, excludedSecrets } = classifiableRows(live.rows);
   const riskRows = rows as unknown as RiskRow[];
 
   const scans = loadScanRows() as unknown as Rec[];
@@ -1614,6 +2028,7 @@ function buildProgram(n: NormParams): Rec {
     showNoFix: n.showNoFix,
     rowCount: rows.length,
     excludedSecrets,
+    endOfLife: endOfLifeBlock(live, n.mttrExcludeEndOfLife),
     rules: {
       sca: { rule: DEFAULT_RISK_RULE, sentence: ruleSentence(DEFAULT_RISK_RULE) },
       sast: { rule: DEFAULT_SAST_RISK_RULE, sentence: ruleSentence(DEFAULT_SAST_RISK_RULE) },
@@ -1652,7 +2067,9 @@ function buildProgram(n: NormParams): Rec {
 function programTrendFor(n: NormParams, all: BaseRow[]): Rec[] {
   // The trend takes the PRE-toggle rows: `loadProgramTrend` has no as-of no-fix mode, and the
   // population it replays is the classifiable one.
-  const { rows } = classifiableRows(scopedRows(all, n));
+  const { rows } = classifiableRows(
+    liveRepoRows(scopedRows(all, n), n.mttrExcludeEndOfLife).rows,
+  );
   return loadProgramTrend(undefined, {
     severities: n.severities,
     base: rows,
@@ -1662,7 +2079,14 @@ function programTrendFor(n: NormParams, all: BaseRow[]): Rec[] {
 
 export function programModel(p?: ModelParams): Rec {
   const n = norm(p);
-  return durablyCached("dsProgram1", keyOf(n), () => buildProgram(n));
+  // "dsProgram1" -> "dsProgram2": `capacity` gained `closedPerMonthMean`. The durable copy
+  // has no TTL to age it out, so a shape change has to move the name or the page draws the
+  // absent mark beside a live close rate until the next commit rewrites the file.
+  return durablyCached(
+    "dsProgram2",
+    { ...keyOf(n), mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
+    () => buildProgram(n),
+  );
 }
 
 // --------------------------------------------------------------------------------------- //
@@ -1670,11 +2094,19 @@ export function programModel(p?: ModelParams): Rec {
 // --------------------------------------------------------------------------------------- //
 
 /**
- * The estate: repositories as the asset, and the language cut beside them.
+ * The estate: repositories as the asset, and the same measurements rolled up to the product
+ * the tenant owns them by.
  *
- * BOTH GROUPINGS AND BOTH POPULATIONS. `assetProfile` groups on `language` (brick's own
- * fixture pins that) or on `repo`; `assetProfilePopulations` stacks the `all` and `high_risk`
- * cuts. "How much does a typical repository carry" and "are we closing high risk faster than
+ * BOTH GRAINS AND BOTH POPULATIONS. `assetProfile` groups on `repo` or on `product`;
+ * `assetProfilePopulations` stacks the `all` and `high_risk` cuts.
+ *
+ * THE LANGUAGE CUT IS GONE FROM THIS PAYLOAD, and the reason is the same one that removed it
+ * from both code registers' concentration lists (`CONCENTRATION_DIMS` above): a repository's
+ * language is not something anyone remediates against, and grouping by it restated the
+ * repository card one level coarser. What replaced it is the grain the tenant actually owns
+ * work by — a product — so one table with a repo/product switch says what two tables used to,
+ * and says the second half of it usefully. `assets.ts` KEEPS its `language` grouping: brick's
+ * fixture pins that shape, and the parity is worth more than the branch costs. "How much does a typical repository carry" and "are we closing high risk faster than
  * it arrives" routinely disagree, and which one an unlabelled number meant is not recoverable
  * afterwards — so every row carries `population` and the page must filter on it.
  *
@@ -1701,14 +2133,60 @@ function buildRepos(n: NormParams): Rec {
     showNoFix: n.showNoFix,
     rowCount: visible.length,
     byRepo: assetProfilePopulations(rows, { ...opts, groupBy: "repo" }),
-    byLanguage: assetProfilePopulations(rows, { ...opts, groupBy: "language" }),
+    byProduct: assetProfilePopulations(rows, { ...opts, groupBy: "product" }),
+    // `visible`, NOT the re-censored `rows` copy: this module never reads `age_days`, so
+    // handing it the rewritten rows would only hide which population it actually measured.
+    coldZone: coldZoneProfile(visible, {
+      now: clock.asOf,
+      observedFrom: clock.observedFrom,
+      coldAfterDays: n.coldAfterDays,
+      mode: n.coldZoneMode,
+      targetSharePct: n.coldTargetSharePct,
+      floorDays: n.coldFloorDays,
+      excludeEndOfLife: n.coldExcludeEndOfLife,
+      newestScanByScope: newestScanByScope(),
+    }),
     signalCoverage: signalCoverage(visible),
   };
 }
 
 export function reposModel(p?: ModelParams): Rec {
   const n = norm(p);
-  return durablyCached("dsRepos1", keyOf(n), () => buildRepos(n));
+  // "dsRepos1" -> "dsRepos2": the payload gained the `coldZone` block. The durable copy has no
+  // TTL to age it out, so a warm dsRepos1 Drive file — which carries no cold zone at all —
+  // would serve a Repositories page with its first section missing entirely, and a section
+  // absent for a cache reason reads as an estate where nothing has gone quiet.
+  //
+  // `coldAfterDays` JOINS THE KEY, the same rule `mttrModel` states for `slaTargets`: this
+  // compute reads it, and a durable entry keyed without it would keep answering with the
+  // previous threshold's verdicts until the next commit rewrote the file.
+  //
+  // SO DO THE THREE RELATIVE-MODE FIELDS, in this fixed order (mode, target, floor) — the same
+  // order `executiveModel` uses, because two key builders that list the same fields differently
+  // are two chances to drop one. The durable layer has no TTL at all, so the argument is
+  // sharper here than on the 1 h entry: an operator who switches to relative mode and reloads
+  // would read the fixed mode's verdicts off a warm Drive file FOREVER, until the next commit
+  // happened to rewrite it, if the mode were not in the name.
+  //
+  // NO NAMESPACE BUMP ("dsRepos2" STAYS) — see this file's caching-audit header for the full
+  // argument: new params fields change the sha1 the filename is built from, so no old file is
+  // addressable by the new key in the first place.
+  return durablyCached(
+    "dsRepos2",
+    {
+      ...keyOf(n),
+      coldAfterDays: n.coldAfterDays,
+      coldZoneMode: n.coldZoneMode,
+      coldTargetSharePct: n.coldTargetSharePct,
+      coldFloorDays: n.coldFloorDays,
+      // The fifth cold-zone field, which belonged here from the day it shipped — see
+      // `executiveModel`'s key for the rule it was one field short of. This page draws no
+      // remediation-speed aggregate, so `mttrExcludeEndOfLife` is deliberately NOT here: a
+      // param the compute does not read never joins a key either.
+      coldExcludeEndOfLife: n.coldExcludeEndOfLife,
+    },
+    () => buildRepos(n),
+  );
 }
 
 // --------------------------------------------------------------------------------------- //
@@ -1764,7 +2242,7 @@ function movementNoteFor(win: MovementWindow): string {
 /**
  * The population the decomposition replays — the KPI band's, MINUS the severity filter.
  *
- * The project scope and the no-fix toggle DO apply: they narrow which findings are the
+ * BOTH VIEW SCOPES and the no-fix toggle DO apply: they narrow which findings are the
  * reader's. The DISPLAY SEVERITY FILTER MUST NOT, and that is the one thing this function
  * exists to say. `outsideGate` counts open rows whose severity the last scan never looked at;
  * running it over a population a display filter had already narrowed to the same severities
@@ -1772,9 +2250,11 @@ function movementNoteFor(win: MovementWindow): string {
  * the whole section was built to end.
  */
 function movementPopulation(rows: BaseRow[], n: NormParams): MovementRow[] {
-  const scoped = n.project
-    ? rows.filter((r) => inProject(parseProjects(r.projects_json), n.project!))
-    : rows;
+  let scoped = rows;
+  if (n.project) {
+    scoped = scoped.filter((r) => inProject(parseProjects(r.projects_json), n.project!));
+  }
+  if (n.domain) scoped = scoped.filter((r) => inDomain(r, n.domain!));
   return n.showNoFix ? scoped : scoped.filter((r) => !baseRowNoFix(r));
 }
 
@@ -1787,6 +2267,7 @@ function buildHistory(n: NormParams): Rec {
     .reverse(); // newest first, as the table draws it
 
   const rows = visibleRows(snap.rows, n);
+  const historyCut = liveRepoRows(rows, n.mttrExcludeEndOfLife);
 
   const movementRows = movementPopulation(snap.rows, n);
   const movement: Rec = {};
@@ -1833,19 +2314,28 @@ function buildHistory(n: NormParams): Rec {
       // reads is the next reader's trap (CLAUDE.md's "a settings key nothing reads is worse
       // than no key", applied to a payload field) — so `km` is the only median this page can
       // publish, and where the curve never reaches half `medianLowerBound` is what is true.
-      km: shipKM(kaplanMeier(rows, KM_OPTS)),
+      //
+      // THE ONE SPEED FIGURE ON THIS PAGE, so the one thing the exclusion touches here. The
+      // three counts above it are what the register HOLDS and stay whole; this is how long a
+      // finding lived, and a repository nobody is meant to remediate has no business in it.
+      km: shipKM(kaplanMeier(historyCut.rows, KM_OPTS)),
     },
+    endOfLife: endOfLifeBlock(historyCut, n.mttrExcludeEndOfLife),
     // `mttrPageTrendSlice` reads both of these keys.
     history: listHistory(),
     trend: trendFor(n, snap.rows),
     // See the block comment above: `scans`, `perScope` and `history` are per-scan/per-day
-    // facts with no project dimension and do NOT narrow with `n.project`; everything else in
-    // this payload does.
+    // facts with no project OR domain dimension and do NOT narrow with either view scope;
+    // everything else in this payload does. The note names whichever scope is actually live,
+    // because "scoped to the selected project" over a domain scope would be a wrong answer to
+    // the only question the note exists to answer.
     scanScopeApplies: false,
-    scanScopeNote: n.project
+    scanScopeNote: n.project || n.domain
       ? "scans, perScope and history describe the whole register — a sync and a "
-        + "daily snapshot carry no project dimension to narrow by. Only rows/kpis/trend above "
-        + "are scoped to the selected project."
+        + "daily snapshot carry no "
+        + (n.project ? "project" : "domain")
+        + " dimension to narrow by. Only rows/kpis/trend above are scoped to the selected "
+        + (n.project ? "project" : "domain") + "."
       : null,
   };
 }
@@ -1858,10 +2348,17 @@ function trendFor(n: NormParams, all: BaseRow[]): Rec[] {
   // MTTR delayed-entry package: `minRisk: true` so the KM-median LINE this trend draws reads
   // on the same reliability standard as every other KM figure this app publishes — see
   // `weekTrend`'s matching comment.
+  //
+  // THE LIFECYCLE HAS NO DATE, so unlike the no-fix rule above it cannot be applied as-of each
+  // point: the tag says what a repository is NOW, not what it was in March. The exclusion is
+  // therefore taken over the whole series — a repository retired today was never in it — and
+  // that asymmetry with the line directly above is deliberate rather than an oversight.
+  // (`loadTrend` re-projects to seven columns and `_lifecycle` does not survive the projection,
+  // so the cut has to be here in any case.)
   return loadTrend({
     severities: n.severities,
     showNoFix: n.showNoFix,
-    base: scopedRows(all, n),
+    base: liveRepoRows(scopedRows(all, n), n.mttrExcludeEndOfLife).rows,
     ...(n.scope ? { scope: n.scope } : {}),
     trackingStartByScope: trackingStartByScopeMap(),
     minRisk: true,
@@ -1895,7 +2392,11 @@ export function historyModel(p?: ModelParams): Rec {
   // `q25`/`q75`/`reliableUntil`/`excludedPreEntry`/`maxObserved`, and its `median`/`mean`/
   // `restrictionTime` now read a reliability-cut, horizon-capped curve — the same shape change
   // `mttrModel`'s own bump documents.
-  return durablyCached("dsHistory3", keyOf(n), () => buildHistory(n));
+  return durablyCached(
+    "dsHistory3",
+    { ...keyOf(n), mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
+    () => buildHistory(n),
+  );
 }
 
 // --------------------------------------------------------------------------------------- //

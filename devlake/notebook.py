@@ -98,7 +98,7 @@ def split_sql_cell(text: str) -> Optional[str]:
     two can never drift apart. A cell is SQL exactly when its whole text starts with the literal
     ``"%sql"``; the query is everything after the first newline. In every shipped notebook that
     means a first line of exactly ``%sql`` followed by the query on the rest of the cell --
-    verified over both forks' notebooks by
+    verified over every notebook in ``brick/notebooks/`` by
     ``devlake/tests/test_notebook_shims.py::test_the_sql_transformer_splits_exactly_as_the_notebook_test_does``.
     """
     if not text.startswith("%sql"):
@@ -155,13 +155,13 @@ def install(ip=None, *, widgets: Dict[str, Any], spark: Any) -> None:
     ``ip`` defaults to ``IPython.get_ipython()`` -- the running kernel/shell -- and this raises
     if there is none (there is nothing to install into).
 
-    ``dbx.get_dbutils.cache_clear()`` is called on whichever fork's ``dbx`` module is importable
-    -- imported by the bare name ``dbx``, which resolves against whichever fork
-    ``devlake.session.put_fork_on_path`` most recently put on ``sys.path`` (never both forks at
-    once; see that module's own docstring). This is needed because ``get_dbutils`` is
+    ``dbx.get_dbutils.cache_clear()`` is called on ``brick``'s own ``dbx`` module -- imported by
+    the bare name ``dbx``, which resolves against ``brick/`` once
+    ``devlake.session.put_brick_on_path`` has put it on ``sys.path`` (see that module's own
+    docstring). This is needed because ``get_dbutils`` is
     ``functools.lru_cache(maxsize=1)``-decorated: a call made before this shim was installed
-    (or under a fork that has since switched) would otherwise keep serving its first, possibly
-    ``None``, answer forever within this process.
+    would otherwise keep serving its first, possibly ``None``, answer forever within this
+    process.
     """
     if ip is None:
         from IPython import get_ipython
@@ -198,8 +198,6 @@ def load_ipython_extension(ip) -> None:
       ``python -m devlake.run``) wrote.
     * ``DEVLAKE_SCHEMA`` (default ``wiz``) -- the schema to reregister and hand to ``panels``'s
       ``schema`` widget.
-    * ``DEVLAKE_FORK`` (default ``brick``) -- which fork's flat module directory goes on
-      ``sys.path`` (see ``devlake.session.put_fork_on_path``).
 
     Widget values themselves (``catalog``, ``schema``, ``scope``, ...) are seeded through
     ``WIDGET_<NAME>`` env vars, read by :class:`FakeWidgets` directly -- this function passes an
@@ -214,12 +212,11 @@ def load_ipython_extension(ip) -> None:
             "lake directory a prior `python -m devlake.run` (or devlake.run.scan) wrote."
         )
     schema = os.environ.get("DEVLAKE_SCHEMA", "wiz")
-    fork = os.environ.get("DEVLAKE_FORK", "brick")
 
     from devlake import lake as lake_module, session as devlake_session
 
-    devlake_session.put_fork_on_path(fork)
-    spark = devlake_session.build(lake_dir, app_name=f"devlake-notebook-{fork}")
+    devlake_session.put_brick_on_path()
+    spark = devlake_session.build(lake_dir, app_name="devlake-notebook")
     lake_module.reregister(spark, lake_dir, schema)
 
     install(ip, widgets={}, spark=spark)

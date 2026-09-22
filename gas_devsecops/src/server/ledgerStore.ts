@@ -26,7 +26,8 @@
 // storage addresses; `PersistOutcome` carries counts and scan ids only, and no thrown message
 // names a token or the contents of a record.
 
-import type { Scope } from "../domain/config";
+import { normalizeWizUrl } from "../../../gas_shared/domain/wizUrl";
+import { isOrgWideProject, type Scope } from "../domain/config";
 import {
   baseRows,
   emptyState,
@@ -142,6 +143,47 @@ function n(r: Rec, k: string): number | null {
 }
 
 /**
+ * `owner_project`, with an organisation-wide project read back as NO OWNER.
+ *
+ * The rule itself lives in `domain/config.ts::ORG_WIDE_PROJECTS` and is applied where the
+ * column is DERIVED (`reconcile.ts::ownerProject`). This is the same rule applied where the
+ * column is READ, and it is not belt-and-braces — it is the only thing that reaches rows
+ * already on the sheet. `reconcile.ts` merges this column latest-wins-NEVER-ERASED
+ * (`row.owner_project = attrs.owner_project ?? row.owner_project`), so a row that was filed
+ * under the connector tag before this rule existed would keep it through every future scan:
+ * the fixed derivation now yields `null`, and `??` reads `null` as "this scan saw nothing"
+ * rather than as "this is no longer the answer". Loosening the merge instead would break the
+ * never-erase rule for every other column that shares the line.
+ */
+function ownerOf(r: Rec): string | null {
+  const owner = s(r, "owner_project");
+  return isOrgWideProject(owner) ? null : owner;
+}
+
+/**
+ * The same read-side rule for the SNAPSHOT path, which does not go through the two row
+ * readers at all.
+ *
+ * `loadState` prefers `archive.readLedgerSnapshot()` — already-shaped `LedgerRow`/
+ * `EpisodeRow` objects, not sheet cells — and falls back to the tabs only when there is no
+ * snapshot. Fixing `rowToLedger`/`rowToEpisode` alone would therefore fix the fallback and
+ * leave the path that actually answers, and `writeStateTables` rewrites the snapshot FROM
+ * this state, so a stale connector-tag owner would be copied forward on every sync forever.
+ * Scrubbing here closes that, and makes the repair permanent: the next write persists the
+ * cleaned value to the snapshot, the tabs and the repos tab alike.
+ *
+ * Mutates in place, which is safe because the snapshot is JSON parsed fresh on each read.
+ */
+function scrubOrgWideOwners(state: LedgerState): void {
+  for (const row of Object.values(state.ledger)) {
+    if (isOrgWideProject(row.owner_project)) row.owner_project = null;
+  }
+  for (const episode of state.episodes) {
+    if (isOrgWideProject(episode.owner_project)) episode.owner_project = null;
+  }
+}
+
+/**
  * A ledger row's scope, from the column, falling back to the KEY PREFIX.
  *
  * The column is the authority — reconcile stamps it on every row it touches — but a row
@@ -221,10 +263,15 @@ function rowToLedger(r: Rec): LedgerRow {
     validated_at: s(r, "validated_at"),
     confidence: s(r, "confidence"),
 
-    owner_project: s(r, "owner_project"),
+    owner_project: ownerOf(r),
     owner_path: s(r, "owner_path"),
     tags_json: s(r, "tags_json"),
     projects_json: s(r, "projects_json"),
+    // NOT `s(r, ...)` like its neighbours: this one becomes an href, and this function is
+    // where a row of the ledger TAB — a Google Sheet an operator can type into — turns back
+    // into a LedgerRow. It is the only place a hand-edited link can be caught before it
+    // reaches the wire. See gas_shared/domain/wizUrl.ts.
+    portal_url: normalizeWizUrl(r["portal_url"]),
   };
 }
 
@@ -250,7 +297,7 @@ function rowToEpisode(r: Rec): EpisodeRow {
     epss: risk.epss,
     cwe: s(r, "cwe"),
     language: s(r, "language"),
-    owner_project: s(r, "owner_project"),
+    owner_project: ownerOf(r),
   };
 }
 
@@ -282,10 +329,6 @@ export function loadScanRows(): ScanRow[] {
   return scanRowsMemo;
 }
 
-export function scanRowExists(scanId: string): boolean {
-  return loadScanRows().some((r) => r.scan_id === scanId);
-}
-
 /**
  * Whether a sync's COMMIT landed: any `scans` row carrying its id prefix.
  *
@@ -315,6 +358,7 @@ export function loadState(useSnapshot = true): LedgerState {
     if (snap) {
       state.ledger = snap.ledger;
       state.episodes = snap.episodes;
+      scrubOrgWideOwners(state);
       stateMemo = state;
       return state;
     }
@@ -793,28 +837,6 @@ export function previousSeverityCounts(scope: Scope): Record<string, number> {
 /** The most recent scan OF `scope`. Scope is required — see `ledgerCore.latestScan`. */
 export function latestScanRow(scope: Scope): ScanRow | null {
   return latestScan(loadScanRows(), scope);
-}
-
-/**
- * Repoint ONE scan row at a rewritten observations file.
- *
- * `writeGzJson` trashes the same-named file and creates a fresh one, so rewriting an obs file
- * yields a NEW Drive id and the old `scans.obs_ref` points at a trashed one — and
- * `previousSeverityCounts` reads through that ref.
- *
- * DIVERGENCE (gas/): it takes the SCOPE as well, and rewrites the tab rather than using
- * `updateWhere`. `updateWhere` patches the FIRST row matching one column, and `scan_id` names
- * three rows here — so the gas/ signature would silently repoint sca's row whichever scope
- * asked. The read-modify-write costs one extra tab read on a path that runs after a manual
- * obs rewrite, which is not a path that runs often.
- */
-export function setScanObsRef(scanId: string, scope: Scope, obsRef: string): void {
-  const rows = loadScanRows();
-  const target = rows.find((r) => r.scan_id === scanId && r.scope === scope);
-  if (!target) return;
-  target.obs_ref = obsRef;
-  overwrite(TABS.scans, scansAsc(rows) as unknown as Rec[]);
-  invalidateLedgerMemos();
 }
 
 // --------------------------------------------------------------------------- #

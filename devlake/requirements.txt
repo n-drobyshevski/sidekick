@@ -1,6 +1,7 @@
-# devlake harness deps only. Neither brick/requirements.txt nor brick/devsecops/requirements.txt
-# names anything below -- those two files are cluster-facing and this directory never deploys.
-# pyspark / delta-spark themselves come from whichever fork's requirements.txt you installed.
+# devlake harness deps only. brick/requirements.txt names nothing below -- that file is
+# cluster-facing and this directory never deploys. (There used to be a second one at
+# brick/devsecops/requirements.txt; it was retired at ef22b05 along with the rest of that fork.)
+# pyspark / delta-spark themselves come from brick/requirements.txt.
 
 duckdb
 ipykernel

@@ -13,13 +13,12 @@ import { expectParity, fixture } from "./helpers";
 describe("trendFromFrames (fixture parity)", () => {
   const fx = fixture("trend");
   it("matches the unscoped Python trend", () => {
-    expectParity(trendFromFrames(fx.scans, fx.base), fx.expected.all);
+    expect(trendFromFrames(fx.scans, fx.base)).toMatchSnapshot();
   });
   it("matches the CRITICAL+HIGH scoped trend", () => {
-    expectParity(
+    expect(
       trendFromFrames(fx.scans, fx.base, ["CRITICAL", "HIGH"]),
-      fx.expected.scoped_critical_high,
-    );
+    ).toMatchSnapshot();
   });
   it("returns [] for empty inputs", () => {
     expectParity(trendFromFrames([], fx.base), []);

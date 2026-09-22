@@ -30,6 +30,7 @@ import {
   settingsPanel,
   switchToggle,
   toast,
+  tipLabel,
 } from "../ui.js";
 
 // A one-line description of the global scope a report/export is generated under, so a
@@ -103,7 +104,9 @@ export async function renderData(main, params, ctx) {
   main.append(sectionLabel("Maintenance"));
   renderMaintenanceSection(main, boot, ctx);
 
-  main.append(sectionLabel("Storage", { term: "compaction" }));
+  // "Space in use", not "Storage": the page's own h1 is Storage now, and a section
+  // restating its page's title says nothing. gas_devsecops named it this first.
+  main.append(sectionLabel("Space in use", { term: "compaction" }));
   renderStorageSection(main);
 }
 
@@ -339,9 +342,13 @@ function renderExportSection(main, boot, domain, supportGroup) {
     el(
       "p",
       { class: "muted small" },
-      "The migration bundle carries the entire durable ledger — every scan, lifecycle and " +
-        "resolved episode — ignoring the filters above. It is the file another surface " +
-        "imports, and this app can re-import it too.",
+      tipLabel("The bundle is the whole ledger, filters ignored", {
+        lines: [
+          "The bundle carries the entire durable ledger, ignoring the filters above.",
+          "Every scan, lifecycle and resolved episode.",
+          "It is the file another surface imports, and this app can re-import it too.",
+        ],
+      }),
     ),
   );
   main.append(card);
@@ -458,17 +465,24 @@ function renderImportSection(main, ctx) {
     el(
       "p",
       { class: "muted small" },
-      "Merge a migration bundle exported from the legacy Python dashboard into this " +
-        "ledger. Imported scans arrive sealed — their raw archives stay on the old " +
-        "machine — and the merge is one-time: it can't be undone from here.",
+      tipLabel("One-time merge; imported scans arrive sealed", {
+        lines: [
+          "Merges a bundle exported from the legacy Python dashboard into this ledger.",
+          "One-time: it can't be undone from here.",
+          "Imported scans arrive sealed — their raw archives stay on the old machine.",
+        ],
+      }),
     ),
     el(
       "p",
       { class: "muted small" },
-      "A large export arrives as several .json files (a manifest plus shards) — select all " +
-        "of them together. A sharded import needs a fresh, never-scanned ledger: if this ledger " +
-        "already has scans, use Reset ledger first, then import and run a Wiz scan to refill " +
-        "open-vulnerability detail.",
+      tipLabel("Sharded exports need a fresh ledger; select every file", {
+        lines: [
+          "A large export arrives as a manifest plus shards — select every file together.",
+          "A sharded import needs a fresh, never-scanned ledger.",
+          "If it already has scans, Reset ledger first, then import and run a Wiz scan.",
+        ],
+      }),
     ),
   );
   const fileInput = el("input", {
@@ -818,13 +832,18 @@ function renderMaintenanceSection(main, boot, ctx) {
 
   main.append(
     settingsPanel({
-      title: "Purge findings by severity",
-      description:
-        "Removes every trace of the chosen severities — open and resolved lifecycles, the " +
-        "sealed episode records, the compaction baseline, and the saved scan archives in " +
-        "Drive. Rewriting the archives is what makes it stick: without it, deleting a scan " +
-        "replays the findings straight back. The archive pass runs in the background and " +
-        "blocks scanning while it does.",
+      // OVER THE ~150-CHARACTER CARD BUDGET ON PURPOSE. This is the most destructive control
+      // in the app, and this section's rule is that nothing offers a button before it can say
+      // what the button would remove (gas/DESIGN.md). The budget shortens the LINES here; it
+      // does not get to drop a clause from what a purge actually destroys.
+      title: tipLabel("Purge findings by severity", { lines: [
+        "Removes every trace of the chosen severities, including the archives in Drive.",
+        "The archive pass runs in the background and blocks scanning while it does.",
+        "Lifecycles open and resolved, sealed episodes, the compaction baseline, archives.",
+        "Rewriting the archives is what makes it stick: without it, a deleted scan replays " +
+        "the findings straight back.",
+      ] }),
+      description: "Deletes every trace of the chosen severities, everywhere.",
       body: [purgePills.node, purgeCounts, purgeProgress],
       footer: purgeBtn,
     }),
@@ -844,12 +863,18 @@ function renderMaintenanceSection(main, boot, ctx) {
 
   main.append(
     settingsPanel({
-      title: "Prune resolved episodes",
-      description:
-        "Drops sealed lifecycles that were closed long enough ago to stop being interesting. " +
-        "Compaction moves closed findings into episode rows but never removes them, so this " +
-        "is the only thing that shortens that tab. Unlike compaction, it CHANGES THE PAST: " +
-        "episodes feed MTTR and remediation coverage, so historical figures will move.",
+      // OVER THE ~150-CHARACTER CARD BUDGET ON PURPOSE, like the purge tip above it. This
+      // section's own rule is that nothing offers a destructive button before it can say what
+      // the button would remove (gas/DESIGN.md), and "it CHANGES THE PAST" is the sentence a
+      // reader has to have BEFORE pressing, not one line down in Help. Short lines, no
+      // paragraph — but the warning stays whole.
+      title: tipLabel("Prune resolved episodes", { lines: [
+        "Drops sealed lifecycles closed long enough ago to stop being interesting.",
+        "Unlike compaction, it CHANGES THE PAST: historical figures will move.",
+        "Compaction rolls closed findings into episode rows but never removes them.",
+        "This is the only thing that shortens that tab. Episodes feed MTTR and coverage.",
+      ] }),
+      description: "Drops sealed lifecycles closed long enough ago to stop mattering.",
       body: [
         settingRow({
           label: "Resolved more than",
@@ -887,11 +912,12 @@ function renderMaintenanceSection(main, boot, ctx) {
 
   main.append(
     settingsPanel({
-      title: "Trim trend history",
-      description:
-        "Drops daily KPI snapshots older than the window. The only cleanup here with no " +
-        "knock-on: the snapshots are written once per scan and never replayed, so trimming " +
-        "them shortens the history-based series and changes nothing else.",
+      title: tipLabel("Trim trend history", { lines: [
+        "Drops daily KPI snapshots older than the window.",
+        "The only cleanup here with no knock-on.",
+        "Snapshots are written once per scan and never replayed, so nothing else moves.",
+      ] }),
+      description: "Drops daily KPI snapshots older than the window.",
       body: [
         settingRow({
           label: "Keep the last",

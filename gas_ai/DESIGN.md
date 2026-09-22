@@ -340,6 +340,37 @@ CSS-drawn dot, and the level name. Meaning is in the text and shape, not the col
 
 **Inputs.** White field, hairline border, `--radius-md`, 36px min-height. Labels at the label step.
 
+**Tables.** One component (`gas_shared/ui/data.js`), and a heading row that carries both of the
+controls a register needs. Press a heading to sort it: the active column reverses, any other moves
+the sort and starts from that column's own first direction, `aria-sort` and the glyph following.
+And where a table offers more columns than one question needs, a **cog at the right end of the
+heading row** opens the column list — on the table, not in the page toolbar, because the filters
+beside the search box change which rows the register answers with and this changes nothing but how
+much of the answer is drawn. It pins to the right edge of whatever is scrolling, so the control
+that makes a too-wide table narrower is never itself off-screen. The identity column is listed and
+not offered; a blank heading is not offered at all. The cog marks itself when the reader has moved
+the table off its defaults and its accessible name says how many columns are hidden of how many
+there are, because a missing column with no sign of why reads as a bug in the register rather than
+a choice somebody made.
+
+**A table ships the columns its own question needs, not every column it can draw.** A column
+marked `defaultHidden` starts off and is one press away; the rest is the page's editorial
+judgment about what the register is FOR, and it is pinned by a test per register so that changing
+it is a deliberate edit rather than a diff nobody reads. Three rules keep that judgment honest.
+A column is never hidden by default while the table is SORTED by it — a page that hides its own
+ordering leaves rows in an arrangement with no arrow, no heading and no way to reverse it, and a
+shared `?sort=` link is all it takes to reach. A reader's own refusal still outranks that: hiding
+the sorted column on purpose is allowed. And what gets stored is the DEVIATIONS from the default,
+signed (`-cloud,+tags`) — a link listing the columns to keep hides every column added after it was
+saved, silently, and nobody reports a column they have never seen.
+
+**Fields the payload already carries earn a column before a new field does.** Several registers
+were shipping facts to the browser that nothing drew — the reach count on an asset, the rule
+behind an issue inside a pattern, a scan's own mode. Each is an opt-in column now rather than a
+new request, and each renders its absence honestly: a field that is structurally absent for half a
+register's rows (IaC on an issue, reach on an unscored identity) draws the muted dash, never a
+confident "no".
+
 **Navigation.** A crimson-accented rail, collapsed to 56px by default and expanded on request.
 Group headers at the micro step, uppercase. The active item takes a 2px accent bar plus weight,
 **never a tint alone**.
@@ -378,10 +409,24 @@ before anything is hovered, because a definition nobody can see is not help. A b
 per row does **not** become a control; it answers on hover and its definition lives on the column
 heading, which is asked once.
 
-**Its ceiling is real and load-bearing.** Roughly four or five short lines, a 240-character lead,
-and **no links or focusable content, ever** — that constraint is what lets it keep a clean role and
+**Its ceiling is real and load-bearing.** **Two lines and about 150 characters in total**, and
+**no links or focusable content, ever** — that constraint is what lets it keep a clean role and
 stay out of a sheet's tab trap. The trigger navigates to the full Help entry instead. So prose
-demoted out of a page splits in two: a ≤240-character lead into the tip, the remainder into Help.
+demoted out of a page splits in two: a card-sized definition into the tip, the remainder into Help.
+
+**The card is a definition, not a paragraph.** Line one says what the thing *is*, at or under 110
+characters — about fifteen words, the length a reader takes at a glance without stopping to parse.
+Line two, where it earns itself, says the one operational consequence, at or under 90. Everything
+after that is a Help line: `glossaryTipLines` paints only the first two, and `helpPage` renders
+them all, so a third line is already the right place to put a sentence rather than a deletion.
+
+This ceiling was 240 characters *per line*, for four or five lines, and the prose round below
+filled it. At 300px and 12px/1.45 a rendered row holds ~45 characters, so that permitted an
+eleven-row wall on hover; the median card in the sibling registers reached seven rows. A tooltip
+past ~150 characters is a popover wearing a tooltip, and the register's own voice rule
+(`PRODUCT.md`: "states what is true and what needs attention, and otherwise stays quiet") had
+already said so. `tipLead`'s 150-character cut is the backstop for copy that arrives unrewritten;
+each book's `MAX_TIP_LINE_LENGTH` is the budget that actually holds.
 
 ### Signature component: The Record Sheet
 
@@ -676,3 +721,65 @@ evidence pass runs on the dry run). The 90-load screenshot sweep at `eeab75f` (1
 including five Settings tabs, at 1280/640/360, seeded and unsynced) found 0 console errors, 0
 overflow and 0 visible alerts — the wave close's own sweep had recorded one transient console
 error, a dev-server rebuild collision on a single load, that did not reproduce here.
+
+### Unit-chart round (2026-09-15)
+
+A second before/after against the same command, same seed, same `--experimental` flag. Only one
+route moved, and only on pictures:
+
+| route | before | after |
+|---|---|---|
+| scans | 462 / 7 / 190 / 138 / 126 / **10** / 16 | 462 / 7 / 190 / 138 / 126 / **11** / 16 |
+
+Every other route is byte-identical on all ten metrics, and no route overflows at 1280, 640 or
+360px (`settings` reads 361px before and after — a pre-existing 1px, untouched here).
+
+**What changed is `coverageBar`.** It was a flex-grow proportional bar over a dozen scan areas,
+`aria-hidden`, with `coverageKeys` carrying the figures; it is `unitGrid` in `cells: "exact"`
+mode now — one cell per area, no rounding to explain, and a reader counts "three reporting, two
+partial, seven not scanned" instead of judging three widths. The keys are untouched and are
+still the text carrier, so the wrapper stays `aria-hidden`.
+
+**Nothing about the vocabulary was invented.** `COVERAGE[state].pill` is already `ok` / `warn` /
+`neutral`, which is the tone set `unitChartModel` accepts unchanged, and the keys' own glyphs
+(● ◐ ○) are already the solid / partial / ring progression the `fill` channel draws. `.cov-bar`
+and `.cov-bar-seg` leave `styles/scans.css` with it.
+
+**The picture count moved by exactly one, which is the whole story.** `.cov-bar` was never in
+the walker's `NAMED_VISUAL_CLASSES`, so the page has always had a picture the instrument could
+not see; `.isotype` is in that list, so the swap is one bar out and one counted lattice in. A
+route whose `visuals` jumped by more than one here would have meant the module drew something
+nobody asked for.
+
+**`pages/scans.js`'s `kindSummaryText` was examined and left alone.** It reads like a sentence
+restating the table under it, and it is — but it is already passed as a `sectionLabel(..., {
+lines })`, which is a tip. It is one level down, which is where this register's ladder already
+puts an explanation, and it costs the surface nothing.
+
+### Prose round (2026-09-16)
+
+The unit-chart round above added pictures and moved `proseBlocks` on no route at all. That was
+the wrong metric to leave alone: the brief was to reduce prose blocks, and to replace what is
+too crucial to delete with a form a reader scans rather than parses. Same command, same seed,
+same `--experimental` flag; only the two routes that moved are shown, every other route is
+byte-identical on all ten metrics and no route overflows at 1280, 640 or 360px.
+
+| route | before | after |
+|---|---|---|
+| inventory | 413 / **10** / **266** / 124 / 165 / 39 / 7 | 203 / **3** / **56** / 119 / 165 / 39 / **13** |
+| scans | 462 / **7** / **190** / 138 / 126 / 10 / 16 | 332 / **2** / **45** / 135 / 126 / 11 / **20** |
+
+**Every moved sentence was an explanation of a picture, and it now rides on the picture's own
+heading.** `inventory`'s four posture cards each carried up to two `.chart-note` paragraphs
+under the canvas — which series have gaps ("gaps, not zeros"), what the foot line qualified,
+what "opened" and "closed" count — and the "Counts over time" card carried two more. They are
+the `<h3>`'s `tipLabel` lines now (`tips` 7 → 13: every moved sentence is reachable by
+keyboard from the heading it explains, and the `tipsSignified` column says each trigger has a
+resting affordance). The "N syncs" line under each heading is the one surface note a card
+keeps. `scans` did the same for the diagram legend and the sync-cadence paragraph (section
+labels), and cut the two chipset lead-ins to their five words with the reason behind them.
+
+**What stays, and why.** `settings` (11 blocks) is decision support — the sentences that say
+what a draft would do before it is saved are this register's own thesis and not restatements.
+`combos`, `compliance` and `data` (4 each) carry the hero qualifier, a rail key and two prune
+notes; they are the next round's, not this one's.

@@ -2,7 +2,7 @@
 // wrong key here is not an error — it is a plausible-looking number about the wrong thing.
 //
 // THE VECTORS BELOW WERE WRONG ABOUT SAST UNTIL 2026-08-27, and how they got that way is
-// worth keeping. They were produced by running brick/devsecops/ingest.py::build_filter and
+// worth keeping. They were produced by running brick/ingest.py::build_filter and
 // pinned verbatim — but brick's helper builds one shape for both scopes, and that shape is
 // only correct for SCA. So this file pinned `severity: ["CRITICAL","HIGH"]` for SAST, which
 // the live tenant refuses with HTTP 400 VALIDATION_INVALID_TYPE_VARIABLE: SASTFindingFilters
@@ -25,7 +25,7 @@ import { TABS, TAB_HEADERS } from "../src/server/sheetsDb";
 const SEV = ["CRITICAL", "HIGH"];
 const PROJECT = "1dfea0cf-834f-5522-b797-bee5aaf09251";
 
-describe("buildFilter matches brick/devsecops::build_filter", () => {
+describe("buildFilter matches brick/ingest.py::build_filter", () => {
   it("scopes SCA to code-stage findings on the default branch that have a fix", () => {
     expect(buildFilter("sca", { severities: SEV })).toEqual({
       status: ["OPEN", "RESOLVED"],
@@ -124,6 +124,20 @@ describe("the SCA documents carry the second clock's inputs", () => {
     for (const f of ["hasExploit", "hasCisaKevExploit", "epssProbability"]) {
       expect(Q_SCA).toContain(f);
     }
+  });
+
+  // THE ASYMMETRY IS THE ASSERTION. `portalUrl` is selected on SCA and on neither of the
+  // other two, and that is evidence rather than an omission: SCA reads `vulnerabilityFindings`,
+  // the same Wiz root the OS register reads, where the field is known to exist. `sastFindings`
+  // and `secretInstances` are different types and nothing confirms it on either — and an
+  // unknown field does not degrade to null, it fails the WHOLE document with "Cannot query
+  // field", taking the scope's entire scan with it. So this pins the asymmetry in place until
+  // wizDiagnostic says otherwise, rather than leaving the next reader to assume it was an
+  // oversight and "fix" it.
+  it("selects portalUrl on SCA only, where the field is known to exist", () => {
+    expect(Q_SCA).toContain("portalUrl");
+    expect(Q_SAST).not.toContain("portalUrl");
+    expect(Q_SECRETS).not.toContain("portalUrl");
   });
 
   it("narrows the vulnerableAsset union to the two members this tenant has", () => {

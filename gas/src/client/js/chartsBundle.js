@@ -49,6 +49,7 @@ import {
   survivalCurve,
   coverageEfficiencyLines,
   coverageEfficiencyScatter,
+  coldZoneScatter,
   trendLine,
 } from "./charts.js";
 
@@ -71,5 +72,6 @@ window.__WSK_CHARTS__ = {
   survivalCurve,
   coverageEfficiencyLines,
   coverageEfficiencyScatter,
+  coldZoneScatter,
   trendLine,
 };

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { field, mttrFromLedger, vulnKey } from "../src/domain/lifecycle";
-import { sha1Hex } from "../src/domain/sha1";
-import { expectParity, fixture } from "./helpers";
+import { sha1Hex } from "../../gas_shared/domain/sha1";
+import { fixture } from "./helpers";
 
 describe("sha1Hex", () => {
   it("matches known digests", () => {
@@ -14,8 +14,8 @@ describe("sha1Hex", () => {
 describe("vulnKey (fixture parity)", () => {
   const { cases } = fixture("vuln_key");
   cases.forEach((c: any, i: number) => {
-    it(`case ${i}: ${c.expected}`, () => {
-      expect(vulnKey(c.input)).toBe(c.expected);
+    it(`case ${i}`, () => {
+      expect(vulnKey(c.input)).toMatchSnapshot();
     });
   });
 });
@@ -24,7 +24,7 @@ describe("field (fixture parity)", () => {
   const { cases } = fixture("field");
   cases.forEach((c: any, i: number) => {
     it(`case ${i}`, () => {
-      expect(field(c.input.record, ...c.input.keys)).toBe(c.expected);
+      expect(field(c.input.record, ...c.input.keys)).toMatchSnapshot();
     });
   });
 });
@@ -33,8 +33,8 @@ describe("mttrFromLedger (fixture parity)", () => {
   const fx = fixture("mttr_from_ledger");
   it("matches the Python summary", () => {
     const { perSev, overall } = mttrFromLedger(fx.rows, { now: Date.parse(fx.now) });
-    expectParity(perSev, fx.expected.per_sev);
-    expectParity(overall, fx.expected.overall);
+    expect(perSev).toMatchSnapshot("perSev");
+    expect(overall).toMatchSnapshot("overall");
   });
   it("returns empty for no rows", () => {
     expect(mttrFromLedger([])).toEqual({ perSev: {}, overall: {} });

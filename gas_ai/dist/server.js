@@ -3984,7 +3984,7 @@ var Server = (() => {
     };
   }
 
-  // src/domain/sha1.ts
+  // ../gas_shared/domain/sha1.ts
   function utf8Bytes(s) {
     const out = [];
     for (let i = 0; i < s.length; i++) {
@@ -4060,8 +4060,8 @@ var Server = (() => {
     return [h0, h1, h2, h3, h4].map((x) => x.toString(16).padStart(8, "0")).join("");
   }
 
-  // src/server/buildInfo.ts
-  var BUILD_ID = true ? "56a517e39a60" : "dev";
+  // ../gas_shared/server/buildInfo.ts
+  var BUILD_ID = true ? "522cf92dee13" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -4718,7 +4718,26 @@ var Server = (() => {
       // null: VULN_FINDINGS is optional, and "no issue is on the KEV catalogue" is a very
       // different claim from "we never asked". Derived from the same fold that writes that
       // census, so the two can never disagree about one sync.
-      "kev_linked_count"
+      "kev_linked_count",
+      // EVERY FRAMEWORK'S COMPLIANCE POSTURE AT THIS SYNC — `{avg, scoredFrameworks,
+      // frameworks: {id: {pct, scored, subcategories}}}` (domain/complianceTrend.ts). The one
+      // record of a framework percentage over time: the `framework_posture` tab is overwritten
+      // wholesale on every commit, so it holds today's reading and nothing else, and
+      // `posture_fail_count` beside it counts failing POLICIES, which is a different quantity
+      // on a different scale.
+      //
+      // ONE CELL, NOT A COLUMN PER FRAMEWORK. Which frameworks are collected is a tenant
+      // setting that moves, and a column per framework would want a migration every time an
+      // operator selected one. Appended under the same no-migration contract as everything
+      // above it; absent on a row written before the column, which the trend reads as "no
+      // point" and never as a landscape scoring zero.
+      //
+      // THE COVERAGE TRAVELS INSIDE, for the reason `edgesKnown` rides inside `adjacency_json`
+      // above: a framework percentage is a share of the subcategories Wiz SCORED, so a line
+      // that rises because scoring narrowed is indistinguishable from one that rises because
+      // the landscape improved — unless `scored`/`subcategories` arrive on the same point.
+      // Split into their own columns, a later reader plots the percentage alone.
+      "compliance_posture_json"
     ],
     [TABS.settings]: ["key", "value_json"],
     [TABS.jobs]: [
@@ -8606,6 +8625,318 @@ var Server = (() => {
     };
   }
 
+  // src/domain/compliancePosture.ts
+  var POSTURE_BANDS = {
+    strong: { min: 90, label: "Strong" },
+    fair: { min: 70, label: "Work to do" },
+    poor: { min: 50, label: "Falling short" },
+    weak: { min: 0, label: "Materially failing" }
+  };
+  function postureBandOf(posturePct2) {
+    if (posturePct2 === null || posturePct2 === void 0) return null;
+    if (posturePct2 >= POSTURE_BANDS.strong.min) return "strong";
+    if (posturePct2 >= POSTURE_BANDS.fair.min) return "fair";
+    if (posturePct2 >= POSTURE_BANDS.poor.min) return "poor";
+    return "weak";
+  }
+  function postureState(posturePct2, emptyPostureReason) {
+    const reason = String(emptyPostureReason != null ? emptyPostureReason : "").trim().toUpperCase();
+    if (reason === "NO_RESOURCES") return "noResources";
+    if (reason === "NO_POLICIES") return "noPolicies";
+    if (reason) return "unknown";
+    return posturePct2 === null ? "unknown" : "scored";
+  }
+  function titleRepeatsExternalId(externalId, title) {
+    const id = String(externalId != null ? externalId : "").trim();
+    const t = String(title != null ? title : "").trim();
+    if (!id || !t) return false;
+    if (!(t.toUpperCase().indexOf(id.toUpperCase()) === 0)) return false;
+    const next = t.charAt(id.length);
+    return next === "" || next === " " || next === "	";
+  }
+  function severityRank2(s) {
+    const i = SEVERITY_ORDER.indexOf(s);
+    return i === -1 ? SEVERITY_ORDER.length : i;
+  }
+  function worstOf(a, b) {
+    if (a === null) return b;
+    if (b === null) return a;
+    return severityRank2(b) < severityRank2(a) ? b : a;
+  }
+  function worstFailingSeverityOf(policies) {
+    let worst = null;
+    for (const p of policies) if (p.failCount > 0) worst = worstOf(worst, p.severity);
+    return worst;
+  }
+  function emptyStateCounts() {
+    return { scored: 0, noResources: 0, noPolicies: 0, unknown: 0 };
+  }
+  function isAssessedPolicy(p) {
+    return p.assessedCount > 0 || p.passCount > 0 || p.failCount > 0 || p.rejectedCount > 0;
+  }
+  function toNode(row, externalId) {
+    return {
+      frameworkId: row.frameworkId,
+      externalId,
+      // Suppressed when the title already opens with it, so an OWASP LLM row reads
+      // "1 LLM01:2025 Prompt Injection" rather than "11 LLM01:2025 Prompt Injection".
+      showExternalId: !titleRepeatsExternalId(externalId, row.title),
+      title: row.title,
+      description: row.description,
+      posturePct: row.posturePct,
+      state: postureState(row.posturePct, row.emptyPostureReason),
+      // Read off the state, not off the number: a row carrying both a percentage and an
+      // emptyPostureReason is one postureState declines to score, and banding the number it
+      // just disowned would put a colour back on a row that has no posture.
+      postureBand: postureState(row.posturePct, row.emptyPostureReason) === "scored" ? postureBandOf(row.posturePct) : null,
+      passCount: row.passCount,
+      failCount: row.failCount,
+      emptyPostureReason: row.emptyPostureReason
+    };
+  }
+  function buildFrameworkTree(frameworkId, posture, policies, frameworks = []) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
+    const rows = posture.filter((p) => p.frameworkId === frameworkId);
+    if (!rows.length) return null;
+    const frameworkRow = rows.find((p) => p.level === "framework");
+    const catalogue = frameworks.find((f) => f.id === frameworkId);
+    const policiesBySub = /* @__PURE__ */ new Map();
+    for (const p of policies) {
+      if (p.frameworkId !== frameworkId) continue;
+      const list2 = (_a5 = policiesBySub.get(p.subcategoryExternalId)) != null ? _a5 : [];
+      list2.push(p);
+      policiesBySub.set(p.subcategoryExternalId, list2);
+    }
+    const stateCounts = emptyStateCounts();
+    const unassessedIds = /* @__PURE__ */ new Set();
+    const subsByCategory = /* @__PURE__ */ new Map();
+    for (const row of rows) {
+      if (row.level !== "subcategory") continue;
+      const externalId = (_b = row.subcategoryExternalId) != null ? _b : "";
+      const raw = (_c = policiesBySub.get(externalId)) != null ? _c : [];
+      const seen = /* @__PURE__ */ new Set();
+      const deduped = raw.filter((p) => {
+        if (seen.has(p.policyId)) return false;
+        seen.add(p.policyId);
+        return true;
+      });
+      deduped.sort(
+        (a, b) => severityRank2(a.severity) - severityRank2(b.severity) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
+      );
+      const assessed = [];
+      for (const p of deduped) {
+        if (isAssessedPolicy(p)) assessed.push(p);
+        else unassessedIds.add(p.policyId);
+      }
+      const node2 = {
+        ...toNode(row, externalId),
+        assessmentScope: row.assessmentScope,
+        mappingRationale: row.mappingRationale,
+        policies: assessed,
+        failingPolicyCount: assessed.filter((p) => p.failCount > 0).length,
+        unassessedPolicyCount: deduped.length - assessed.length,
+        // From the LISTED policies, so the tint on this row and the rules the row expands to
+        // show can never name different severities.
+        worstFailingSeverity: worstFailingSeverityOf(assessed)
+      };
+      stateCounts[node2.state] += 1;
+      if (node2.state !== "scored") continue;
+      const key = (_d = row.categoryExternalId) != null ? _d : "";
+      const list2 = (_e = subsByCategory.get(key)) != null ? _e : [];
+      list2.push(node2);
+      subsByCategory.set(key, list2);
+    }
+    const categories = rows.filter((r) => r.level === "category").map((row) => {
+      var _a6, _b2;
+      const externalId = (_a6 = row.categoryExternalId) != null ? _a6 : "";
+      const subcategories = (_b2 = subsByCategory.get(externalId)) != null ? _b2 : [];
+      return {
+        ...toNode(row, externalId),
+        subcategories,
+        mirrorsCategory: subcategories.length === 1 && subcategories[0].externalId === externalId,
+        worstFailingSeverity: subcategories.reduce(
+          (worst, sub) => worstOf(worst, sub.worstFailingSeverity),
+          null
+        )
+      };
+    }).filter((cat) => cat.subcategories.length > 0);
+    const distinct = /* @__PURE__ */ new Map();
+    for (const cat of categories) {
+      for (const sub of cat.subcategories) {
+        for (const p of sub.policies) {
+          distinct.set(p.policyId, ((_f = distinct.get(p.policyId)) != null ? _f : false) || p.failCount > 0);
+        }
+      }
+    }
+    const worstFailingSeverity = categories.reduce(
+      (worst, cat) => worstOf(worst, cat.worstFailingSeverity),
+      null
+    );
+    const frameworkState = postureState(
+      (_g = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _g : null,
+      (_h = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _h : null
+    );
+    return {
+      frameworkId,
+      name: (_j = (_i = frameworkRow == null ? void 0 : frameworkRow.title) != null ? _i : catalogue == null ? void 0 : catalogue.name) != null ? _j : frameworkId,
+      description: (_k = frameworkRow == null ? void 0 : frameworkRow.description) != null ? _k : catalogue == null ? void 0 : catalogue.description,
+      posturePct: (_l = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _l : null,
+      state: frameworkState,
+      // Same guard toNode applies one level down: only a row that actually scored gets a
+      // band, so an unscored framework's hero draws no bar rather than a failing-coloured one.
+      postureBand: frameworkState === "scored" ? postureBandOf((_m = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _m : null) : null,
+      emptyPostureReason: (_n = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _n : null,
+      passSubCategoryCount: (_o = frameworkRow == null ? void 0 : frameworkRow.passSubCategoryCount) != null ? _o : 0,
+      failSubCategoryCount: (_p = frameworkRow == null ? void 0 : frameworkRow.failSubCategoryCount) != null ? _p : 0,
+      categories,
+      stateCounts,
+      policyCount: distinct.size,
+      failingPolicyCount: [...distinct.values()].filter(Boolean).length,
+      // Only ids that appear NOWHERE in the listed tree. A control mapped under six
+      // subcategories and evaluated under one of them is a listed policy, not a dropped one,
+      // and counting it in both places would describe the same rule twice.
+      unassessedPolicyCount: [...unassessedIds].filter((id) => !distinct.has(id)).length,
+      worstFailingSeverity
+    };
+  }
+  function buildAllFrameworkTrees(posture, policies, frameworks = []) {
+    const ids = [];
+    for (const p of posture) if (ids.indexOf(p.frameworkId) === -1) ids.push(p.frameworkId);
+    const trees = ids.map((id) => buildFrameworkTree(id, posture, policies, frameworks)).filter((t) => t !== null);
+    trees.sort((a, b) => {
+      if (a.posturePct === null && b.posturePct === null) return a.name < b.name ? -1 : 1;
+      if (a.posturePct === null) return 1;
+      if (b.posturePct === null) return -1;
+      return a.posturePct - b.posturePct || (a.name < b.name ? -1 : 1);
+    });
+    return trees;
+  }
+  function complianceKpis(posture, policies = []) {
+    const frameworkRows = posture.filter((p) => p.level === "framework");
+    const scored = frameworkRows.filter(
+      (p) => postureState(p.posturePct, p.emptyPostureReason) === "scored"
+    );
+    const averagePosture = scored.length ? Math.round(scored.reduce((sum, p) => {
+      var _a5;
+      return sum + ((_a5 = p.posturePct) != null ? _a5 : 0);
+    }, 0) / scored.length) : null;
+    const failingSubcategories = posture.filter(
+      (p) => p.level === "subcategory" && p.failCount > 0
+    ).length;
+    const failing = /* @__PURE__ */ new Set();
+    for (const p of policies) if (p.failCount > 0) failing.add(p.policyId);
+    return {
+      frameworks: frameworkRows.length,
+      scoredFrameworks: scored.length,
+      averagePosture,
+      averagePostureBand: postureBandOf(averagePosture),
+      failingSubcategories,
+      failingPolicies: failing.size
+    };
+  }
+
+  // src/domain/complianceTrend.ts
+  var COMPLIANCE_POSTURE_COLUMN = "compliance_posture_json";
+  var COMPLIANCE_POSTURE_MAX_CHARS = 45e3;
+  var LANDSCAPE_KEY = "__landscape";
+  var STATE_KEYS = ["scored", "noResources", "noPolicies", "unknown"];
+  function subcategoryCount(tree) {
+    return STATE_KEYS.reduce((sum, k) => sum + (tree.stateCounts[k] || 0), 0);
+  }
+  function censusCompliancePosture(trees) {
+    const frameworks = {};
+    const scoredPcts = [];
+    for (const tree of trees) {
+      const scored = tree.state === "scored" && tree.posturePct !== null;
+      if (scored) scoredPcts.push(tree.posturePct);
+      frameworks[tree.frameworkId] = {
+        pct: scored ? tree.posturePct : null,
+        scored: tree.stateCounts.scored || 0,
+        subcategories: subcategoryCount(tree)
+      };
+    }
+    return {
+      avg: scoredPcts.length ? Math.round(scoredPcts.reduce((sum, p) => sum + p, 0) / scoredPcts.length) : null,
+      scoredFrameworks: scoredPcts.length,
+      frameworks
+    };
+  }
+  function encodeCompliancePosture(census) {
+    const json = JSON.stringify(census);
+    return json.length > COMPLIANCE_POSTURE_MAX_CHARS ? null : json;
+  }
+  function cellPct(v) {
+    if (v === null || v === void 0 || v === "") return null;
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < 0 || n > 100) return null;
+    return Math.round(n);
+  }
+  function cellCount3(v) {
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
+  }
+  function parseCensus(v) {
+    if (typeof v !== "string" || !v) return null;
+    let parsed;
+    try {
+      parsed = JSON.parse(v);
+    } catch {
+      return null;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const raw = parsed;
+    const rawFrameworks = raw["frameworks"];
+    if (!rawFrameworks || typeof rawFrameworks !== "object" || Array.isArray(rawFrameworks)) {
+      return null;
+    }
+    const frameworks = {};
+    for (const id of Object.keys(rawFrameworks)) {
+      const entry = rawFrameworks[id];
+      if (!entry || typeof entry !== "object") continue;
+      const e = entry;
+      frameworks[id] = {
+        pct: cellPct(e["pct"]),
+        scored: cellCount3(e["scored"]),
+        subcategories: cellCount3(e["subcategories"])
+      };
+    }
+    return {
+      avg: cellPct(raw["avg"]),
+      scoredFrameworks: cellCount3(raw["scoredFrameworks"]),
+      frameworks
+    };
+  }
+  function compliancePostureTrendFromHistory(rows, limit = 90) {
+    var _a5;
+    const points = [];
+    for (const r of rows) {
+      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
+      const census = parseCensus(r[COMPLIANCE_POSTURE_COLUMN]);
+      if (!census) continue;
+      const at = String(r["finished_at"] || r["started_at"] || "");
+      if (!at) continue;
+      const counts = { [LANDSCAPE_KEY]: census.avg };
+      let scored = 0;
+      let subcategories = 0;
+      for (const id of Object.keys(census.frameworks)) {
+        const entry = census.frameworks[id];
+        counts[id] = entry.pct;
+        scored += entry.scored;
+        subcategories += entry.subcategories;
+      }
+      const coverage = {
+        [LANDSCAPE_KEY]: { scored, subcategories, scoredFrameworks: census.scoredFrameworks }
+      };
+      for (const id of Object.keys(census.frameworks)) {
+        const entry = census.frameworks[id];
+        coverage[id] = { scored: entry.scored, subcategories: entry.subcategories };
+      }
+      points.push({ at, counts, coverage });
+    }
+    points.sort(cmpBy((p) => p.at));
+    return limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
+  }
+
   // src/server/sampleData.ts
   var T0 = "2026-04-02T08:00:00Z";
   var T1 = "2026-06-28T05:00:00Z";
@@ -10151,6 +10482,11 @@ var Server = (() => {
     }
     return entries;
   }
+  function seedCompliancePostureCell() {
+    return encodeCompliancePosture(censusCompliancePosture(
+      buildAllFrameworkTrees(SEED_POSTURE, SEED_FRAMEWORK_POLICIES, SEED_FRAMEWORKS)
+    ));
+  }
   var SEED_CONFIG_RULES = [
     {
       id: "rule-iam-159",
@@ -10349,216 +10685,6 @@ var Server = (() => {
       }
     }
     return out;
-  }
-
-  // src/domain/compliancePosture.ts
-  var POSTURE_BANDS = {
-    strong: { min: 90, label: "Strong" },
-    fair: { min: 70, label: "Work to do" },
-    poor: { min: 50, label: "Falling short" },
-    weak: { min: 0, label: "Materially failing" }
-  };
-  function postureBandOf(posturePct2) {
-    if (posturePct2 === null || posturePct2 === void 0) return null;
-    if (posturePct2 >= POSTURE_BANDS.strong.min) return "strong";
-    if (posturePct2 >= POSTURE_BANDS.fair.min) return "fair";
-    if (posturePct2 >= POSTURE_BANDS.poor.min) return "poor";
-    return "weak";
-  }
-  function postureState(posturePct2, emptyPostureReason) {
-    const reason = String(emptyPostureReason != null ? emptyPostureReason : "").trim().toUpperCase();
-    if (reason === "NO_RESOURCES") return "noResources";
-    if (reason === "NO_POLICIES") return "noPolicies";
-    if (reason) return "unknown";
-    return posturePct2 === null ? "unknown" : "scored";
-  }
-  function titleRepeatsExternalId(externalId, title) {
-    const id = String(externalId != null ? externalId : "").trim();
-    const t = String(title != null ? title : "").trim();
-    if (!id || !t) return false;
-    if (!(t.toUpperCase().indexOf(id.toUpperCase()) === 0)) return false;
-    const next = t.charAt(id.length);
-    return next === "" || next === " " || next === "	";
-  }
-  function severityRank2(s) {
-    const i = SEVERITY_ORDER.indexOf(s);
-    return i === -1 ? SEVERITY_ORDER.length : i;
-  }
-  function worstOf(a, b) {
-    if (a === null) return b;
-    if (b === null) return a;
-    return severityRank2(b) < severityRank2(a) ? b : a;
-  }
-  function worstFailingSeverityOf(policies) {
-    let worst = null;
-    for (const p of policies) if (p.failCount > 0) worst = worstOf(worst, p.severity);
-    return worst;
-  }
-  function emptyStateCounts() {
-    return { scored: 0, noResources: 0, noPolicies: 0, unknown: 0 };
-  }
-  function isAssessedPolicy(p) {
-    return p.assessedCount > 0 || p.passCount > 0 || p.failCount > 0 || p.rejectedCount > 0;
-  }
-  function toNode(row, externalId) {
-    return {
-      frameworkId: row.frameworkId,
-      externalId,
-      // Suppressed when the title already opens with it, so an OWASP LLM row reads
-      // "1 LLM01:2025 Prompt Injection" rather than "11 LLM01:2025 Prompt Injection".
-      showExternalId: !titleRepeatsExternalId(externalId, row.title),
-      title: row.title,
-      description: row.description,
-      posturePct: row.posturePct,
-      state: postureState(row.posturePct, row.emptyPostureReason),
-      // Read off the state, not off the number: a row carrying both a percentage and an
-      // emptyPostureReason is one postureState declines to score, and banding the number it
-      // just disowned would put a colour back on a row that has no posture.
-      postureBand: postureState(row.posturePct, row.emptyPostureReason) === "scored" ? postureBandOf(row.posturePct) : null,
-      passCount: row.passCount,
-      failCount: row.failCount,
-      emptyPostureReason: row.emptyPostureReason
-    };
-  }
-  function buildFrameworkTree(frameworkId, posture, policies, frameworks = []) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
-    const rows = posture.filter((p) => p.frameworkId === frameworkId);
-    if (!rows.length) return null;
-    const frameworkRow = rows.find((p) => p.level === "framework");
-    const catalogue = frameworks.find((f) => f.id === frameworkId);
-    const policiesBySub = /* @__PURE__ */ new Map();
-    for (const p of policies) {
-      if (p.frameworkId !== frameworkId) continue;
-      const list2 = (_a5 = policiesBySub.get(p.subcategoryExternalId)) != null ? _a5 : [];
-      list2.push(p);
-      policiesBySub.set(p.subcategoryExternalId, list2);
-    }
-    const stateCounts = emptyStateCounts();
-    const unassessedIds = /* @__PURE__ */ new Set();
-    const subsByCategory = /* @__PURE__ */ new Map();
-    for (const row of rows) {
-      if (row.level !== "subcategory") continue;
-      const externalId = (_b = row.subcategoryExternalId) != null ? _b : "";
-      const raw = (_c = policiesBySub.get(externalId)) != null ? _c : [];
-      const seen = /* @__PURE__ */ new Set();
-      const deduped = raw.filter((p) => {
-        if (seen.has(p.policyId)) return false;
-        seen.add(p.policyId);
-        return true;
-      });
-      deduped.sort(
-        (a, b) => severityRank2(a.severity) - severityRank2(b.severity) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
-      );
-      const assessed = [];
-      for (const p of deduped) {
-        if (isAssessedPolicy(p)) assessed.push(p);
-        else unassessedIds.add(p.policyId);
-      }
-      const node2 = {
-        ...toNode(row, externalId),
-        assessmentScope: row.assessmentScope,
-        mappingRationale: row.mappingRationale,
-        policies: assessed,
-        failingPolicyCount: assessed.filter((p) => p.failCount > 0).length,
-        unassessedPolicyCount: deduped.length - assessed.length,
-        // From the LISTED policies, so the tint on this row and the rules the row expands to
-        // show can never name different severities.
-        worstFailingSeverity: worstFailingSeverityOf(assessed)
-      };
-      stateCounts[node2.state] += 1;
-      if (node2.state !== "scored") continue;
-      const key = (_d = row.categoryExternalId) != null ? _d : "";
-      const list2 = (_e = subsByCategory.get(key)) != null ? _e : [];
-      list2.push(node2);
-      subsByCategory.set(key, list2);
-    }
-    const categories = rows.filter((r) => r.level === "category").map((row) => {
-      var _a6, _b2;
-      const externalId = (_a6 = row.categoryExternalId) != null ? _a6 : "";
-      const subcategories = (_b2 = subsByCategory.get(externalId)) != null ? _b2 : [];
-      return {
-        ...toNode(row, externalId),
-        subcategories,
-        mirrorsCategory: subcategories.length === 1 && subcategories[0].externalId === externalId,
-        worstFailingSeverity: subcategories.reduce(
-          (worst, sub) => worstOf(worst, sub.worstFailingSeverity),
-          null
-        )
-      };
-    }).filter((cat) => cat.subcategories.length > 0);
-    const distinct = /* @__PURE__ */ new Map();
-    for (const cat of categories) {
-      for (const sub of cat.subcategories) {
-        for (const p of sub.policies) {
-          distinct.set(p.policyId, ((_f = distinct.get(p.policyId)) != null ? _f : false) || p.failCount > 0);
-        }
-      }
-    }
-    const worstFailingSeverity = categories.reduce(
-      (worst, cat) => worstOf(worst, cat.worstFailingSeverity),
-      null
-    );
-    const frameworkState = postureState(
-      (_g = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _g : null,
-      (_h = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _h : null
-    );
-    return {
-      frameworkId,
-      name: (_j = (_i = frameworkRow == null ? void 0 : frameworkRow.title) != null ? _i : catalogue == null ? void 0 : catalogue.name) != null ? _j : frameworkId,
-      description: (_k = frameworkRow == null ? void 0 : frameworkRow.description) != null ? _k : catalogue == null ? void 0 : catalogue.description,
-      posturePct: (_l = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _l : null,
-      state: frameworkState,
-      // Same guard toNode applies one level down: only a row that actually scored gets a
-      // band, so an unscored framework's hero draws no bar rather than a failing-coloured one.
-      postureBand: frameworkState === "scored" ? postureBandOf((_m = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _m : null) : null,
-      emptyPostureReason: (_n = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _n : null,
-      passSubCategoryCount: (_o = frameworkRow == null ? void 0 : frameworkRow.passSubCategoryCount) != null ? _o : 0,
-      failSubCategoryCount: (_p = frameworkRow == null ? void 0 : frameworkRow.failSubCategoryCount) != null ? _p : 0,
-      categories,
-      stateCounts,
-      policyCount: distinct.size,
-      failingPolicyCount: [...distinct.values()].filter(Boolean).length,
-      // Only ids that appear NOWHERE in the listed tree. A control mapped under six
-      // subcategories and evaluated under one of them is a listed policy, not a dropped one,
-      // and counting it in both places would describe the same rule twice.
-      unassessedPolicyCount: [...unassessedIds].filter((id) => !distinct.has(id)).length,
-      worstFailingSeverity
-    };
-  }
-  function buildAllFrameworkTrees(posture, policies, frameworks = []) {
-    const ids = [];
-    for (const p of posture) if (ids.indexOf(p.frameworkId) === -1) ids.push(p.frameworkId);
-    const trees = ids.map((id) => buildFrameworkTree(id, posture, policies, frameworks)).filter((t) => t !== null);
-    trees.sort((a, b) => {
-      if (a.posturePct === null && b.posturePct === null) return a.name < b.name ? -1 : 1;
-      if (a.posturePct === null) return 1;
-      if (b.posturePct === null) return -1;
-      return a.posturePct - b.posturePct || (a.name < b.name ? -1 : 1);
-    });
-    return trees;
-  }
-  function complianceKpis(posture, policies = []) {
-    const frameworkRows = posture.filter((p) => p.level === "framework");
-    const scored = frameworkRows.filter(
-      (p) => postureState(p.posturePct, p.emptyPostureReason) === "scored"
-    );
-    const averagePosture = scored.length ? Math.round(scored.reduce((sum, p) => {
-      var _a5;
-      return sum + ((_a5 = p.posturePct) != null ? _a5 : 0);
-    }, 0) / scored.length) : null;
-    const failingSubcategories = posture.filter(
-      (p) => p.level === "subcategory" && p.failCount > 0
-    ).length;
-    const failing = /* @__PURE__ */ new Set();
-    for (const p of policies) if (p.failCount > 0) failing.add(p.policyId);
-    return {
-      frameworks: frameworkRows.length,
-      scoredFrameworks: scored.length,
-      averagePosture,
-      averagePostureBand: postureBandOf(averagePosture),
-      failingSubcategories,
-      failingPolicies: failing.size
-    };
   }
 
   // src/domain/complianceScope.ts
@@ -11560,7 +11686,7 @@ var Server = (() => {
       };
     });
   }
-  function cellPct(v) {
+  function cellPct2(v) {
     if (v === "" || v === null || v === void 0) return null;
     const n = Number(v);
     return isFinite(n) ? n : null;
@@ -11602,7 +11728,7 @@ var Server = (() => {
       nodeId: String((_e = r["node_id"]) != null ? _e : "") || void 0,
       title: String((_f = r["title"]) != null ? _f : ""),
       description: String((_g = r["description"]) != null ? _g : "") || void 0,
-      posturePct: cellPct(r["posture_pct"]),
+      posturePct: cellPct2(r["posture_pct"]),
       passCount: num2(r["pass_count"]),
       failCount: num2(r["fail_count"]),
       passSubCategoryCount: optNum(r["pass_subcategory_count"]),
@@ -11737,6 +11863,7 @@ var Server = (() => {
     overwrite(TABS.issueLedger, ledger.rows.map(issueLedgerToRow));
     const snapshotRef = writeGraphSnapshot(postured);
     const openIssuesThisSync = decidedIssues.filter(isUnresolvedIssue);
+    const frameworkTrees = buildAllFrameworkTrees(posture, frameworkPolicies, frameworks);
     appendRows(TABS.syncHistory, [{
       sync_id: meta.syncId,
       started_at: meta.startedAt,
@@ -11803,11 +11930,28 @@ var Server = (() => {
       // framework) has no number here — and "no failing policies" is a very different claim
       // from "we never asked". The trend reader plots null as a gap.
       posture_fail_count: frameworkPolicies.length ? failingPolicyCount(dropUnselected(frameworkPolicies, scopeFiveRs(
-        buildAllFrameworkTrees(posture, frameworkPolicies, frameworks),
+        frameworkTrees,
         decidedFindings,
         aiAssetIds(assetNodes),
         getFiveRsPins2()
       ))) : null,
+      // EVERY FRAMEWORK'S PERCENTAGE AT THIS SYNC, with the subcategory coverage each one is a
+      // share of — the only record of compliance posture over time this sheet will ever hold.
+      // `framework_posture` above is overwritten wholesale on every commit, so a percentage Wiz
+      // computed last month exists nowhere once the next sync lands.
+      //
+      // Counted off the SAME trees `posture_fail_count` reads one line up, which is the point of
+      // building them once: the failing-policy count and the percentages beside it describe one
+      // construction of one landscape, and a second `buildAllFrameworkTrees` call here is how
+      // the two would come to describe different ones.
+      //
+      // NULL, NOT AN EMPTY CENSUS, when no posture was collected — the same refusal
+      // `posture_fail_count` makes and for the same reason. The posture steps are optional and
+      // per-framework, so "this tenant declined them" must not read as "every framework scored
+      // nothing", which is what an `{avg: null, frameworks: {}}` cell would draw as a point with
+      // no line. And null again when the census would not fit a cell (encodeCompliancePosture):
+      // a chart refinement must never be able to fail a commit.
+      compliance_posture_json: posture.length ? encodeCompliancePosture(censusCompliancePosture(frameworkTrees)) : null,
       // The posture distribution WITH its scope split — the third model's series.
       // `censusPostureTiers` reports tiers plus `withheld` (in scope, not yet measured) plus
       // `outOfScope` (this lattice does not describe the kind) plus the total, so every share
@@ -13698,7 +13842,7 @@ var Server = (() => {
     const i = SEVERITY_ORDER.indexOf(s);
     return i === -1 ? SEVERITY_ORDER.length : i;
   }
-  var STATE_KEYS = ["scored", "noResources", "noPolicies", "unknown"];
+  var STATE_KEYS2 = ["scored", "noResources", "noPolicies", "unknown"];
   function frameworkRail(trees) {
     return trees.map((tree) => ({
       frameworkId: tree.frameworkId,
@@ -13711,7 +13855,7 @@ var Server = (() => {
       // From stateCounts, not from the listed nodes: the tree lists only scored
       // subcategories (compliancePosture.ts), and a rail that counted those would report a
       // framework's size as the part of it that happened to score.
-      subcategoryCount: STATE_KEYS.reduce((sum, k) => sum + (tree.stateCounts[k] || 0), 0),
+      subcategoryCount: STATE_KEYS2.reduce((sum, k) => sum + (tree.stateCounts[k] || 0), 0),
       policyCount: tree.policyCount,
       failingPolicyCount: tree.failingPolicyCount,
       worstFailingSeverity: tree.worstFailingSeverity,
@@ -13825,20 +13969,20 @@ var Server = (() => {
       noPolicies: 0,
       unknown: 0
     };
-    let subcategoryCount = 0;
+    let subcategoryCount2 = 0;
     for (const tree of trees) {
       stateCounts.scored += tree.stateCounts.scored;
       stateCounts.noResources += tree.stateCounts.noResources;
       stateCounts.noPolicies += tree.stateCounts.noPolicies;
       stateCounts.unknown += tree.stateCounts.unknown;
-      subcategoryCount += STATE_KEYS.reduce((sum, k) => sum + (tree.stateCounts[k] || 0), 0);
+      subcategoryCount2 += STATE_KEYS2.reduce((sum, k) => sum + (tree.stateCounts[k] || 0), 0);
     }
     return {
       collected: trees.length,
       catalogued: catalogue.length,
       scoredFrameworks: trees.filter((t) => t.state === "scored").length,
       stateCounts,
-      subcategoryCount
+      subcategoryCount: subcategoryCount2
     };
   }
 
@@ -13890,6 +14034,81 @@ var Server = (() => {
       passCount,
       failCount,
       wizPosturePct
+    };
+  }
+
+  // src/domain/landscapePosture.ts
+  function isApplicableControl(enabled) {
+    return enabled !== false;
+  }
+  function landscapeDerivedPosture(trees, wiz) {
+    const byPolicy = /* @__PURE__ */ new Map();
+    for (const tree of trees) {
+      for (const category of tree.categories) {
+        for (const sub of category.subcategories) {
+          for (const p of sub.policies) {
+            let acc = byPolicy.get(p.policyId);
+            if (!acc) {
+              acc = {
+                passCount: 0,
+                failCount: 0,
+                // Sticky-false's initial reading, overridden below by any later row saying
+                // false — `scopeFiveRs` accumulates `enabled` the identical way.
+                enabled: p.enabled,
+                frameworkIds: /* @__PURE__ */ new Set()
+              };
+              byPolicy.set(p.policyId, acc);
+            }
+            if (p.passCount > acc.passCount) acc.passCount = p.passCount;
+            if (p.failCount > acc.failCount) acc.failCount = p.failCount;
+            if (p.enabled === false) acc.enabled = false;
+            acc.frameworkIds.add(tree.frameworkId);
+          }
+        }
+      }
+    }
+    let passCount = 0;
+    let failCount = 0;
+    let cleanPolicyCount = 0;
+    let failingPolicyCount2 = 0;
+    let applicablePolicyCount = 0;
+    let disabledPolicyCount = 0;
+    const frameworks = /* @__PURE__ */ new Set();
+    for (const acc of byPolicy.values()) {
+      if (!isApplicableControl(acc.enabled)) {
+        disabledPolicyCount += 1;
+        continue;
+      }
+      applicablePolicyCount += 1;
+      passCount += acc.passCount;
+      failCount += acc.failCount;
+      if (acc.failCount === 0) cleanPolicyCount += 1;
+      else failingPolicyCount2 += 1;
+      for (const id of acc.frameworkIds) frameworks.add(id);
+    }
+    const posturePct2 = applicablePolicyCount === 0 || passCount + failCount === 0 ? null : clampAwayFromFalseExtreme(
+      Math.round(100 * passCount / (passCount + failCount)),
+      failCount > 0,
+      passCount > 0
+    );
+    const controlPassPct = applicablePolicyCount === 0 ? null : clampAwayFromFalseExtreme(
+      Math.round(100 * cleanPolicyCount / applicablePolicyCount),
+      failingPolicyCount2 > 0,
+      cleanPolicyCount > 0
+    );
+    return {
+      posturePct: posturePct2,
+      postureBand: postureBandOf(posturePct2),
+      controlPassPct,
+      cleanPolicyCount,
+      failingPolicyCount: failingPolicyCount2,
+      applicablePolicyCount,
+      disabledPolicyCount,
+      frameworkCount: frameworks.size,
+      passCount,
+      failCount,
+      wizAveragePosture: wiz.averagePosture,
+      scoredFrameworks: wiz.scoredFrameworks
     };
   }
 
@@ -18309,9 +18528,10 @@ var Server = (() => {
         (_b = (_a5 = trees.find((t) => t.frameworkId === fiveRsScope.frameworkId)) == null ? void 0 : _a5.posturePct) != null ? _b : null
       );
       const merged = catalogue.map((f) => ({ ...f, selected: selected.indexOf(f.id) >= 0 }));
+      const kpis = complianceKpis(posture, policies);
       return {
         trees,
-        kpis: complianceKpis(posture, policies),
+        kpis,
         selected,
         // The Overview's four bands. Computed here rather than in the browser because the
         // client bundle cannot import the domain layer at all — every client-side copy of
@@ -18339,7 +18559,38 @@ var Server = (() => {
         // payload is already shipped whole and cached, so there is no second scope for a
         // mirror to reconcile against — computing it here instead buys nothing but risk.
         fiveRsPosture,
+        // THE ASSURANCE HERO'S OWN PERCENTAGE — derived over the controls that apply to
+        // this landscape, rather than the mean of Wiz's per-framework scores `kpis`
+        // carries. landscapePosture.ts says at length why those are two different claims
+        // and why both ship: the mean is what has a history (the trend line beside the hero
+        // draws it) and what the Wiz Scans page reports, so it is carried INSIDE this object
+        // rather than replaced anywhere.
+        //
+        // Built from `trees`, which are the 5Rs-scoped ones this payload renders — the same
+        // population as the register below the hero, which is the entire point. Under a
+        // project view they are the project's trees, so this figure narrows with the rest of
+        // the page rather than being the one number left describing the register.
+        landscapePosture: landscapeDerivedPosture(trees, kpis),
         coverage: coverageSummary(trees, merged),
+        // POSTURE OVER TIME — one point per sync, every framework plus the cross-framework
+        // mean, read off `sync_history`'s own column (domain/complianceTrend.ts). It replaces
+        // the state strip that used to sit beside the hero: that strip drew the LATEST sync's
+        // subcategory states as a four-segment bar, which answers "what did Wiz score" and
+        // never "is this getting better", the question a compliance register is actually
+        // opened with.
+        //
+        // Shipped whole, with every framework's series in the same array, because the page
+        // switches framework client-side off one fetch (the `?framework=` control rebuilds
+        // from `data`, it does not re-call). One array of at most 90 points holding a handful
+        // of frameworks is smaller than the trees beside it.
+        //
+        // REGISTER-WIDE EVEN UNDER A PROJECT VIEW, and the card says so rather than quietly
+        // drawing the landscape's history under a project filter. `scopedPosture` re-asks Wiz
+        // for the project in view, which is how every OTHER figure on this page narrows — but
+        // the past cannot be re-asked, and a history row carries no asset id to re-slice by.
+        // `postureScope` beside it already carries the project and domain in force, so the
+        // card reads its disclaimer off the field the rest of the page already trusts.
+        complianceTrend: compliancePostureTrendFromHistory(syncHistory()),
         // WHICH POPULATION every figure above describes, and — when a project view is set
         // but the numbers are still the register's — why. The page prints this beside the
         // hero rather than as a footnote, the discipline `registerWideNote` already keeps:
@@ -20196,6 +20447,7 @@ var Server = (() => {
   function seedTrendHistory(endIso, registerScope, withLedger) {
     if (dataRowCount(TABS.syncHistory) > 0) return;
     const posture = withLedger ? seedPostureTrend(endIso) : null;
+    const compliancePosture = seedCompliancePostureCell();
     appendRows(TABS.syncHistory, SEED_TREND.map((counts, i) => {
       const at = seedSyncAt(endIso, i);
       const entry = withLedger ? SEED_LEDGER.history[i] : void 0;
@@ -20238,7 +20490,14 @@ var Server = (() => {
         // census here would draw five flat lines saying nothing is exploitable over a register
         // nobody asked the question of, which is the one thing `EXPLOITATION_SPEC`'s null-skip
         // exists to prevent. The card says "No sync has recorded this yet." and means it.
-        exploitation_json: null
+        exploitation_json: null,
+        // EVERY FRAMEWORK'S PERCENTAGE, the same on all eight rows — see
+        // `seedCompliancePostureCell`. The fabricated history runs over one posture fixture, so
+        // the line is flat because the fixture is; `edgesKnown` is the same 79 on every row for
+        // the identical reason. NOT gated on `withLedger`, unlike the two cells above it: those
+        // count rows the LEDGER says were open, and this counts subcategories Wiz scored, which
+        // the ledger has no say in.
+        compliance_posture_json: compliancePosture
       };
     }));
   }
@@ -20778,7 +21037,7 @@ var Server = (() => {
     return value && value.trim() ? `(set, ${value.trim().length} chars)` : "(unset)";
   }
   function wizDiagnostic() {
-    var _a5, _b, _c;
+    var _a5, _b, _c, _d;
     const lines = [];
     const log = (m) => {
       lines.push(m);
@@ -20862,6 +21121,34 @@ var Server = (() => {
         );
       }
       return lines.join("\n");
+    }
+    try {
+      const probe = fetchConnectionPage("issuesV2", {
+        query: "query AiIssuePortalUrlProbe($first: Int) { issuesV2(first: $first) { nodes { id portalUrl } } }",
+        first: 1
+      });
+      const first = (_d = probe.rows[0]) != null ? _d : null;
+      const url = first === null ? null : first["portalUrl"];
+      if (typeof url === "string" && url.trim()) {
+        log(`Step 4 OK: this tenant DOES report a console link on an issue (${url.trim()}).`);
+        log(
+          "\u2192 Worth acting on: gas_ai could carry an 'Open in Wiz' row on the issue sheet the way gas/ and gas_devsecops' sca register already do. The field exists here."
+        );
+      } else if (first === null) {
+        log("Step 4 SKIPPED: the tenant returned no issues, so there was no row to read.");
+      } else {
+        log("Step 4: the field exists on this type but this issue carried no link.");
+      }
+    } catch (e) {
+      const msg = e.message;
+      if (/cannot query field/i.test(msg)) {
+        log(`Step 4: this tenant's issue type has NO portalUrl \u2014 ${msg}`);
+        log(
+          "\u2192 Expected, and not a failure. It is why this register has no 'Open in Wiz' row while the two finding registers do, and the error above names the exact type, which is the thing to quote if Wiz is ever asked to expose one."
+        );
+      } else {
+        log(`Step 4 SKIPPED: the probe could not run \u2014 ${msg}`);
+      }
     }
     return lines.join("\n");
   }

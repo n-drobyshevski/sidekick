@@ -38,24 +38,9 @@ export const SEVERITY_TEXT: Record<string, string> = {
 };
 
 /**
- * The redundant cue. Severity never carries meaning by colour alone — every mark pairs its
- * fill with one of these and a word (PRODUCT.md, Accessibility). The red/orange/amber band
- * is a measured colourblind risk: HIGH and MEDIUM sit 6.7 apart in normal vision and 1.6
- * apart under deuteranopia, so these are load-bearing rather than decorative.
- */
-export const SEVERITY_GLYPHS: Record<string, string> = {
-  CRITICAL: "●",
-  HIGH: "▲",
-  MEDIUM: "■",
-  LOW: "◆",
-  INFO: "○",
-  UNKNOWN: "—",
-};
-
-/**
  * Remediation windows in days.
  *
- * Identical to gas/ and to brick/devsecops/config.py, and that is a decision rather than an
+ * Identical to gas/ and to brick/config.py, and that is a decision rather than an
  * accident: a CRITICAL finding gets seven days whether it is a host CVE, a dependency CVE
  * or a hardcoded secret, so the four surfaces cannot report different SLA attainment for
  * the same estate. In SLA means resolved ON OR BEFORE the target — the comparison is
@@ -68,6 +53,81 @@ export const SLA_TARGETS: Record<string, number> = {
   LOW: 90,
   INFO: 180,
 };
+
+/**
+ * The cold-zone window in days: how long a repository can go without a finding being
+ * resolved, removed or rotated before `src/domain/coldZone.ts` calls it cold.
+ *
+ * 90 DAYS IS A CHOICE, NOT A MEASUREMENT, and it sits here beside `SLA_TARGETS` because it
+ * is the same kind of fact — an operator's statement of what "too long" means, which the
+ * Settings page can change. It is deliberately NOT one of the SLA targets: those ask "was
+ * THIS finding fixed in time", one row at a time, and every one of them would still be met
+ * by a repository nobody has opened in a year as long as the findings on it are LOW. This
+ * asks the other question — has anything at all happened here — so it is a single window for
+ * the whole repository and it matches the longest routine remediation window (LOW = 90 d):
+ * a quarter with no movement of any severity is a silence, not a backlog.
+ *
+ * The bounds are guardrails for the settings clamp, and each end is a refusal:
+ *   MIN 7    below a week the figure measures the scan cadence, not engagement — a register
+ *            synced weekly would show every repository cold on the first quiet Monday.
+ *   MAX 365  past a year "cold" stops being actionable; a repository silent for longer than
+ *            the retention window has nothing left on record to explain the silence with.
+ */
+export const DEFAULT_COLD_AFTER_DAYS = 90;
+export const COLD_AFTER_DAYS_MIN = 7;
+export const COLD_AFTER_DAYS_MAX = 365;
+
+/**
+ * The SECOND way to draw the same line: relative ("dynamic") cold zoning.
+ *
+ * `fixed` is the window above — a repository is cold after `coldAfterDays` of silence, and
+ * the number means the same thing on every estate. `relative` asks the other question: which
+ * repositories are the idlest COMPARED WITH THE REST OF THIS ESTATE? The operator names a
+ * share (the idlest 20%, say) and the line in days is derived from the population, so it
+ * follows the estate instead of standing still while the estate moves underneath it.
+ *
+ * WHY A SHARE IS A LEGITIMATE DEFINITION, and not just a prettier way to sort:
+ *   * EPSS publishes a PERCENTILE beside its probability for exactly this reason — a raw
+ *     score is unreadable without the distribution it came from, and a percentile line stays
+ *     consistent as the distribution shifts, where a fixed line silently changes meaning.
+ *   * "the top Y% of assets by relative risk" is an established alternative to fixed numeric
+ *     thresholds in security dashboards, because it bounds the work the number creates.
+ *   * Idle times are HEAVY-TAILED (a few repositories silent for years, most for days). That
+ *     is the regime where data-driven cuts — head/tail breaks, Jiang 2013 — beat fixed bins,
+ *     because a fixed bin over a heavy tail either catches everything or nothing.
+ *
+ * WHAT A DATA-DRIVEN CUT GETS WRONG, and what is here to catch it. Any "idlest X%" rule will
+ * name somebody, however healthy the estate, and that is a slander the register has to be
+ * able to refuse. Two failure modes, two answers:
+ *   1  SMALL n. With four repositories carrying open findings, the idlest 20% is one
+ *      repository — whoever happens to be last, even at three days of silence.
+ *   2  ALL-SIMILAR population. If every repository was touched this week, the idlest 20% are
+ *      still only a few days idle, and calling them cold measures nothing but the sort order.
+ * Both are answered by `DEFAULT_COLD_FLOOR_DAYS`: the derived line is never allowed below the
+ * floor, so a fresh or well-tended estate simply reports fewer cold repositories than the
+ * target asked for — and `coldZone.ts` publishes `derived_days`, `floor_applied` and the
+ * ACHIEVED share beside the target, so the page can say the zone came out smaller than asked
+ * rather than pretending the target was met. The reverse (ties at the cutoff pushing the
+ * achieved share ABOVE the target) is published the same way.
+ *
+ * Bounds, and why each end is a refusal:
+ *   TARGET MIN 1   below one percent the "share" is a rounding artefact of the estate size.
+ *   TARGET MAX 50  past half the estate, "the cold zone" stops naming a minority worth
+ *                  looking at and becomes a statement about the register's own cadence.
+ *   FLOOR MIN 1    a floor of zero is no floor: it would let the derived line sit at "idle
+ *                  since yesterday" on an estate where everything is being worked.
+ *   FLOOR MAX      the fixed window's own maximum, so neither mode can draw a line past the
+ *                  point where "cold" stops being actionable (see `COLD_AFTER_DAYS_MAX`).
+ */
+export type ColdZoneMode = "fixed" | "relative";
+export const COLD_ZONE_MODES: readonly ColdZoneMode[] = ["fixed", "relative"];
+export const DEFAULT_COLD_ZONE_MODE: ColdZoneMode = "fixed";
+export const DEFAULT_COLD_TARGET_SHARE_PCT = 20;
+export const COLD_TARGET_SHARE_PCT_MIN = 1;
+export const COLD_TARGET_SHARE_PCT_MAX = 50;
+export const DEFAULT_COLD_FLOOR_DAYS = 14;
+export const COLD_FLOOR_DAYS_MIN = 1;
+export const COLD_FLOOR_DAYS_MAX = COLD_AFTER_DAYS_MAX;
 
 /**
  * The three registers this product measures, and the ONE identity they share.
@@ -97,7 +157,7 @@ export type Scope = (typeof SCOPES)[number];
  * The severities a sync requests by default, PER SCOPE — because one list cannot serve
  * three registers that mean different things by the word.
  *
- * `sca` and `sast` keep CRITICAL/HIGH, which is brick/devsecops's default and is not a claim
+ * `sca` and `sast` keep CRITICAL/HIGH, which is brick/'s default and is not a claim
  * about what matters: it is what keeps a first sync inside one execution budget on an estate
  * where a single repository carries ~6,900 SCA findings.
  *
@@ -140,9 +200,61 @@ export const SCOPE_LABELS: Record<Scope, string> = {
   secrets: "Secrets",
 };
 
+/**
+ * Projects that are an ORGANISATIONAL TAG rather than a scope.
+ *
+ * Wiz files a repository under every project that reaches it, and the tenant's GitHub
+ * connector puts one project on ALL of them — `GITHUB-DKTUNITED`. It is a true fact about
+ * every repository and therefore tells you nothing about any of them: as a switcher row it
+ * offers "everything synced" under another name, as an owner it files a repository under the
+ * organisation that owns all of them, and as a concentration bucket it answers the question
+ * with the population. A dimension that cannot discriminate is not a dimension.
+ *
+ * MATCHED ON SLUG OR NAME, CASE-INSENSITIVELY, because a project's machine identity here is
+ * its slug (`domain/projectScope.ts`) while what a person recognises is its name, and the
+ * tenant's slugs are the lower-cased names — listing the name once covers both.
+ *
+ * A LIST, EXPORTED, because this is the tenant's convention and conventions change: a second
+ * connector (a second `GITHUB-…` project, a `JIRA-…`) is one edit here rather than a hunt
+ * through the call sites. Spelled out rather than inferred from a `GITHUB-` prefix on
+ * purpose — a real business unit is free to be named after the tool it lives in, and guessing
+ * would silently hide it. If the list ever has to differ per deployment it becomes a stored
+ * setting; one tenant's one entry does not earn a settings page yet.
+ *
+ * EXCLUDED FROM ANALYSIS, NOT FROM THE LEDGER. `reconcile.ts`'s `projectsJson`/
+ * `projectsListJson` still write what Wiz reported, whole — the stored row is the
+ * OBSERVATION, and an observation is not ours to edit. The three places that turn projects
+ * into an ANSWER drop these: the switcher catalogue and membership predicate
+ * (`domain/projectScope.ts::parseProjects`), the owner a row is filed under
+ * (`reconcile.ts::ownerProject`, plus `server/ledgerStore.ts` on the way back in, for rows
+ * written before this rule existed).
+ */
+export const ORG_WIDE_PROJECTS: readonly string[] = ["GITHUB-DKTUNITED"];
+
+const ORG_WIDE_KEYS: ReadonlySet<string> = new Set(
+  ORG_WIDE_PROJECTS.map((p) => p.trim().toUpperCase()),
+);
+
+/**
+ * Is any of these labels an organisation-wide project.
+ *
+ * VARIADIC AND `unknown`-TYPED so the three call sites can each hand it what they hold
+ * without a cast: a parsed `{slug, name}`, a raw Wiz `Rec` (`slug` / `id` / `name`, any of
+ * them possibly absent), or the bare `owner_project` string read back off a sheet. Anything
+ * that is not a non-empty string is simply not a match.
+ */
+export function isOrgWideProject(...labels: readonly unknown[]): boolean {
+  for (const label of labels) {
+    if (typeof label !== "string") continue;
+    const key = label.trim().toUpperCase();
+    if (key !== "" && ORG_WIDE_KEYS.has(key)) return true;
+  }
+  return false;
+}
 
 
-/** Statuses that mean "not open". Mirrors brick/devsecops/config.py RESOLVED_STATUSES. */
+
+/** Statuses that mean "not open". Mirrors brick/config.py RESOLVED_STATUSES. */
 export const RESOLVED_STATUSES = new Set(["RESOLVED", "REMEDIATED", "FIXED", "CLOSED"]);
 
 export const STATUS_OPEN = "OPEN";
@@ -158,24 +270,15 @@ export const RESOLUTION_DISAPPEARED = "disappeared";
  */
 export const EPSS_PRIORITY_THRESHOLD = 0.1;
 
-/**
- * Bumped when a stored derivation's INPUTS change shape. Anything that changes WHICH rows
- * a derivation reads has to move this, or a persisted result is silently reused across the
- * change and the knob appears to do nothing.
- */
-// 1 -> 2: ledgerCore.baseRows' fix clock is now per scope (fix_available_at = first_seen for
-// sast and secrets, since neither waits on a vendor), which changes every derived row.
-export const DERIVATION_VERSION = 2;
-
 // --------------------------------------------------------------------------------------- //
-//  Risk classification — Prioritization to Prediction (P2P). brick/devsecops/config.py is
+//  Risk classification — Prioritization to Prediction (P2P). brick/config.py is
 //  the source for everything below through ruleForScope, unless a comment says otherwise.
 // --------------------------------------------------------------------------------------- //
 
 /**
  * The high-risk classifier for CVE-bearing findings (sca): an any-of over the exploit
  * signals Wiz attaches. Mirrors gas/src/domain/program.ts's `RiskRule` / `DEFAULT_RISK_RULE`
- * — itself the TS shape of brick's `RiskRule` dataclass, brick/devsecops/config.py:279-312.
+ * — itself the TS shape of brick's `RiskRule` dataclass, brick/config.py:279-312.
  *
  * THIS IS THE ONLY DEFINITION IN THE TREE. gas/ declares `RiskRule` inside its program.ts;
  * here it stays in config.ts, because `ruleForScope` below has to live beside the scope
@@ -200,7 +303,7 @@ export const DEFAULT_RISK_RULE: RiskRule = {
 /**
  * The high-risk classifier for static-analysis findings (sast), where none of RiskRule's
  * three signals exist — a weakness in first-party code has no CVE, so no KEV entry, no
- * published exploit and no EPSS score. brick/devsecops/config.py:337-370 (`SastRiskRule` /
+ * published exploit and no EPSS score. brick/config.py:337-370 (`SastRiskRule` /
  * `DEFAULT_SAST_RISK_RULE`). Any-of over three signals that each answer a different question:
  *   cwe        is this a KIND of weakness that gets exploited? (external evidence — see
  *              CWE_TOP_25_2024 below)
@@ -222,7 +325,7 @@ export const DEFAULT_SAST_RISK_RULE: SastRiskRule = {
 
 /**
  * MITRE's CWE Top 25 Most Dangerous Software Weaknesses, 2024 edition.
- * brick/devsecops/config.py:382-408 (`CWE_TOP_25_2024`), copied verbatim — 25 entries,
+ * brick/config.py:382-408 (`CWE_TOP_25_2024`), copied verbatim — 25 entries,
  * asserted by test/ledgerTypes.test.ts. A snapshot that ages: re-derive against the current
  * year's publication rather than trusting this list indefinitely.
  */
@@ -236,7 +339,7 @@ export const CWE_TOP_25_2024: readonly string[] = [
 
 /**
  * CWE is a tree; scanners report leaves and the Top 25 above is mostly interior nodes, so a
- * child is matched through its Top-25 ancestor. brick/devsecops/config.py:424-441
+ * child is matched through its Top-25 ancestor. brick/config.py:424-441
  * (`CWE_ANCESTORS`), copied verbatim — deliberately incomplete (only children actually seen
  * in the tenant's findings), never a transcription of the full CWE tree. An unmapped child
  * classifies `low` rather than `high`, which is a coverage gap to publish, not paper over.
@@ -261,7 +364,7 @@ export const CWE_ANCESTORS: Record<string, string> = {
 };
 
 /**
- * `aiAnalysis.verdict` values that count as the AI triage firing. brick/devsecops/config.py:450
+ * `aiAnalysis.verdict` values that count as the AI triage firing. brick/config.py:450
  * (`AI_VERDICTS_HIGH`). UNVERIFIED against the live tenant — every node in the captured SAST
  * response has `aiAnalysis: null` (brick's comment), so this is a guess at the vocabulary and
  * will not fire until corrected against real data.
@@ -271,9 +374,9 @@ export const AI_VERDICTS_HIGH: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The high-risk rule a scope is classified under. brick/devsecops/config.py:453-461
+ * The high-risk rule a scope is classified under. brick/config.py:453-461
  * (`rule_for_scope`), extended to all three scopes rather than brick's CVE-register-or-SAST
- * dispatch — secrets never existed in brick/devsecops, so brick had nothing to say about it.
+ * dispatch — secrets never existed in brick/, so brick had nothing to say about it.
  *
  * `secrets` returns null: there is no exploit intelligence for a hardcoded string the way
  * there is for a CVE, and severity here grades a DETECTION (how confident the scanner is
@@ -294,31 +397,31 @@ export function ruleForScope(scope: Scope): RiskRule | SastRiskRule | null {
 
 /**
  * The dead band (percentage points) around zero net flow that still counts as "keeping up".
- * brick/devsecops/config.py:467 (`NET_CAPACITY_BAND_PCT`). P2P v3 Fig. 22 splits firms into
+ * brick/config.py:467 (`NET_CAPACITY_BAND_PCT`). P2P v3 Fig. 22 splits firms into
  * falling behind / maintaining / gaining ground without a sharp cut; a one-finding swing
  * should not flip a monthly verdict.
  */
 export const NET_CAPACITY_BAND_PCT = 2;
 
-/** The row label used for the all-severities aggregate in gold tables. brick/devsecops/config.py:470. */
+/** The row label used for the all-severities aggregate in gold tables. brick/config.py:470. */
 export const OVERALL = "OVERALL";
 
 /**
  * Which population a capacity row describes — every finding vs. high-risk lifecycles only.
- * brick/devsecops/config.py:482-483 (`POPULATION_ALL` / `POPULATION_HIGH_RISK`).
+ * brick/config.py:482-483 (`POPULATION_ALL` / `POPULATION_HIGH_RISK`).
  */
 export const POPULATION_ALL = "all";
 export const POPULATION_HIGH_RISK = "high_risk";
 
 /**
  * The asset-category fallback for a scope with no language/ecosystem to group on.
- * brick/devsecops/config.py:272 (`ASSET_GROUP_UNKNOWN`).
+ * brick/config.py:272 (`ASSET_GROUP_UNKNOWN`).
  */
 export const ASSET_GROUP_UNKNOWN = "UNKNOWN";
 
 /**
  * Disappearance-resolution timestamping default: "scan_ts" (conservative) or "midpoint".
- * gas/src/domain/config.ts:81 (`DISAPPEARANCE_RESOLUTION`); brick/devsecops/config.py:501
+ * gas/src/domain/config.ts:81 (`DISAPPEARANCE_RESOLUTION`); brick/config.py:501
  * mirrors the same value for the same reason.
  */
 export const DISAPPEARANCE_RESOLUTION = "scan_ts";

@@ -17,7 +17,7 @@
 // table, in the bundle that also decides which of them is reachable, rather than a client
 // literal that can disagree with the URL it is drawn next to.
 
-import { BUILD_ID } from "./buildInfo";
+import { BUILD_ID } from "../../../gas_shared/server/buildInfo";
 import * as access from "./access";
 import { PROP_KEYS, setProp } from "./props";
 import { readUrls, writeUrls, type TileKey } from "./urls";

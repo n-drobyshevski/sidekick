@@ -1,4 +1,4 @@
-"""Wiring tests for the Databricks entry point.
+"""Wiring tests for ``run_pipeline``, the register's one entry point.
 
 These guard the parts that only fail on a cluster: parameter resolution across the three
 places Databricks can supply them from, and the ``dbutils`` accessors degrading quietly when
@@ -8,6 +8,7 @@ does nothing useful.
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 import sys
@@ -23,15 +24,14 @@ pytest.importorskip(
 # The modules are plain top-level files, so their own directory goes on the path -- the same
 # arrangement the Databricks side uses.
 BRICK_DIR = Path(__file__).resolve().parents[1]
+REPO_ROOT = BRICK_DIR.parent
 sys.path.insert(0, str(BRICK_DIR))
 
 import dbx  # noqa: E402
-import ingest  # noqa: E402
 import run_pipeline  # noqa: E402
-from config import (
-    FETCH_ASSET_FIELDS,  # noqa: E402
-    SCOPES,  # noqa: E402
-)
+from config import SCOPES, SOURCES  # noqa: E402
+import ingest  # noqa: E402
+from config import FETCH_ASSET_FIELDS  # noqa: E402
 from ingest import QUERY, build_filter, describe_errors  # noqa: E402
 
 
@@ -92,42 +92,116 @@ def test_identifiers_are_validated(monkeypatch):
     with pytest.raises(RuntimeError, match="not a valid identifier"):
         run_pipeline.resolve_namespace(argv=["--catalog=ok", "--schema=wiz;DROP TABLE x"])
     with pytest.raises(RuntimeError, match="not a valid identifier"):
-        run_pipeline.resolve_tables("cat.sch", "os", argv=["--table_prefix=bad-prefix"])
+        run_pipeline.resolve_tables("cat.sch", argv=["--table_prefix=bad-prefix"])
 
 
-def test_tables_are_prefixed_with_the_scope_by_default(monkeypatch):
-    """A shared schema makes bare `findings` / `metrics_capacity` a collision risk, and the
-    scope in the name keeps an OS run and an all-types run in separate tables."""
+def test_every_scope_resolves_the_same_three_prefixed_tables(monkeypatch):
+    """A shared schema makes a bare `findings_raw` / `metrics` a collision risk, hence a prefix.
+
+    **This test used to be `test_tables_are_prefixed_with_the_scope_by_default`, and it
+    asserted `wiz_sca_*` against `wiz_sast_*`.** The claim it encoded was that the two
+    registers "never share a table", enforced by the scope sitting in the default prefix. That
+    claim is retired by decision: three scopes meant nine tables to grant, optimise and
+    document, and they now share one set. What the old test was protecting -- that the
+    populations are never blended -- did not go away with it; it moved into `scope`, which is
+    half the ledger's MERGE key and a predicate on every read of it
+    (`test_scope_isolation.py`). A name is not a boundary; a predicate can be perturbed.
+    """
     monkeypatch.delenv("TABLE_PREFIX", raising=False)
     monkeypatch.setattr(dbx, "widget", lambda name: "")
     # A deliberately generic namespace: the catalog is a runtime parameter, and a real one
     # here would read like configuration.
     ns = "some_catalog.some_schema"
-    tables = run_pipeline.resolve_tables(ns, "os", argv=[])
-    assert tables.bronze == f"{ns}.wiz_os_findings_raw"
-    assert tables.silver == f"{ns}.wiz_os_findings"
-    assert tables.capacity == f"{ns}.wiz_os_metrics_capacity"
+    tables = run_pipeline.resolve_tables(ns, argv=[])
+    assert tables.bronze == f"{ns}.wiz_findings_raw"
+    assert tables.ledger == f"{ns}.wiz_vuln_ledger"
+    assert tables.metrics == f"{ns}.wiz_metrics"
 
-    assert run_pipeline.resolve_tables(ns, "all", argv=[]).silver == f"{ns}.wiz_all_findings"
+    # And the names carry no scope at all -- `resolve_tables` no longer takes one, so there is
+    # no second call to compare against. The register is one table set for every scope.
+    assert "sca" not in tables.ledger and "sast" not in tables.ledger
+    assert run_pipeline.DEFAULT_TABLE_PREFIX == "wiz_"
 
 
 def test_table_prefix_is_overridable_and_can_be_empty(monkeypatch):
     monkeypatch.setattr(dbx, "widget", lambda name: "")
     assert (
-        run_pipeline.resolve_tables("c.s", "os", argv=["--table_prefix=sec_"]).mttr
-        == "c.s.sec_metrics_mttr"
+        run_pipeline.resolve_tables("c.s", argv=["--table_prefix=sec_"]).metrics
+        == "c.s.sec_metrics"
     )
-    bare = run_pipeline.resolve_tables("c.s", "os", argv=["--table_prefix="])
-    assert bare.mttr == "c.s.metrics_mttr"
+    bare = run_pipeline.resolve_tables("c.s", argv=["--table_prefix="])
+    assert bare.metrics == "c.s.metrics"
 
 
 def test_scope_defaults_to_os_and_rejects_unknown_values(monkeypatch):
+    """`os` -- the oldest, largest and most read population here, and what the notebooks open on.
+
+    **This test used to assert `sca`, and to assert that `os` was REFUSED.** The claim it
+    encoded was "this register does not measure hosts, so silently accepting the scope name
+    would write `wiz_os_*` tables full of code findings". That claim is gone by decision, not by
+    accident: this tree absorbed the host register, `os` is a real scope with the OS register's
+    filter behind it, and host findings in the register is now the correct outcome. (The
+    `wiz_os_*` tables themselves are gone too -- every scope shares `wiz_*` now, with `scope`
+    a column -- but that is a later change and not why this one flipped.)
+    The property the old assertion was protecting -- a scope name that is not a population here
+    is refused rather than served -- is kept below, and `all` is still one of those: it was
+    brick's every-detection-method scope, it overlapped `os`, and it is dropped rather than
+    ported.
+
+    The reason `sca` was the default before still holds of `os` and is why the flip is safe: a
+    reader who chooses no scope gets a register whose numbers mean what they appear to mean --
+    CVEs, real exploit signals, and both ends of the clock measured.
+    """
     monkeypatch.delenv("SCOPE", raising=False)
     monkeypatch.setattr(dbx, "widget", lambda name: "")
     assert run_pipeline.resolve_scope(argv=[]) == "os"
-    assert run_pipeline.resolve_scope(argv=["--scope=all"]) == "all"
+    assert run_pipeline.resolve_scope(argv=["--scope=sca"]) == "sca"
+    assert run_pipeline.resolve_scope(argv=["--scope=sast"]) == "sast"
+    for wrong in ("all", "containers", "secrets"):
+        with pytest.raises(RuntimeError, match="unknown scope"):
+            run_pipeline.resolve_scope(argv=[f"--scope={wrong}"])
+
+
+def test_both_scopes_default_to_the_same_gate_and_the_shape_says_they_need_not(monkeypatch):
+    """The severity default is keyed by scope, and today both keys agree.
+
+    This moves no number. Both registers here carry CVE-ish findings whose severities mean the
+    same thing, so both pull CRITICAL,HIGH and every published figure is byte-identical to what
+    a single tuple produced. What the shape buys is the next scope: it has to state its own
+    gate rather than inherit a volume control chosen for a different population.
+
+    `gas_devsecops/` is the evidence that the inheritance is not hypothetical. It gave `secrets`
+    the vulnerability registers' CRITICAL,HIGH, which deleted `PASSWORD` 209 -> 0 and
+    `CERTIFICATE` 160 -> 0 -- every one of those sits below HIGH -- and shipped a secrets register
+    with no passwords in it. Nothing errored; the gate was simply the right answer to a question
+    nobody had asked about that population.
+    """
+    from config import DEFAULT_FETCH_SEVERITIES, default_fetch_severities
+
+    monkeypatch.delenv("SEVERITIES", raising=False)
+    monkeypatch.setattr(dbx, "widget", lambda name: "")
+
+    # Equality, today, and stated rather than derived so a drift has to be deliberate.
+    assert default_fetch_severities("sca") == ("CRITICAL", "HIGH")
+    assert default_fetch_severities("sast") == default_fetch_severities("sca")
+
+    # Keyed per scope, with an entry for every scope: a missing key is refused, not quietly
+    # served from another population's gate.
+    assert set(DEFAULT_FETCH_SEVERITIES) == set(SCOPES)
     with pytest.raises(RuntimeError, match="unknown scope"):
-        run_pipeline.resolve_scope(argv=["--scope=containers"])
+        default_fetch_severities("secrets")
+
+    # And genuinely independent -- the half a single tuple could not express. Widening one
+    # scope's gate leaves the other exactly where it was.
+    monkeypatch.setitem(DEFAULT_FETCH_SEVERITIES, "sast", ("CRITICAL", "HIGH", "MEDIUM"))
+    assert run_pipeline.resolve_severities("sast", argv=[]) == ["CRITICAL", "HIGH", "MEDIUM"]
+    assert run_pipeline.resolve_severities("sca", argv=[]) == ["CRITICAL", "HIGH"]
+    # It is a default, so an explicit `--severities` still outranks it on either scope.
+    assert run_pipeline.resolve_severities("sast", argv=["--severities=critical"]) == ["CRITICAL"]
+
+    # The API filter reads the same source, so the gate a scope pulls is the gate on the wire.
+    monkeypatch.setitem(DEFAULT_FETCH_SEVERITIES, "sca", ("CRITICAL",))
+    assert build_filter("sca")["severity"] == ["CRITICAL"]
 
 
 def test_existing_schema_is_not_recreated():
@@ -226,13 +300,15 @@ def test_ingest_keeps_the_population_scope_separate_from_the_secret_scope(monkey
             return FakeDF(rows)
 
     count = run_pipeline.ingest_to_bronze(
-        FakeSpark(), "cat.sch.wiz_os_findings_raw", "scan-1", "2026-07-01T00:00:00Z", "os"
+        FakeSpark(), "cat.sch.wiz_findings_raw", "scan-1", "2026-07-01T00:00:00Z", "sca"
     )
 
     assert count == 1
-    assert seen["scope"] == "os"  # the population, not "wiz"
-    assert written["rows"][0][2] == "os"  # and the same value lands in bronze
-    assert written["table"] == "cat.sch.wiz_os_findings_raw"
+    assert seen["scope"] == "sca"  # the population, not "wiz"
+    # And the same value lands in bronze -- the only place the scope is recorded now that the
+    # table name no longer carries it.
+    assert written["rows"][0][2] == "sca"
+    assert written["table"] == "cat.sch.wiz_findings_raw"
 
 
 def test_dbutils_accessors_are_quiet_off_cluster():
@@ -264,49 +340,100 @@ def test_severity_filter_maps_info_to_the_api_spelling():
 # here is not an error -- it is a plausible-looking number about the wrong thing.
 
 
-def test_os_scope_matches_the_dashboards_population():
-    """Parity with os_vulns.VARIABLES["filterBy"], the OS register population."""
-    got = build_filter("os", ["CRITICAL"])
-    assert got["detectionMethod"] == ["OS"]
-    assert got["assetType"] == ["VIRTUAL_MACHINE"]
+def test_sca_scope_matches_the_reference_query():
+    """Parity with the filterBy of the Wiz console's own SCA export, which was the only
+    evidence available that this selection validates.
+
+    That export script is deleted, so the literal asserted below is now the surviving
+    transcription of the console's filterBy. The capture it produced,
+    `brick/fixtures/sca_response.json`, is the evidence the selection actually ran against the
+    tenant, and `git show ef22b05^:brick/devsecops/sca_request.py` still holds the request.
+
+    Both clauses earn their place. Without `codeToCloudPipelineStage: CODE` a dependency is
+    counted once in the repository and again in every container image built from it; without
+    `isDefaultBranch` the register grows and shrinks with the team's branching habits rather
+    than with its code.
+    """
+    got = build_filter("sca", ["CRITICAL"])
+    assert got["codeToCloudPipelineStage"] == ["CODE"]
+    assert got["isDefaultBranch"] == {"equals": True}
     assert got["hasFix"] is True
-    assert got["assetIsRepresentativeResource"] is False
-    assert got["detailedNameV2"] == {"notEquals": ["openssl", "python", "vim"]}
     assert got["severity"] == ["CRITICAL"]
+    # `sca` measures code, so none of the host-register restrictions apply.
+    assert "detectionMethod" not in got
+    assert "assetType" not in got
+
+
+def _vuln_scopes():
+    """The scopes whose findings come from ``vulnerabilityFindings``.
+
+    ``sast`` reads a different connection with a different filter type, so the two invariants
+    below -- both of which are about VulnerabilityFindingFilters keys -- cannot apply to it.
+    That exception is pinned by its own test rather than left as a silent gap in a loop.
+    """
+    return [scope for scope, source in SOURCES.items() if source.kind == "vulnerability"]
 
 
 def test_every_scope_asks_for_resolved_findings():
     """Without this the API returns only OPEN findings and every remediation metric collapses
     -- coverage 0%, efficiency undefined, MTTR empty -- while looking like a real result."""
-    for scope in SCOPES:
+    for scope in _vuln_scopes():
         assert build_filter(scope)["status"] == ["OPEN", "RESOLVED"]
 
 
-def test_all_scope_does_not_restrict_type_or_asset():
-    got = build_filter("all")
-    assert "detectionMethod" not in got
-    assert "assetType" not in got
+def test_sast_does_not_ask_for_resolved_findings_yet():
+    """The invariant above is deliberately **declined** here, not unavailable.
+
+    A SAST finding has a status, so the API can be asked for resolved ones. Two live reasons not
+    to: ``SASTFinding`` has no ``resolvedAt``, and `status: RESOLVED` returns zero rows against
+    this tenant. The query now selects ``createdAt``, so an already-resolved finding would land
+    `first_seen = createdAt` and `resolved_at = now` -- reporting its AGE as its MTTR, which is
+    worse than the flat 0 that arithmetic used to give because it looks like a measurement. See
+    `config.SAST_FETCH_RESOLVED` for the trace, and
+    `test_code_scopes.test_asking_sast_for_resolved_findings_would_report_its_age_as_its_mttr`
+    for the measurement.
+
+    `hasFix` is a separate matter and simply meaningless for a weakness in first-party code.
+    """
+    got = build_filter("sast")
+    assert "status" not in got
+    assert "hasFix" not in got
+    assert got["resource"] == {"isDefaultBranch": {"equals": True}}
 
 
 def test_scopes_share_the_actionable_filter():
     """hasFix is shared so remediation rates mean the same thing in each scope. Without it,
     awaiting-vendor-fix findings would sit in `all`'s coverage denominator and not in `os`'s,
     making `all` look worse for a reason that is not performance."""
-    for scope in SCOPES:
+    for scope in _vuln_scopes():
         assert build_filter(scope)["hasFix"] is True
+
+
+def test_sca_scope_is_the_code_stage_of_the_default_branch():
+    """Both halves earn their place. Without `codeToCloudPipelineStage: CODE` a dependency is
+    counted once in the repo and again in every image built from it; without `isDefaultBranch`
+    the register grows and shrinks with the team's branching habits rather than its code."""
+    got = build_filter("sca")
+    assert got["codeToCloudPipelineStage"] == ["CODE"]
+    assert got["isDefaultBranch"] == {"equals": True}
+    # It is the same connection `os` reads, which is the whole reason it needs no new maths.
+    assert SOURCES["sca"].connection == "vulnerabilityFindings"
 
 
 def test_project_id_is_opt_in():
     """os_vulns.py hardcodes one tenant's projectIdV2; copying it would silently scope every
     run to that project."""
-    assert "projectIdV2" not in build_filter("os")
-    assert build_filter("os", project_id="p-1")["projectIdV2"] == {"equals": ["p-1"]}
+    assert "projectIdV2" not in build_filter("sca")
+    assert build_filter("sca", project_id="p-1")["projectIdV2"] == {"equals": ["p-1"]}
+    # The two filter types spell it differently -- the Wiz console's SAST export passed a bare
+    # list (its capture is brick/fixtures/sast_response.json).
+    assert build_filter("sast", project_id="p-1")["projectId"] == ["p-1"]
 
 
 def test_build_filter_does_not_mutate_the_scope_template():
-    build_filter("os", ["LOW"], project_id="p-1")
-    assert "severity" not in SCOPES["os"]
-    assert "projectIdV2" not in SCOPES["os"]
+    build_filter("sca", ["LOW"], project_id="p-1")
+    assert "severity" not in SCOPES["sca"]
+    assert "projectIdV2" not in SCOPES["sca"]
 
 
 def test_unknown_scope_is_rejected():
@@ -317,12 +444,56 @@ def test_unknown_scope_is_rejected():
 # ----------------------------------------------------------------------- the query
 
 
-def test_the_shipped_query_does_not_ask_for_the_asset():
-    """The live tenant no longer has those union members, and it rejects the whole request --
-    not the sub-selection, the request. One unavailable field would cost every scan."""
-    assert "vulnerableAsset" not in QUERY
-    assert ingest.QUERY == ingest.build_query(FETCH_ASSET_FIELDS)
+def test_the_sca_query_asks_for_exactly_two_asset_members():
+    """The inversion of the OS register's rule, and the reason this tree can compute P2P v5
+    at all.
+
+    A union fails as a whole, so one member the tenant no longer has costs the entire request
+    -- which is why `FETCH_ASSET_FIELDS` is off for a register that would have to ask for all
+    thirteen. `sca` returns REPOSITORY_BRANCH and nothing else, so it asks for the two members
+    it needs and gets its asset columns. `brick/fixtures/sca_response.json` is the evidence.
+
+    Reads `build_query(scope="sca")` rather than the module-level `QUERY`, which used to be the
+    same document and is not any more: `QUERY` is `build_query()`, so it follows
+    `config.DEFAULT_SCOPE`, and that became `os` when this tree absorbed the host register.
+    Nothing about the `sca` document changed -- see the test below for what `QUERY` now holds.
+    """
+    sca_query = ingest.build_query(scope="sca")
     assert FETCH_ASSET_FIELDS is False
+    assert ingest.asset_members("sca") == (
+        "VulnerableAssetBase",
+        "VulnerableAssetRepositoryBranch",
+    )
+    assert "... on VulnerableAssetRepositoryBranch {" in sca_query
+    assert "... on VulnerableAssetVirtualMachine {" not in sca_query
+    # And the ecosystem column P2P v5 groups on, asked for only where it is read.
+    assert "codeLibraryLanguage" in sca_query
+
+
+def test_the_module_level_query_is_the_default_scope_s_document():
+    """`QUERY = build_query()` is evaluated at import, so it is whatever `DEFAULT_SCOPE` says.
+
+    That is `os` now, and the os document is the bare one: no `vulnerableAsset` union (a host
+    finding can arrive on any of the thirteen members, so `FETCH_ASSET_FIELDS` decides and it
+    is off) and no `codeLibraryLanguage` (a host register has no ecosystem to group on).
+
+    Runtime is unaffected and this is the assertion that says so out loud: `fetch_findings`
+    calls `query_for(scope)` with the scope the run was given, and no caller reads `QUERY` to
+    decide what to send. It is a module constant a test can inspect, and the thing worth
+    pinning about it is which document it is -- a reader who assumes it is still the `sca` one
+    will draw the wrong conclusion from every assertion made against it.
+    """
+    assert ingest.QUERY == ingest.build_query(scope="os") == ingest.query_for("os")
+    assert "codeLibraryLanguage" not in QUERY
+    assert "vulnerableAsset" not in QUERY
+    # The filter keys that make it the os population reach the wire through `build_filter`,
+    # not through the document -- both halves are named here because the document alone does
+    # not say which scope it belongs to.
+    os_filter = build_filter("os")
+    assert os_filter["detectionMethod"] == ["OS"]
+    assert os_filter["assetType"] == ["VIRTUAL_MACHINE"]
+    assert os_filter["assetIsRepresentativeResource"] is False
+    assert os_filter["detailedNameV2"] == {"notEquals": ["openssl", "python", "vim"]}
 
 
 def test_the_query_still_parses_with_the_asset_omitted():
@@ -331,13 +502,8 @@ def test_the_query_still_parses_with_the_asset_omitted():
     assert "{}" not in QUERY.replace(" ", "")
     # The fields the metrics actually depend on are all still there.
     for field in (
-        "severity",
-        "status",
-        "firstDetectedAt",
-        "resolvedAt",
-        "hasExploit",
-        "hasCisaKevExploit",
-        "epssProbability",
+        "severity", "status", "firstDetectedAt", "resolvedAt",
+        "hasExploit", "hasCisaKevExploit", "epssProbability",
     ):
         assert field in QUERY
 
@@ -349,8 +515,8 @@ def test_vulnerable_asset_is_selected_through_inline_fragments():
     Asserted against the enabled form, which is what a tenant that still has these members
     would send -- the fragments have to stay correct for the constant to be worth flipping.
     """
-    enabled = ingest.build_query(True)
-    assert "... on VulnerableAssetVirtualMachine {" in enabled  # what scope=os returns
+    enabled = ingest._asset_selection(members=ingest._ASSET_MEMBERS)
+    assert "... on VulnerableAssetRepositoryBranch {" in enabled  # what scope=sca returns
     assert "... on VulnerableAssetBase {" in enabled
 
     # No bare field selection between `vulnerableAsset {` and the first fragment.
@@ -360,7 +526,7 @@ def test_vulnerable_asset_is_selected_through_inline_fragments():
 
 def test_query_never_asks_a_member_for_a_field_it_lacks():
     """Two members genuinely lack some of the fields; asking anyway is another 400."""
-    enabled = ingest.build_query(True)
+    enabled = ingest._asset_selection(members=ingest._ASSET_MEMBERS)
     for member, missing in ingest._ASSET_OMISSIONS.items():
         block = enabled.split(f"... on {member} {{", 1)[1].split("}", 1)[0]
         selected = {line.strip() for line in block.splitlines() if line.strip()}
@@ -368,7 +534,7 @@ def test_query_never_asks_a_member_for_a_field_it_lacks():
 
 
 def test_every_asset_member_selects_something():
-    enabled = ingest.build_query(True)
+    enabled = ingest._asset_selection(members=ingest._ASSET_MEMBERS)
     for member in ingest._ASSET_MEMBERS:
         block = enabled.split(f"... on {member} {{", 1)[1].split("}", 1)[0]
         assert block.strip(), f"{member} has an empty selection set, which is also invalid"
@@ -403,21 +569,24 @@ def test_unparseable_error_body_still_says_something():
 
 # ------------------------------------------------------------- deployment consistency
 #
-# v2 added a sixth runtime module, ledger.py, and shipped with a README whose deployment tree
-# still listed five. Following it produced a workspace holding v2's metrics.py and v1's
+# v2 added a sixth runtime module, ledger.py, and shipped with a deployment tree that still
+# listed five. Following it produced a workspace holding v2's metrics.py and v1's
 # run_pipeline.py, which imports cleanly and then dies at the silver write -- 137,870 findings
 # into the first real run, as "A schema mismatch detected when writing to the Delta table".
 # These tests exist so that specific mistake cannot be made silently again.
+#
+# The tree lives in brick/docs/deploy.md since the README was split by reader; README.md is the
+# map, and "2. Get the code onto the workspace" is where the procedure actually is.
 
-README = BRICK_DIR / "README.md"
+DEPLOY_DOC = BRICK_DIR / "docs" / "deploy.md"
 
 
-def _readme_module_tree() -> set:
-    """The `.py` filenames in the README's deployment file tree."""
-    lines = README.read_text(encoding="utf-8").splitlines()
+def _deploy_doc_module_tree() -> set:
+    """The `.py` filenames in the deployment doc's file tree."""
+    lines = DEPLOY_DOC.read_text(encoding="utf-8").splitlines()
     start = next(i for i, line in enumerate(lines) if "this path goes on sys.path" in line)
     names = set()
-    for line in lines[start + 1 :]:
+    for line in lines[start + 1:]:
         if line.startswith("```"):
             break
         match = re.search(r"([A-Za-z_][A-Za-z0-9_]*\.py)", line)
@@ -426,27 +595,140 @@ def _readme_module_tree() -> set:
     return names
 
 
-def test_readme_deployment_tree_matches_the_real_import_graph():
+def test_deploy_doc_tree_matches_the_real_import_graph():
     """The deployment instructions cannot drift from what the code actually needs.
 
     This is the test that would have caught the v2 release: adding a module without adding it
     to the tree now fails here rather than on someone's cluster.
     """
-    documented = _readme_module_tree()
-    assert documented, "could not find the deployment file tree in README.md"
+    documented = _deploy_doc_module_tree()
+    assert documented, "could not find the deployment file tree in docs/deploy.md"
     expected = {f"{name}.py" for name in run_pipeline.RUNTIME_MODULES}
     assert documented == expected, (
-        f"README deployment tree and RUNTIME_MODULES disagree: "
-        f"only in README {sorted(documented - expected)}, "
+        f"docs/deploy.md deployment tree and RUNTIME_MODULES disagree: "
+        f"only in the doc {sorted(documented - expected)}, "
         f"only in code {sorted(expected - documented)}"
     )
 
 
-def test_readme_does_not_still_say_five_modules():
+def test_deploy_doc_does_not_still_say_five_modules():
     """The prose carried the count too, and prose does not fail a schema check."""
-    text = README.read_text(encoding="utf-8")
+    text = DEPLOY_DOC.read_text(encoding="utf-8")
     assert "five `.py` modules" not in text
     assert "ledger.py" in text
+    # And the one thing the deployment procedure must say out loud.
+    assert "sys.path" in text
+
+
+# ------------------------------------------------------------ the committed captures' location
+#
+# Six brick test modules (conftest.py, test_ledger.py, test_catalog_mode.py,
+# test_import_bundle.py, test_csvstore.py, test_metrics.py, test_code_scopes.py) and
+# devlake/run.py each build a path to one of the three committed Wiz captures. Only the brick
+# ones run in this suite, and all of them need Spark -- so a fixture move that updated the six
+# brick readers but missed devlake/run.py would pass every brick test and still break
+# ``python -m devlake.run`` silently. Catching that by running devlake was a thirty-minute round
+# trip (~10-12 minutes of the fixture-reading Spark subset, plus noticing devlake was never
+# actually run). This test is two seconds and JVM-free -- it never imports pyspark's
+# SparkSession -- so it belongs here, not in a Spark-backed module.
+_COMMITTED_CAPTURES = (
+    "sca_findings_example.json",
+    "sast_response.json",
+    "sca_response.json",
+)
+
+
+def test_every_committed_capture_is_where_its_readers_look():
+    """The three captures live under ``brick/fixtures/``, and nothing under ``brick/`` or
+    ``devlake/`` builds a path to one of their basenames without a ``fixtures`` path component.
+
+    See the section banner above for why this specific, cheap check exists.
+    """
+    for name in _COMMITTED_CAPTURES:
+        assert (BRICK_DIR / "fixtures" / name).is_file(), (
+            f"{name} is not committed at brick/fixtures/{name}"
+        )
+
+    offenders = []
+    for root in (BRICK_DIR, REPO_ROOT / "devlake"):
+        for path in sorted(root.rglob("*.py")):
+            if "__pycache__" in path.parts:
+                continue
+            offenders.extend(_paths_missing_fixtures_component(path))
+
+    assert not offenders, "path(s) built to a committed capture without a fixtures/ component:\n" + "\n".join(
+        offenders
+    )
+
+
+def _paths_missing_fixtures_component(path):
+    """AST-walk ``path`` for every maximal ``a / b / ...`` join whose resolved components
+    include one of the three captures' basenames, and flag any where ``"fixtures"`` is not
+    also among those components.
+
+    Deliberately narrow: it only understands ``Path``-style ``/`` joins (what every reader in
+    this repo actually uses), tracing simple ``NAME = <expr>`` assignments so an indirection
+    like ``FIXTURE_DIR / LIVE_FIXTURE`` resolves through both ``FIXTURE_DIR`` and
+    ``LIVE_FIXTURE``. A label like ``LIVE_FIXTURE = "sca_findings_example.json"`` is not itself
+    flagged -- only an actual join is -- so naming a fixture file for later joining is fine, and
+    only the join site is where the ``fixtures`` component is required.
+    """
+    text = path.read_text(encoding="utf-8")
+    try:
+        tree = ast.parse(text, filename=str(path))
+    except SyntaxError:
+        return []
+
+    parents = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+
+    assigns = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+            if isinstance(target, ast.Name):
+                assigns[target.id] = node.value
+
+    def resolve(node, seen):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return [node.value]
+        if isinstance(node, ast.Name):
+            if node.id in seen or node.id not in assigns:
+                return ["?"]
+            return resolve(assigns[node.id], seen | {node.id})
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            left, right = resolve(node.left, seen), resolve(node.right, seen)
+            return None if left is None or right is None else left + right
+        if isinstance(node, (ast.Attribute, ast.Subscript)):
+            return resolve(node.value, seen)
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Attribute):
+                return resolve(node.func.value, seen)
+            if isinstance(node.func, ast.Name) and node.args:
+                return resolve(node.args[0], seen)
+            return ["?"]
+        return None
+
+    def is_maximal_join(node):
+        parent = parents.get(node)
+        return not (isinstance(parent, ast.BinOp) and isinstance(parent.op, ast.Div))
+
+    offenders = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div)):
+            continue
+        if not is_maximal_join(node):
+            continue
+        components = resolve(node, frozenset())
+        if components is None:
+            continue
+        hit = next((c for c in _COMMITTED_CAPTURES if c in components), None)
+        if hit and "fixtures" not in components:
+            rel = path.relative_to(REPO_ROOT)
+            offenders.append(f"{rel}:{node.lineno}: joins to {hit!r} without a fixtures/ component")
+    return offenders
 
 
 def test_every_runtime_module_declares_a_version():
@@ -480,7 +762,7 @@ def test_check_deployment_rejects_a_module_with_no_version(monkeypatch):
     monkeypatch.setitem(sys.modules, "config", ancient)
     with pytest.raises(RuntimeError, match="Mixed brick deployment") as exc:
         run_pipeline.check_deployment()
-    assert "config=pre-2.0" in str(exc.value)
+    assert "config=absent" in str(exc.value)
 
 
 def test_check_deployment_names_every_stale_module(monkeypatch):
@@ -504,18 +786,19 @@ def test_data_path_produces_delta_path_references(monkeypatch):
     """A path-backed table is named `delta.`<root>/<prefix><name>`` -- valid anywhere Spark
     wants a table, which is what lets one `Tables` serve both modes."""
     monkeypatch.setattr(dbx, "widget", lambda name: "")
-    tables = run_pipeline.resolve_tables("", "os", argv=[], data_path="/Volumes/c/s/v/brick")
-    assert tables.bronze == "delta.`/Volumes/c/s/v/brick/wiz_os_findings_raw`"
-    assert tables.ledger == "delta.`/Volumes/c/s/v/brick/wiz_os_vuln_ledger`"
-    # The directory names match what a catalog run would call the tables, so the README's
-    # CREATE TABLE ... LOCATION recipe is one statement per directory with nothing renamed.
-    assert tables.capacity.endswith("/wiz_os_metrics_capacity`")
+    tables = run_pipeline.resolve_tables("", argv=[], data_path="/Volumes/c/s/v/code")
+    assert tables.bronze == "delta.`/Volumes/c/s/v/code/wiz_findings_raw`"
+    assert tables.ledger == "delta.`/Volumes/c/s/v/code/wiz_vuln_ledger`"
+    # The directory names match what a catalog run would call the tables, so the
+    # CREATE TABLE ... LOCATION recipe in docs/storage.md is one statement per directory with
+    # nothing renamed.
+    assert tables.metrics.endswith("/wiz_metrics`")
 
 
 def test_as_path_recovers_the_path_and_leaves_catalog_names_alone():
     """The whole storage abstraction: a reference carries its own path."""
-    assert run_pipeline.as_path("delta.`/mnt/brick/wiz_os_scans`") == "/mnt/brick/wiz_os_scans"
-    assert run_pipeline.as_path("cat.sch.wiz_os_scans") is None
+    assert run_pipeline.as_path("delta.`/mnt/code/wiz_metrics`") == "/mnt/code/wiz_metrics"
+    assert run_pipeline.as_path("cat.sch.wiz_metrics") is None
 
 
 def test_data_path_is_optional_and_empty_means_catalog_mode(monkeypatch):

@@ -74,6 +74,7 @@ import {
   registerRowsTable, renderRegisterPage, sectionCard, statusSegment, textCell,
 } from "./sca.js";
 import { populationLine } from "./registerModel.js";
+import { endOfLifeExclusionNote } from "./mttr.js";
 
 /**
  * The measurement note about the twin fold, as one string.
@@ -352,6 +353,9 @@ export function secretsModel(payload, opts) {
   const vm = {
     scope: "secrets",
     firstRun,
+    // Who the time-to-revoke estimate was measured over — through the model like every other
+    // block here, rather than reached for out of the payload at render time.
+    endOfLife: sec.endOfLife || null,
     asOf: reg.asOf ?? sec.asOf ?? null,
     rowCount: num(sec.rowCount, num(reg.rowCount)),
     open: num(sec.open, num(reg.open)),
@@ -500,7 +504,7 @@ export function secretsModel(payload, opts) {
     // statement about age, which is what the question here actually is.
     aging: bucketTotals(reg.aging),
     oldestRepos: oldestReposModel(reg.oldest),
-    concentration: concentrationModel(reg.concentration, ["repo", "secret_kind", "owner_project"]),
+    concentration: concentrationModel(reg.concentration, ["repo", "secret_kind", "product", "support_group", "domain"]),
     movement: withoutRequestedSeverities(movementModel(reg.movement, reg.latestScan)),
 
     twinNote: TWIN_NOTE,
@@ -934,9 +938,8 @@ function paintSecrets(host, vm, filters) {
         term: "secret-resolved",
         lines: [
           vm.hero.denominator,
-          "Credentials committed to source. Removing one is not the same as fixing it: the"
-          + " string leaving HEAD closes the finding, and the credential stays live until it"
-          + " is rotated.",
+          "Credentials committed to source. Removing one is not the same as fixing it.",
+          "The string leaving HEAD closes the finding; the credential lives until rotated.",
         ],
       },
     ),
@@ -967,7 +970,10 @@ function paintSecrets(host, vm, filters) {
   // register nobody has read is one more confident zero, and `firstRunNotice` below already
   // says what is missing.
   const population = vm.firstRun.show ? null : populationLine(vm);
-  if (population) host.append(el("p", { class: "small muted" }, population.text));
+  if (population) host.append(el("div", { class: "scope-chips", role: "group", "aria-label": population.text },
+          ...population.parts.map((part, i) => el("span", {
+            class: "scope-chip" + (i === 0 ? " scope-chip--lead" : ""),
+          }, part))));
 
   // FIRST RUN STOPS HERE — see sca.js's paintSca for why every section past this point would
   // otherwise print its own confident "0", including the removed-vs-rotated four-corner table
@@ -1019,10 +1025,9 @@ function paintSecrets(host, vm, filters) {
   host.append(sectionLabel("Validity and confidence", {
     term: "validation-state",
     lines: [
-      "The validation state says whether anybody asked the provider; the detector confidence"
-      + " says how sure the scanner was that the matched string is a credential at all.",
-      "The two are counted on separate axes, so a cross-tab would have to be multiplied out"
-      + " of two sets of totals — which is a fabrication, not a measurement.",
+      "Validation state says whether anybody asked the provider.",
+      "Detector confidence says how sure the scanner was it is a credential at all.",
+      "Counted on separate axes: a cross-tab would be multiplied out, not measured.",
     ],
   }));
   host.append(el("p", { class: "small muted" },
@@ -1044,9 +1049,9 @@ function paintSecrets(host, vm, filters) {
     term: "removed",
     lines: [
       vm.removalVsRotation.denominator,
-      "Two independent events, so two axes: a row is removed when the string leaves HEAD and"
-      + " rotated when the credential is observed dead. Neither implies the other, and the"
-      + " corner where they disagree is the one this page leads with.",
+      "Two independent events, so two axes. Neither implies the other.",
+      "Removed when the string leaves HEAD, rotated when the credential is observed dead.",
+      "The corner where they disagree is the one this page leads with.",
     ],
   },
     quadTable(
@@ -1121,6 +1126,7 @@ function paintSecrets(host, vm, filters) {
   ));
 
   // ------------------------------------------------------------------- time to revoke
+  const eolNote = endOfLifeExclusionNote(vm.endOfLife, "the time-to-revoke figures");
   // THE 43-WORD LEDE IS THE HEADING'S DEFINITION. What the clock measures FROM and TO, and
   // why an unchecked credential is outside it, is what "time to revoke" MEANS here. The
   // excluded count itself does not move: it is the fourth card, in words, with its own
@@ -1128,9 +1134,8 @@ function paintSecrets(host, vm, filters) {
   host.append(sectionCard("Time to revoke", {
     term: "time-to-revoke",
     lines: [
-      "Detection to confirmed-invalid, with still-live credentials right-censored at today.",
-      "A credential nobody ever checked supports no claim in either direction, so it is"
-      + " excluded from this estimate rather than censored inside it.",
+      "Detection to confirmed-invalid, with still-live credentials censored at today.",
+      "One nobody checked is excluded rather than censored: it supports no claim.",
     ],
   },
     el("div", { class: "kpi-row" },
@@ -1172,6 +1177,11 @@ function paintSecrets(host, vm, filters) {
           + "exactly what an unvalidated row cannot support.",
       }),
     ),
+    // THE SECOND EXCLUSION, IN THE SECTION THAT ALREADY HAS ONE. This card's own "excluded,
+    // not censored" is about rows nobody checked; this sentence is about repositories nobody
+    // maintains. Both narrow this estimate and neither touches the counts above it — a leaked
+    // credential in a retired repository is still leaked.
+    eolNote ? el("p", { class: "small muted" }, eolNote) : null,
     vm.timeToRevoke.curve.length
       ? chartCard(
         "Survival of a committed credential",
@@ -1276,7 +1286,7 @@ function paintSecrets(host, vm, filters) {
         sortSpec: { value: (r) => r.oldestDays, descending: true, tiebreak: (r) => r.key },
         columns: [
           { key: "key", label: "Repository", cell: (r) => r.key },
-          { key: "owner", label: "Owning project", cell: (r) => r.ownerProject || absent() },
+          { key: "product", label: "Product", cell: (r) => r.product || absent() },
           { key: "open", label: "Open", className: "num", cell: (r) => fmtCount(r.openCount) },
           { key: "aged", label: "Open past 90d", className: "num", cell: (r) => fmtCount(r.agedCount) },
           {
@@ -1305,9 +1315,9 @@ function paintSecrets(host, vm, filters) {
   // point on the page from the heading it is about.
   host.append(sectionCard("Every finding in the register", {
     lines: [
-      "Open and resolved, server-paged and server-sorted — click a column to ask for a"
-      + " different order rather than re-sorting what is already on screen, and open a row"
-      + " for everything the register holds about that one finding.",
+      "Open and resolved, server-paged and server-sorted.",
+      "Open a row for everything the register holds about that one finding.",
+      "A column asks for a different order rather than re-sorting what is on screen.",
       vm.missingColumns,
     ],
   },
@@ -1473,10 +1483,9 @@ function segmentCard(seg) {
               help: {
                 term: "validation-state",
                 lines: [
-                  "The count is how many of this segment's findings have ever been"
-                  + " validated; the bar beside it is that count as a share of the"
-                  + " segment's own total, so two segments of different sizes can be"
-                  + " compared down the column.",
+                  "How many of this segment's findings have ever been validated.",
+                  "The bar is that count as a share of the segment's own total.",
+                  "So two segments of different sizes can be compared down the column.",
                 ],
               },
             },

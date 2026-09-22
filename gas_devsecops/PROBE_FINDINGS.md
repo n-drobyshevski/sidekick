@@ -179,7 +179,7 @@ sampling artifact, not a schema gap; on a RESOLVED-only page it populates:
 ```
 
 **No PARTIAL result was observed.** `partialErrors: []` on SCA; SAST never returned data.
-The captured `brick/devsecops/sast_response.json` has one, so the tolerance in `post()`
+The captured `brick/fixtures/sast_response.json` has one, so the tolerance in `post()`
 earns its place — this run simply did not reproduce it.
 
 ### The SAST defect: an object filter sent as an array
@@ -402,7 +402,7 @@ one regex with `i` cannot.
 - **The SAST age-vs-MTTR decision** from §6, untouched by this pass. **Still open.**
 - ~~**The `TEMPORAL` regex**, §7.4.~~ Fixed in `83d6b1e`, verified in §8.4.
 - **No PARTIAL response has ever been reproduced live** across two passes, though the
-  captured `brick/devsecops/sast_response.json` contains one. The tolerance stays; it is
+  captured `brick/fixtures/sast_response.json` contains one. The tolerance stays; it is
   simply still unexercised outside the fixture. **Still true after three passes.**
 
 ---

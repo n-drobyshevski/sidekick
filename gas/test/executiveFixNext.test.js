@@ -502,10 +502,15 @@ describe("os: the front door still draws no chart", () => {
     expect(SRC).not.toMatch(/from "\.\.\/chartsLoader\.js"/);
   });
 
-  it("draws the ranked list as an ordered list, because the order is the claim", () => {
-    // A reader on a screen reader hears "1 of 8" and gets the same argument the page makes
-    // visually. A `<ul>` or a stack of divs is the same pixels and a different statement.
-    expect(SRC).toContain('el("ol", { class: "fixnext" })');
+  it("draws the ranked list as a table with a rank column, because the order is the claim", () => {
+    // It was an `<ol>`, so a screen reader heard "1 of 8". A table with a rank column says the
+    // same thing ("row 1 of 8", and the number in the first cell) and gives every fact its own
+    // column instead of one `·`-joined sentence per group — eight of which were eight of this
+    // page's nine prose blocks under the density walker. A stack of divs would be the same
+    // pixels and no statement at all, which is what this pin is against.
+    expect(SRC).toContain('className: "fixnext-table"');
+    expect(SRC).toMatch(/key: "rank",\s*label: "#"/);
+    expect(SRC).not.toContain('el("ol", { class: "fixnext" })');
   });
 
   it("has no page-level Run scan button left to disagree with the rail's", () => {
@@ -514,5 +519,63 @@ describe("os: the front door still draws no chart", () => {
     // scan is or is not already running.
     expect(SRC).not.toContain("ctx.startScan");
     expect(SRC).not.toContain("RUN_ICON");
+  });
+});
+
+// ------------------------------------------------- where the ranked list sits, and how
+
+/**
+ * The host order, as the page itself declares it — `main.append(...)`'s argument list is the
+ * DOM order, so this is the one line that decides what a reader meets first.
+ */
+function hostOrder(src) {
+  const m = src.match(/main\.append\(([^)]*Host[^)]*)\);/);
+  return m ? m[1].split(",").map((s) => s.trim()).filter(Boolean) : [];
+}
+
+describe("os: Fix next is the page's LAST block, and it is collapsible", () => {
+  it("appends fixHost after every other host, the last-scan caption included", () => {
+    const order = hostOrder(SRC);
+    expect(order).toEqual([
+      // `coldHost` rides in the run of one-glance blocks that qualify the hero, between the
+      // severity slot and the by-domain table; what this test is about is the tail.
+      "noticeHost", "heroHost", "sevHost", "coldHost", "byDomainHost", "scanHost", "fixHost",
+    ]);
+    // Perturbed, because "is fixHost in the list" would pass on the arrangement this replaced.
+    // The ranked list spent its whole life directly under the hero, which put the page's
+    // longest block between the one figure a leader opens this page for and every figure that
+    // qualifies it.
+    const before = "  main.append(noticeHost, heroHost, fixHost, sevHost, byDomainHost, scanHost);";
+    expect(hostOrder(before).at(-1)).toBe("scanHost");
+    expect(hostOrder(SRC).at(-1)).toBe("fixHost");
+  });
+
+  it("builds the section through collapsibleSection, with the page holding the open flag", () => {
+    const fn = SRC.slice(SRC.indexOf("function renderFixNext("));
+    expect(fn).toContain('collapsibleSection("Fix next", {');
+    expect(fn).toMatch(/open: fixOpen,/);
+    expect(fn).toMatch(/onToggle: \(o\) => \{ fixOpen = o; \},/);
+    // Remembered per reader across visits — the closure flag only survives this page's own
+    // repaints, and swrCall paints twice on a warm cache.
+    expect(fn).toMatch(/remember: "execFixNext",/);
+  });
+
+  it("puts the denominator on the heading, so a SHUT section still says what it holds", () => {
+    const fn = SRC.slice(SRC.indexOf("function renderFixNext("));
+    expect(fn).toMatch(/hint: view\.rankedShort,/);
+    // And it is no longer ALSO a paragraph under the table — one statement, one place. The
+    // "may never leave the surface" pin in wordsOneLevelDown.test.js is what holds the other
+    // half of this: the heading is on the surface whether the section is open or closed.
+    expect(fn).not.toContain('el("p", { class: "small muted" }, view.rankedShort)');
+  });
+
+  it("keeps the cap and the exposure refusal inside the section, beside what they qualify", () => {
+    const fn = SRC.slice(SRC.indexOf("function renderFixNext("));
+    // `fix` is the section's own body. Folding a caveat away WITH the figure it qualifies is
+    // the one arrangement in which the figure is never on screen without it; appending either
+    // to `fixHost` instead would leave it outside the fold, stating a constraint on a list the
+    // reader cannot see.
+    expect(fn).toMatch(/if \(view\.cutNote\) fix\.append/);
+    expect(fn).toMatch(/fix\.append\(el\("p", \{ class: "small muted" \}, view\.exposureNote\)\)/);
   });
 });

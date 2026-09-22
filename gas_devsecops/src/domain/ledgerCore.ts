@@ -484,6 +484,9 @@ function rowFromEpisode(e: EpisodeRow): LedgerRow {
     // a sealed episode's owner_path is already null above for the same reason) — nothing to
     // expand it from.
     projects_json: null,
+    // No link either, for the same reason and with the same consequence: a sealed episode
+    // has dropped the per-finding detail it summarizes, so the sheet draws no Wiz row.
+    portal_url: null,
   };
 }
 

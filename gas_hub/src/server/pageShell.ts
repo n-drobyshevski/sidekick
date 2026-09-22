@@ -99,17 +99,6 @@ export interface CardPageSpec {
   actions?: string;
 }
 
-/** A primary action, styled as DESIGN.md's one committing action per context. */
-export function primaryAction(href: string, label: string): string {
-  // target="_top" is not decoration: HtmlService serves these pages inside a sandbox iframe on
-  // googleusercontent.com, so a link without it navigates the FRAME and dead-ends on a page
-  // that cannot reach the app. The <base> below covers anchors that forget, this makes it
-  // explicit on the one link the page exists to offer.
-  return (
-    '<a class="btn" target="_top" href="' + escapeHtml(href) + '">' + escapeHtml(label) + "</a>"
-  );
-}
-
 /** A secondary text link, beside or below the primary action. */
 export function secondaryAction(href: string, label: string): string {
   return (

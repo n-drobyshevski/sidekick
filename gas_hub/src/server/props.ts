@@ -35,19 +35,6 @@ export function getProp(key: string): string | null {
   return PropertiesService.getScriptProperties().getProperty(key);
 }
 
-export function requireProp(key: string): string {
-  const v = getProp(key);
-  if (!v) {
-    throw new Error(`Missing Script Property ${key} — set it in ` +
-      `Project Settings > Script Properties.`);
-  }
-  return v;
-}
-
 export function setProp(key: string, value: string): void {
   PropertiesService.getScriptProperties().setProperty(key, value);
-}
-
-export function deleteProp(key: string): void {
-  PropertiesService.getScriptProperties().deleteProperty(key);
 }

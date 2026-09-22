@@ -715,3 +715,48 @@ table.data.jobs-table td.job-status-cell { white-space: normal; max-width: 420px
   text-align: center; font-size: var(--fs-label); padding: 0 var(--space-5);
   height: auto; border: none; border-radius: 0;
 }
+
+/* The verdict dot-and-word moved to gas_shared/styles/components.css, beside ui/verdict.js.
+   Two apps drew byte-identical rules for it, which is the promotion trigger this block's
+   own comment named. */
+
+/* The four figures as a 2x2 beside the census, rather than a column of four.
+   `.kpi-row`'s own track is `repeat(auto-fit, minmax(160px, 1fr))`, which in a 564px half of
+   `.card-pair` packs THREE across and leaves the fourth alone on a second row; `--column`, the
+   other shipped modifier, stacks all four and makes the left side twice the height of the card
+   beside it. Two-up is the one that squares the band: two rows of two stand level with the
+   lattice, and at ~270px a tile still fits its figure and a two-line sentence under it. Page
+   local because it is a fact about THIS pairing, not a property of the component. */
+.cold-figures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 1099px) { .cold-figures { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); } }
+
+/* ------------------------------ Cold zone: the band key row, and the picked group row
+   THE HEAT TABLE THAT WAS HERE IS GONE. `table.data.heat` drew a support-group x idle-band
+   matrix keyed on the same support group as the roll-up above it, and its ordinal shading was
+   the one such channel in this app — neutral ink at four alphas, argued at length in
+   DESIGN.md because severity and --accent were both wrong for it. The matrix folded into the
+   roll-up as one `bandBar` per row (gas_shared/ui/bandBar.js, and components.css for the
+   ramp), so both the table and its local shading rule leave together. What replaced the ramp
+   is not a fourth candidate: the shade stopped encoding MAGNITUDE (count/max over the grid,
+   which is where "a 70-day cell in red reads as HIGH" came from) and started encoding the
+   band's own fixed position, which is what the ordinal ramp is for.
+
+   WHAT STAYS HERE IS THE PAGE'S OWN CHROME: the key row that is now the band control, and the
+   mark on a picked group row. Neither is a component a sibling draws. */
+
+/* The band key row, the distribution cell and the picked-row mark moved to
+   gas_shared/styles/components.css, beside the `.bandbar` they dress: gas_devsecops draws
+   the identical chrome around the identical component, which is the promotion trigger.
+   What stays in this file is the argument above for why the heat table is gone. */
+
+/* ------------------------------------------------------- Cold zone: the verdict census
+   `.cold-census { max-width: 44rem }` LEFT WITH THE CENSUS'S OWN RULE. It was written here as a
+   modifier on `gas_shared`'s `.isotype-wrap`, to stop a lattice stretching across a wide page
+   and reading as a banner rather than as a countable set of marks. Two things were wrong with
+   it living here. It was INERT — the grid inside the wrap was `width: max-content`, so it never
+   reached the cap it was given and the cells stayed a 64px smudge instead. And `gas_devsecops`
+   passes the very same class name with no rule at all behind it, so the register that spelled
+   the intention was the one that could not act on it while the register that could had never
+   heard of it. Both now come from `.isotype--grid.isotype--census` in
+   gas_shared/styles/components.css, where the argument and the declaration sit together — the
+   same move gas_ai's Scans page made when its local cell-size rule was folded into `unitGrid`. */

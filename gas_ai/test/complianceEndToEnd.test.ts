@@ -317,6 +317,52 @@ describe("the Overview bands getCompliance ships beside the trees", () => {
     expect(counts).toEqual([...counts].sort((a: number, b: number) => b - a));
   });
 
+  it("derives the landscape posture over the applicable controls, not as the mean", () => {
+    const data = compliance();
+    const landscape = data.landscapePosture;
+
+    // SIX DISTINCT CONTROLS ACROSS FOUR FRAMEWORKS. Not the sum of the four trees'
+    // policyCounts — the seed files SUB-082 under both the Agentic and the 5Rs framework on
+    // purpose, and a control two frameworks cite is one thing to fix. If this ever climbs to
+    // the summed total, the cross-framework dedupe has gone.
+    expect(landscape.applicablePolicyCount).toBe(6);
+    expect(landscape.frameworkCount).toBe(4);
+    expect(landscape.applicablePolicyCount)
+      .toBeLessThan(data.trees.reduce((sum: number, t: any) => sum + t.policyCount, 0));
+
+    // 1,892 checks passing to 29 failing — weighted by CHECKS, which is what makes it a
+    // different claim from the mean rather than a refinement of it.
+    expect(landscape.passCount).toBe(1892);
+    expect(landscape.failCount).toBe(29);
+    expect(landscape.posturePct).toBe(98);
+    expect(landscape.postureBand).toBe("strong");
+
+    // THE TWO CLAIMS TRAVEL TOGETHER. Wiz's mean is 94 — four framework scores averaged,
+    // each over Wiz's own larger denominator — and it survives this derivation untouched
+    // because the trend line beside the hero still draws it and the hero's own disclosure
+    // names it. The gap between 98 and 94 is the feature, not a discrepancy.
+    expect(landscape.wizAveragePosture).toBe(data.kpis.averagePosture);
+    expect(landscape.wizAveragePosture).toBe(94);
+    expect(landscape.scoredFrameworks).toBe(4);
+
+    // The control-weighted reading of the SAME population, shipped beside the headline
+    // rather than instead of it: one of six applicable controls is clean. A hero at 98% over
+    // five failing controls is exactly why both formulas are on the page.
+    expect(landscape.controlPassPct).toBe(17);
+    expect(landscape.cleanPolicyCount).toBe(1);
+    expect(landscape.failingPolicyCount).toBe(5);
+
+    // AND IT RECONCILES WITH THE KPI BESIDE IT. `complianceKpis.failingPolicies` counts
+    // distinct failing policies over the same scoped rows by its own walk; this counts them
+    // over the built trees. Two arithmetics, one answer — if they drift, the header's
+    // "Failing controls" stat and the hero's own denominator describe different landscapes.
+    expect(landscape.failingPolicyCount).toBe(data.kpis.failingPolicies);
+
+    // Nothing in the seed is disabled in Wiz, so the applicable population is attributable
+    // to the assessed-and-AI-scoped filters alone rather than confounded with a third.
+    expect(landscape.disabledPolicyCount).toBe(0);
+  });
+
   it("counts what is collected against what the tenant catalogues", () => {
     const cov = compliance().coverage;
     // Five frameworks exist in the seed tenant and four are collected — the CIS one is
@@ -326,9 +372,64 @@ describe("the Overview bands getCompliance ships beside the trees", () => {
     expect(cov.catalogued).toBe(5);
 
     // Every subcategory lands in exactly one state — no row is counted twice and none is
-    // dropped, which is what makes the state strip an accounting rather than a summary.
+    // dropped, which is what makes the state keys an accounting rather than a summary.
     const total = Object.values(cov.stateCounts).reduce((a: any, b: any) => a + b, 0);
     expect(total).toBe(cov.subcategoryCount);
+  });
+});
+
+// ------------------------------------------------------------- posture over time
+//
+// The series the Compliance header draws where the four-segment state bar used to be. Every
+// link in it is a place this has silently broken before: the column has to be declared, the
+// commit has to write it, the reader has to parse it, and the endpoint has to ship it.
+// Nothing in between raises an error when one of the four stops happening — the chart simply
+// renders its empty state, which looks exactly like a register nobody has synced.
+describe("the compliance trend getCompliance ships", () => {
+  it("ships a point for every recorded sync, oldest first", () => {
+    const points = compliance().complianceTrend;
+    // Eight fabricated syncs plus the dry run's own — `seedTrendHistory` writes the census on
+    // all eight, because the compliance census describes `SEED_POSTURE` rather than the
+    // ledger, and the dry run writes its own through the live commit path.
+    expect(points).toHaveLength(9);
+    const at = points.map((p: any) => p.at);
+    expect([...at].sort()).toEqual(at);
+  });
+
+  it("draws the same landscape number the hero above it prints", () => {
+    // THE ASSERTION THAT KEEPS THE HERO AND THE CHART IN ONE POPULATION. The hero is
+    // `complianceKpis.averagePosture`; the line is `censusCompliancePosture.avg`, computed by
+    // different code at a different time. If these ever disagree the header states two
+    // landscapes and gives the reader no way to tell which is which.
+    const data = compliance();
+    const last = data.complianceTrend[data.complianceTrend.length - 1];
+    expect(last.counts.__landscape).toBe(data.kpis.averagePosture);
+    expect(last.coverage.__landscape.scoredFrameworks).toBe(data.kpis.scoredFrameworks);
+  });
+
+  it("carries every collected framework's own percentage, matching its tree", () => {
+    const data = compliance();
+    const last = data.complianceTrend[data.complianceTrend.length - 1];
+    for (const tree of data.trees) {
+      expect(last.counts[tree.frameworkId], tree.frameworkId).toBe(tree.posturePct);
+    }
+  });
+
+  it("carries the coverage each percentage is a share of", () => {
+    // Without this a rising line and a narrowing denominator are the same picture — see
+    // domain/complianceTrend.ts's header. The card prints the pair on every point.
+    const data = compliance();
+    const last = data.complianceTrend[data.complianceTrend.length - 1];
+    for (const tree of data.trees) {
+      const cov = last.coverage[tree.frameworkId];
+      expect(cov.scored, tree.frameworkId).toBe(tree.stateCounts.scored);
+      const reported = Object.values(tree.stateCounts)
+        .reduce((a: any, b: any) => a + b, 0) as number;
+      expect(cov.subcategories, tree.frameworkId).toBe(reported);
+    }
+    // And landscape-wide, the same accounting the coverage band publishes for this sync.
+    expect(last.coverage.__landscape.subcategories).toBe(data.coverage.subcategoryCount);
+    expect(last.coverage.__landscape.scored).toBe(data.coverage.stateCounts.scored);
   });
 });
 

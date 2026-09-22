@@ -39,16 +39,18 @@ describe the whole app rather than any one page: the switcher scopes every figur
 page, so it reads as chrome rather than as one page's filter. Everything else stays in the
 rail: the nav, **Run scan** and **Quick refresh**, the credentials pill and the last-scan line.
 
-Above 800px the nav's **first tier** is a 76px icon rail: one item per lane — _Overview_,
-_Security_ (MTTR & SLA, Program performance, OS vulnerabilities), _Data_ (Data, Scan History,
-Attribution) — then a rule, then Settings, which names itself and so sits in an unlabelled
-chrome tail rather than under a "Preferences" heading over one link. **A lane holding one
-visible page is drawn AS that page**, which is why Overview appears on the rail as _Executive_.
-Pointing at a lane opens the **second tier**: a full-height 280px panel listing that lane's
-pages. **A rail item earns a panel by having something to put in it**, so the two multi-page
-lanes have one and Executive and Settings are plain links; the rail draws nothing to advertise
-which is which — the panel is what shows up, and `aria-haspopup` is what says so to a reader
-who cannot see it.
+Above 800px the nav's **first tier** is a 76px icon rail: one item per lane — _Program_
+(Executive, MTTR & SLA, Coverage & efficiency), _Registers_ (OS vulnerabilities, Cold zone),
+_Data_ (Storage, Scan history, Attribution, Key sheet) — then a rule, then Settings, which
+names itself and so sits in an unlabelled chrome tail rather than under a "Preferences"
+heading over one link. These are the lanes `gas_devsecops` arrived at independently, and the
+words are shared with it on purpose: the same question gets the same name in both registers.
+**A lane holding one visible page is drawn AS that page**, which is why an earlier
+one-page _Overview_ lane had to be folded into a real one. Pointing at a lane opens the
+**second tier**: a full-height 280px panel listing that lane's pages. **A rail item earns a
+panel by having something to put in it**, so the three lanes have one and Settings is a plain
+link; the rail draws nothing to advertise which is which — the panel is what shows up, and
+`aria-haspopup` is what says so to a reader who cannot see it.
 
 The panel opens on a 220ms cold delay (nothing inside a 400ms warm window, and a grace period
 long enough for the pointer to cross the gap — SC 1.4.13), on `ArrowRight` from the keyboard,
@@ -56,9 +58,10 @@ and on the first tap where there is no hover at all. Its `→|` control **pins**
 second column, which is what the old collapsed/expanded rail preference became — same
 `localStorage` key, so a reader who had widened the rail keeps a wide left edge. Below 800px
 the rail is a stacked list instead: every page, lane headings as words, one rule above the
-tail, and no panel. `test/navGroups.test.js` and `test/navModel.test.js` hold the shape —
-lanes contiguous, every lane and page marked, the tail drawn once, and the landing route the
-same in `app.js` and `store.js`.
+tail, and no panel. `gas_shared/test/contracts/navGroups.js` and `test/navModel.test.js` hold
+the shape — lanes contiguous, every lane and page marked, no two marks alike, the tail drawn
+once, and the landing route the manifest's. The route table itself is `src/client/js/pages.js`,
+its own module so the contract can import it rather than parse it.
 
 The switcher fronts the two dimensions this register scopes by, as two groups in one list:
 
@@ -96,7 +99,10 @@ answered**, by a per-source strip: `tag` rising and `rule` falling is the estate
 
 **The code still says `domain`.** That is the wire and storage name — the `domains` settings
 blob, the RPC params, the ledger's `_domain` column, `api_getMttrByDomain` — and renaming it
-would churn a persisted schema and every cache key for nothing a reader can see.
+would churn a persisted schema and every cache key for nothing a reader can see. The same goes
+for the remediation split, whose RPC, host element, renderer and two persisted chart preferences
+are all still called `byDomain` although three dimensions now arrive on them: they name the
+*section*, not the dimension it happens to be showing.
 
 It is not a Wiz _project_ picker, and cannot be: `src/domain/transform.ts` drops the
 `projects[]` array Wiz returns on every finding, and `WIZ_PROJECT_ID_V2` scopes the SYNC rather
@@ -121,8 +127,24 @@ worse than answering for everything, not narrower. A scoped current-scan tally
 (`api.ts:executiveSeverityCounts`) removes the obstacle, and with it the exemption. The
 remediation split follows the same dimension swap the MTTR page makes: by domain at the whole
 register, by support group **within** a picked domain, since splitting by domain while scoped to
-one is a single row restating the hero. A scope holding only resolved history says so
-(`No open findings in this scope.`) rather than showing a row of bare zeros under a live hero.
+one is a single row restating the hero — and **by asset** within a picked support group. A scope
+holding only resolved history says so (`No open findings in this scope.`) rather than showing a
+row of bare zeros under a live hero.
+
+**The by-asset case is a choice, not a degeneracy fix, and the one-row argument above does not
+stretch to cover it.** By domain *within a support group* was a perfectly good multi-row answer —
+"which domains does this team carry risk in?" — and it is gone. It is gone because a support
+group is a **team**, and the thing a team patches is a **host**: the split that tells them where
+to go on Monday is the one over their assets. Anyone restoring the old view should do it on its
+own merits rather than on the strength of the sentence before this one.
+
+It is also the only one of the three that is **capped**, at 20 assets. Domains and support groups
+are configured by an operator, so the register knows how many there are and lists them all;
+assets come from the estate, and a team can own thousands. The cap is not about compute — the
+Kaplan–Meier curve behind each row is quadratic *within* a bucket, so more, smaller buckets cost
+*less* — it is about what the landing page's payload and the DOM can carry. What falls outside
+the 20 is reported, not dropped in silence: a line under both tables says how many assets and how
+many open findings are not shown, and the register itself still lists every one of them.
 
 The caption beside the trigger always carries the **denominator** (`31 of 161 findings`), since
 a bare count cannot tell a small support group from a small register, and a **second figure**
@@ -339,7 +361,7 @@ none                 === rows classified "low"
 unknown              === rows classified "unknown"
 ```
 
-That matters because this page and **Program performance** both publish an unclassified
+That matters because this page and **Coverage & efficiency** both publish an unclassified
 count over the same fleet. Two independent classifiers would eventually disagree, and a
 reader would have no way to tell which one was lying. `unknown` is a first-class tier for the
 same reason it is a first-class verdict there — see _Unclassified findings are not "low risk"_.
@@ -372,9 +394,9 @@ KEV is rare and that rarity is exactly what makes it the day's work. It also kee
 clear of the wall of red DESIGN.md rejects. The unclassified tier is **hatched**, never
 filled: a measurement gap is not a low score.
 
-## Program performance (coverage, efficiency, capacity)
+## Coverage & efficiency (coverage, efficiency, capacity)
 
-The **Program performance** page answers the question MTTR cannot: not _how fast_ risk is
+The **Coverage & efficiency** page answers the question MTTR cannot: not _how fast_ risk is
 closed, but whether the _right_ risk is closed. The metrics are the Cisco Kenna / Cyentia
 "Prioritization to Prediction" family (`src/domain/program.ts`):
 
@@ -459,6 +481,189 @@ computing a rate over the slice that happens to have data.
 > (`sheetsDb.ensureTab` from `writeStateTables`), but running `setup()` is the direct fix.
 > The ledger grows by four columns, roughly +22% on its ~18 cells/vulnerability footprint —
 > check **Settings → Storage** at production scale.
+
+## The cold zone
+
+Where **Coverage & efficiency** asks whether the right risk is closing, the **Cold zone**
+page (`#/coldZone`, and its "Backlog in the cold zone" card on the Executive page) asks
+where remediation has stopped altogether. Backlog size cannot tell an actively-worked asset
+from an abandoned one; idle time can. `src/domain/coldZone.ts` measures, per **asset**
+rolled up per **support group** (`_supportGroup`, joined live the same way the domain
+breakdown is — never a stored ledger column), how long since anything on it last resolved.
+
+### Two states, tested in an order that matters
+
+- **`cold`** — a fact about the team. The asset is still scanned, still carries open
+  findings, and nothing on it has resolved for at least the cold-zone window.
+- **`unobserved`** — a fact about the scanner. It stopped returning the asset at all.
+
+`unobserved` is tested **first**, and the order is load-bearing: `reconcile` resolves a
+finding that drops out of the newest scan **by disappearance**
+(`resolution_src: "disappeared"`), so an asset the scanner has simply lost sight of looks,
+for one scan, exactly like it was mass-remediated. Reading that as warmth would reward
+losing coverage — the single worst thing this page could do — so an unobserved asset is
+never warm, never cold, and sits in no idle bucket. It publishes `disappeared_at` and how
+many findings closed at that instant instead, so the shape of the drop-out is visible.
+
+### Two kinds of out of sight, and only one of them is work
+
+That order has a cost worth knowing about, because it surprises every reader once. **An asset
+that was fully remediated and then decommissioned is `unobserved` for as long as the ledger
+remembers it** — nothing open, and no scan will ever list it again. `reconcile` writes
+`last_scan_id` only on findings a scan actually returns and the disappearance branch never
+touches it, so once the scanner stops listing an asset its rows are frozen against an old scan
+permanently. The census denominator is every asset that has ever had a row here, so on a
+register with ordinary asset churn — retired VMs, deleted containers, rebuilt hosts, ephemeral
+cloud resources — that tail only grows. One real tenant read **1,947 of 2,404 assets out of
+sight**, which looks like a coverage catastrophe and is mostly machines that no longer exist.
+
+So the census draws the two apart, on the one question that separates them: **is anything still
+open on it?**
+
+- **Out of sight, backlog open** (`assets_unobserved_open`) — the scanner lost the asset while
+  findings were still on it. That backlog is real, and nobody will be told about it again. This
+  is the figure to act on, and it is the one under the Unobserved assets card.
+- **Gone, nothing open** (`assets_unobserved_clear`) — fixed, then decommissioned. Nothing to do.
+
+They sum to `assets_unobserved`, so the verdict itself never split: the assets table, the group
+roll-up and the scatter all still see one `unobserved` state.
+
+**To go from the picture to the list**, the page cross-filters. Two controls narrow the "Cold
+and unobserved assets" table below: the **band key row** above the support-group table (every
+idle band, its estate-wide count, and press to filter), and a **support group's own name** in
+its row. Either alone or both together; pressing again lets go, and a chip above the table
+names whatever is currently applied. Nothing refetches — every asset a selection can reach is
+already in the payload the page holds — and nothing goes in the URL.
+
+Picking a band also **dims that band's complement in every row's idle profile at once**, which
+is how the column-wise read survives the heat table folding into the roll-up. Note the band
+selection reaches assets the cold list never holds on its own: bands 0–2 are warm assets, and
+`coldBandRows` widens the population to match rather than lighting a picture that lists
+nothing.
+
+The same selection reaches the **"Idle time against backlog" scatter** at the foot of the page,
+where it *highlights* rather than narrows — see [The scatter answers the same
+selection](#the-scatter-answers-the-same-selection) below.
+
+The same table keeps its cut control: **All**, **Cold**, and **Out of sight, backlog open**,
+each labelled with its count so an empty cut can be read without opening it. The band rides
+inside that same value rather than beside it, so the two can never disagree — and the corner
+that would be empty by construction (an unobserved asset has no band) cannot be asked for. On that last cut the table swaps the idle reading
+— which measures a silence the scanner can no longer see — for the two facts that say why an
+asset went quiet:
+
+- **Last seen** — the last time any finding on it reached a scan, with the silence since.
+- **Closed at once** — how many of its findings closed by disappearance at the same instant. A
+  large number is the whole asset leaving in one scan; a single one faded as its last finding
+  closed.
+
+There is no cause to name beyond that. Every asset in this cut is out of sight for the same
+structural reason, so the columns carry the evidence and leave the reading to you.
+
+### The lower bound
+
+An asset can carry open findings and have **never** had one resolve. That is not "0 days
+idle", and it is not "unmeasured" either — it is the strongest case of cold there is, and
+refusing to say so just because nothing was measured would hide exactly the assets this
+page exists for. Those rows get `idle_bound_days`: the later of "when we started watching"
+and "when this asset's oldest open finding first appeared", published as a genuine **lower
+bound**, never a measurement dressed up as one.
+
+That is also the register's general notation rule for every bounded figure here: **"≥ N d"**
+in a table cell, **"at least N days"** in prose — never a bare number standing in for either.
+A bound and a measurement must never read alike.
+
+### Two ways to draw the line
+
+- **Fixed** (the default) — the operator names a window in days (`coldAfterDays`, default
+  90). The same number means the same thing on every estate, every week.
+- **Relative** — the operator names a share (`coldTargetSharePct`, default 20%), and the
+  line in days is *derived*: the idlest N% of the assets that are observed and still carry
+  open findings. The cut is a **rank** — the k-th largest idle reading — never an
+  interpolation, so it always lands on an asset someone can go look at, and ties at the
+  cutoff are all cold rather than split.
+
+Relative mode never goes below `coldFloorDays` (default 14 days) — the **floor**. A share
+always names somebody, however healthy the estate, and the floor is what stops "the idlest
+20%" from slandering four assets that were all touched last week. When the floor holds, the
+page's caption says so and still publishes the derived line it overruled
+(`derived_days`), so the claim stays auditable either way.
+
+### The observation rule: per severity, over flat scans only
+
+An asset counts as observed if **any** of its rows reaches the newest **flat** scan covering
+that row's severity — never the single newest scan overall. Two reasons:
+
+1. `reconcile.ts` already gates disappearance the same way ("this severity wasn't scanned,
+   absence is expected, not resolution") — keying observation on one scan instead would mark
+   every HIGH-severity asset unobserved the morning after a CRITICAL-only sweep, contradicting
+   the register's own rule about the very same rows.
+2. **Grouped scans write no per-finding observations at all** (`persistGroupedScan`) — they
+   cannot say whether an asset was returned — so only `shape === "flat"` scans count, for the
+   clock (`asOf` / `observedFrom`) as well as the map. A severity with rows but no flat scan on
+   record is undecidable and resolves to observed, the conservative direction, and is named in
+   `severities_without_scan` so the reader knows which way the doubt fell.
+
+### Reading the same scatter one grain up
+
+**Idle time against backlog** plots idle days against open findings, and its switch says
+whether a dot is an **asset** or a **support group**. Both grains plot the same two
+quantities over the same population — the observed assets that still carry an open finding —
+so a group's dot is an aggregation of the asset dots beside it, and its backlog is exactly
+theirs added up.
+
+A support group has no idle time of its own, so the group grain takes its **median member's
+reading**: the asset at the middle of the group once its members are ordered by idle time,
+never an average of two. That keeps the claim exact at every count — *at least half of this
+group's assets have been idle at least this long* — and it means a dot past the cold line is
+a group at least half of whose assets are cold. `cold` and the **"at least"** mark come from
+that one asset too, so the threshold is never re-decided outside the domain. A lower bound
+only ever understates, so a median that lands on one is still a lower bound on the group's
+median: the true figure can only be further right.
+
+The other two candidates are worse on purpose. A group's last movement is its *least* idle
+asset, so one busy asset would read a frozen group as active; its idlest asset is the other
+extreme, and every group of any size would sit past the line. Only the middle separates them.
+
+### The scatter answers the same selection
+
+Pressing a support group's name, or an idle band in the key row, also reaches this chart — but
+it **highlights** rather than narrows. Matching dots keep their full ink; the rest fade and
+shrink to a small faint mark of the same shape. The axes and the dashed cold line **do not
+move**, which is the point: the question a press asks here is *where does this sit against
+everyone else*, and a chart that rescaled around the answer would have thrown away the
+comparison. Cold assets stay filled diamonds and the rest stay hollow circles whether lit or
+dimmed, so the verdict and the selection never borrow each other's cue.
+
+- **On the asset grain**, a dot lights when the asset is in the picked group, in the picked
+  band, or both — the two axes cross with *and*, never *or*.
+- **On the support-group grain**, a band lights the groups whose **median member** sits in that
+  band. The dot already sits at that member's reading, so the lit dots are exactly the ones
+  inside the band's stretch of the x axis and you can check the highlight against the axis by
+  eye. A group is *not* lit merely for owning one asset in the band — that is what the band bars
+  in the table above say, and it would put a lit dot in the wrong part of this axis.
+- **"Only the selection"**, beside the grain switch, collapses the plot to the lit dots alone.
+  The axes rescale there — it is an explicit opt-in — and the control is disabled while nothing
+  is selected, refuses itself when the selection has no dot here at all, and lets go on its own
+  as soon as you drop the filter.
+- **The cut control does not reach this chart.** **Cold** is already the filled diamond.
+  **Out of sight, backlog open** lists exactly the assets this chart excludes by construction,
+  so a line above the canvas says so rather than leaving a press looking broken; a support group
+  picked above still applies underneath it.
+
+The highlight is not only pixels. The canvas's own description opens with what is lit and marks
+each lit point inline, and the table twin beside it grows an **In selection** column for as long
+as anything is dimmed.
+
+### Two things this page counts rather than hides
+
+- **`unclassified_rows`** — open findings the active high-risk rule cannot classify at all,
+  because the signals it reads were never captured on them. They are real open findings, they
+  count as such, and they can never be high risk; the third KPI's denominator explains the gap
+  rather than silently excluding the rows.
+- **`(no support group)`** — a real row, never a drop. With no support-group map loaded, or a
+  subscription the map does not name, every affected asset lands here, and the page says so —
+  the same discipline the Attribution page's map-health note follows.
 
 ## Exporting the register
 
@@ -807,8 +1012,28 @@ magic-byte sniff in `archiveStore` tolerates). `dev/boot.js` runs `setup()`, see
 8 backdated dry-run scans (the clock is shifted per scan so MTTR/trend have shape,
 and eight daily scans span the seven days an open-backlog comparison needs),
 and shims `google.script.run` onto `Server.api`. The dry-run sample is amplified to
-~170 findings across ~26 assets via an esbuild alias (`dev/sampleData.dev.ts`) that
+~180 findings across ~30 assets via an esbuild alias (`dev/sampleData.dev.ts`) that
 exists only in the dev build — `dist/server.js` and the pushed bundle are untouched.
+
+Query flags `dev/boot.js` reads off `location.search` on every load:
+
+| Flag                    | Effect                                                            |
+| ----------------------- | ------------------------------------------------------------------ |
+| `?noseed`                | Skip the seed scans — a fresh, empty ledger.                       |
+| `?nohub`                 | Skip seeding a hub URL — the header renders with no hub button.    |
+| `?slow=<ms>`             | Artificial RPC latency, for exercising loading states.             |
+| `?seedJob=running\|stuck`| Seed a non-terminal scan job row (the progress card / details).    |
+| `?cold=fixed\|relative`  | Force the cold-zone mode (Lifecycle tab), saved after the seed.    |
+| `?coldafter=N`           | Fixed-mode window in days (`coldAfterDays`).                       |
+| `?coldtarget=N`          | Relative-mode target share, in percent (`coldTargetSharePct`).     |
+| `?coldfloor=N`           | Relative-mode floor in days (`coldFloorDays`).                     |
+
+The four `cold*` flags merge into one `api_saveSettings` call issued **after** the seed
+loop — saving settings bumps the settings data version, and the cold-zone read model's
+durable cache keys on it, so it only recomputes against the seed once that version has
+moved. `?cold=relative` alone leaves the target share and floor at whatever they already
+are (the domain defaults, 20% / 14 days, on a fresh harness): `saveSettings` merges the
+patch over the current settings rather than replacing them.
 
 ### Measuring a page (`npm run density`)
 
@@ -886,7 +1111,7 @@ Things node tests cannot cover — verify after the first deployment:
       again must reclaim the dead job and start a new one rather than re-adopting it. Confirm a
       scan can start afterwards (jobs are single-flight across kinds, so a wedged backfill
       blocks scanning).
-- [ ] Program performance: after `setup()`, run a scan and confirm the `vuln_ledger` tab has
+- [ ] Coverage & efficiency: after `setup()`, run a scan and confirm the `vuln_ledger` tab has
       `has_kev` / `has_exploit` / `epss` / `risk_observed_at` populated. Then
       **Settings → Risk-signal backfill**: it survives the 6-min cap via its own
       `trigger_continueBackfill` one-shot trigger, is safe to re-run, and a mid-run Stop
@@ -905,7 +1130,7 @@ Things node tests cannot cover — verify after the first deployment:
       `shrinkTab` failed — check the reported `cellsBefore`/`cellsAfter` pair). Then confirm
       the walk resumes across `trigger_continuePurge` hops (this needs a register large enough
       to exceed one 4.5-min hop — the node tests cover the cursor logic, not the real trigger
-      timing), and that a mid-purge **Delete selected** on Scan History is refused rather than
+      timing), and that a mid-purge **Delete selected** on Scan history is refused rather than
       replaying half-rewritten archives.
 - [ ] After the purge completes, delete an unsealed scan and confirm the purged severities do
       **not** reappear — the archive rewrite is the only thing preventing it.

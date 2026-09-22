@@ -22,7 +22,7 @@ import {
 describe("parsePages() reads the same PAGES table shape test/pagesLit.test.js's own parser reads", () => {
   const FAKE_APP_SRC = [
     "const OTHER = 1;",
-    "const PAGES = {",
+    "export const PAGES = {",
     '  executive: { title: "Executive", group: "Program", render: renderExecutive },',
     '  mttr: { title: "MTTR & SLA", group: "Program", render: renderMttr },',
     "  settings: { title: \"Settings\", group: null, render: renderSettings },",
@@ -44,7 +44,7 @@ describe("parsePages() reads the same PAGES table shape test/pagesLit.test.js's 
   });
 
   it("a line missing render: still yields the route, with render: null", () => {
-    const src = "const PAGES = {\n  help: { title: \"Key sheet\", group: \"Data\" },\n};\n";
+    const src = "export const PAGES = {\n  help: { title: \"Key sheet\", group: \"Data\" },\n};\n";
     expect(parsePages(src)).toEqual([{ route: "help", render: null }]);
   });
 
@@ -57,17 +57,41 @@ describe("parsePages() reads the same PAGES table shape test/pagesLit.test.js's 
   // boundaries to read another app's source at runtime.
   it("a sibling app's extra per-route key (gas_ai's fullBleed) does not hide the route", () => {
     const src = [
-      "const PAGES = {",
+      "export const PAGES = {",
       '  graph: { title: "Security Graph", group: "Landscape", render: renderGraphPage, fullBleed: true },',
       "};",
     ].join("\n");
     expect(parsePages(src)).toEqual([{ route: "graph", render: "renderGraphPage" }]);
   });
 
+  // THE SHAPE THAT USED TO BE UNREADABLE, and the reason gas_ai's `aars` entry carried a
+  // "ONE LINE, and it has to stay one line" warning for as long as it did. The parser took
+  // `render:` off the same line as the key, so an entry wrapped for a reader came back with
+  // render: null — which this walker would then report as a route pointing at nothing.
+  it("reads an entry wrapped across lines, comments and all, as one route", () => {
+    const src = [
+      "export const PAGES = {",
+      "  // Gated, never removed: the key stays so shared #/aars links keep working.",
+      "  aars: {",
+      '    title: "Scoring Models",',
+      '    group: "Labs",',
+      "    render: renderAarsRules,",
+      "    fullBleed: true,",
+      "    experimental: true,",
+      "  },",
+      '  settings: { title: "Settings", group: null, render: renderSettings },',
+      "};",
+    ].join("\n");
+    expect(parsePages(src)).toEqual([
+      { route: "aars", render: "renderAarsRules" },
+      { route: "settings", render: "renderSettings" },
+    ]);
+  });
+
   it("two-space comment lines BETWEEN routes are skipped, not read as routes — every sibling "
     + "table interleaves them, gas_ai's most heavily", () => {
     const src = [
-      "const PAGES = {",
+      "export const PAGES = {",
       "  // The front door. MANIFEST.defaultRoute names it.",
       '  hub: { title: "Registers", group: null, render: renderHub },',
       "  // Second lane comment: the route key stays `settings`.",
@@ -89,7 +113,7 @@ describe("parsePages() reads the same PAGES table shape test/pagesLit.test.js's 
   // is for, rather than a rule stated in a comment nothing runs.
   it("a route-shaped line BELOW the table's closing brace is not a route", () => {
     const src = [
-      "const PAGES = {",
+      "export const PAGES = {",
       '  hub: { title: "Registers", group: null, render: renderHub },',
       "};",
       "const ROUTE_ICONS = {",
@@ -101,7 +125,7 @@ describe("parsePages() reads the same PAGES table shape test/pagesLit.test.js's 
 
   it("a two-route table (gas_hub's whole IA) is a measurement, not an empty walk", () => {
     const src = [
-      "const PAGES = {",
+      "export const PAGES = {",
       '  hub: { title: "Registers", group: null, render: renderHub },',
       '  settings: { title: "Settings", group: null, render: renderSettings },',
       "};",
@@ -473,8 +497,28 @@ describe("countVisuals() counts every picture once, and the right ones", () => {
     ));
     expect(v).toMatchObject({
       canvas: 1, meter: 1, sevbar: 1, axisBar: 1, isotype: 1, quad: 1, spark: 0, svg: 0,
+      bandbar: 0,
     });
     expect(v.total).toBe(6);
+  });
+
+  // ONE BAND BAR IS ONE PICTURE, not one per segment. A row's distribution is a single
+  // `role="img"`, and counting its segments would report a nine-row table as forty-five
+  // pictures — the walker would then "prove" that folding a grid into a column of bars tripled
+  // the page's visual density, which is the opposite of what it did.
+  it("counts a band bar once, however many segments it carries", () => {
+    const bar = node("SPAN", ["bandbar"]);
+    bar.children = [
+      node("SPAN", ["bandbar__fill"]),
+    ];
+    bar.children[0].children = [
+      node("SPAN", ["bandbar__seg"]),
+      node("SPAN", ["bandbar__seg"]),
+      node("SPAN", ["bandbar__seg"]),
+    ];
+    const v = countVisuals(wrap(bar));
+    expect(v.bandbar).toBe(1);
+    expect(v.total).toBe(1);
   });
 
   // THE SECOND DEAD PREDICATE. It read `classes.includes("spark")`, and the shared component
@@ -521,7 +565,9 @@ describe("countVisuals() counts every picture once, and the right ones", () => {
     const v = countVisuals(null);
     expect(v.total).toBe(0);
     // Every bucket present, so a failed route's row lines up with a measured one's.
-    for (const key of ["canvas", "svg", "meter", "sevbar", "axisBar", "isotype", "quad", "spark"]) {
+    for (const key of [
+      "canvas", "svg", "meter", "sevbar", "axisBar", "isotype", "quad", "spark", "bandbar",
+    ]) {
       expect(v[key], key).toBe(0);
     }
   });

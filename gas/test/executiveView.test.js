@@ -1,7 +1,7 @@
 // What the Executive page CLAIMS once it answers for the header scope: which population its
 // severity tiles counted, and which dimension its remediation split is drawn over.
 //
-// Plain .js for the reason navGroups.test.js writes out. executive.js exports these two
+// Plain .js for the reason attributionPrefill.test.js writes out. executive.js exports these two
 // functions so this file can exist — the split scanProgress.js and capacity.js already use.
 //
 // The failure mode this guards is not a crash. It is a page that answers for one domain in its
@@ -36,12 +36,30 @@
 // `domain`; the by-support-group split ships `group` alone. A reader that reaches for `.domain`
 // renders a table of real numbers beside a column of blanks — which looks like missing data
 // rather than like a bug in the accessor.
+//
+// THE THIRD HALF IS NEWER AND IS ABOUT A BLOCK THAT MAY NOT BE DRAWN AT ALL. The movement
+// strip in the hero header states every severity's open count, its previous count and its
+// direction, over the same scoped rows under the same gate — so wherever that strip can be
+// drawn, this block was the page saying 27 CRITICAL and 39 HIGH a second time, a screen lower,
+// in a second picture. It is the strip's FALLBACK now: `openMovement` needs two scans a week
+// apart, and a register that does not have them keeps this block as the only breakdown of its
+// open backlog. Which of the two is on screen is a real decision with a real wrong answer, so
+// it lives on the view and is pinned here, perturbation included.
+
+import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
+import { code } from "../../gas_shared/test/contracts/emptyStates.js";
 import {
-  executiveByDomainView, executiveHeroView, executiveSeverityView,
+  coldShareView, executiveByDomainView, executiveHeroView, executiveSeverityView,
 } from "../src/client/js/pages/executive.js";
+
+// The DOM half is swept as source text, the house pattern for a tree with no jsdom, and
+// comment-stripped through `code()` because this page's prose quotes the calls it removed.
+const EXEC_SRC = readFileSync(
+  new URL("../src/client/js/pages/executive.js", import.meta.url), "utf8",
+);
 
 const ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
 const ALL = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
@@ -268,6 +286,23 @@ describe("executiveByDomainView — the dimension follows the scope", () => {
     expect(v.columnHeader).toBe("Support group");
     expect(v.rows.map((r) => r.name)).toEqual(["Team X", "Team Y"]);
   });
+
+  // The third dimension, shown under a support-group scope. Like the support-group split it
+  // writes `group` alone, so the same unaliased read has to hold.
+  it("titles and labels the asset split, reading the unaliased name", () => {
+    const v = dView({ dimension: "asset", rows: [row("web-01", 5), row("db-02", 3)] });
+    expect(v.title).toBe("MTTR by asset");
+    expect(v.columnHeader).toBe("Asset");
+    expect(v.rows.map((r) => r.name)).toEqual(["web-01", "db-02"]);
+  });
+
+  // An unknown tag is not a reason to blank the section: the domain copy is the fallback, the
+  // same one the renderer picks.
+  it("falls back to the domain copy on an unrecognised dimension tag", () => {
+    const v = dView({ dimension: "galaxy", rows: [row("A", 5), row("B", 3)] });
+    expect(v.title).toBe("MTTR by domain");
+    expect(v.columnHeader).toBe("Domain");
+  });
 });
 
 describe("executiveByDomainView — when there is no split worth drawing", () => {
@@ -278,9 +313,21 @@ describe("executiveByDomainView — when there is no split worth drawing", () =>
 
   // domainNames is register-wide, so under a support-group scope that gate passes for a group
   // that lives in a single domain — and a one-row table just restates the hero.
-  it("hides a one-row table on either dimension", () => {
+  it("hides a one-row table on every dimension", () => {
     expect(dView({ dimension: "domain", rows: [byDomainRow("A", 5)] }).show).toBe(false);
     expect(dView({ dimension: "supportGroup", rows: [row("Team X", 5)] }).show).toBe(false);
+    expect(dView({ dimension: "asset", rows: [row("web-01", 5)] }).show).toBe(false);
+  });
+
+  // The domainNames gate is the CONFIGURED domain universe — it says nothing about whether a
+  // support group has assets worth splitting, so it must not reach the asset dimension. A
+  // single-domain register scoped to a team still gets its by-asset table.
+  it("does not let the domain-count gate hide the asset or support-group split", () => {
+    const one = ["A"];
+    expect(dView({ dimension: "asset", rows: [row("web-01", 5), row("db-02", 3)] }, one).show)
+      .toBe(true);
+    expect(dView({ dimension: "supportGroup", rows: [row("X", 5), row("Y", 3)] }, one).show)
+      .toBe(true);
   });
 
   it("hides an absent or empty payload", () => {
@@ -307,6 +354,36 @@ describe("executiveByDomainView — ranking", () => {
   it("treats a missing open count as zero rather than dropping the row", () => {
     const v = dView({ dimension: "domain", rows: [{ group: "A" }, byDomainRow("B", 3)] });
     expect(v.rows.map((r) => [r.name, r.open])).toEqual([["B", 3], ["A", 0]]);
+  });
+});
+
+// The asset dimension is the only bounded one — "lists every group" above is now "lists every
+// group IT IS GIVEN", and this is the sentence that makes the difference visible on the page
+// rather than leaving the reader to assume the table is the whole estate.
+describe("executiveByDomainView — the cut note", () => {
+  const assets = { dimension: "asset", rows: [row("web-01", 5), row("db-02", 3)] };
+
+  it("says what the cap dropped", () => {
+    const v = dView({ ...assets, cut: { groups: 7, open: 31, resolved: 12 } });
+    expect(v.cutNote)
+      .toBe("7 more assets holding 31 open findings are not shown; the register lists"
+        + " every open finding.");
+  });
+
+  it("agrees in number with itself for a single dropped asset", () => {
+    const v = dView({ ...assets, cut: { groups: 1, open: 1, resolved: 0 } });
+    expect(v.cutNote)
+      .toBe("1 more asset holding 1 open finding is not shown; the register lists"
+        + " every open finding.");
+  });
+
+  // Two silences that must read alike: an uncapped dimension sends no `cut` at all, and a
+  // capped one that fit inside its cap sends zeroes. Neither has anything to confess.
+  it("stays silent when nothing was cut", () => {
+    expect(dView({ dimension: "domain", rows: [byDomainRow("A", 5), byDomainRow("B", 3)] })
+      .cutNote).toBeNull();
+    expect(dView({ ...assets, cut: null }).cutNote).toBeNull();
+    expect(dView({ ...assets, cut: { groups: 0, open: 0, resolved: 0 } }).cutNote).toBeNull();
   });
 });
 
@@ -401,5 +478,315 @@ describe("executiveHeroView — the qualifier states its own base", () => {
       mttr: { rowCount: 1, overall: { resolved: 0, open: 1 }, remediation: { km: {} } },
     });
     expect(v.qualifier).toBe("1 tracked lifecycle · 0 resolved · 1 still open");
+  });
+});
+
+// =========================================================================================
+//  coldShareView — one number, and the three things that can make it not be one
+// =========================================================================================
+//
+// The Executive's cold-backlog card reads a `ColdZoneHeadline` (src/domain/coldZone.ts): the
+// totals and the clock, never the per-asset or per-group arrays. Three states a payload can
+// legitimately arrive in, and each renders differently:
+//
+//   measurable        the share, with the pair behind it and a sentence naming the mode.
+//   not measurable    a notice. No flat scan on record means there is no clock to measure
+//                     idleness against — an absence, not a failure.
+//   null share        the muted dash. "No asset has an open finding" is not "0.0% of the
+//                     backlog is cold", and the second one reads as a clean bill of health.
+//
+// And a fourth thing that is not a state of the data at all: WHICH CLOCK dated the figure.
+// The server publishes `coldZoneAsOfSource`, and "wallClock" means the number moves every time
+// the page is reopened rather than when the estate does — so the card says so.
+
+const headline = (over = {}) => ({
+  coldZone: {
+    measurable: true,
+    mode: "fixed",
+    cold_after_days: 90,
+    fixed_after_days: 90,
+    target_share_pct: null,
+    achieved_share_pct: 20,
+    floor_days: null,
+    floor_applied: false,
+    derived_days: null,
+    eligible_assets: 10,
+    cold_bound_only: 0,
+    observed_from: "2026-01-01T00:00:00.000Z",
+    as_of: "2026-06-01T00:00:00.000Z",
+    totals: {
+      assets: 40,
+      assets_with_open: 10,
+      cold_assets: 2,
+      open_findings: 500,
+      open_in_cold: 157,
+      cold_backlog_share_pct: 31.4,
+    },
+    row_count: 900,
+    dropped_no_asset: 0,
+    unclassified_rows: 0,
+    severities_without_scan: [],
+    ...over,
+  },
+  coldZoneAsOfSource: "scan",
+});
+
+describe("coldShareView — the measurable case", () => {
+  it("publishes the share and the pair it was taken over", () => {
+    const v = coldShareView(headline());
+    expect(v.show).toBe(true);
+    expect(v.measurable).toBe(true);
+    expect(v.pct).toBe(31.4);
+    expect(v.openInCold).toBe(157);
+    expect(v.openFindings).toBe(500);
+    expect(v.coldAssets).toBe(2);
+    expect(v.assetsWithOpen).toBe(10);
+    expect(v.coldAfterDays).toBe(90);
+  });
+
+  it("never carries the per-asset or per-group arrays — that is the point of the slice", () => {
+    const v = coldShareView(headline());
+    expect(v.assets).toBeUndefined();
+    expect(v.groups).toBeUndefined();
+  });
+});
+
+describe("coldShareView — the shape decides, never the flag", () => {
+  it("refuses a payload that claims measurable over a null totals", () => {
+    const v = coldShareView(headline({ totals: null }));
+    expect(v.show).toBe(false);
+    expect(v.measurable).toBe(false);
+    // The threshold still rides along: a reader asking "cold after how long?" is asking about
+    // the setting, not about the data.
+    expect(v.coldAfterDays).toBe(90);
+  });
+
+  // PERTURBATION: the flag check this view replaces would have passed that same payload, and
+  // the renderer would then have read `.open_in_cold` off null.
+  it("the tempting flag check passes the payload that would throw", () => {
+    const p = headline({ totals: null });
+    expect(p.coldZone.measurable).toBe(true);
+    expect(() => p.coldZone.totals.open_in_cold).toThrow();
+  });
+
+  it("answers on a payload with no cold-zone block at all rather than throwing", () => {
+    for (const payload of [null, undefined, {}, [], 7]) {
+      const v = coldShareView(payload);
+      expect(v.show).toBe(false);
+      expect(v.pct).toBeNull();
+      expect(v.openFindings).toBe(0);
+    }
+  });
+
+  // THE SHAPE THE SERVER SHIPS WHEN THE COLD COMPUTE FAILED. `getExecutivePage` guards its cold
+  // slice and sends `{ coldZone: null, coldZoneAsOfSource: null }` rather than letting a Drive
+  // service error take the whole landing page down (test/coldZoneServer.test.ts). That is only a
+  // degradation while THIS renders it as the absence notice — a throw in here would put the red
+  // box back, one layer further down.
+  it("renders an explicitly null cold zone as the absence, not as a failure", () => {
+    const v = coldShareView({ coldZone: null, coldZoneAsOfSource: null });
+    expect(v.show).toBe(false);
+    expect(v.measurable).toBe(false);
+    expect(v.pct).toBeNull();
+    expect(v.openFindings).toBe(0);
+    expect(v.coldAfterDays).toBeNull();
+    // A null source is not the server SAYING it fell back to the wall clock.
+    expect(v.atLedgerClock).toBe(true);
+  });
+
+  it("survives the rest of the page's slices arriving alongside a null cold zone", () => {
+    const v = coldShareView({ coldZone: null, coldZoneAsOfSource: null, mttr: {}, byDomain: [] });
+    expect(v.show).toBe(false);
+    expect(v.mode).toBe("fixed");
+  });
+});
+
+describe("coldShareView — a null share is an answer and it is not zero", () => {
+  it("keeps a null cold_backlog_share_pct null", () => {
+    const v = coldShareView(headline({
+      totals: {
+        assets: 4, assets_with_open: 0, cold_assets: 0,
+        open_findings: 0, open_in_cold: 0, cold_backlog_share_pct: null,
+      },
+    }));
+    expect(v.show).toBe(true);
+    expect(v.pct).toBeNull();
+  });
+
+  it("Number(null) — the cast this refusal replaces — would have printed 0.0%", () => {
+    expect(Number(null)).toBe(0);
+  });
+});
+
+describe("coldShareView — the mode is the exact word or it is fixed", () => {
+  it("reads only the literal \"relative\" as relative, and carries its two clauses", () => {
+    const v = coldShareView(headline({
+      mode: "relative", target_share_pct: 20, floor_days: 14, derived_days: 47,
+      cold_after_days: 47, floor_applied: false,
+    }));
+    expect(v.mode).toBe("relative");
+    expect(v.targetSharePct).toBe(20);
+    expect(v.derivedDays).toBe(47);
+    expect(v.floorApplied).toBe(false);
+    for (const mode of ["Relative", "RELATIVE", 1, null]) {
+      expect(coldShareView(headline({ mode })).mode, String(mode)).toBe("fixed");
+    }
+  });
+
+  it("carries floor_applied only when the payload literally says true", () => {
+    expect(coldShareView(headline({ floor_applied: true })).floorApplied).toBe(true);
+    expect(coldShareView(headline({ floor_applied: "yes" })).floorApplied).toBe(false);
+  });
+});
+
+describe("coldShareView — which clock dated the figure", () => {
+  it("is the ledger clock unless the server SAID it fell back", () => {
+    expect(coldShareView(headline()).atLedgerClock).toBe(true);
+    const older = headline();
+    delete older.coldZoneAsOfSource;
+    expect(coldShareView(older).atLedgerClock).toBe(true);
+  });
+
+  it("is false on wallClock, in the measurable and the not-measurable branch alike", () => {
+    const measurable = { ...headline(), coldZoneAsOfSource: "wallClock" };
+    expect(coldShareView(measurable).atLedgerClock).toBe(false);
+    const absentBlock = { ...headline({ totals: null }), coldZoneAsOfSource: "wallClock" };
+    expect(coldShareView(absentBlock).atLedgerClock).toBe(false);
+  });
+});
+
+// =========================================================================================
+//  The card itself, read as source — the two things a pure function cannot hold
+// =========================================================================================
+//
+// There is no jsdom here, so the render half is swept as text the way test/coldZoneDom.test.js
+// and test/historyDom.test.js do: what the card refuses to print, and where its cross-reference
+// points. A link to the wrong route is the kind of defect every unit test passes.
+
+describe("the cold-zone card's render half", () => {
+  const SRC = readFileSync(
+    new URL("../src/client/js/pages/executive.js", import.meta.url), "utf8",
+  );
+
+  it("points its cross-reference at the Cold zone route", () => {
+    expect(SRC).toContain('el("a", { class: "linklike", href: "#/coldZone" }, "Cold zone")');
+    expect(SRC).toContain("Which assets, and which support groups");
+  });
+
+  it("draws the absence as a notice rather than an error", () => {
+    const at = SRC.indexOf("function renderColdShare");
+    expect(at).toBeGreaterThan(-1);
+    const body = SRC.slice(at, SRC.indexOf("by domain", at));
+    expect(body).toContain('variant: "notice"');
+    expect(body).not.toContain("errorState(");
+  });
+
+  it("prints the muted dash rather than a percentage when the share is null", () => {
+    const at = SRC.indexOf("function renderColdShare");
+    const body = SRC.slice(at, SRC.indexOf("by domain", at));
+    expect(body).toContain("view.pct === null ? absentText : pct1(view.pct)");
+  });
+
+  it("names the wall clock's consequence rather than only its name", () => {
+    expect(SRC).toContain("moves as the page is reopened");
+  });
+
+  it("labels the figure and takes its definition from the book", () => {
+    expect(SRC).toContain('label: "Backlog in the cold zone"');
+    expect(SRC).toContain('sectionLabel("The cold zone", { term: "cold-zone" })');
+  });
+});
+
+// =========================================================================================
+//  The severity block is the movement strip's FALLBACK, not its second copy
+// =========================================================================================
+
+/**
+ * A comparable `movementOpen` block, in the shape `insights.openMovement` publishes — two
+ * endpoints a week apart, a row per severity, a total that the rows sum to.
+ */
+const COMPARABLE = {
+  comparable: true,
+  reason: null,
+  since: "2026-09-09T00:00:00Z",
+  until: "2026-09-16T00:00:00Z",
+  gapDays: 7,
+  rows: [
+    { severity: "CRITICAL", open: 27, prevOpen: 29, delta: -2 },
+    { severity: "HIGH", open: 39, prevOpen: 46, delta: -7 },
+  ],
+  total: { open: 70, prevOpen: 79, delta: -9 },
+};
+
+describe("executiveSeverityView — the movement strip supersedes it when it can be drawn", () => {
+  it("withholds the whole block when the movement comparison exists", () => {
+    const v = sevView({ movement: COMPARABLE });
+    expect(v.show).toBe(false);
+    expect(v.supersededBy).toBe("movement");
+    // NOT "empty tiles and let the renderer work it out": `show` is the decision, and the
+    // tiles are absent because there is no block, not because the register has no findings.
+    expect(v.tiles).toEqual([]);
+    expect(v.populationLine).toBeNull();
+  });
+
+  // The three refusals `openMovement` can publish. Each one is a register the strip cannot
+  // describe, and every one of them is a register whose severity split still exists.
+  for (const reason of ["noScan", "oneScan", "tooClose"]) {
+    it(`draws the block when the comparison is refused with \`${reason}\``, () => {
+      const v = sevView({ movement: { comparable: false, reason, rows: [], gapDays: 4 } });
+      expect(v.show).toBe(true);
+      expect(values(v)).toEqual({ CRITICAL: "12", HIGH: "340", MEDIUM: "1,200", LOW: "7" });
+    });
+  }
+
+  it("draws the block when handed no movement at all, so an older payload keeps it", () => {
+    // `movement` undefined means NOT COMPARABLE, not "assume it is". A payload shape that
+    // predates the block — or a caller that simply does not pass one — must keep the severity
+    // split rather than silently lose the only severity statement on the page.
+    expect(sevView().show).toBe(true);
+    expect(sevView({ movement: null }).show).toBe(true);
+    expect(sevView({ movement: {} }).show).toBe(true);
+  });
+
+  // PERTURBATION. The tempting implementation is "does the movement block have any rows?",
+  // which reads the evidence instead of the decision. `insights.openMovement` publishes
+  // `comparable` and empties `rows` on every refusal, so the two agree TODAY and the shortcut
+  // passes every test above — until something publishes rows alongside a refusal, at which
+  // point the shortcut deletes the page's only severity statement and the honest read does
+  // not. Reproduced inline so this is a measurement rather than a restatement of the rule.
+  it("PERTURBATION: reading `rows.length` instead of the decision suppresses a refusal", () => {
+    const refusedWithRows = { comparable: false, reason: "tooClose", rows: COMPARABLE.rows };
+    const byRows = (m) => Boolean(m && Array.isArray(m.rows) && m.rows.length);
+    expect(byRows(refusedWithRows)).toBe(true);        // the shortcut hides the block
+    expect(sevView({ movement: refusedWithRows }).show).toBe(true); // the shipped rule keeps it
+  });
+
+  it("supersession outranks every other branch, scoped and pending alike", () => {
+    // A scoped view with no payload yet would otherwise return `pending: true` and paint a
+    // skeleton. A skeleton for a block that is not going to exist is the flash the page
+    // dropped its early paint to avoid.
+    const v = sevView({ scoped: true, payload: null, movement: COMPARABLE });
+    expect(v.show).toBe(false);
+    expect(v.pending).toBe(false);
+  });
+});
+
+describe("os: the page hands the severity view its movement, and paints it no earlier", () => {
+  it("passes `movement` off the same payload the strip is drawn from", () => {
+    expect(EXEC_SRC).toMatch(/movement: data && data\.movement,/);
+  });
+
+  it("no longer paints the block from bootstrap before the payload lands", () => {
+    // The early paint could not survive the fallback: whether the block belongs is a question
+    // about the payload, and answering it from bootstrap would be a second copy of
+    // `insights.openMovement`'s own rule. The call is gone, not merely moved.
+    expect(code(EXEC_SRC)).not.toContain("renderSeverity(null)");
+    expect(code(EXEC_SRC)).toMatch(/guard\("open findings by severity", sevHost, \(\) => renderSeverity\(payload\)\)/);
+  });
+
+  it("drops the scoped error box that existed only to replace that early paint", () => {
+    expect(code(EXEC_SRC)).not.toContain("Couldn't load counts for this scope.");
+    // The page's ONE failure statement is still the hero's, with the retry on it.
+    expect(code(EXEC_SRC)).toContain("Couldn't load remediation data.");
   });
 });

@@ -12,7 +12,7 @@
 // be present before anything draws. These specs enumerate the orderings, because a DOM test
 // would exercise whichever interleaving the harness happened to produce and call it proof.
 //
-// Plain .js for the reason navGroups.test.js writes out.
+// Plain .js for the reason attributionPrefill.test.js writes out.
 
 import { describe, expect, it } from "vitest";
 
@@ -42,6 +42,20 @@ describe("the invariant: nothing draws without a summary", () => {
     expect(drawn(plan({ mttr: MTTR, page: PAGE, summaryChanged: true })))
       .toEqual(["aging", "byDomain", "charts", "fan", "hero", "sla", "survival"]);
   });
+});
+
+// The slot is named `byDomain` and stays that way — it is the section's wire name, and all
+// three dimensions come back on it. The plan must not start reading the tag and deciding
+// anything from it: which dimension arrived is the renderer's business, WHETHER to repaint is
+// the plan's, and a scope change is already a `pageChanged`.
+describe("the byDomain slot is dimension-blind", () => {
+  for (const dimension of ["domain", "supportGroup", "asset"]) {
+    it(`schedules the section identically for the ${dimension} split`, () => {
+      const page = { ...PAGE, byDomain: { dimension, rows: [] } };
+      expect(drawn(plan({ mttr: MTTR, page, pageChanged: true })))
+        .toEqual(["byDomain", "charts", "hero"]);
+    });
+  }
 });
 
 describe("summary first, page second — the common cold path", () => {

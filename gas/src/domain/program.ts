@@ -478,6 +478,22 @@ export interface Capacity {
   mmcrMean: number | null;
   /** "1 in N" phrasing of mmcrMean — the P2P v3 idiom. Null when mmcrMean is null or 0. */
   oneInN: number | null;
+  /**
+   * Mean findings CLOSED per month, over exactly the months `mmcrMean` averages. Null when
+   * there are none.
+   *
+   * The rate's absolute counterpart, and it shares `monthsCounted` on purpose. "About one in
+   * ten a month" is four findings on one register and four hundred on another, and the rate
+   * alone cannot tell them apart — which is the figure a reader needs to staff against. A
+   * count averaged over a DIFFERENT set of months than the rate printed beside it would be
+   * two figures nobody can reconcile, so this is computed here rather than on the page: the
+   * returned `months` are trimmed by `maxMonths` AFTER `counted` is taken, and a caller
+   * averaging what ships would quietly be using a narrower denominator than it published.
+   *
+   * Unrounded. Rounding is a display decision, the same split `gas_ai`'s rankEval makes
+   * between `closedPerHorizonMean` and its rounded `capacityK`.
+   */
+  closedPerMonthMean: number | null;
   netTotal: number;
   verdict: CapacityVerdict | null;
   monthsCounted: number;
@@ -590,7 +606,15 @@ export function capacityByMonth(
   }
 
   if (!parsed.length) {
-    return { months: [], mmcrMean: null, oneInN: null, netTotal: 0, verdict: null, monthsCounted: 0 };
+    return {
+      months: [],
+      mmcrMean: null,
+      oneInN: null,
+      closedPerMonthMean: null,
+      netTotal: 0,
+      verdict: null,
+      monthsCounted: 0,
+    };
   }
 
   // minNum, not Math.min(...): `parsed` holds one entry per finding, so the spread/apply
@@ -634,6 +658,10 @@ export function capacityByMonth(
   const mmcrMean = counted.length
     ? counted.reduce((a, m) => a + (m.mmcr as number), 0) / counted.length
     : null;
+  // The same months, counted rather than rated — see `Capacity.closedPerMonthMean`.
+  const closedPerMonthMean = counted.length
+    ? counted.reduce((a, m) => a + m.closed, 0) / counted.length
+    : null;
   const netTotal = months.reduce((a, m) => a + m.net, 0);
   const netPctOverall = counted.length
     ? counted.reduce((a, m) => a + (m.netPct ?? 0), 0) / counted.length
@@ -648,6 +676,7 @@ export function capacityByMonth(
     months: trimmed,
     mmcrMean,
     oneInN: mmcrMean !== null && mmcrMean > 0 ? 100 / mmcrMean : null,
+    closedPerMonthMean,
     netTotal,
     verdict: counted.length ? verdictOf(netPctOverall) : null,
     monthsCounted: counted.length,

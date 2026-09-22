@@ -121,7 +121,9 @@ export function isIconSvg(node) {
  * buckets are last, with `svg` explicitly declining anything a named bucket already claimed.
  * A double count would show up as the wave inventing a picture it did not draw.
  */
-const NAMED_VISUAL_CLASSES = ["meter", "sevbar", "axis-bar", "isotype", "quad", "sparkline"];
+const NAMED_VISUAL_CLASSES = [
+  "meter", "sevbar", "axis-bar", "isotype", "quad", "sparkline", "bandbar",
+];
 
 function hasNamedVisual(node) {
   return !!node && Array.isArray(node.classes)
@@ -139,6 +141,13 @@ export const VISUAL_PREDICATES = [
   ["isotype", hasClass("isotype")],
   ["quad", hasClass("quad")],
   ["spark", hasClass("sparkline")],
+  // A DISTRIBUTION ACROSS ORDERED BANDS, at the size of a table cell (gas_shared/ui/
+  // bandBar.js). It arrives in this list AFTER the two registers that draw it shipped, and in
+  // its own commit, on this file's own rule: editing the instrument in the wave that uses it
+  // as evidence gives a before-column and an after-column measured by two different rulers.
+  // The wave that folded two subject x band grids into their roll-up tables therefore reads as
+  // `visuals` UNCHANGED in its own diff, and gains one per row here.
+  ["bandbar", hasClass("bandbar")],
   ["canvas", (n) => tagOf(n) === "CANVAS"],
   ["svg", (n) => tagOf(n) === "SVG" && !isIconSvg(n) && !hasNamedVisual(n)],
 ];
@@ -327,29 +336,49 @@ export function collectProseBlocks(root, minWords = PROSE_MIN_WORDS) {
 }
 
 // ============================================================================================
-//  Route list — parsed from app.js's own PAGES table, never hand-typed
+//  Route list — parsed from pages.js's own PAGES table, never hand-typed
 // ============================================================================================
 
 /**
- * The exact regex `test/pagesLit.test.js`'s own `parsePages()` uses, lifted here rather than
- * imported (that file is a `describe`/`it` module, not an export site, and duplicating six
- * lines of regex is cheaper than making a test file importable). If `app.js`'s PAGES table
- * ever changes shape, that test fails first — this function failing alongside it, rather than
- * silently returning `[]` and making the walker "measure" zero routes, is the point of
- * `density.test.js`'s own parsePages coverage below.
+ * READ AS TEXT ON PURPOSE, unlike the test contracts. The route table moved out of app.js
+ * into its own importable `pages.js`, and `gas_shared/test/contracts/navGroups.js` dropped its
+ * regex for a real import the same day — but this walker is a CLI that points `--root` at a
+ * SIBLING app and reads it from a Node process that has not installed that app's deps. Text is
+ * what it can honestly read there, so the regex stays; only the file it opens changed.
+ *
+ * If that table ever changes shape, `density.test.js`'s own coverage below fails first — this
+ * function failing alongside it, rather than silently returning `[]` and making the walker
+ * "measure" zero routes, is the point of that coverage.
  */
-export function parsePages(appSrc) {
-  const marker = "const PAGES = {";
-  const start = appSrc.indexOf(marker);
+export function parsePages(pagesSrc) {
+  const marker = "export const PAGES = {";
+  const start = pagesSrc.indexOf(marker);
   if (start === -1) return [];
-  const end = appSrc.indexOf("\n};", start);
-  const body = appSrc.slice(start, end === -1 ? undefined : end);
+  const end = pagesSrc.indexOf("\n};", start);
+  const body = pagesSrc.slice(start, end === -1 ? undefined : end);
   const out = [];
+  // MULTI-LINE ENTRIES ARE READ, not skipped. This used to take `render:` off the same line
+  // as the key, which quietly made "one line per route" a rule nobody had chosen: gas_ai's
+  // `aars` entry carried a comment warning future readers not to wrap it. An entry is open
+  // from its `  key: {` until the `  },` that closes it, and `render:` is looked for across
+  // that span — so an entry may be shaped for a reader.
+  let current = null;
   for (const line of body.split("\n")) {
-    const m = line.match(/^\s{2}(\w+):\s*\{(.*)$/);
-    if (!m) continue;
-    const renderMatch = m[2].match(/render:\s*(\w+)/);
-    out.push({ route: m[1], render: renderMatch ? renderMatch[1] : null });
+    // Comments first: an entry's prose can NAME the render function it sets, and a scan
+    // that counted those would credit the wrong line.
+    if (/^\s*\/\//.test(line)) continue;
+    const key = line.match(/^\s{2}(\w+):\s*\{(.*)$/);
+    if (key) {
+      current = { route: key[1], render: null };
+      out.push(current);
+    }
+    if (current) {
+      const renderMatch = line.match(/render:\s*(\w+)/);
+      if (renderMatch) current.render = renderMatch[1];
+    }
+    // A `  },` at entry indentation closes a multi-line entry; a one-line entry closed on
+    // its own line and `current` is simply replaced by the next key.
+    if (/^\s{2}\},?\s*$/.test(line)) current = null;
   }
   return out;
 }

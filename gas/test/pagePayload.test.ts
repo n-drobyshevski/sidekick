@@ -125,9 +125,23 @@ const FULL_GROUP = {
 describe("execGroupSlice — three columns and the dimension tag", () => {
   it("ships only the columns the exec table draws", () => {
     const out = execGroupSlice(FULL_GROUP)!;
-    expect(Object.keys(out).sort()).toEqual(["dimension", "rows"]);
+    expect(Object.keys(out).sort()).toEqual(["cut", "dimension", "rows"]);
     expect((out.rows as object[]).map((r) => Object.keys(r).sort()))
       .toEqual([["group", "kmMedian", "open"], ["group", "kmMedian", "open"]]);
+  });
+
+  // The cap is the asset split's alone, so the two uncapped dimensions send no `cut` and this
+  // must land on null — an explicit "nothing could have been cut", not an absent key the
+  // client would have to tell apart from a zero.
+  it("nulls the cut for a dimension that was never capped", () => {
+    expect(execGroupSlice(FULL_GROUP)!.cut).toBeNull();
+  });
+
+  it("carries the cut through for the capped dimension", () => {
+    const cut = { groups: 7, open: 31, resolved: 12 };
+    const out = execGroupSlice({ ...FULL_GROUP, dimension: "asset", cut })!;
+    expect(out.cut).toEqual(cut);
+    expect(out.dimension).toBe("asset");
   });
 
   it("drops the trend series, which no chart on this page reads", () => {
@@ -369,9 +383,18 @@ describe("the MTTR by-group split, cut in two", () => {
   // drawer exists.
   it("mttrGroupTableSlice keeps the table and drops the series", () => {
     const out = mttrGroupTableSlice(GROUP)!;
-    expect(Object.keys(out).sort()).toEqual(["dimension", "rows"]);
+    expect(Object.keys(out).sort()).toEqual(["cut", "dimension", "rows"]);
     expect(out.rows).toEqual(GROUP.rows);
     expect(JSON.stringify(out)).not.toContain("kmPoints");
+  });
+
+  // Same contract as execGroupSlice: null where nothing could have been cut, verbatim where
+  // something was. The table's footnote reads this, and the charts read `cut.resolved` to keep
+  // their pooled "Other" series in step with the server's.
+  it("mttrGroupTableSlice carries the cut, and nulls it when there is none", () => {
+    expect(mttrGroupTableSlice(GROUP)!.cut).toBeNull();
+    const cut = { groups: 4, open: 9, resolved: 3 };
+    expect(mttrGroupTableSlice({ ...GROUP, dimension: "asset", cut })!.cut).toEqual(cut);
   });
 
   it("mttrGroupTrendSlice returns exactly the series the drawer draws", () => {

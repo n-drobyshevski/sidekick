@@ -21,9 +21,10 @@ read the tree as `"type": "module"`.
 | `api.js` | the `google.script.run` bridge and the `{ok,data}` envelope |
 | `store.js` | the bootstrap cache, the SWR RPC cache and hash routing |
 | `icons.js` | node-kind SVG (512 lines; only `ui/nodeCell.js` and `ui/uiIcons.js` reach it) |
-| `ui/` | 36 component modules plus `index.js`, the one import surface, `helpPage.js` — a page, not a component, so deliberately not in the barrel — and `settingsForm.js` — a DOM-free model reached only by direct path, deliberately not in the barrel either (see "The settings seam" below) |
+| `shell/` | the SPA chrome: `appShell.js` (boot, the hash router, the per-route `<main>` swap), `appbar.js`, `navModel.js` (the rail's arithmetic, DOM-free), `navRail.js`, `navFlyout.js`, `navIcons.js` — the nav marks with more than one consumer, one named export each so esbuild drops what an app does not name — plus `bootSplash.js`, `routeOverlay.js`, `experimental.js` and the one `index.template.html` every app renders from |
+| `ui/` | 37 component modules plus `index.js`, the one import surface, `helpPage.js` — a page, not a component, so deliberately not in the barrel — and `settingsForm.js` — a DOM-free model reached only by direct path, deliberately not in the barrel either (see "The settings seam" below) |
 | `styles/` | nine stylesheets: `tokens.base.css` first, `overrides.css` last |
-| `test/contracts/` | sixteen spec factories the apps register from their own test files |
+| `test/contracts/` | twenty-two spec factories the apps register from their own test files (the count was stale at "sixteen" before `collapsibleSection.js` was counted in; it is `grep -l 'export function register' test/contracts/*.js`) |
 | `test/testConfig.js` | a manifest fixture, for tests that reach a module reading one |
 | `test/domStub.js` | a DOM small enough to render a component into, for a repo with no jsdom |
 
@@ -33,12 +34,27 @@ read the tree as `"type": "module"`.
 - **Anything that reads an app's domain layer.** `gas_devsecops/ui/projectScope.js` reads
   `src/domain/projectScope.ts` and means nothing in a sibling with no repositories, so it
   stays in that app. The parity contract holds the allow-list.
-- **The shell.** `app.js`, `navModel.js`, `navFlyout.js`, `routeIcons.js`, `helpContent.js`
-  and the pages are still per-app. Some of that is genuinely per-app; some is a later
-  package's job.
+- **The shell.** `app.js`, `pages.js`, `helpContent.js` and the pages are per-app.
+  `navModel.js` and `navFlyout.js` moved here; `routeIcons.js` is now a per-app MERGE — the
+  marks with a second consumer live in `shell/navIcons.js` and each app names the ones it
+  uses beside its own.
+
+  `pages.js` is per-app BY CONSTRUCTION rather than by default: its entries close over that
+  app's own render functions, so there is nothing to promote. What changed is that it is a
+  module at all. The table used to sit inside `app.js`, which touches the DOM at module
+  scope, so five separate readers recovered it by regex over that file's source — and a
+  line-shaped pattern can only read line-shaped source, which is why one app's route entry
+  carried a comment forbidding anyone to wrap it. The contracts import it now.
 - **The vocabulary.** `helpContent.js` is each register's own book — which words it defines is
   the part that is genuinely per-app. Only the SHAPE of a definition is shared (`{ id, term,
   lines[] }`, kebab-case ids), so a `glossaryTip` behaves the same in all three.
+  That last clause was aspirational until the tip-budget round, and worth recording because
+  the gap was invisible: `gas_ai` carried one `blurb` string and no `lines`, so
+  `glossaryTipLines` fell through to `tipLead(entry.blurb)` and cut 46 of its 51 entries
+  mid-sentence. A `glossaryTip` there showed an ellipsis where the other two showed a
+  definition. All three carry `lines[]` now, and each app's `helpContent.test.js` holds the
+  first two of them to a card-sized budget (`MAX_TIP_LINE_LENGTH`), because those two are
+  what the card paints. Root `DESIGN.md` carries the rule.
 - **Page-shaped CSS**, with one exception: `styles/help.css`, which dresses the shared key
   sheet below. This bullet used to claim that sheet is "the shape every sidekick's key sheet
   has"; it is not, and was not when it was written — see the exception below. It is the shape
@@ -234,7 +250,7 @@ reader the wrong tab and never say so.
 **Reached by direct path — `gas_shared/ui/settingsForm.js` — never through `ui/index.js`.** This
 file has no `document` in it anywhere, the same as `ui/scopeModel.js` and `ui/tableModel.js`, but
 unlike those two it is deliberately outside the barrel: a settings-model test has no reason to
-pull the other 36 component modules (`dom.js`'s `el()` included) in behind eight pure functions,
+pull the other 37 component modules (`dom.js`'s `el()` included) in behind eight pure functions,
 and every app's own settings-model file runs under plain Node with no jsdom to spare. The rule is
 asserted, not just stated — `test/contracts/settingsForm.js` checks the import specifier by
 regex against the app's own source, because the failure this guards against is a future edit
@@ -335,12 +351,12 @@ a register. `splitBar`'s hatch, `tickTimeline`'s ticks and `createCutHistogram`'
 nothing OS-vulnerability-specific either, which is why they moved to `components.css` rather than
 following `settings.css` over from `gas`.
 
-## Three primitives for a page with too many words
+## Four primitives for a page with too many words
 
 The density wave's finding was that these registers are *correct* and *wordy*: a `denomNote`
 paragraph under every figure card (22 of them across three register pages, 13 on Secrets
 alone), a five-column table with a prose "Reading" column wherever two yes/no questions cross,
-and a figure that says where a number is but never where it is going. Three modules, all
+and a figure that says where a number is but never where it is going. Four modules, all
 additive, all with a pure model half a contract can hold and a thin DOM half that cannot be
 wrong in an interesting way.
 
@@ -392,6 +408,127 @@ optional resolver for one narrow reason — `tipLines({term})` reaches
 `appConfig().findHelpEntry`, which THROWS when nothing configured it, and a contract that
 installed a manifest to get past that would install it for every other file sharing the
 vitest worker.
+
+**`ui/verdict.js` — a verdict as a dot AND a word.** The one that arrived by the placement
+rule catching up with itself. It had already been promoted once, out of `gas_devsecops`'s
+`renderProgram` into that app's `ui/verdict.js`, on the stated bar that "two pages
+independently wanting the same shape is what promotes a private inner function into a module".
+Its parity entry then explained why it stopped there: "never pushed down into gas_shared
+because neither sibling register has a capacity verdict to draw it for" — true of CAPACITY,
+and overtaken by the cold zone, which gave `gas` a second copy of the same slug-to-tone table,
+the same function, and a BYTE-IDENTICAL ruleset whose own comment said "NOT PROMOTED TO
+gas_shared. One app draws it today; a second consumer is what promotes a rule." Both halves
+are here now, JS beside CSS in `styles/components.css`. One table matters more than one
+function: the two apps' copies were kept in step by hand, and the mapping is where a drift
+would be invisible — `unobserved` and `watching` are `neutral` rather than `bad` because
+neither is a statement about a team, and an app that quietly reddened one would be publishing
+a verdict nobody measured. `.verdict-word`'s `font-weight: 650` came across unchanged and is
+wrong; repointing it moves a shipped pixel in two apps and owes its own commit.
+
+**`ui/unitChart.js` — a count as countable marks.** The fourth, and the one that arrived by
+promotion rather than by extraction: `gas_devsecops`'s Executive page had drawn unit marks for
+the open backlog since the cold-zone wave, with the ladder, the clipped partial mark and the
+refuse-before-cast rule inline in that page, and no sibling could draw one. `unitScale` /
+`unitCounts` are `pictogramUnit` / `pictogramCounts` verbatim; `unitChartModel` / `unitGrid` /
+`unitKeyRow` are the part-to-whole half the tally never had. Two layouts, one file, two models —
+they share the MARK (its box, its `--ink` fill, its forced-colours substitution) and keep two
+models, because a tally goes wrong when the unit is per-row instead of per-table and a waffle
+when the cells do not sum to the lattice.
+
+**The class is `.isotype`, and that is the decision worth reading.**
+`gas_devsecops/dev/densityModel.mjs`'s `VISUAL_PREDICATES` already counts `hasClass("isotype")`
+as a picture. Naming the generalised module's wrapper anything else would have meant editing the
+measuring instrument in the same wave that uses it to prove a change — a before-column and an
+after-column read off two different rulers. The grid is the same class with a modifier for that
+reason and no other, and it is why this package needed no edit to the walker at all.
+
+Two non-colour channels rather than one: `data-tone` is `quad.js`'s four (a fifth would be a
+severity, and a tone outside the set is refused, which is what structurally keeps a severity
+distribution out of this module and in `sevSegmentBar`), and `data-fill` is a SILHOUETTE —
+solid, ring or hatch — so two adjacent segments differ by shape as well as by fill. Four by
+three is twelve distinguishable styles and zero new colour tokens; `--chart-cat-*` stays
+reserved and undefined. `--hatch` gets its first consumer as designed: a segment that is a
+coverage gap rather than a measurement.
+
+**Twelve styles was the claim; for a while nine of them existed.** `[data-fill="hatch"]` painted
+one ink at one alpha whatever the segment's `data-tone` was, so the tone channel reached solid
+and ring and stopped at the third silhouette — four hatched tones rendered as one. Both cold-zone
+censuses are built on that pair being distinguishable: they hatch `watching` (open findings whose
+idle time could not be measured) as `warn` and `unobserved` (the scanner has lost sight of it) as
+`neutral`, and shipped them pixel-identical, with the key row beneath as the only thing telling
+them apart. The comb now takes its ink from `color`, the way the ring already took its own, with
+`--hatch`'s geometry and its neutral rgba as the default so a hatch that was already neutral does
+not move. Under forced colours the comb is dropped rather than tone-mapped: it is a hue now, and
+`--warn` on a black High Contrast ground measures about 1.8:1 — the dashed border is what carries
+measured-versus-not-measured there, and that is what was measured.
+
+**A block lattice is as flat as it can be, and it grows to its card.** `unitGrid` lays a lattice
+of 24 or fewer out as one row at 14px; past that it used to fall back to BOTH a square shape and
+the waffle's 9px cell, so one repository over the edge turned a 318px strip into a 53px square
+and thirty assets rendered as a 64px smudge in a 704px card — the same defect the 14px rule was
+written to fix, one size class along. The shape and the size part company instead. A block takes
+as few rows as `ROW_MAX` allows and balances across them, and it keeps its floor — 14px for a
+census, 9px for a proportion, which has more columns and needs the smaller minimum to fit a
+360px card — with `.isotype--block` in `styles/components.css` growing the column from there to
+the width of the card and capping it at 30px, past which a cell stops reading as a mark, and at
+44rem, past which the lattice reads as a banner. The column count stays in the module because
+the shape of a picture is a decision about the picture; how much room those columns get is a
+fact about the viewport, and CSS is the only one of the two that can see it. That cap used to be
+`gas`'s own `.cold-census { max-width: 44rem }`, where it was inert (the grid inside was
+`max-content` and never reached it) and where `gas_devsecops` — which passes the same class
+name — had no rule behind it at all.
+
+**The square was the shape that could not be helped, and it was never carrying what it looked
+like it carried.** The flat rule first shipped for exact censuses only, on the reasoning that a
+10x10 waffle means one cell per percentage point and a stretched one would be a different claim.
+Half right: stretching a CELL changes nothing, and only the COLUMN COUNT could change what a ROW
+reads as — from a tenth to a fifth, which is no harder to read. What a square does carry is its
+own height, so a 10x10 grown to a size worth looking at is a banner. The gate also meant the fix
+missed the card it was written for: the register that prompted it holds 2,404 assets, which is a
+proportion rather than a census, so it kept its 108px block while every small register got the
+new one. Both modes take the flat rule now.
+
+Refusals, all by type before any cast: an unmeasured count is `absentText` and contributes no
+cells and no share; a zero denominator is unmeasured and never `"0.0%"`; `unit` is required and
+throws; a segment with no `label` is refused outright; and segments summing PAST the stated
+total throw, because two overlapping populations read as one partition has no silent outcome
+worth having. Shares read against the STATED total, never the segments' own sum — the leftover
+is a named remainder. `cells: "exact"` is one cell per member and throws above
+`MAX_EXACT_CELLS`, because a grid that looks countable and is not is worse than one that never
+claimed to be.
+
+**A waffle owes no `chartTable` disclosure, and the reason is specific.** `chartTable.js` exists
+because a `<canvas>` has no DOM to read and a Chart.js tooltip answers only a pointer, so the
+figures are literally unreachable. `unitKeyRow` prints every segment's label, count and share in
+real text beneath the lattice, and the model refuses a segment with no label — so there is no
+configuration in which the grid is the sole carrier. That is `splitBar`'s caption argument, and
+it is stronger than the canvas case because the numbers are beside the picture rather than one
+disclosure down.
+
+**One thing this module may not have: a `minMark` option.** A rung of 30 against an open backlog
+of 200,000 rounds to zero tenths, so `unitRow` returns `null` and the caller draws nothing. That
+is correct — the honest encoding of a continuous share of one denominator is a proportional bar
+with a minimum-width floor, which `gas`'s triage funnel already has. An option that drew a mark
+below the resolution of its own unit would be a licence to lie in the one place that must not.
+
+**A backtick in a thrown string fails the BUILD, not the suite.** Three of this module's own
+refusal messages quoted a parameter name in backticks. esbuild lowers template literals and
+minify strips comments, but a backtick CHARACTER inside a string literal survives both, and
+every app's `esbuild.config.mjs` middlebox guard rejects it. `gas` built anyway — it had
+tree-shaken `unitChartModel` until a second register called it — so the failure only surfaced
+two apps later. `test/contracts/unitChart.js` sweeps the module's comment-stripped source for
+one now.
+
+**Two forms that replaced sentences, from the prose round (2026-09-16).** `splitBar` given
+`keys` (which `severitySplitModel` now returns beside its `caption`) draws one key per severity
+under the track — swatch, word, figure, "not scanned" beside an out-of-scope one — and the
+model's `summary` beneath them, and prints the caption nowhere. The caption is still built and
+still the bar's spoken form; what changed is that a 45-word sentence on every Settings page in
+two registers is a row of facts a reader scans. A caller passing only `caption` (the two-way
+impact split) is drawn byte-identically. And `.scope-chips` / `.scope-chip` in
+`components.css` draw a register's provenance line — `populationLine`'s `parts`, one chip
+each, the lead chip the count — with the joined sentence as the group's `aria-label`. Both are
+CSS-and-model changes only; neither is a new module.
 
 **`--hatch`, and the class over it.** One token in `styles/tokens.base.css` holding the
 repeating-linear-gradient that means THIS PART IS NOT A MEASUREMENT, plus a `.hatch` utility
@@ -505,7 +642,7 @@ registerTokenContract({ describe, it, expect, appRoot: new URL("../", import.met
 |---|---|
 | `tokens.js` | the severity palette, the five-token accent split, no `--accent` as ink, the graphite primary button, `charts.js`'s `ACCENT`, no hex literal outside the two token files (its own allow-list mechanism covers mask stops and a chart palette's greys — see `ctx.hexAllow`) |
 | `emptyStates.js` | a failure is never dressed as an absence; every page below the front door says where its figures came from. `ctx.syncField` names the bootstrap field a first-run page gates on (`latestSync` by default, `latestScan` in gas) — hard-coding it had silently excused gas from this whole half. Also exports `code()`, the comment-and-string-aware stripper every other sweep in this directory (and `measure.mjs`) reads through, rather than the raw source |
-| `navGroups.js` | `PAGES` is the only IA list — lane contiguity, two pages per labelled lane, one mark per lane and route, the manifest's front door |
+| `navGroups.js` | `PAGES` is the only IA list — imported from the app's `pages.js`, not parsed: lane contiguity, two pages per labelled lane, a render function per route, one mark per lane and route, no two marks alike in one nav, no shared mark re-pasted as a literal, the manifest's front door, and `SHARED_TITLES`/`SHARED_LANES` — the words and lanes more than one register composes, so the same question gets the same name twice |
 | `brandMark.js` | the static splash SVG is the module's geometry, and the splash copy is the manifest's |
 | `parity.js` | nothing shared has been forked back into an app: no re-copied `ui/` module, no local `api.js`/`store.js`/`icons.js`, no re-forked shell module, the barrel is still a re-export, and — P9 — no local DECLARATION of `relativeAge`/`syncCaption`/`absentText` anywhere in the app's client tree (catches the pre-P8 shape: a private helper inline in a page, not a second copy of the shared file). The stylesheet half: cascade order, `overrides.css` last, `tokens.base.css` FIRST (P9, asserted against the real parsed imports rather than the caller's own expected-order array), and — where `ctx.localSheets` is given — that only the declared local sheets remain local |
 | `scope.js` | the kinds an app declares, the value encoding, and the exact object a pick puts on the wire |
@@ -519,6 +656,8 @@ registerTokenContract({ describe, it, expect, appRoot: new URL("../", import.met
 | `figureCard.js` | `ui/figures.js`'s `figureCard`: the denominator PREPENDED to the tip lines, stamped on `data-denominator`, and drawn as no paragraph. Perturbed three ways — dropped from the lines (the attribute check still passes and the reader is told nothing), appended instead of prepended (buried under a three-line glossary entry), and merged into a bare `{lines}` (identical on screen, and every migrated card loses its route to the book) |
 | `settingsForm.js` | `ui/settingsForm.js`'s kernel, run against every registry that binds it: this app's own `{tabs, fields}` registry is well-formed (every field names a real tab, no duplicate tab keys, every tab and field carries a non-empty label, and the malformed shapes actually throw), the kernel's fixed behaviour against one synthetic registry so the assertions are identical for every app rather than hand-derived from each one's own field names, the direct-import-path rule asserted as a specifier regex against the app's own source, the `tabStatus` key-presence-not-truthiness perturbation, and — opt-in via `ctx.spine` — the canonical Register · … · Access · System tab spine |
 | `settingsReadouts.js` | the shared half of `ui/settingsReadouts.js` and `ui/figures.js`'s `openAndTotal`: the zero-denominator refusal (`absentText`, never `"0.0%"`), the naive `Array#includes` perturbation showing why `severitySplitModel`'s `inScope` must be a predicate and never a selected array, the glyph-without-word refusal for `tickTimeline`, a build-once identity assertion that `createCutHistogram`'s `update()` never recreates the range input, and `openAndTotal`'s own suppress-when-equal and refuse-before-cast rules. Registered from `gas`, `gas_ai` and `gas_devsecops` — not `gas_hub`, which has no register population |
+| `unitChart.js` | the unit ladder and the part-to-whole: one unit per TABLE (a per-row unit draws 401 with fewer marks than 400), every input refused by type before any cast, cells allocated by largest remainder so the lattice sums exactly and no real segment rounds away to nothing, shares read against the STATED total, a segment with no word refused, a tone outside quad's four refused, and — because it broke a build once — no backtick in any string that survives minification. Registered from all three registers; `gas_hub` has no register population and does not |
+| `collapsibleSection.js` | `ui/sheet.js`'s `collapsibleSection` — a whole section behind its own heading. Four perturbations, one per rewrite somebody would reasonably make: the heading built with `sectionLabel` (which turns the whole h2 into a `.tip-trigger`, so the obvious click target stops opening the section and a `{term}` help toggles AND navigates on one click), a guard using `stopPropagation` instead of `preventDefault` (`ui/tip.js` delegates on `document`, so the stronger-looking fix is the one that kills the tip), a `<details>` left holding its own open state (identical on a first paint, lost on the second — an swr page paints twice), and a `readOpen` returning `false` rather than `null` on a denied localStorage (every reader gets the section shut forever). Registered from `gas` and `gas_devsecops`, the two apps that draw one |
 
 `gas_devsecops/test/shared.test.js` is the worked example.
 

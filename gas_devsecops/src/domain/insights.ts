@@ -23,10 +23,22 @@
 //                                   currentScan). This register has no such frame abstraction
 //                                   yet (reconcile.ts, ported separately) — every function here
 //                                   already reads a row's own `severity` column directly.
-//   domain / supportGroup          host-only. `_domain` / `_supportGroup` are server-attached
-//   (GROUP_COLUMNS dims, and        from Wiz/Domain-style tags on a VM/host asset; a source
-//   oldestOpen's bySupportGroup /   repository carries no such taxonomy. The repo's ownership
-//   byDomain views)                axis here is `owner_project` (from projects[], every scope).
+//   supportGroup                   DROPPED THEN, RESTORED SINCE — see GROUP_COLUMNS below.
+//   (GROUP_COLUMNS dim, and         The original entry was right about gas/'s support group,
+//   oldestOpen's bySupportGroup)    which is a SUBSCRIPTION tag that a repository branch
+//                                   cannot carry (wizQueries.ts: `subscriptionName` is always
+//                                   null there). It was wrong that this register therefore
+//                                   has none: THIS tenant's support group is a PROJECT, named
+//                                   `CS-…`/`CE-…`/`LU-…`, and it rides in on every finding.
+//   domain                         DROPPED THEN, RESTORED SINCE — see GROUP_COLUMNS below.
+//   (GROUP_COLUMNS dim, and        The original entry said a source repository carries no such
+//   oldestOpen's byDomain view)    taxonomy. It does: the tenant tags repositories with a
+//                                   `domain` tag. What is true is that the three finding
+//                                   documents cannot SELECT an asset's tags, so the value
+//                                   arrives through a separate graphSearch join
+//                                   (src/server/repoTags.ts) and is attached to rows on
+//                                   read. `owner_project` remains the other ownership axis;
+//                                   the two are orthogonal, not a replacement for each other.
 //   atype / cloud / os /           host-only. Asset type, cloud platform, operating system and
 //   subscription (GROUP_COLUMNS    cloud subscription are VM/host attributes with no repository
 //   dims)                          analog; `owner_project` already carries subscription's
@@ -313,7 +325,10 @@ export const AGED_OPEN_EDGE = AGE_BUCKET_EDGES[2];
 export interface OldestFinding {
   identifier: string | null; // gas/'s `cve` — renamed per ledgerTypes.ts's cve -> identifier
   repo: string | null; // gas/'s `asset` — renamed per ledgerTypes.ts's asset_name -> repo_name
-  ownerProject: string | null; // gas/'s `subscription` — the ownership analog here (see header)
+  // gas/'s `subscription` — the ownership analog here (see header). THE PRODUCT, not the
+  // conflated `owner_project` column: `_product` is attached on read from the tenant's naming
+  // convention, so this names one grain rather than whichever of two Wiz returned first.
+  product: string | null;
   severity: string; // normalized
   ageDays: number;
 }
@@ -323,7 +338,7 @@ export interface OldestGroup {
   agedCount: number; // open findings older than AGED_OPEN_EDGE days
   openCount: number; // all open findings in the group
   oldestDays: number; // age of the group's single oldest open finding
-  ownerProject?: string; // representative attribution — byRepo only
+  product?: string; // representative attribution — byRepo only
 }
 
 export interface OldestOpen {
@@ -331,9 +346,11 @@ export interface OldestOpen {
   byRepo: OldestGroup[]; // gas/'s byAsset — the "asset" here is a repository
 }
 
+// `_product` REPLACES `owner_project` here rather than joining it, so the compiler proves the
+// old column left this path: a stale `r.owner_project` anywhere below is a type error now.
 type OldestRow = Pick<
   BaseRow,
-  "identifier" | "severity" | "status" | "repo_name" | "owner_project" | "age_days" | "scope"
+  "identifier" | "severity" | "status" | "repo_name" | "_product" | "age_days" | "scope"
 >;
 
 /** Finite age of an open row, or null when resolved / missing (skipped by callers). */
@@ -353,7 +370,7 @@ function rankGroups(
   rows: OldestRow[],
   keyFn: (r: OldestRow) => string,
   topN: number,
-  meta?: (r: OldestRow) => Partial<Pick<OldestGroup, "ownerProject">>,
+  meta?: (r: OldestRow) => Partial<Pick<OldestGroup, "product">>,
 ): OldestGroup[] {
   const groups = new Map<string, OldestGroup>();
   for (const row of rows) {
@@ -387,14 +404,14 @@ export function oldestOpen(rows: OldestRow[], topN = 7, scope?: Scope): OldestOp
     .map(({ r, age }) => ({
       identifier: r.identifier,
       repo: r.repo_name,
-      ownerProject: r.owner_project,
+      product: r._product ?? null,
       severity: normalizeSeverity(r.severity),
       ageDays: age,
     }));
   return {
     findings,
     byRepo: rankGroups(scoped, (r) => String(r.repo_name ?? ""), topN, (r) => ({
-      ownerProject: String(r.owner_project ?? ""),
+      product: String(r._product ?? ""),
     })),
   };
 }
@@ -448,11 +465,51 @@ export function movement(
 
 // Groupable dimensions for the multi-level breakdown, mapped directly to their LedgerRow/
 // BaseRow flat column — see the module header for what gas/'s GROUP_COLUMNS dropped and why.
-// Exactly the D9 brief's set: repo, language, owner_project, secret_kind, cwe.
+// The D9 brief's set (repo, language, owner_project, secret_kind, cwe), plus `domain`.
+//
+// THREE ENTRIES ARE NOT LEDGER COLUMNS — `domain`, `product` and `support_group` — and all
+// three are spelled the same way anyway because they do not need to be anything else: each is
+// a flat field on the row by the time any grouping runs (`readModels.baseSnapshot` attaches
+// them), so the lookup below reads them exactly as it reads `repo_name`. Nothing here learns
+// that one came from a join and two from a name rule.
+//
+// The module header above records `domain` as DROPPED, host-only, on the grounds that "a source
+// repository carries no such taxonomy". That was wrong about the tenant — its repositories do
+// carry a `domain` tag — and right only about the QUERIES: the three finding documents cannot
+// select an asset's tags, which is why the value arrives through `src/server/repoTags.ts`
+// rather than off the row.
+//
+// `support_group` is the same correction with a different cause. gas/'s support group is a
+// SUBSCRIPTION tag a repository branch cannot carry, which is why the header dropped it; this
+// tenant's is a PROJECT named `CS-…`/`CE-…`/`LU-…`, and `projects[]` is in all three query
+// documents, so it rides in on every finding and needs no join at all.
+//
+// `owner_project` STAYS, AND NOTHING DRAWS IT. It is demoted from a published dimension to an
+// INPUT to one: `projectGrain.productOf` falls back to it for rows written before
+// `projects_json` existed and for sealed episodes, which carry nothing else. Deleting the key
+// would delete that fallback's name from the register's vocabulary and break `trend.groupKeyOf`
+// for it. There is precedent in this very list — `language` is here and was removed from both
+// code registers' concentration lists (readModels.ts's CONCENTRATION_DIMS says why).
+//
+// PRODUCT AND SUPPORT GROUP ARE BOTH LISTED BECAUSE THEY ANSWER DIFFERENT QUESTIONS. One
+// support group holds many products, so the group's total is a roll-up the product card cannot
+// express: a product card can show you which product is worst, and only the group card can
+// show you that three mediocre products under one group add up to the biggest backlog anyone
+// owns. Neither is derivable from the other's top-N.
+//
+// A ROW WITH NO DOMAIN FALLS IN `(none)`, like every other dimension's blank — the bucketing
+// below already does that for a null column, and a domain nobody tagged is exactly a blank.
+// That is the ONE place this register lets unattributed rows show up as a named bucket, and it
+// is legitimate here where it would not be in the scope switcher: a breakdown is a partition of
+// a population that has to add up, so the rows nobody could place have to be visible in it.
+// The switcher offers a scope to STAND IN, which `(none)` is not — see domainScope.ts.
 export const GROUP_COLUMNS: Record<string, string> = {
   repo: "repo_name",
   language: "language",
   owner_project: "owner_project",
+  product: "_product",
+  support_group: "_supportGroup",
+  domain: "_domain",
   secret_kind: "secret_kind",
   cwe: "cwe",
 };

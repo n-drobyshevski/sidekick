@@ -3,7 +3,7 @@
 // and, beside every figure, how many rows nobody has ever checked.
 //
 // NEW AND DESIGNED. There is no port source for this file. gas/ has no secrets register, and
-// brick/devsecops/ never modelled one either (config.ts's `ruleForScope` says so in its own
+// brick/ never modelled one either (config.ts's `ruleForScope` says so in its own
 // comment: secrets returns null because brick had nothing to say about the scope). So every
 // measurement decision below was made HERE, and each one is written down with its reason,
 // because there is no upstream module to go and read instead. Changing one of these changes

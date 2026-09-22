@@ -32,9 +32,10 @@ import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import { scopeParam } from "./_rates.js";
 import { SCOPE_LABELS_LONG as SCOPE_LABELS } from "./_scopeLabels.js";
 import {
-  absent, absentText, clear, dataTable, days1, disclosure, el, emptyState, errorState, fmtCount,
-  fmtDate, fmtDateTime, fmtDays, heroStat, num, pageHeader, pluralize, sectionLabel, sevKeyRow,
-  sevSegmentBar, skeleton, statRow, statusPill, tipLabel,
+  absent, absentText, clear, collapsibleSection, dataTable, days1, disclosure, el, emptyState,
+  errorState, figureCard, fmtCount, fmtDate, fmtDateTime, fmtDays, heroStat, num, pageHeader,
+  pct1, pluralize, sectionLabel, sevKeyRow, sevSegmentBar, skeleton, statRow, statusPill,
+  tipLabel, unitCounts, unitRow, unitScale,
 } from "../ui.js";
 // THE HALF-LIFE DECISION IS IMPORTED, NOT REPEATED. `execMttrSlice` is a slice of the MTTR
 // page's own payload (api.ts says so), so the rule that turns `{median, medianLowerBound}`
@@ -42,7 +43,7 @@ import {
 // could describe the same estimate differently. It lives on the page that owns the clock.
 // `fmtCount`/`fmtDays` themselves come from `../ui.js` now, not from `./mttr.js` — see
 // `ui/figures.js`'s module header.
-import { kmHalfLifeView, rateView, trackingSinceView } from "./mttr.js";
+import { endOfLifeExclusionNote, kmHalfLifeView, rateView, trackingSinceView } from "./mttr.js";
 
 // ------------------------------------------------------------------------- view models
 
@@ -126,13 +127,12 @@ export function executiveSeverityView(payload, order) {
   };
 }
 
-// The pictogram ladder, and the ceiling that picks a rung off it. 40 marks is where a reader
-// stops counting and starts estimating from the row's length — which is still an honest read,
-// because every row is in the same unit — and the rungs are the round numbers a reader can
-// hold in their head while doing it. Nothing below 10: one mark per finding on an 18,000-row
-// register is not a picture.
-const PICTOGRAM_UNITS = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000];
-const PICTOGRAM_MAX_MARKS = 40;
+// THE PICTOGRAM LADDER MOVED. `unitScale` / `unitCounts` in gas_shared/ui/unitChart.js are
+// this page's own `pictogramUnit` / `pictogramCounts`, promoted verbatim when the second and
+// third registers needed the same picture. The ladder, the 40-mark ceiling and the
+// refuse-before-cast rule all travelled with them, and gas_shared/test/contracts/unitChart.js
+// is where `test/executivePictogram.test.js`'s perturbations now live — registered from this
+// app's own test/shared.test.js, so nothing about the coverage moved with the code.
 
 /**
  * The three registers side by side: how much is open in each, and how fast each closes.
@@ -178,76 +178,6 @@ export function executiveRegisterView(byScope) {
   };
 }
 
-/**
- * The pictogram unit, chosen ONCE PER TABLE.
- *
- * NEURATH'S RULE IS THE WHOLE POINT: more quantity is MORE MARKS OF THE SAME SIZE, never a
- * bigger mark. A row's marks are only readable against the row above it if both rows count in
- * the same unit, so the unit is a property of the TABLE and not of a row. The two rejected
- * alternatives are worth naming, because both look tidier per row and both destroy the
- * comparison the form exists to make:
- *
- *   per-row unit  — every row fills the same width, so 280 open and 30 open draw the same
- *                   picture. That is a bar chart with the axis deleted.
- *   a cap         — "at most 40 marks, then stop" truncates the largest register silently, and
- *                   the register that most needs reading is the one that gets cut.
- *
- * So: the smallest unit from the ladder that keeps the BIGGEST row inside 40 marks. Every
- * other row then draws fewer marks than that, in the same unit, and the ratio between two rows
- * is the ratio between their counts.
- *
- * A non-finite or non-positive maximum falls back to the finest unit rather than throwing —
- * with no rows to size against there is nothing to compare, and the caller draws no marks
- * anyway.
- *
- * @param {unknown} maxOpen  the largest open count in the table
- * @returns {number} one of PICTOGRAM_UNITS
- */
-export function pictogramUnit(maxOpen) {
-  // Refused BEFORE any cast — `Number(null)`, `Number("")`, `Number([])` and `Number(false)`
-  // are all 0, and a 0 here would silently pick the finest unit for a value that was never a
-  // measurement. (It picks the finest unit anyway; the point is that it does so because the
-  // input was refused, not because a cast invented a zero.)
-  if (typeof maxOpen !== "number" || !Number.isFinite(maxOpen) || maxOpen <= 0) {
-    return PICTOGRAM_UNITS[0];
-  }
-  for (const unit of PICTOGRAM_UNITS) {
-    if (maxOpen / unit <= PICTOGRAM_MAX_MARKS) return unit;
-  }
-  return PICTOGRAM_UNITS[PICTOGRAM_UNITS.length - 1];
-}
-
-/**
- * How many whole marks, and how much of one more.
- *
- * The remainder is drawn as a mark clipped to its TENTHS rather than as a smaller mark, for
- * the same reason the unit is per-table: a mark of a different size is a different unit, and
- * a reader counting marks would be counting two things at once. Ten tenths is a whole mark, so
- * a remainder that rounds up to 10 carries into `full` instead of drawing a "partial" mark
- * indistinguishable from a full one.
- *
- * @param {unknown} n     the count to draw
- * @param {unknown} unit  findings per mark
- * @returns {{full: number, partialTenths: number}}
- */
-export function pictogramCounts(n, unit) {
-  // Both refusals come BEFORE any arithmetic. `Number(["3"])` is 3 and `Number([])` is 0 —
-  // a cast-first version of this function draws three marks for a value that is not a number
-  // and no marks for one that is not a measurement, and neither is distinguishable in the
-  // output from a real count. See test/executivePictogram.test.js, which reproduces the
-  // cast-first rewrite inline and shows it disagreeing on exactly that value.
-  if (typeof n !== "number" || !Number.isFinite(n) || n <= 0) {
-    return { full: 0, partialTenths: 0 };
-  }
-  if (typeof unit !== "number" || !Number.isFinite(unit) || unit <= 0) {
-    return { full: 0, partialTenths: 0 };
-  }
-  const full = Math.floor(n / unit);
-  const tenths = Math.round((10 * (n % unit)) / unit);
-  return tenths >= 10
-    ? { full: full + 1, partialTenths: 0 }
-    : { full, partialTenths: Math.max(0, tenths) };
-}
 
 /**
  * Movement, and what it is movement OF.
@@ -459,9 +389,20 @@ export function fixNextView(payload, boot) {
       // Never "(unknown)": a finding carrying no repository is a gap in attribution, and the
       // em dash is this register's one mark for that.
       repoText: repo === null ? absentText : repo,
-      ownerProject: g.owner_project === null || g.owner_project === undefined
+      product: g.product === null || g.product === undefined ? null : String(g.product),
+      supportGroup: g.supportGroup === null || g.supportGroup === undefined
         ? null
-        : String(g.owner_project),
+        : String(g.supportGroup),
+      // WHO THIS IS FOR, IN THREE STATES RATHER THAN TWO. The product is the grain a reader
+      // acts on; the support group above it is who they escalate to, and it is the more
+      // likely of the two to agree across a repository's rows — so a group that cannot name
+      // one product is not therefore ownerless. Only when neither agrees is there no owner to
+      // print, and that itself says the tenant's convention has broken for this repository.
+      ownerText: g.product !== null && g.product !== undefined
+        ? String(g.product)
+        : (g.supportGroup !== null && g.supportGroup !== undefined
+          ? String(g.supportGroup) + " (support group)"
+          : "no single owner"),
       count,
       countText: fmtCount(count) + " open " + pluralize(count, "finding"),
       oldestDays: num(g.oldestAgeDays),
@@ -532,6 +473,92 @@ export function fixNextView(payload, boot) {
     // this sentence is now false.
     linkNote: "Each link opens that register unfiltered — the register pages take a severity"
       + " filter and a fix-availability switch, and no repository filter yet.",
+  };
+}
+
+/**
+ * The cold zone, as the one figure a leader reads about it: how much of the open backlog is
+ * sitting on repositories where nothing is moving.
+ *
+ * ONE NUMBER, AND IT IS A SHARE RATHER THAN A COUNT. "412 open findings are cold" is a figure
+ * whose meaning changes with the size of the register; "31.4% of the backlog is cold" is the
+ * same fact read against the only denominator that makes it comparable week to week. Both are
+ * published — the share is the value, the pair behind it is the sentence underneath — because
+ * a rate without its denominator is not a measurement (PRODUCT.md, and `pagesLit` gate 3/7).
+ *
+ * NULL IS AN ANSWER AND IT IS NOT ZERO. `cold_backlog_share_pct` is null over an empty
+ * denominator — a register with no open findings at all has no cold SHARE, and rendering that
+ * as 0.0% would say the backlog is all warm when there is no backlog. The card draws
+ * `absentText` instead, which is what every other absent figure on this page draws.
+ *
+ * THE SHAPE IS CHECKED, NOT THE FLAG. `api_getExecutivePage` ships `coldZone` as a
+ * `ColdZoneHeadline` — the totals and the clock, never the per-repo or per-team arrays — and
+ * sets `totals` to null in exactly the case `measurable: false` describes. A payload that said
+ * `measurable: true` over a null `totals` (an older server answering a newer client) would
+ * pass a flag check and then throw inside the renderer, which `guard()` would dress as a red
+ * error box for what is really an absence. So this decides for itself from what arrived.
+ *
+ * `coldZoneAsOfSource` IS CARRIED BECAUSE THE CLOCK CAN SLIP. Every duration in the cold-zone
+ * family is measured at the LEDGER's clock — the newest scan's timestamp — so the same saved
+ * ledger always reads the same number. Where the server could not find that clock it falls
+ * back to the wall clock and says so, and a figure measured against "now" grows a little every
+ * time the page is opened. That is a different reading from the one the card otherwise
+ * promises, so the denominator sentence says which it is rather than quietly printing both the
+ * same way.
+ *
+ * AND THE MODE RIDES ALONG, for the reason the Repositories page's caption spells out at
+ * length: `cold_after_days` is the EFFECTIVE line in both modes, so one number reaches this
+ * card whichever definition drew it, and "at least 47 days" means something different when a
+ * person chose 47 than when the estate's tenth-idlest repository did. The card still prints
+ * ONE figure; the denominator sentence is where the difference is stated.
+ */
+export function coldShareView(payload) {
+  const cz = payload && typeof payload === "object" && !Array.isArray(payload)
+    ? payload.coldZone
+    : null;
+  const present = !!cz && typeof cz === "object" && !Array.isArray(cz);
+  const totals = present && cz.totals && typeof cz.totals === "object" && !Array.isArray(cz.totals)
+    ? cz.totals
+    : null;
+  const measurable = present && cz.measurable === true && totals !== null;
+  const source = payload && typeof payload.coldZoneAsOfSource === "string"
+    ? payload.coldZoneAsOfSource
+    : null;
+  // Absent means the older contract — the fixed window — and only the literal "relative" is
+  // relative. Same refusal as `pages/repos.js`'s `coldZoneView`, and for the same reason.
+  const mode = present && cz.mode === "relative" ? "relative" : "fixed";
+  const modeFields = {
+    mode,
+    targetSharePct: present ? num(cz.target_share_pct) : null,
+    achievedSharePct: present ? num(cz.achieved_share_pct) : null,
+    floorApplied: present && cz.floor_applied === true,
+    derivedDays: present ? num(cz.derived_days) : null,
+    floorDays: present ? num(cz.floor_days) : null,
+  };
+  if (!measurable) {
+    return {
+      show: false,
+      measurable: false,
+      atLedgerClock: source !== "wallClock",
+      pct: null, openInCold: 0, openFindings: 0, coldRepos: 0, reposWithOpen: 0,
+      coldAfterDays: present ? num(cz.cold_after_days) : null,
+      ...modeFields,
+    };
+  }
+  return {
+    show: true,
+    measurable: true,
+    ...modeFields,
+    // TRUE unless the server SAID it fell back — an older payload that carries no source at
+    // all is not evidence of a wall-clock reading, and the caveat is only worth printing where
+    // it is known to apply.
+    atLedgerClock: source !== "wallClock",
+    pct: num(totals.cold_backlog_share_pct),
+    openInCold: num(totals.open_in_cold, 0),
+    openFindings: num(totals.open_findings, 0),
+    coldRepos: num(totals.cold_repos, 0),
+    reposWithOpen: num(totals.repos_with_open, 0),
+    coldAfterDays: num(cz.cold_after_days),
   };
 }
 
@@ -652,12 +679,27 @@ export async function renderExecutive(host, params, _ctx) {
 
   const noticeHost = el("div", {});
   const heroHost = el("div", {});
-  // Directly under the hero and ABOVE the tiles: the hero states the register's claim about
-  // itself, this states what follows from it, and only then comes the description.
-  const fixHost = el("div", {});
+  // FIRST OF THE QUALIFYING BLOCKS, now that the ranked list has left the slot above it. It
+  // used to sit between "what to fix next" and "what is open by severity" because it answered
+  // the question between them; with the worklist at the foot of the page it opens that run
+  // instead — how much of the backlog nobody is spending any hour on, then how big the backlog
+  // is, then how it splits across the three registers.
+  const coldHost = el("div", {});
   const sevHost = el("div", {});
   const registerHost = el("div", {});
   const scanHost = el("div", {});
+  // LAST ON THE PAGE, AND SHUT. Same call as the OS register's front door, for the same
+  // reason: the ranked list is the page's longest block and its only WORKLIST — a different
+  // reader on a different errand from the leader the hero is written for — so it no longer
+  // stands between the one figure this page opens with and the three one-glance blocks that
+  // qualify it.
+  //
+  // `fixOpen` OUTLIVES THE PAINT. swrCall paints twice on a warm cache (the stored answer,
+  // then the fresh one), so a section whose open state lived on the node would snap shut under
+  // a reader who had just expanded it. The flag is the page's; the node is handed it and hands
+  // back every change.
+  const fixHost = el("div", {});
+  let fixOpen = false;
   // THE TITLE BLOCK IS STATIC, AND THE h1 DOES NOT WAIT ON AN RPC. The metric header below is
   // built inside `renderHero`, which runs only once the fetch resolves — so the loading
   // skeleton, the fetch-failure errorState and (on Coverage & efficiency) the no-figures empty
@@ -667,7 +709,7 @@ export async function renderExecutive(host, params, _ctx) {
   // header, then the figure and its stat strip.
   host.append(
     pageHeader({ route: "executive" }),
-    noticeHost, heroHost, fixHost, sevHost, registerHost, scanHost,
+    noticeHost, heroHost, coldHost, sevHost, registerHost, scanHost, fixHost,
   );
 
   // One failing section must never blank the front door.
@@ -702,11 +744,13 @@ export async function renderExecutive(host, params, _ctx) {
     // waits on. Both blocks are cleared so a stale paint cannot leave zeros behind them.
     if (first.show) {
       clear(fixHost);
+      clear(coldHost);
       clear(sevHost);
       clear(registerHost);
       return;
     }
     guard("the fix-next list", fixHost, () => renderFixNext(payload));
+    guard("the cold-zone share", coldHost, () => renderColdShare(payload));
     guard("open findings by severity", sevHost, () => renderSeverity(payload));
     guard("the register split", registerHost, () => renderRegisters(payload));
   };
@@ -739,7 +783,14 @@ export async function renderExecutive(host, params, _ctx) {
     clear(heroHost);
 
     const stats = [
-      statRow("Tracked", fmtCount(view.tracked), "lifecycles in the ledger"),
+      // "IN THIS ESTIMATE", NOT "IN THE LEDGER". This figure is the estimator's population and
+      // always was — a scope or severity filter already narrowed it — but until the
+      // remediation-speed exclusion existed the loose wording never produced a visible
+      // contradiction. It does now: with the switch on, this reads 477 while "413 open of 554
+      // tracked" sits under the severity bar on the same page, and both are right about
+      // different populations. Naming the population is what tells them apart; the note under
+      // the hero is what says why they differ.
+      statRow("Tracked", fmtCount(view.tracked), "lifecycles in this estimate"),
       statRow("Resolved", fmtCount(view.resolved), "closed findings — the estimator's events"),
       statRow(
         "Still open",
@@ -767,6 +818,12 @@ export async function renderExecutive(host, params, _ctx) {
     const tracking = trackingSinceView(payload);
     if (tracking.show) heroHost.append(el("p", { class: "small muted" }, tracking.text));
     heroHost.append(curveNote());
+    // THE ONE PAGE WHERE THE SENTENCE HAS TO NAME ITS FAMILY. The switch narrows the half-life
+    // above and leaves every severity tile below whole — a retired repository's open findings
+    // are real and stay in the backlog — so a note reading "these figures" here would claim
+    // the tiles moved too. `endOfLifeExclusionNote`'s `what` parameter exists for exactly this.
+    const eol = endOfLifeExclusionNote(payload && payload.endOfLife, "the half-life figures");
+    if (eol) heroHost.append(el("p", { class: "small muted" }, eol));
   }
 
   /**
@@ -808,8 +865,8 @@ export async function renderExecutive(host, params, _ctx) {
       return {
         term: "half-life",
         lines: [
-          "No lifecycle has a readable clock yet. This is “not measured”, not zero — the"
-          + " half-life needs at least one observation to rest on.",
+          "No lifecycle has a readable clock yet: “not measured”, not zero.",
+          "The half-life needs at least one observation to rest on.",
         ],
       };
     }
@@ -834,8 +891,8 @@ export async function renderExecutive(host, params, _ctx) {
     return el("p", { class: "small muted" },
       tipLabel("Survival curve", {
         lines: [
-          "This page is sent the estimate only, not the curve behind it — the curve, its"
-          + " censor markers and the per-severity split are on MTTR & SLA.",
+          "This page is sent the estimate only, not the curve behind it.",
+          "The curve, its censor markers and the per-severity split are on MTTR & SLA.",
         ],
       }),
       " → ",
@@ -912,7 +969,8 @@ export async function renderExecutive(host, params, _ctx) {
   // ------------------------------------------------------------------------- fix next
 
   /**
-   * The ranked list, as an ordered list of GROUPS.
+   * The ranked list, as an ordered list of GROUPS — last on the page, and behind its own
+   * heading.
    *
    * NO CHART AND NO CANVAS, which is the module header's hard rule and is not relaxed for a
    * ranking. `<ol>` is the right element because the order IS the claim — a reader using a
@@ -921,6 +979,12 @@ export async function renderExecutive(host, params, _ctx) {
    * EVERY ROW CARRIES ITS UNITS. "7" is not a figure; "7 open findings" is. The oldest age
    * carries "days" for the same reason, and a group whose rows have no readable age says so
    * rather than printing a 0.
+   *
+   * COLLAPSIBLE, AND SHUT UNTIL A READER OPENS IT. Everything the section holds folds
+   * together, the cap note with the list it qualifies, so nothing in it is ever on screen
+   * without its caveat; the denominator rides on the heading so the shut section still says
+   * how much of the backlog is behind it. See the host declaration above for why `fixOpen` is
+   * the page's and not the node's.
    */
   function renderFixNext(payload) {
     const view = fixNextView(payload, boot);
@@ -931,10 +995,26 @@ export async function renderExecutive(host, params, _ctx) {
     // lede said what "Fix next" means; the heading now says it through the `fix-next` entry,
     // which is the same three clauses in the book's own voice. Nothing about the rule is a
     // task constraint or an honesty statement, which is what R2 keeps on the surface.
-    fixHost.append(sectionLabel("Fix next", { term: "fix-next" }));
+    //
+    // THE DENOMINATOR IS THE SHUT SECTION'S OWN CAPTION. "10 of 416 open findings ranked" used
+    // to sit under the list as a surface paragraph; it is the one line that tells a reader what
+    // is behind the toggle and how much of the backlog it speaks for, so it rides on the
+    // heading instead and is legible whether the section is open or closed. It is NOT moved
+    // behind a signifier — the disclosure under it still holds the four reasons, exactly as
+    // before — it moved UP, onto the thing it measures.
+    const section = collapsibleSection("Fix next", {
+      help: { term: "fix-next" },
+      hint: view.rankedShort,
+      open: fixOpen,
+      // Per reader, across visits — the flag above only survives this page's own repaints.
+      remember: "execFixNext",
+      onToggle: (o) => { fixOpen = o; },
+    });
+    fixHost.append(section.node);
+    const fix = section.body;
 
     if (view.empty) {
-      fixHost.append(emptyState("Nothing is ranked.", view.emptyReason));
+      fix.append(emptyState("Nothing is ranked.", view.emptyReason));
     } else {
       const list = el("ol", { class: "fixnext" });
       for (const it of view.items) {
@@ -954,28 +1034,90 @@ export async function renderExecutive(host, params, _ctx) {
             }, it.repoText === absentText ? absent() : it.repoText)),
           el("div", { class: "fixnext-meta small muted" },
             it.scopeLabel + " · " + it.countText + " · " + it.oldestText
-            + " · " + (it.ownerProject === null
-              ? "no single owning project"
-              : it.ownerProject)),
+            + " · " + it.ownerText),
         ));
       }
-      fixHost.append(list);
+      fix.append(list);
     }
 
-    // "10 of 416 open findings ranked" on the surface; the four reasons behind the other 406
-    // in a closed `disclosure` under it. NOT a tip: the sentence is an ACCOUNTING, four counts
-    // with a reason each, and a hover card is the wrong shape for something a reader may want
-    // to read twice and compare against the register pages. A disclosure is the second of the
-    // two channels R1 allows, and its summary is the visible signifier.
-    fixHost.append(el("p", { class: "small muted" }, view.rankedShort));
-    fixHost.append(disclosure(
+    // The four reasons behind the other 406 in a closed `disclosure`. NOT a tip: the sentence
+    // is an ACCOUNTING, four counts with a reason each, and a hover card is the wrong shape
+    // for something a reader may want to read twice and compare against the register pages. A
+    // disclosure is the second of the two channels R1 allows, and its summary is the visible
+    // signifier. The two numbers it accounts for are on the section's own heading now.
+    fix.append(disclosure(
       "Why the rest are not ranked",
       el("p", { class: "small muted" }, view.unrankedSentence),
     ));
-    // KEPT ON THE SURFACE. A cap is a task constraint — the reader is looking at a list that
-    // stops before the backlog does, and a count of what was cut off the end is exactly the
-    // kind of statement R2 refuses to move behind a signifier.
-    if (view.cutNote) fixHost.append(el("p", { class: "small muted" }, view.cutNote));
+    // KEPT ON THIS SECTION'S SURFACE. A cap is a task constraint — the reader is looking at a
+    // list that stops before the backlog does, and a count of what was cut off the end is
+    // exactly the kind of statement R2 refuses to move behind a signifier. It folds with the
+    // list it qualifies, which is the one arrangement in which the list is never on screen
+    // without it.
+    if (view.cutNote) fix.append(el("p", { class: "small muted" }, view.cutNote));
+  }
+
+  // ------------------------------------------------------------------------- cold zone
+
+  /**
+   * One card: the share of the open backlog sitting where nothing is moving.
+   *
+   * ONE FIGURE AND NO TABLE, which is the same slice rule the hero follows. The Repositories
+   * page draws the whole family — every cold repository, every project, the idle-bucket grid
+   * and the scatter — and `coldZoneHeadline` (src/domain/coldZone.ts) is the projection that
+   * keeps the per-repository arrays off this payload entirely rather than shipping them and
+   * rendering one number out of them.
+   *
+   * THE LINK IS THE REST OF THE ANSWER. A reader who wants to know WHICH repositories is one
+   * click away, and that is a cross-reference rather than a second copy of the section.
+   */
+  function renderColdShare(payload) {
+    const view = coldShareView(payload);
+    clear(coldHost);
+    coldHost.append(sectionLabel("The cold zone", { term: "cold-zone" }));
+    if (!view.show) {
+      // A NOTICE, NEVER AN ERROR. No scan on record means there is no clock to measure
+      // idleness against — a state this block renders correctly, not a failure of it.
+      coldHost.append(emptyState(
+        "The cold zone is not measured yet.",
+        "Idle time is counted from the last scan back to the movement before it, so this"
+        + " figure appears once a sync has saved one.",
+        { variant: "notice" },
+      ));
+      return;
+    }
+    const windowText = view.coldAfterDays === null
+      ? "the cold-zone window"
+      : `at least ${fmtDays(view.coldAfterDays)}`;
+    // WHERE THAT WINDOW CAME FROM. Nothing here branches on the mode to read a NUMBER — the
+    // line above is the effective one in both modes — but a derived line and a chosen one are
+    // different claims about the same figure, and the floor case is the one where the zone is
+    // deliberately smaller than the share that was asked for.
+    const targetText = `${fmtCount(view.targetSharePct)}%`;
+    const modeClause = view.mode !== "relative"
+      ? ""
+      : view.floorApplied === true
+        ? ` — the floor, which holds the zone smaller than the ${targetText} asked for`
+        : ` — the line relative mode set so the idlest ${targetText} of repositories with open`
+          + " findings are cold";
+    const clock = view.atLedgerClock
+      ? "Measured at the last scan, never against today."
+      : "Measured against the current time rather than the last scan — the clock the ledger"
+        + " was measured at could not be read, so this figure moves as the page is reopened.";
+    coldHost.append(el("div", { class: "kpi-row" }, figureCard({
+      label: "Backlog in the cold zone",
+      value: view.pct === null ? absentText : pct1(view.pct),
+      sub: `${fmtCount(view.openInCold)} of ${fmtCount(view.openFindings)} open findings`,
+      help: { term: "cold-zone" },
+      denominator:
+        `${fmtCount(view.openInCold)} of ${fmtCount(view.openFindings)} open findings, on`
+        + ` ${fmtCount(view.coldRepos)} of ${fmtCount(view.reposWithOpen)} repositories with`
+        + " open findings where nothing has been resolved, removed or rotated for"
+        + ` ${windowText}${modeClause}. ${clock}`,
+    })));
+    coldHost.append(el("p", { class: "small muted" },
+      "Which repositories, and which projects → ",
+      el("a", { class: "linklike", href: "#/repos" }, "Repositories")));
   }
 
   // -------------------------------------------------------------------------- severity
@@ -1007,9 +1149,9 @@ export async function renderExecutive(host, params, _ctx) {
     // sits on the heading rather than under the picture.
     const label = sectionLabel("Open findings by severity", {
       lines: [
-        "Severity is the grade Wiz put on the detection, counted over OPEN findings only.",
-        "On the secrets register it grades the detection and not whether the credential is"
-        + " live, which is why that register is segmented differently on its own page.",
+        "Severity is the grade Wiz put on the detection, over OPEN findings only.",
+        "On secrets it grades the detection, not whether the credential is live.",
+        "Which is why that register is segmented differently on its own page.",
       ],
     });
     sevHost.append(label);
@@ -1051,9 +1193,9 @@ export async function renderExecutive(host, params, _ctx) {
       return;
     }
     // ONE UNIT FOR THE WHOLE TABLE, computed once here rather than per cell — see
-    // `pictogramUnit`. Rows the cell will refuse to draw (a non-finite count) are kept out of
+    // `unitScale`. Rows the cell will refuse to draw (a non-finite count) are kept out of
     // the maximum too, so one unreadable row cannot pick the unit for the two readable ones.
-    const unit = pictogramUnit(view.rows.reduce(
+    const unit = unitScale(view.rows.reduce(
       (m, r) => (typeof r.open === "number" && Number.isFinite(r.open) && r.open > m ? r.open : m),
       0,
     ));
@@ -1072,27 +1214,24 @@ export async function renderExecutive(host, params, _ctx) {
      * as it was; the pictogram is a second encoding of a figure that is already in words, which
      * is what keeps this clear of "meaning by colour (or shape) alone". The marks are one
      * `role="img"` with the count and the unit in its label rather than N nodes a screen reader
-     * would walk.
+     * would walk — `unitRow` builds that node now, and this closure keeps only the two refusals
+     * that are facts about THIS table.
+     *
+     * THE LABEL IS PASSED, NOT COMPOSED. `unitRow` would build the same sentence from `noun`,
+     * and the module's own default is this string; passing it explicitly is what lets the
+     * promotion be checked rather than trusted — the shipped wording is right here, in the
+     * file that shipped it, where a diff shows any change to it.
      */
     function isotype(r) {
       if (r.share.baseEmpty) return null;
       if (typeof r.open !== "number" || !Number.isFinite(r.open)) return null;
-      const { full, partialTenths } = pictogramCounts(r.open, unit);
-      const marks = [];
-      for (let i = 0; i < full; i++) marks.push(el("span", { class: "isotype-mark" }));
-      if (partialTenths > 0) {
-        marks.push(el("span", {
-          class: "isotype-mark isotype-mark--part",
-          style: "--tenths:" + partialTenths,
-        }));
-      }
-      if (marks.length === 0) return null;
+      const { full, partialTenths } = unitCounts(r.open, unit);
+      if (full === 0 && partialTenths === 0) return null;
       anyMarks = true;
-      return el("span", {
-        class: "isotype",
-        role: "img",
-        "aria-label": fmtCount(r.open) + " open, one mark per " + fmtCount(unit),
-      }, ...marks);
+      return unitRow(r.open, {
+        unit,
+        label: fmtCount(r.open) + " open, one mark per " + fmtCount(unit),
+      });
     }
 
     registerHost.append(dataTable({

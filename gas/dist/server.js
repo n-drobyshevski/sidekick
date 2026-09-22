@@ -344,7 +344,7 @@ var Server = (() => {
     welcomeHtml: () => welcomeHtml
   });
 
-  // src/domain/sha1.ts
+  // ../gas_shared/domain/sha1.ts
   function utf8Bytes(s) {
     const out = [];
     for (let i = 0; i < s.length; i++) {
@@ -512,7 +512,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "cfcdb9df27d9" : "dev";
+  var BUILD_ID = true ? "723eb7e2c6b7" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -652,6 +652,51 @@ var Server = (() => {
     return HtmlService.createHtmlOutput(welcomeHtml(email, continueUrl, accountChooserUrl())).setTitle(PRODUCT).addMetaTag("viewport", "width=device-width, initial-scale=1");
   }
 
+  // src/server/errorLog.ts
+  var KEY = "RECENT_ERRORS";
+  var MAX_ENTRIES = 25;
+  var MAX_MESSAGE_LEN = 500;
+  var MAX_BLOB_CHARS = 8500;
+  function truncate(s) {
+    return s.length > MAX_MESSAGE_LEN ? s.slice(0, MAX_MESSAGE_LEN) + "\u2026" : s;
+  }
+  function recentErrors() {
+    const raw = getProp(KEY);
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter((e) => Boolean(e) && typeof e === "object" && !Array.isArray(e)).map((e) => {
+        var _a, _b, _c, _d;
+        return {
+          ts: String((_a = e["ts"]) != null ? _a : ""),
+          op: String((_b = e["op"]) != null ? _b : "api"),
+          kind: String((_c = e["kind"]) != null ? _c : "error"),
+          message: String((_d = e["message"]) != null ? _d : "")
+        };
+      });
+    } catch {
+      return [];
+    }
+  }
+  function recordError(op, err, kind = "error", now) {
+    try {
+      const message = err instanceof Error ? err.message : typeof err === "string" ? err : String(err);
+      const entry = { ts: nowIso(now), op, kind, message: truncate(message) };
+      const next = [entry, ...recentErrors()].slice(0, MAX_ENTRIES);
+      let blob = JSON.stringify(next);
+      while (next.length > 1 && blob.length > MAX_BLOB_CHARS) {
+        next.pop();
+        blob = JSON.stringify(next);
+      }
+      setProp(KEY, blob);
+    } catch {
+    }
+  }
+  function clearErrors() {
+    deleteProp(KEY);
+  }
+
   // src/server/archiveStore.ts
   var SUBFOLDERS = [
     "scans",
@@ -665,15 +710,44 @@ var Server = (() => {
     // deployment that never re-runs setup() still self-heals on the first write.
     "readmodels"
   ];
+  var recordedFailures = /* @__PURE__ */ new Set();
+  function noteDriveFailure(label, e) {
+    console.warn(`${label}: ${e}`);
+    if (recordedFailures.has(label)) return;
+    recordedFailures.add(label);
+    recordError(label, e, "error");
+  }
   function rootFolder() {
     return DriveApp.getFolderById(requireProp(PROP_KEYS.archiveFolderId));
   }
-  function childFolder(parent, name) {
+  function findChild(parent, name) {
     const it = parent.getFoldersByName(name);
-    return it.hasNext() ? it.next() : parent.createFolder(name);
+    return it.hasNext() ? it.next() : null;
+  }
+  function childFolder(parent, name) {
+    var _a;
+    return (_a = findChild(parent, name)) != null ? _a : parent.createFolder(name);
   }
   function subfolder(name) {
     return childFolder(rootFolder(), name);
+  }
+  function findSubfolder(name) {
+    try {
+      return findChild(rootFolder(), name);
+    } catch (e) {
+      noteDriveFailure(`archiveRead:${name}`, e);
+      return null;
+    }
+  }
+  function readGzJsonIn(folder, name, label = "archiveRead") {
+    if (!folder) return null;
+    try {
+      const files = folder.getFilesByName(name);
+      return files.hasNext() ? parseGzBlob(files.next().getBlob()) : null;
+    } catch (e) {
+      noteDriveFailure(label, e);
+      return null;
+    }
   }
   function ensureFolders(rootId) {
     const root = rootId ? DriveApp.getFolderById(rootId) : rootFolder();
@@ -713,22 +787,29 @@ var Server = (() => {
   function scanFolder(scanId) {
     return childFolder(subfolder("scans"), safeName(scanId));
   }
+  function findScanFolder(scanId) {
+    const scans = findSubfolder("scans");
+    if (!scans) return null;
+    try {
+      return findChild(scans, safeName(scanId));
+    } catch (e) {
+      noteDriveFailure("archiveRead:scans", e);
+      return null;
+    }
+  }
   function writeScanPage(scanId, pageNumber, payload) {
     const name = `page-${String(pageNumber).padStart(4, "0")}.json.gz`;
     return writeGzJson(scanFolder(scanId), name, payload).getId();
   }
   function readScanPage(scanId, pageNumber) {
     const name = `page-${String(pageNumber).padStart(4, "0")}.json.gz`;
-    const files = scanFolder(scanId).getFilesByName(name);
-    return files.hasNext() ? parseGzBlob(files.next().getBlob()) : null;
+    return readGzJsonIn(findScanFolder(scanId), name, "archiveRead:page");
   }
   function writeSlimRecords(scanId, records) {
     return writeGzJson(scanFolder(scanId), "slim.json.gz", records).getId();
   }
   function readSlimRecords(scanId) {
-    const files = scanFolder(scanId).getFilesByName("slim.json.gz");
-    if (!files.hasNext()) return null;
-    const parsed = parseGzBlob(files.next().getBlob());
+    const parsed = readGzJsonIn(findScanFolder(scanId), "slim.json.gz", "archiveRead:slim");
     return Array.isArray(parsed) ? parsed : null;
   }
   var FRAME_NAME = "frame-v1.json.gz";
@@ -736,9 +817,7 @@ var Server = (() => {
     return writeGzJson(scanFolder(scanId), FRAME_NAME, records).getId();
   }
   function readFrame(scanId) {
-    const files = scanFolder(scanId).getFilesByName(FRAME_NAME);
-    if (!files.hasNext()) return null;
-    const parsed = parseGzBlob(files.next().getBlob());
+    const parsed = readGzJsonIn(findScanFolder(scanId), FRAME_NAME, "archiveRead:frame");
     return Array.isArray(parsed) ? parsed : null;
   }
   var PAGE_RUNS_NAME = "pageruns.json.gz";
@@ -746,9 +825,7 @@ var Server = (() => {
     writeGzJson(scanFolder(scanId), PAGE_RUNS_NAME, runs);
   }
   function readPageRuns(scanId) {
-    const files = scanFolder(scanId).getFilesByName(PAGE_RUNS_NAME);
-    if (!files.hasNext()) return null;
-    const parsed = parseGzBlob(files.next().getBlob());
+    const parsed = readGzJsonIn(findScanFolder(scanId), PAGE_RUNS_NAME, "archiveRead:pageRuns");
     return Array.isArray(parsed) ? parsed : null;
   }
   function readScanPayload(scanRef) {
@@ -760,14 +837,19 @@ var Server = (() => {
       return null;
     }
     const pages = [];
-    const files = folder.getFiles();
-    while (files.hasNext()) {
-      const f = files.next();
-      const name = f.getName();
-      if (!/^page-\d+\.json(\.gz)?$/.test(name)) continue;
-      const payload = parseGzBlob(f.getBlob());
-      if (payload === null) return null;
-      pages.push({ name, payload });
+    try {
+      const files = folder.getFiles();
+      while (files.hasNext()) {
+        const f = files.next();
+        const name = f.getName();
+        if (!/^page-\d+\.json(\.gz)?$/.test(name)) continue;
+        const payload = parseGzBlob(f.getBlob());
+        if (payload === null) return null;
+        pages.push({ name, payload });
+      }
+    } catch (e) {
+      noteDriveFailure("archiveRead:scanPayload", e);
+      return null;
     }
     if (!pages.length) return null;
     pages.sort((a, b) => a.name < b.name ? -1 : 1);
@@ -873,17 +955,23 @@ var Server = (() => {
       return [];
     }
     const nums = [];
-    const files = folder.getFiles();
-    while (files.hasNext()) {
-      const m = /^page-(\d+)\.json(\.gz)?$/.exec(files.next().getName());
-      if (m) nums.push(Number(m[1]));
+    try {
+      const files = folder.getFiles();
+      while (files.hasNext()) {
+        const m = /^page-(\d+)\.json(\.gz)?$/.exec(files.next().getName());
+        if (m) nums.push(Number(m[1]));
+      }
+    } catch (e) {
+      noteDriveFailure("archiveRead:pageNumbers", e);
+      return [];
     }
     return nums.sort((a, b) => a - b);
   }
   function trashPageRuns(scanId) {
     try {
-      const files = scanFolder(scanId).getFilesByName(PAGE_RUNS_NAME);
-      while (files.hasNext()) files.next().setTrashed(true);
+      const folder = findScanFolder(scanId);
+      const files = folder ? folder.getFilesByName(PAGE_RUNS_NAME) : null;
+      while (files && files.hasNext()) files.next().setTrashed(true);
     } catch (e) {
       console.warn(`Couldn't trash page runs for ${scanId}: ${e}`);
     }
@@ -894,9 +982,7 @@ var Server = (() => {
     writeGzJson(subfolder("snapshots"), SNAPSHOT_NAME, snap);
   }
   function readLedgerSnapshot() {
-    const files = subfolder("snapshots").getFilesByName(SNAPSHOT_NAME);
-    if (!files.hasNext()) return null;
-    const parsed = parseGzBlob(files.next().getBlob());
+    const parsed = readGzJsonIn(findSubfolder("snapshots"), SNAPSHOT_NAME, "archiveRead:snapshot");
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
     const snap = parsed;
     return snap.ledger && snap.episodes ? snap : null;
@@ -915,33 +1001,49 @@ var Server = (() => {
     const file = writeGzJson(subfolder("exports"), name, bundle);
     return { name, url: file.getDownloadUrl(), bytes: file.getSize() };
   }
-  function readGzJsonNamed(folder, name) {
-    const files = subfolder(folder).getFilesByName(name);
-    return files.hasNext() ? parseGzBlob(files.next().getBlob()) : null;
-  }
   function listNames(folder) {
+    const dir = findSubfolder(folder);
+    if (!dir) return [];
     const out = [];
-    const files = subfolder(folder).getFiles();
-    while (files.hasNext()) out.push(files.next().getName());
+    try {
+      const files = dir.getFiles();
+      while (files.hasNext()) out.push(files.next().getName());
+    } catch (e) {
+      noteDriveFailure(`archiveRead:${folder}`, e);
+      return [];
+    }
     return out;
   }
   function trashNamed(folder, name) {
-    const files = subfolder(folder).getFilesByName(name);
+    const dir = findSubfolder(folder);
+    if (!dir) return;
+    const files = dir.getFilesByName(name);
     while (files.hasNext()) files.next().setTrashed(true);
   }
   function trashLedgerSnapshot() {
-    const files = subfolder("snapshots").getFilesByName(SNAPSHOT_NAME);
+    const dir = findSubfolder("snapshots");
+    if (!dir) return;
+    const files = dir.getFilesByName(SNAPSHOT_NAME);
     while (files.hasNext()) files.next().setTrashed(true);
   }
   function importFolder(sessionId) {
     return childFolder(subfolder("imports"), safeName(sessionId));
   }
+  function findImportFolder(sessionId) {
+    const imports = findSubfolder("imports");
+    if (!imports) return null;
+    try {
+      return findChild(imports, safeName(sessionId));
+    } catch (e) {
+      noteDriveFailure("archiveRead:imports", e);
+      return null;
+    }
+  }
   function writeImportManifest(sessionId, manifest) {
     return writeGzJson(importFolder(sessionId), "manifest.json.gz", manifest).getId();
   }
   function readImportManifest(sessionId) {
-    const files = importFolder(sessionId).getFilesByName("manifest.json.gz");
-    return files.hasNext() ? parseGzBlob(files.next().getBlob()) : null;
+    return readGzJsonIn(findImportFolder(sessionId), "manifest.json.gz", "archiveRead:imports");
   }
   function stageShard(sessionId, index, payload) {
     const name = `shard-${String(index + 1).padStart(4, "0")}.json.gz`;
@@ -1017,7 +1119,14 @@ var Server = (() => {
       "has_kev",
       "has_exploit",
       "epss",
-      "risk_observed_at"
+      "risk_observed_at",
+      // Wiz's own console link. LAST, which is where `ensureHeaders` appends a newly-added
+      // column on an existing deployment — so a sheet created by this version and a sheet
+      // healed into it end up with the same column order rather than two orders that only
+      // agree by luck. (Writes map by the headers READ OFF THE SHEET, not by this list, so
+      // the orders never have to match each other — but a reader comparing two deployments
+      // should not have to discover that.)
+      "portal_url"
     ],
     [TABS.episodes]: [
       "vuln_key",
@@ -1373,6 +1482,18 @@ var Server = (() => {
   var DEFAULT_RETENTION_DAYS = 180;
   var RETENTION_MIN_DAYS = 30;
   var MIN_UNSEALED_FLAT_SCANS = 2;
+  var RESOLUTION_DISAPPEARED = "disappeared";
+  var DEFAULT_COLD_AFTER_DAYS = 90;
+  var COLD_AFTER_DAYS_MIN = 7;
+  var COLD_AFTER_DAYS_MAX = 365;
+  var COLD_ZONE_MODES = ["fixed", "relative"];
+  var DEFAULT_COLD_ZONE_MODE = "fixed";
+  var DEFAULT_COLD_TARGET_SHARE_PCT = 20;
+  var COLD_TARGET_SHARE_PCT_MIN = 1;
+  var COLD_TARGET_SHARE_PCT_MAX = 50;
+  var DEFAULT_COLD_FLOOR_DAYS = 14;
+  var COLD_FLOOR_DAYS_MIN = 1;
+  var COLD_FLOOR_DAYS_MAX = COLD_AFTER_DAYS_MAX;
 
   // src/domain/severity.ts
   function normalizeSeverity(sev2) {
@@ -1680,7 +1801,15 @@ var Server = (() => {
       scanClosedByMonth[k] = ((_b = scanClosedByMonth[k]) != null ? _b : 0) + Number((_c = s["resolved_count"]) != null ? _c : 0);
     }
     if (!parsed.length) {
-      return { months: [], mmcrMean: null, oneInN: null, netTotal: 0, verdict: null, monthsCounted: 0 };
+      return {
+        months: [],
+        mmcrMean: null,
+        oneInN: null,
+        closedPerMonthMean: null,
+        netTotal: 0,
+        verdict: null,
+        monthsCounted: 0
+      };
     }
     const earliest = minNum(parsed.map((p) => p.first));
     const months = [];
@@ -1717,6 +1846,7 @@ var Server = (() => {
     }
     const counted = months.filter((m) => !m.partial && !m.reconstructed && m.mmcr !== null);
     const mmcrMean = counted.length ? counted.reduce((a, m) => a + m.mmcr, 0) / counted.length : null;
+    const closedPerMonthMean = counted.length ? counted.reduce((a, m) => a + m.closed, 0) / counted.length : null;
     const netTotal = months.reduce((a, m) => a + m.net, 0);
     const netPctOverall = counted.length ? counted.reduce((a, m) => {
       var _a2;
@@ -1727,6 +1857,7 @@ var Server = (() => {
       months: trimmed,
       mmcrMean,
       oneInN: mmcrMean !== null && mmcrMean > 0 ? 100 / mmcrMean : null,
+      closedPerMonthMean,
       netTotal,
       verdict: counted.length ? verdictOf(netPctOverall) : null,
       monthsCounted: counted.length
@@ -1955,6 +2086,59 @@ var Server = (() => {
     d["retention_days"] = days === null ? null : Math.max(Math.trunc(days), RETENTION_MIN_DAYS);
     return d;
   }
+  function numericOrNull(v) {
+    if (typeof v === "number") return Number.isFinite(v) ? v : null;
+    if (typeof v === "string" && v.trim() !== "") {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    }
+    return null;
+  }
+  function getColdAfterDays(settings) {
+    const n = numericOrNull(settings["cold_after_days"]);
+    if (n === null) return DEFAULT_COLD_AFTER_DAYS;
+    return Math.min(COLD_AFTER_DAYS_MAX, Math.max(COLD_AFTER_DAYS_MIN, Math.floor(n)));
+  }
+  function withColdAfterDays(settings, days) {
+    return { ...settings, cold_after_days: getColdAfterDays({ cold_after_days: days }) };
+  }
+  function getColdZoneMode(settings) {
+    const v = settings["cold_zone_mode"];
+    if (typeof v !== "string") return DEFAULT_COLD_ZONE_MODE;
+    const m = v.trim().toLowerCase();
+    return COLD_ZONE_MODES.includes(m) ? m : DEFAULT_COLD_ZONE_MODE;
+  }
+  function withColdZoneMode(settings, mode) {
+    return { ...settings, cold_zone_mode: getColdZoneMode({ cold_zone_mode: mode }) };
+  }
+  function getColdTargetSharePct(settings) {
+    const n = numericOrNull(settings["cold_target_share_pct"]);
+    if (n === null) return DEFAULT_COLD_TARGET_SHARE_PCT;
+    return Math.min(COLD_TARGET_SHARE_PCT_MAX, Math.max(COLD_TARGET_SHARE_PCT_MIN, Math.floor(n)));
+  }
+  function withColdTargetSharePct(settings, pct2) {
+    return {
+      ...settings,
+      cold_target_share_pct: getColdTargetSharePct({ cold_target_share_pct: pct2 })
+    };
+  }
+  function getColdFloorDays(settings) {
+    const n = numericOrNull(settings["cold_floor_days"]);
+    if (n === null) return DEFAULT_COLD_FLOOR_DAYS;
+    return Math.min(COLD_FLOOR_DAYS_MAX, Math.max(COLD_FLOOR_DAYS_MIN, Math.floor(n)));
+  }
+  function withColdFloorDays(settings, days) {
+    return { ...settings, cold_floor_days: getColdFloorDays({ cold_floor_days: days }) };
+  }
+  function effectiveColdZoneSettings(settings) {
+    const s = settings != null ? settings : {};
+    return {
+      mode: getColdZoneMode(s),
+      coldAfterDays: getColdAfterDays(s),
+      targetSharePct: getColdTargetSharePct(s),
+      floorDays: getColdFloorDays(s)
+    };
+  }
   function getAutoCompact(settings) {
     const val = "auto_compact" in settings ? settings["auto_compact"] : true;
     return typeof val === "boolean" ? val : true;
@@ -2072,11 +2256,15 @@ var Server = (() => {
       d = withRetentionDays(d, raw === null || raw === void 0 ? null : Number(raw));
     }
     if ("autoCompact" in patch) d = withAutoCompact(d, Boolean(patch["autoCompact"]));
+    if ("coldZoneMode" in patch) d = withColdZoneMode(d, patch["coldZoneMode"]);
+    if ("coldAfterDays" in patch) d = withColdAfterDays(d, patch["coldAfterDays"]);
+    if ("coldTargetSharePct" in patch) d = withColdTargetSharePct(d, patch["coldTargetSharePct"]);
+    if ("coldFloorDays" in patch) d = withColdFloorDays(d, patch["coldFloorDays"]);
     return d;
   }
 
   // src/server/wizQuery.ts
-  var QUERY = "\n    query VulnerabilityFindingsTable($filterBy: VulnerabilityFindingFilters, $first: Int, $after: String, $orderBy: VulnerabilityFindingOrder = {direction: DESC, field: CREATED_AT}, $includeRelatedIssueAnalytics: Boolean = false, $includeRelatedSourceMappedIssueAnalytics: Boolean = false, $includeTotalCount: Boolean = false, $includePostureIssues: Boolean = false, $fetchPrivilegedActionRequests: Boolean = false) {\n      vulnerabilityFindings(\n        filterBy: $filterBy\n        first: $first\n        after: $after\n        orderBy: $orderBy\n      ) {\n        nodes {\n          ...VulnerabilityFindingFragment\n          ...DuplicateFindingBadge\n          transitivity\n          rootComponent {\n            name\n          }\n          isHighProfileThreat\n          vendorSeverity\n          nvdSeverity\n          weightedSeverity\n          hasExploit\n          usedInCodeResult\n          hasCisaKevExploit\n          cisaKevReleaseDate\n          cisaKevDueDate\n          score\n          epssSeverity\n          epssPercentile\n          epssProbability\n          categories\n          hasInitialAccessPotential\n          isClientSide\n          affectedBySettings\n          codeLibraryLanguage\n          exploitabilityValidationStatus\n          cvssv2 {\n            attackVector\n            attackComplexity\n            confidentialityImpact\n            integrityImpact\n            privilegesRequired\n            userInteractionRequired\n            vectorString\n            scope\n          }\n          cvssv3 {\n            attackVector\n            attackComplexity\n            confidentialityImpact\n            integrityImpact\n            privilegesRequired\n            userInteractionRequired\n            vectorString\n            scope\n          }\n          effectiveAvailabilityImpact\n          cnaScore\n          vendorScore\n          relatedIssueAnalytics @include(if: $includeRelatedIssueAnalytics) {\n            ...VulnerabilityFindingRelatedIssueAnalyticsFragment\n          }\n          relatedSourceMappedIssueAnalytics @include(if: $includeRelatedSourceMappedIssueAnalytics) {\n            ...VulnerabilityFindingRelatedIssueAnalyticsFragment\n          }\n          postureIssues @include(if: $includePostureIssues) {\n            ...PostureIssuePopoverListRecord\n          }\n          privilegedActionRequests @include(if: $fetchPrivilegedActionRequests) {\n            ...PendingUpdateVulnerabilityFindingStatusRequest\n          }\n        }\n        pageInfo {\n          hasNextPage\n          endCursor\n        }\n        totalCount @include(if: $includeTotalCount)\n      }\n    }\n   \n        fragment VulnerabilityFindingFragment on VulnerabilityFinding {\n      id\n      name\n      detailedName\n      description\n      severity\n      status\n      fixedVersion\n      detectionMethod\n      firstDetectedAt\n      firstDetectedAtSource\n      lastDetectedAt\n      resolvedAt\n      validatedInRuntime\n      runtimeValidationResult\n      reachability\n      hasTriggerableRemediation\n      remediationPullRequestAvailable\n      dataSourceName\n      fixDate\n      fixDateBefore\n      publishedDate\n      version\n      versionResolutionPrimarySource {\n        type\n        version\n      }\n      isOperatingSystemEndOfLife\n      recommendedVersion\n      locationPath\n      artifactType {\n        ...SBOMArtifactTypeFragment\n      }\n      projects {\n        id\n        name\n        slug\n        isFolder\n      }\n      ignoreRules {\n        id\n      }\n      note {\n        id\n        text\n      }\n      layerMetadata {\n        id\n        details\n        isBaseLayer\n        layerHash\n      }\n      vulnerableAsset {\n        ... on VulnerableAssetBase {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          externalId\n          providerUniqueId\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetVirtualMachine {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystem\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          imageName\n          imageId\n          imageNativeType\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          computeInstanceGroup {\n            id\n            externalId\n            name\n            replicaCount\n            tags\n          }\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetServerless {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetContainerImage {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          repository {\n            vertexId\n            name\n          }\n          registry {\n            vertexId\n            name\n          }\n          scanSource\n          executionControllers {\n            ...VulnerableAssetExecutionControllerDetails\n          }\n          graphEntity {\n            ...VulnerabilityContainerImageGraphEntityExecutionContext\n          }\n          nativeType\n          tagReferences\n          imageTags\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetContainer {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          executionControllers {\n            ...VulnerableAssetExecutionControllerDetails\n          }\n          nativeType\n          isUsedOnPrem\n        }\n        ... on VulnerableAssetRepositoryBranch {\n          id\n          type\n          name\n          cloudPlatform\n          repositoryId\n          repositoryName\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetIde {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetEndpoint {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetPaaSResource {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetVirtualMachineImage {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetNetworkAddress {\n          subscriptionId\n          subscriptionName\n          subscriptionExternalId\n          tags\n          address\n          addressType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetCommon {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetDevice {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n          operatingSystem\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n        }\n      }\n      sourceMappedCodeFindings {\n        id\n        remediationPullRequestAvailable\n      }\n    }\n   \n\n\n        fragment SBOMArtifactTypeFragment on SBOMArtifactType {\n      group\n      codeLibraryLanguage\n      osPackageManager\n      hostedTechnology {\n        id\n        name\n        icon\n      }\n      plugin\n      custom\n      ciComponent\n    }\n   \n\n\n        fragment VulnerabilityFindingOperatingSystemDistribution on Technology {\n      id\n      name\n      icon\n    }\n   \n\n\n        fragment VulnerableAssetExecutionControllerDetails on VulnerableAssetExecutionController {\n      id\n      entityType\n      externalId\n      providerUniqueId\n      name\n      subscriptionExternalId\n      subscriptionId\n      subscriptionName\n      ancestors {\n        id\n        name\n        entityType\n        externalId\n        providerUniqueId\n      }\n    }\n   \n\n\n        fragment VulnerabilityContainerImageGraphEntityExecutionContext on GraphEntity {\n      id\n      providerUniqueId\n      type\n      containerImageExecutionContextAnalyticsV3 {\n        totalResourceCount\n        nativeType {\n          nativeType\n          count\n        }\n      }\n    }\n   \n\n\n        fragment DuplicateFindingBadge on VulnerabilityFinding {\n      id\n      origin\n      duplicateOf {\n        id\n        name\n        origin\n        vulnerableAsset {\n          ... on VulnerableAssetBase {\n            id\n            name\n          }\n        }\n      }\n    }\n   \n\n\n        fragment VulnerabilityFindingRelatedIssueAnalyticsFragment on VulnerabilityFindingRelatedIssueAnalytics {\n      issueCount\n      informationalSeverityCount\n      lowSeverityCount\n      mediumSeverityCount\n      highSeverityCount\n      criticalSeverityCount\n    }\n   \n\n\n        fragment PostureIssuePopoverListRecord on PostureIssue {\n      id\n      name\n      type\n      entity {\n        providerUniqueId\n        id\n        type\n      }\n    }\n   \n\n\n        fragment PendingUpdateVulnerabilityFindingStatusRequest on PrivilegedActionRequest {\n      ...PendingStatusRequestBanner\n      ...PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams\n    }\n   \n\n\n        fragment PendingStatusRequestBanner on PrivilegedActionRequest {\n      id\n      type\n      status\n      createdAt\n      createdBy {\n        id\n        name\n        email\n      }\n      params {\n        ... on PrivilegedActionRequestUpdateIssueStatusParams {\n          issueStatus: status\n        }\n        ... on PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams {\n          findingStatus: status\n        }\n        ... on PrivilegedActionRequestCreateIgnoreRuleParams {\n          ignoreRuleName: name\n        }\n      }\n    }\n   \n\n\n        fragment PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams on PrivilegedActionRequest {\n      id\n      params {\n        ... on PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams {\n          status\n        }\n      }\n      subject {\n        ... on VulnerabilityFinding {\n          id\n          status\n        }\n      }\n    }\n";
+  var QUERY = "\n    query VulnerabilityFindingsTable($filterBy: VulnerabilityFindingFilters, $first: Int, $after: String, $orderBy: VulnerabilityFindingOrder = {direction: DESC, field: CREATED_AT}, $includeRelatedIssueAnalytics: Boolean = false, $includeRelatedSourceMappedIssueAnalytics: Boolean = false, $includeTotalCount: Boolean = false, $includePostureIssues: Boolean = false, $fetchPrivilegedActionRequests: Boolean = false) {\n      vulnerabilityFindings(\n        filterBy: $filterBy\n        first: $first\n        after: $after\n        orderBy: $orderBy\n      ) {\n        nodes {\n          ...VulnerabilityFindingFragment\n          ...DuplicateFindingBadge\n          transitivity\n          rootComponent {\n            name\n          }\n          isHighProfileThreat\n          vendorSeverity\n          nvdSeverity\n          weightedSeverity\n          hasExploit\n          usedInCodeResult\n          hasCisaKevExploit\n          cisaKevReleaseDate\n          cisaKevDueDate\n          score\n          epssSeverity\n          epssPercentile\n          epssProbability\n          categories\n          hasInitialAccessPotential\n          isClientSide\n          affectedBySettings\n          codeLibraryLanguage\n          exploitabilityValidationStatus\n          cvssv2 {\n            attackVector\n            attackComplexity\n            confidentialityImpact\n            integrityImpact\n            privilegesRequired\n            userInteractionRequired\n            vectorString\n            scope\n          }\n          cvssv3 {\n            attackVector\n            attackComplexity\n            confidentialityImpact\n            integrityImpact\n            privilegesRequired\n            userInteractionRequired\n            vectorString\n            scope\n          }\n          effectiveAvailabilityImpact\n          cnaScore\n          vendorScore\n          relatedIssueAnalytics @include(if: $includeRelatedIssueAnalytics) {\n            ...VulnerabilityFindingRelatedIssueAnalyticsFragment\n          }\n          relatedSourceMappedIssueAnalytics @include(if: $includeRelatedSourceMappedIssueAnalytics) {\n            ...VulnerabilityFindingRelatedIssueAnalyticsFragment\n          }\n          postureIssues @include(if: $includePostureIssues) {\n            ...PostureIssuePopoverListRecord\n          }\n          privilegedActionRequests @include(if: $fetchPrivilegedActionRequests) {\n            ...PendingUpdateVulnerabilityFindingStatusRequest\n          }\n        }\n        pageInfo {\n          hasNextPage\n          endCursor\n        }\n        totalCount @include(if: $includeTotalCount)\n      }\n    }\n   \n        fragment VulnerabilityFindingFragment on VulnerabilityFinding {\n      id\n      portalUrl\n      name\n      detailedName\n      description\n      severity\n      status\n      fixedVersion\n      detectionMethod\n      firstDetectedAt\n      firstDetectedAtSource\n      lastDetectedAt\n      resolvedAt\n      validatedInRuntime\n      runtimeValidationResult\n      reachability\n      hasTriggerableRemediation\n      remediationPullRequestAvailable\n      dataSourceName\n      fixDate\n      fixDateBefore\n      publishedDate\n      version\n      versionResolutionPrimarySource {\n        type\n        version\n      }\n      isOperatingSystemEndOfLife\n      recommendedVersion\n      locationPath\n      artifactType {\n        ...SBOMArtifactTypeFragment\n      }\n      projects {\n        id\n        name\n        slug\n        isFolder\n      }\n      ignoreRules {\n        id\n      }\n      note {\n        id\n        text\n      }\n      layerMetadata {\n        id\n        details\n        isBaseLayer\n        layerHash\n      }\n      vulnerableAsset {\n        ... on VulnerableAssetBase {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          externalId\n          providerUniqueId\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetVirtualMachine {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystem\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          imageName\n          imageId\n          imageNativeType\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          computeInstanceGroup {\n            id\n            externalId\n            name\n            replicaCount\n            tags\n          }\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetServerless {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetContainerImage {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          repository {\n            vertexId\n            name\n          }\n          registry {\n            vertexId\n            name\n          }\n          scanSource\n          executionControllers {\n            ...VulnerableAssetExecutionControllerDetails\n          }\n          graphEntity {\n            ...VulnerabilityContainerImageGraphEntityExecutionContext\n          }\n          nativeType\n          tagReferences\n          imageTags\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetContainer {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          executionControllers {\n            ...VulnerableAssetExecutionControllerDetails\n          }\n          nativeType\n          isUsedOnPrem\n        }\n        ... on VulnerableAssetRepositoryBranch {\n          id\n          type\n          name\n          cloudPlatform\n          repositoryId\n          repositoryName\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetIde {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetEndpoint {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetPaaSResource {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetVirtualMachineImage {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetNetworkAddress {\n          subscriptionId\n          subscriptionName\n          subscriptionExternalId\n          tags\n          address\n          addressType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetCommon {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetDevice {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n          operatingSystem\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n        }\n      }\n      sourceMappedCodeFindings {\n        id\n        remediationPullRequestAvailable\n      }\n    }\n   \n\n\n        fragment SBOMArtifactTypeFragment on SBOMArtifactType {\n      group\n      codeLibraryLanguage\n      osPackageManager\n      hostedTechnology {\n        id\n        name\n        icon\n      }\n      plugin\n      custom\n      ciComponent\n    }\n   \n\n\n        fragment VulnerabilityFindingOperatingSystemDistribution on Technology {\n      id\n      name\n      icon\n    }\n   \n\n\n        fragment VulnerableAssetExecutionControllerDetails on VulnerableAssetExecutionController {\n      id\n      entityType\n      externalId\n      providerUniqueId\n      name\n      subscriptionExternalId\n      subscriptionId\n      subscriptionName\n      ancestors {\n        id\n        name\n        entityType\n        externalId\n        providerUniqueId\n      }\n    }\n   \n\n\n        fragment VulnerabilityContainerImageGraphEntityExecutionContext on GraphEntity {\n      id\n      providerUniqueId\n      type\n      containerImageExecutionContextAnalyticsV3 {\n        totalResourceCount\n        nativeType {\n          nativeType\n          count\n        }\n      }\n    }\n   \n\n\n        fragment DuplicateFindingBadge on VulnerabilityFinding {\n      id\n      origin\n      duplicateOf {\n        id\n        name\n        origin\n        vulnerableAsset {\n          ... on VulnerableAssetBase {\n            id\n            name\n          }\n        }\n      }\n    }\n   \n\n\n        fragment VulnerabilityFindingRelatedIssueAnalyticsFragment on VulnerabilityFindingRelatedIssueAnalytics {\n      issueCount\n      informationalSeverityCount\n      lowSeverityCount\n      mediumSeverityCount\n      highSeverityCount\n      criticalSeverityCount\n    }\n   \n\n\n        fragment PostureIssuePopoverListRecord on PostureIssue {\n      id\n      name\n      type\n      entity {\n        providerUniqueId\n        id\n        type\n      }\n    }\n   \n\n\n        fragment PendingUpdateVulnerabilityFindingStatusRequest on PrivilegedActionRequest {\n      ...PendingStatusRequestBanner\n      ...PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams\n    }\n   \n\n\n        fragment PendingStatusRequestBanner on PrivilegedActionRequest {\n      id\n      type\n      status\n      createdAt\n      createdBy {\n        id\n        name\n        email\n      }\n      params {\n        ... on PrivilegedActionRequestUpdateIssueStatusParams {\n          issueStatus: status\n        }\n        ... on PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams {\n          findingStatus: status\n        }\n        ... on PrivilegedActionRequestCreateIgnoreRuleParams {\n          ignoreRuleName: name\n        }\n      }\n    }\n   \n\n\n        fragment PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams on PrivilegedActionRequest {\n      id\n      params {\n        ... on PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams {\n          status\n        }\n      }\n      subject {\n        ... on VulnerabilityFinding {\n          id\n          status\n        }\n      }\n    }\n";
   var BASE_VARIABLES = {
     "orderBy": {
       "field": "RELATED_ISSUE_SEVERITY",
@@ -2317,6 +2505,21 @@ var Server = (() => {
     }
   }
 
+  // ../gas_shared/domain/wizUrl.ts
+  var PORTAL_PREFIXES = [
+    ["https:", "", "app.wiz.io", ""].join("/"),
+    ["https:", "", "app.wiz.us", ""].join("/")
+  ];
+  function isLegal(url) {
+    return PORTAL_PREFIXES.some((prefix) => url.indexOf(prefix) === 0);
+  }
+  function normalizeWizUrl(raw) {
+    if (typeof raw !== "string") return null;
+    const url = raw.trim();
+    if (!url) return null;
+    return isLegal(url) ? url : null;
+  }
+
   // src/server/diagnostics.ts
   function preview(value) {
     if (!value || !value.trim()) return "(unset)";
@@ -2328,7 +2531,7 @@ var Server = (() => {
     return value && value.trim() ? `(set, ${value.trim().length} chars)` : "(unset)";
   }
   function wizDiagnostic() {
-    var _a;
+    var _a, _b;
     const lines = [];
     const log = (m) => {
       lines.push(m);
@@ -2372,10 +2575,11 @@ var Server = (() => {
       );
       return lines.join("\n");
     }
+    let firstNode = null;
     try {
       const page = queryPage(buildVariables({ first: 1 }));
+      firstNode = (_b = page.nodes[0]) != null ? _b : null;
       log(`Step 2 OK: query succeeded \u2014 ${page.nodes.length} finding(s) on page 1.`);
-      log("=== All checks passed. Live scans should work. ===");
     } catch (e) {
       const msg = e.message;
       log(`Step 2 FAIL: the query was rejected \u2014 ${msg}`);
@@ -2394,6 +2598,30 @@ var Server = (() => {
       }
       return lines.join("\n");
     }
+    if (firstNode === null) {
+      log(
+        "Step 3 SKIPPED: the query returned no findings, so there was no row to read a Wiz console link off. Not a failure \u2014 widen the severity filter or the project and re-run if you want this checked."
+      );
+    } else {
+      const raw = firstNode["portalUrl"];
+      const usable = normalizeWizUrl(raw);
+      if (usable) {
+        log(`Step 3 OK: findings carry a Wiz console link (${usable}).`);
+      } else if (typeof raw === "string" && raw.trim()) {
+        log(
+          `Step 3 WARN: this tenant returned a portalUrl the register will not link to \u2014 ${raw.trim()}`
+        );
+        log(
+          "\u2192 The finding sheet shows no Wiz row for it. Links are allowed only on the Wiz consoles (app.wiz.io / app.wiz.us); see gas_shared/domain/wizUrl.ts for why the list is a security boundary rather than a typo-catcher, and widen it there if your tenant is genuinely served from another host."
+        );
+      } else {
+        log("Step 3 WARN: the query worked but this finding carried no portalUrl.");
+        log(
+          "\u2192 The finding sheet will show no Wiz row for findings like it. If EVERY finding is like this, the tenant is not populating the field and there is nothing to link to; the register states that rather than guessing a URL."
+        );
+      }
+    }
+    log("=== All checks passed. Live scans should work. ===");
     return lines.join("\n");
   }
 
@@ -2410,6 +2638,7 @@ var Server = (() => {
     getAccess: () => getAccess,
     getAttribution: () => getAttribution,
     getChartsBundle: () => getChartsBundle,
+    getColdZonePage: () => getColdZonePage,
     getDomains: () => getDomains3,
     getExecutivePage: () => getExecutivePage,
     getExportCoverageCsv: () => getExportCoverageCsv,
@@ -3290,6 +3519,1025 @@ var Server = (() => {
     return summarize(work, opts.now);
   }
 
+  // src/domain/reconcile.ts
+  var LEDGER_COLUMNS = [
+    "vuln_key",
+    "cve",
+    "severity",
+    "asset_id",
+    "asset_name",
+    "asset_type",
+    "cloud",
+    "first_seen",
+    "last_seen",
+    "status",
+    "resolved_at",
+    "resolution_src",
+    "reopened_count",
+    "first_scan_id",
+    "last_scan_id",
+    "subscription_name",
+    "subscription_ext_id",
+    "tags_json",
+    "fix_date",
+    "fix_observed_at",
+    "published_date",
+    "has_kev",
+    "has_exploit",
+    "epss",
+    "risk_observed_at",
+    "portal_url"
+  ];
+  var TAGS_PREFIX = "vulnerableAsset.tags.";
+  function tagsJson(record) {
+    const va = record["vulnerableAsset"];
+    let tags = null;
+    if (va && typeof va === "object" && !Array.isArray(va)) {
+      const t = va["tags"];
+      if (t && typeof t === "object" && !Array.isArray(t)) tags = t;
+    }
+    if (tags === null) {
+      const flat = record["vulnerableAsset.tags"];
+      if (flat && typeof flat === "object" && !Array.isArray(flat)) tags = flat;
+    }
+    if (tags === null) {
+      const collected = {};
+      for (const [k, v] of Object.entries(record)) {
+        if (k.startsWith(TAGS_PREFIX) && clean(v) !== null) {
+          collected[k.slice(TAGS_PREFIX.length)] = v;
+        }
+      }
+      tags = collected;
+    }
+    const kept = {};
+    for (const [k, v] of Object.entries(tags)) {
+      if (clean(v) !== null || v === "") kept[String(k)] = v;
+    }
+    const keys = Object.keys(kept).sort();
+    if (!keys.length) return null;
+    const parts = keys.map((k) => `${JSON.stringify(k)}: ${JSON.stringify(kept[k])}`);
+    return `{${parts.join(", ")}}`;
+  }
+  function makeRow(record, key, sev2, firstSeen, scanId, scanTs, fixDate, fixObservedAt) {
+    var _a;
+    return {
+      vuln_key: key,
+      cve: (_a = clean(record["name"])) != null ? _a : null,
+      severity: sev2,
+      asset_id: field(record, "vulnerableAsset.id") || null,
+      asset_name: field(record, "vulnerableAsset.name") || null,
+      asset_type: field(record, "vulnerableAsset.type") || null,
+      cloud: field(record, "vulnerableAsset.cloudPlatform") || null,
+      subscription_name: field(record, "vulnerableAsset.subscriptionName") || null,
+      subscription_ext_id: field(record, "vulnerableAsset.subscriptionExternalId", "vulnerableAsset.subscriptionId") || null,
+      tags_json: tagsJson(record),
+      first_seen: firstSeen,
+      last_seen: scanTs,
+      status: "OPEN",
+      resolved_at: null,
+      resolution_src: null,
+      reopened_count: 0,
+      first_scan_id: scanId,
+      last_scan_id: scanId,
+      fix_date: fixDate,
+      fix_observed_at: fixObservedAt,
+      // Refreshed on every later scan too (see reconcile()), because this is an address rather
+      // than a measurement — the header on the field says why it does not stick.
+      portal_url: normalizeWizUrl(record["portalUrl"]),
+      // Left null here and filled by seedPublished() after the branch, which — like the risk
+      // merge below it — runs identically for new, reopened and persisting rows.
+      published_date: null,
+      // Left empty here and filled by mergeRiskSignals() after the branch, which runs for new,
+      // reopened, and persisting rows alike (the merge is identical in all three).
+      ...emptyRiskSignals()
+    };
+  }
+  function emptyRiskSignals() {
+    return { has_kev: null, has_exploit: null, epss: null, risk_observed_at: null };
+  }
+  function coerceRiskSignals(r) {
+    var _a;
+    const obs = observeRiskSignals({
+      hasCisaKevExploit: r["has_kev"],
+      hasExploit: r["has_exploit"],
+      epssProbability: r["epss"]
+    });
+    return {
+      has_kev: obs.kev,
+      has_exploit: obs.exploit,
+      epss: obs.epss,
+      risk_observed_at: (_a = clean(r["risk_observed_at"])) != null ? _a : null
+    };
+  }
+  function observeRiskSignals(rec) {
+    const bool = (v) => {
+      if (typeof v === "boolean") return v;
+      if (typeof v === "string") {
+        const s = v.trim().toUpperCase();
+        if (s === "TRUE") return true;
+        if (s === "FALSE") return false;
+      }
+      return null;
+    };
+    const rawEpss = clean(rec["epssProbability"]);
+    const n = typeof rawEpss === "number" ? rawEpss : rawEpss === null ? NaN : Number(rawEpss);
+    return {
+      kev: bool(rec["hasCisaKevExploit"]),
+      exploit: bool(rec["hasExploit"]),
+      epss: Number.isFinite(n) ? n : null
+    };
+  }
+  function mergeRiskSignals(row, rec, scanTsIso) {
+    const obs = observeRiskSignals(rec);
+    if (obs.kev !== null && (row.has_kev == null || obs.kev)) row.has_kev = obs.kev;
+    if (obs.exploit !== null && (row.has_exploit == null || obs.exploit)) {
+      row.has_exploit = obs.exploit;
+    }
+    if (obs.epss !== null && (row.epss == null || obs.epss > row.epss)) row.epss = obs.epss;
+    const witnessed = obs.kev !== null || obs.exploit !== null || obs.epss !== null;
+    if (!witnessed) return;
+    if (row.risk_observed_at == null || scanTsIso < row.risk_observed_at) {
+      row.risk_observed_at = scanTsIso;
+    }
+  }
+  function seedPublished(row, rec) {
+    if (row.published_date != null) return;
+    if (!present(rec["publishedDate"])) return;
+    const iso = toIso(parseTs(rec["publishedDate"]));
+    if (iso !== null) row.published_date = iso;
+  }
+  function reconcile(currentRecords, existingLedger, scanId, scanTs, prevScanId, options = {}) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
+    const {
+      disappearanceMode = "scan_ts",
+      prevScanTs = null,
+      scannedSeverities = null,
+      prevScanIdBySeverity: prevScanIdBySeverity2 = null
+    } = options;
+    const updated = {};
+    for (const [key, row] of Object.entries(existingLedger)) updated[key] = { ...row };
+    const seen2 = /* @__PURE__ */ new Set();
+    const observations = [];
+    let newCount = 0;
+    let resolvedCount = 0;
+    let reopenedCount = 0;
+    const scanTsIso = (_a = toIso(parseTs(scanTs))) != null ? _a : String(scanTs);
+    for (const rec of currentRecords) {
+      const key = vulnKey(rec);
+      if (seen2.has(key)) continue;
+      seen2.add(key);
+      const sev2 = normalizeSeverity(clean(rec["severity"]));
+      const apiFirst = (_c = (_b = clean(rec["firstDetectedAt"])) != null ? _b : clean(rec["firstSeenAt"])) != null ? _c : clean(rec["createdAt"]);
+      const apiStatus = String((_d = clean(rec["status"])) != null ? _d : "").toUpperCase();
+      const apiResolved = (_f = (_e = clean(rec["resolvedAt"])) != null ? _e : clean(rec["remediatedAt"])) != null ? _f : clean(rec["fixedAt"]);
+      const apiSaysResolved = present(apiResolved) || RESOLVED_STATUSES.has(apiStatus);
+      const fixSignal = present(rec["fixedVersion"]) || present(rec["fixDate"]);
+      const recFixDate = present(rec["fixDate"]) ? toIso(parseTs(rec["fixDate"])) : null;
+      const seedFix = (r) => {
+        if (r.fix_date == null && recFixDate !== null) r.fix_date = recFixDate;
+        if (r.fix_observed_at == null && fixSignal) r.fix_observed_at = scanTsIso;
+      };
+      let row = updated[key];
+      if (row === void 0) {
+        const firstSeen = (_g = minIso(apiFirst, scanTsIso)) != null ? _g : scanTsIso;
+        row = makeRow(rec, key, sev2, firstSeen, scanId, scanTsIso, recFixDate, fixSignal ? scanTsIso : null);
+        updated[key] = row;
+        newCount += 1;
+      } else if (row.status === "RESOLVED" && !apiSaysResolved) {
+        row.status = "OPEN";
+        row.resolved_at = null;
+        row.resolution_src = null;
+        row.reopened_count = Number((_h = row.reopened_count) != null ? _h : 0) + 1;
+        row.first_seen = (_i = minIso(apiFirst, scanTsIso)) != null ? _i : scanTsIso;
+        row.last_seen = scanTsIso;
+        row.last_scan_id = scanId;
+        row.fix_date = null;
+        row.fix_observed_at = null;
+        seedFix(row);
+        reopenedCount += 1;
+      } else {
+        if (row.status === "OPEN") {
+          row.first_seen = (_j = minIso(row.first_seen, apiFirst)) != null ? _j : row.first_seen;
+        }
+        row.last_seen = scanTsIso;
+        row.last_scan_id = scanId;
+        seedFix(row);
+      }
+      mergeRiskSignals(row, rec, scanTsIso);
+      seedPublished(row, rec);
+      row.severity = sev2;
+      row.cve = (_k = clean(rec["name"])) != null ? _k : null;
+      row.asset_id = field(rec, "vulnerableAsset.id") || row.asset_id;
+      row.asset_name = field(rec, "vulnerableAsset.name") || row.asset_name;
+      row.asset_type = field(rec, "vulnerableAsset.type") || row.asset_type;
+      row.cloud = field(rec, "vulnerableAsset.cloudPlatform") || row.cloud;
+      row.portal_url = normalizeWizUrl(rec["portalUrl"]) || row.portal_url || null;
+      row.subscription_name = field(rec, "vulnerableAsset.subscriptionName") || row.subscription_name;
+      row.subscription_ext_id = field(rec, "vulnerableAsset.subscriptionExternalId", "vulnerableAsset.subscriptionId") || row.subscription_ext_id;
+      row.tags_json = (_l = tagsJson(rec)) != null ? _l : row.tags_json;
+      if (apiSaysResolved && row.status === "OPEN") {
+        row.status = "RESOLVED";
+        row.resolved_at = present(apiResolved) ? toIso(parseTs(apiResolved)) : scanTsIso;
+        row.resolution_src = "api";
+        resolvedCount += 1;
+      }
+      observations.push({
+        scan_id: scanId,
+        vuln_key: key,
+        present: 1,
+        severity: sev2,
+        status: row.status
+      });
+    }
+    if (prevScanId !== null) {
+      const scope = scannedSeverities !== null ? new Set(scannedSeverities) : null;
+      for (const [key, row] of Object.entries(updated)) {
+        if (seen2.has(key) || row.status === "RESOLVED") continue;
+        const sevRow = row.severity;
+        if (scope !== null && (sevRow === null || !scope.has(sevRow))) {
+          continue;
+        }
+        const expectedPrev = (_m = (prevScanIdBySeverity2 != null ? prevScanIdBySeverity2 : {})[sevRow != null ? sevRow : ""]) != null ? _m : prevScanId;
+        if (row.last_scan_id !== expectedPrev) continue;
+        if (disappearanceMode === "midpoint" && prevScanTs) {
+          row.resolved_at = midpointIso(prevScanTs, scanTsIso);
+        } else {
+          row.resolved_at = scanTsIso;
+        }
+        row.status = "RESOLVED";
+        row.resolution_src = "disappeared";
+        resolvedCount += 1;
+        observations.push({
+          scan_id: scanId,
+          vuln_key: key,
+          present: 0,
+          severity: row.severity,
+          status: "RESOLVED"
+        });
+      }
+    }
+    return {
+      ledger: updated,
+      observations,
+      deltas: {
+        new_count: newCount,
+        resolved_count: resolvedCount,
+        reopened_count: reopenedCount
+      }
+    };
+  }
+
+  // src/domain/ledgerCore.ts
+  function emptyState() {
+    return { scans: [], ledger: {}, episodes: [] };
+  }
+  function scansAsc(scans) {
+    return [...scans].sort((a, b) => {
+      var _a, _b;
+      const ta = (_a = parseTs(a.ts)) != null ? _a : 0;
+      const tb = (_b = parseTs(b.ts)) != null ? _b : 0;
+      if (ta !== tb) return ta - tb;
+      return a.scan_id < b.scan_id ? -1 : a.scan_id > b.scan_id ? 1 : 0;
+    });
+  }
+  function latestScan(scans) {
+    const asc = scansAsc(scans);
+    return asc.length ? asc[asc.length - 1] : null;
+  }
+  function prevScanIdBySeverity(scans) {
+    const remaining = new Set(SEVERITY_ORDER);
+    const mapping = {};
+    const desc = scansAsc(scans).reverse();
+    for (const r of desc) {
+      const scope = parseSeverities(r.severities);
+      const covered = scope === null ? [...remaining] : [...remaining].filter((s) => scope.includes(s));
+      for (const sev2 of covered) mapping[sev2] = r.scan_id;
+      covered.forEach((s) => remaining.delete(s));
+      if (!remaining.size) break;
+    }
+    return Object.keys(mapping).length ? mapping : null;
+  }
+  function newestFlatScanBySeverity(scans) {
+    const remaining = new Set(SEVERITY_ORDER);
+    const out = {};
+    const desc = scansAsc(scans.filter((s) => s.shape === "flat")).reverse();
+    for (const r of desc) {
+      const scope = parseSeverities(r.severities);
+      const covered = scope === null ? [...remaining] : [...remaining].filter((s) => scope.includes(s));
+      for (const sev2 of covered) out[sev2] = { scan_id: r.scan_id, ts: r.ts };
+      covered.forEach((s) => remaining.delete(s));
+      if (!remaining.size) break;
+    }
+    return out;
+  }
+  function existingScanDeltas(scans, scanId) {
+    const row = scans.find((r) => r.scan_id === scanId);
+    if (!row) return null;
+    return {
+      new_count: row.new_count,
+      resolved_count: row.resolved_count,
+      reopened_count: row.reopened_count
+    };
+  }
+  function reconcileEpisodeCollisions(state, updated, existingLedger, deltas, scanId) {
+    var _a;
+    const newKeys = Object.keys(updated).filter((k) => !(k in existingLedger));
+    if (!newKeys.length) return;
+    const episodeReopens = /* @__PURE__ */ new Map();
+    for (const e of state.episodes) {
+      if (e.superseded_by_scan === null && newKeys.includes(e.vuln_key)) {
+        episodeReopens.set(e.vuln_key, e);
+      }
+    }
+    for (const [key, episode] of episodeReopens) {
+      const row = updated[key];
+      if (row.status === "OPEN") {
+        row.reopened_count = Number((_a = episode.reopened_count) != null ? _a : 0) + 1;
+        deltas.new_count -= 1;
+        deltas.reopened_count += 1;
+        episode.superseded_by_scan = scanId;
+      } else {
+        if (!episode.tags_json && row.tags_json) episode.tags_json = row.tags_json;
+        delete updated[key];
+        deltas.new_count -= 1;
+        deltas.resolved_count -= 1;
+      }
+    }
+  }
+  function persistFlatScan(state, records, options) {
+    var _a, _b, _c, _d;
+    const scanId = options.scanId || nowIso(options.now);
+    const scanTs = scanId;
+    const disappearanceMode = (_a = options.disappearanceMode) != null ? _a : DISAPPEARANCE_RESOLUTION;
+    const severitiesText = serializeSeverities((_b = options.scannedSeverities) != null ? _b : null);
+    const scope = parseSeverities(severitiesText);
+    const existing = existingScanDeltas(state.scans, scanId);
+    if (existing !== null) return { deltas: existing, observations: [], scanRow: null };
+    const prev = latestScan(state.scans);
+    const prevScanId = prev ? prev.scan_id : null;
+    const prevScanTs = prev ? prev.ts : null;
+    const prevBySev = prevScanId !== null ? prevScanIdBySeverity(state.scans) : null;
+    const existingLedger = state.ledger;
+    const { ledger: updated, observations, deltas } = reconcile(
+      records,
+      existingLedger,
+      scanId,
+      scanTs,
+      prevScanId,
+      {
+        disappearanceMode,
+        prevScanTs,
+        scannedSeverities: scope,
+        prevScanIdBySeverity: prevBySev
+      }
+    );
+    reconcileEpisodeCollisions(state, updated, existingLedger, deltas, scanId);
+    const scanRow = {
+      scan_id: scanId,
+      ts: scanTs,
+      mode: options.mode,
+      shape: "flat",
+      total: records.length,
+      new_count: deltas.new_count,
+      resolved_count: deltas.resolved_count,
+      reopened_count: deltas.reopened_count,
+      raw_ref: (_c = options.rawRef) != null ? _c : null,
+      obs_ref: (_d = options.obsRef) != null ? _d : null,
+      severities: severitiesText,
+      sealed: 0
+    };
+    state.scans.push(scanRow);
+    state.ledger = updated;
+    return { deltas, observations, scanRow };
+  }
+  function persistGroupedScan(state, nodes, options) {
+    var _a, _b;
+    const scanId = options.scanId || nowIso(options.now);
+    const zero = { new_count: 0, resolved_count: 0, reopened_count: 0 };
+    if (existingScanDeltas(state.scans, scanId) !== null) {
+      return { deltas: zero, scanRow: null };
+    }
+    const scanRow = {
+      scan_id: scanId,
+      ts: scanId,
+      mode: options.mode,
+      shape: "grouped",
+      total: nodes.length,
+      new_count: 0,
+      resolved_count: 0,
+      reopened_count: 0,
+      raw_ref: (_a = options.rawRef) != null ? _a : null,
+      obs_ref: null,
+      severities: serializeSeverities((_b = options.scannedSeverities) != null ? _b : null),
+      sealed: 0
+    };
+    state.scans.push(scanRow);
+    return { deltas: zero, scanRow };
+  }
+  function reinsertScanRow(state, row) {
+    state.scans.push({ ...row });
+  }
+  var DAY_MS3 = 864e5;
+  var COMPACTED_ASSET2 = "(compacted)";
+  var ROLLOUT_MS = parseTs(REMEDIATION_ROLLOUT_ISO);
+  function baseRows(state, now) {
+    var _a;
+    const nowMs = now != null ? now : Date.now();
+    const out = [];
+    const withDerived = (row) => {
+      var _a2, _b;
+      const first = parseTs(row.first_seen);
+      const resolved = parseTs(row.resolved_at);
+      const open = row.status === "OPEN";
+      const fixAvailableAt = first !== null && ROLLOUT_MS !== null && first < ROLLOUT_MS ? row.first_seen : (_b = (_a2 = row.fix_date) != null ? _a2 : row.fix_observed_at) != null ? _b : null;
+      const fixAvailMs = parseTs(fixAvailableAt);
+      const actionableMs = fixAvailMs === null ? null : first === null ? fixAvailMs : Math.max(first, fixAvailMs);
+      const actionableFrom = actionableMs === null ? null : toIso(actionableMs);
+      return {
+        ...row,
+        mttr_days: first !== null && resolved !== null ? (resolved - first) / DAY_MS3 : null,
+        age_days: resolved === null && first !== null ? (nowMs - first) / DAY_MS3 : null,
+        fix_available_at: fixAvailableAt,
+        actionable_from: actionableFrom,
+        mttr_actionable_days: resolved !== null && actionableMs !== null ? (resolved - actionableMs) / DAY_MS3 : null,
+        actionable_age_days: open && actionableMs !== null ? (nowMs - actionableMs) / DAY_MS3 : null,
+        awaiting_vendor_fix: open && fixAvailableAt === null
+      };
+    };
+    for (const row of Object.values(state.ledger)) out.push(withDerived(row));
+    for (const e of state.episodes) {
+      if (e.superseded_by_scan !== null) continue;
+      if (e.vuln_key in state.ledger) continue;
+      out.push(
+        withDerived({
+          vuln_key: e.vuln_key,
+          cve: e.cve,
+          severity: e.severity,
+          asset_id: null,
+          asset_name: COMPACTED_ASSET2,
+          asset_type: null,
+          cloud: null,
+          first_seen: e.first_seen,
+          last_seen: e.resolved_at,
+          status: "RESOLVED",
+          resolved_at: e.resolved_at,
+          resolution_src: e.resolution_src,
+          reopened_count: e.reopened_count,
+          first_scan_id: null,
+          last_scan_id: null,
+          subscription_name: null,
+          subscription_ext_id: null,
+          // Carried through compaction now (see EpisodeRow), so a sealed episode still knows
+          // which domain owned it. Null on episodes written before the column existed, and on
+          // every legacy imported bundle — those read as Not attributable, which is the truth.
+          tags_json: (_a = e.tags_json) != null ? _a : null,
+          fix_date: e.fix_date,
+          fix_observed_at: e.fix_observed_at,
+          published_date: e.published_date,
+          has_kev: e.has_kev,
+          has_exploit: e.has_exploit,
+          epss: e.epss,
+          risk_observed_at: e.risk_observed_at,
+          // No link, for the same reason `asset_id` above is null: a compacted episode has
+          // dropped the per-finding detail it was summarizing, and an EpisodeRow never carried
+          // a URL. The sheet draws no Wiz row, which is the honest rendering of a sealed row.
+          portal_url: null
+        })
+      );
+    }
+    return out;
+  }
+
+  // src/domain/coldZone.ts
+  var DAY_MS4 = 864e5;
+  var COLD_GROUP_NONE = "(no support group)";
+  function blank(v) {
+    return !present(v);
+  }
+  function cmp(a, b) {
+    return a < b ? -1 : a > b ? 1 : 0;
+  }
+  function safePct(numerator, denominator) {
+    return denominator > 0 ? numerator / denominator * 100 : null;
+  }
+  function daysBetween(fromMs, toMs) {
+    return Math.max(0, (toMs - fromMs) / DAY_MS4);
+  }
+  function fmtDays(n) {
+    return String(Number(n.toFixed(1)));
+  }
+  var VERDICT_RANK = {
+    cold: 0,
+    unobserved: 1,
+    watching: 2,
+    warm: 3,
+    clear: 4
+  };
+  function newAcc(assetId) {
+    return {
+      assetId,
+      assetName: null,
+      assetType: null,
+      cloud: null,
+      supportGroup: null,
+      severities: /* @__PURE__ */ new Set(),
+      rowsBySeverity: /* @__PURE__ */ new Map(),
+      open: 0,
+      openHigh: 0,
+      reopenedOpen: 0,
+      oldestOpenFirstSeen: null,
+      earliestFirstSeen: null,
+      lastSeen: null,
+      movementAt: null,
+      disappeared: /* @__PURE__ */ new Map()
+    };
+  }
+  function foldRow(acc, row, risk) {
+    var _a, _b;
+    if (acc.assetName === null && !blank(row.asset_name)) acc.assetName = String(row.asset_name);
+    if (acc.assetType === null && !blank(row.asset_type)) acc.assetType = String(row.asset_type);
+    if (acc.cloud === null && !blank(row.cloud)) acc.cloud = String(row.cloud);
+    if (acc.supportGroup === null && !blank(row._supportGroup)) {
+      acc.supportGroup = String(row._supportGroup);
+    }
+    const sev2 = normalizeSeverity(row.severity);
+    acc.severities.add(sev2);
+    const bucket = acc.rowsBySeverity.get(sev2);
+    if (bucket) bucket.push(row);
+    else acc.rowsBySeverity.set(sev2, [row]);
+    const open = isOpenStatus(row.status);
+    const firstSeen = parseTs(row.first_seen);
+    if (firstSeen !== null && (acc.earliestFirstSeen === null || firstSeen < acc.earliestFirstSeen)) {
+      acc.earliestFirstSeen = firstSeen;
+    }
+    const lastSeen = parseTs(row.last_seen);
+    if (lastSeen !== null && (acc.lastSeen === null || lastSeen > acc.lastSeen)) acc.lastSeen = lastSeen;
+    if (open) {
+      acc.open += 1;
+      if (risk === "high") acc.openHigh += 1;
+      if (Number(row.reopened_count) > 0) acc.reopenedOpen += 1;
+      if (firstSeen !== null && (acc.oldestOpenFirstSeen === null || firstSeen < acc.oldestOpenFirstSeen)) {
+        acc.oldestOpenFirstSeen = firstSeen;
+      }
+    }
+    const movedAt = parseTs(row.resolved_at);
+    if (movedAt !== null && (acc.movementAt === null || movedAt > acc.movementAt)) {
+      acc.movementAt = movedAt;
+    }
+    if (String((_a = row.resolution_src) != null ? _a : "") === RESOLUTION_DISAPPEARED) {
+      const at = parseTs(row.resolved_at);
+      if (at !== null) acc.disappeared.set(at, ((_b = acc.disappeared.get(at)) != null ? _b : 0) + 1);
+    }
+  }
+  function isObserved(acc, newestBySeverity, severitiesWithoutScan) {
+    var _a;
+    let observed = false;
+    for (const sev2 of acc.severities) {
+      const newest = newestBySeverity[sev2];
+      if (!newest) {
+        severitiesWithoutScan.add(sev2);
+        observed = true;
+        continue;
+      }
+      const rows = (_a = acc.rowsBySeverity.get(sev2)) != null ? _a : [];
+      const newestTs = parseTs(newest.ts);
+      for (const row of rows) {
+        if (!blank(row.last_scan_id)) {
+          if (!blank(newest.scan_id) && String(row.last_scan_id) === String(newest.scan_id)) {
+            observed = true;
+            break;
+          }
+          continue;
+        }
+        const lastSeen = parseTs(row.last_seen);
+        if (newestTs !== null && lastSeen !== null && lastSeen >= newestTs) {
+          observed = true;
+          break;
+        }
+      }
+    }
+    return observed;
+  }
+  function bucketOf(readingDays, t) {
+    if (readingDays >= t) return 3;
+    if (readingDays >= 2 * t / 3) return 2;
+    if (readingDays >= t / 3) return 1;
+    return 0;
+  }
+  function coldZoneProfile(rows, opts) {
+    var _a, _b;
+    const nowMs = parseTs(opts.now);
+    if (nowMs === null) {
+      throw new Error(`coldZoneProfile: unparseable now (${JSON.stringify(opts.now)})`);
+    }
+    const observedFromOpt = (_a = opts.observedFrom) != null ? _a : null;
+    const observedFromMs = observedFromOpt === null ? null : parseTs(observedFromOpt);
+    if (observedFromOpt !== null && observedFromMs === null) {
+      throw new Error(
+        `coldZoneProfile: unparseable observedFrom (${JSON.stringify(observedFromOpt)})`
+      );
+    }
+    const t = Number(opts.coldAfterDays);
+    if (!Number.isFinite(t) || t <= 0) {
+      throw new Error(`coldZoneProfile: coldAfterDays must be a positive number (${String(opts.coldAfterDays)})`);
+    }
+    const mode = (_b = opts.mode) != null ? _b : DEFAULT_COLD_ZONE_MODE;
+    if (!COLD_ZONE_MODES.includes(mode)) {
+      throw new Error(
+        `coldZoneProfile: mode must be one of ${COLD_ZONE_MODES.join(" | ")} (${JSON.stringify(opts.mode)})`
+      );
+    }
+    const relative = mode === "relative";
+    const targetSharePct = relative ? Number(opts.targetSharePct) : null;
+    const floorDays = relative ? Number(opts.floorDays) : null;
+    if (relative && (!Number.isFinite(targetSharePct) || targetSharePct <= 0 || targetSharePct > 100)) {
+      throw new Error(
+        `coldZoneProfile: relative mode requires targetSharePct in (0, 100] (${String(opts.targetSharePct)})`
+      );
+    }
+    if (relative && (!Number.isFinite(floorDays) || floorDays <= 0)) {
+      throw new Error(
+        `coldZoneProfile: relative mode requires floorDays to be a positive number (${String(opts.floorDays)})`
+      );
+    }
+    let unclassifiedRows = 0;
+    const classified = [];
+    for (const row of rows) {
+      const risk = classifyRisk(row, opts.rule);
+      if (risk === "unknown") unclassifiedRows += 1;
+      classified.push({ row, risk });
+    }
+    let droppedNoAsset = 0;
+    const byAsset = /* @__PURE__ */ new Map();
+    for (const { row, risk } of classified) {
+      if (blank(row.asset_id)) {
+        droppedNoAsset += 1;
+        continue;
+      }
+      const id = String(row.asset_id).trim();
+      let acc = byAsset.get(id);
+      if (!acc) {
+        acc = newAcc(id);
+        byAsset.set(id, acc);
+      }
+      foldRow(acc, row, risk);
+    }
+    const severitiesWithoutScan = /* @__PURE__ */ new Set();
+    const observedById = /* @__PURE__ */ new Map();
+    for (const acc of byAsset.values()) {
+      observedById.set(acc.assetId, isObserved(acc, opts.newestScanBySeverity, severitiesWithoutScan));
+    }
+    const severitiesWithoutScanList = [...severitiesWithoutScan].sort(cmp);
+    const base = {
+      observed_from: observedFromMs === null ? null : toIso(observedFromMs),
+      as_of: toIso(nowMs),
+      row_count: rows.length,
+      dropped_no_asset: droppedNoAsset,
+      unclassified_rows: unclassifiedRows,
+      severities_without_scan: severitiesWithoutScanList
+    };
+    const modeBase = {
+      mode,
+      fixed_after_days: t,
+      target_share_pct: targetSharePct,
+      floor_days: floorDays
+    };
+    if (observedFromMs === null) {
+      return {
+        measurable: false,
+        ...modeBase,
+        cold_after_days: relative ? floorDays : t,
+        achieved_share_pct: null,
+        floor_applied: false,
+        derived_days: null,
+        eligible_assets: null,
+        cold_bound_only: null,
+        ...base,
+        bucket_edges: null,
+        bucket_labels: null,
+        assets: null,
+        groups: null,
+        totals: null
+      };
+    }
+    const facts = [];
+    for (const acc of byAsset.values()) {
+      const observed = observedById.get(acc.assetId) === true;
+      const idleDays = acc.movementAt === null ? null : daysBetween(acc.movementAt, nowMs);
+      const boundStart = acc.earliestFirstSeen === null ? observedFromMs : Math.max(observedFromMs, acc.earliestFirstSeen);
+      const idleBoundDays = idleDays === null ? daysBetween(boundStart, nowMs) : null;
+      const idleReading = idleDays != null ? idleDays : idleBoundDays;
+      let disappearedAt = null;
+      let disappearedCount = 0;
+      for (const [at, count] of acc.disappeared) {
+        if (count > disappearedCount || count === disappearedCount && disappearedAt !== null && at > disappearedAt) {
+          disappearedAt = at;
+          disappearedCount = count;
+        }
+      }
+      facts.push({
+        acc,
+        observed,
+        idleDays,
+        idleBoundDays,
+        idleReading,
+        disappearedAt,
+        disappearedCount,
+        // Eligible for the share: still scanned, and something is still open on it. An asset
+        // the scanner lost is not evidence about engagement, and one with nothing open cannot be
+        // in a zone that measures unclosed work.
+        eligible: observed && acc.open > 0
+      });
+    }
+    const eligible = facts.filter((f) => f.eligible);
+    const eligibleAssets = eligible.length;
+    let derivedDays = null;
+    let floorApplied = false;
+    let effective = t;
+    if (relative) {
+      if (eligibleAssets > 0) {
+        const readings = eligible.map((f) => f.idleReading).sort((a, b) => b - a);
+        const k = Math.min(eligibleAssets, Math.max(1, Math.ceil(targetSharePct / 100 * eligibleAssets)));
+        derivedDays = Math.floor(readings[k - 1]);
+        effective = Math.max(derivedDays, floorDays);
+        floorApplied = derivedDays < floorDays;
+      } else {
+        effective = floorDays;
+        derivedDays = null;
+        floorApplied = false;
+      }
+    }
+    const bucketEdges = [0, effective / 3, 2 * effective / 3, effective];
+    const bucketLabels = [
+      `${fmtDays(0)}\u2013${fmtDays(effective / 3)} d`,
+      `${fmtDays(effective / 3)}\u2013${fmtDays(2 * effective / 3)} d`,
+      `${fmtDays(2 * effective / 3)}\u2013${fmtDays(effective)} d`,
+      `\u2265 ${fmtDays(effective)} d`,
+      "not yet measurable"
+    ];
+    const assets = [];
+    let coldBoundOnly = 0;
+    for (const f of facts) {
+      const { acc, observed, idleDays, idleBoundDays, idleReading, disappearedAt, disappearedCount } = f;
+      let verdict;
+      if (!observed) verdict = "unobserved";
+      else if (acc.open === 0) verdict = "clear";
+      else if (idleDays !== null && idleDays >= effective) verdict = "cold";
+      else if (idleDays === null && idleBoundDays !== null && idleBoundDays >= effective) verdict = "cold";
+      else if (idleDays !== null) verdict = "warm";
+      else verdict = "watching";
+      if (verdict === "cold" && idleDays === null) coldBoundOnly += 1;
+      const bucket = verdict === "unobserved" || verdict === "clear" ? null : verdict === "watching" ? 4 : bucketOf(idleReading, effective);
+      assets.push({
+        asset_id: acc.assetId,
+        asset_name: acc.assetName,
+        asset_type: acc.assetType,
+        cloud: acc.cloud,
+        support_group: acc.supportGroup,
+        open_findings: acc.open,
+        open_high_risk: acc.openHigh,
+        oldest_open_age_days: acc.oldestOpenFirstSeen === null ? null : daysBetween(acc.oldestOpenFirstSeen, nowMs),
+        last_movement_at: toIso(acc.movementAt),
+        idle_days: idleDays,
+        idle_bound_days: idleBoundDays,
+        idle_is_bound: idleDays === null,
+        idle_reading_days: idleReading,
+        observed,
+        last_observed_at: toIso(acc.lastSeen),
+        unobserved_for_days: acc.lastSeen === null ? null : daysBetween(acc.lastSeen, nowMs),
+        disappeared_at: toIso(disappearedAt),
+        disappeared_at_last_observation: disappearedCount,
+        reopened_open: acc.reopenedOpen,
+        verdict,
+        cold: verdict === "cold",
+        bucket
+      });
+    }
+    assets.sort(
+      (a, b) => {
+        var _a2, _b2;
+        return VERDICT_RANK[a.verdict] - VERDICT_RANK[b.verdict] || b.open_findings - a.open_findings || cmp((_a2 = a.asset_name) != null ? _a2 : a.asset_id, (_b2 = b.asset_name) != null ? _b2 : b.asset_id);
+      }
+    );
+    const groups = rankGroups(rollUp(assets), mode, targetSharePct);
+    const totals = totalsOf(assets, groups);
+    return {
+      measurable: true,
+      ...modeBase,
+      cold_after_days: effective,
+      achieved_share_pct: totals.cold_asset_share_pct,
+      floor_applied: floorApplied,
+      derived_days: derivedDays,
+      eligible_assets: eligibleAssets,
+      cold_bound_only: coldBoundOnly,
+      ...base,
+      bucket_edges: bucketEdges,
+      bucket_labels: bucketLabels,
+      assets,
+      groups,
+      totals
+    };
+  }
+  function rollUp(assets) {
+    const byGroup = /* @__PURE__ */ new Map();
+    for (const a of assets) {
+      const list = byGroup.get(a.support_group);
+      if (list) list.push(a);
+      else byGroup.set(a.support_group, [a]);
+    }
+    const out = [];
+    for (const [supportGroup, list] of byGroup) {
+      const buckets = [0, 0, 0, 0, 0];
+      const bucketOpen = [0, 0, 0, 0, 0];
+      let observed = 0;
+      let unobserved = 0;
+      let unobservedOpen = 0;
+      let unobservedClear = 0;
+      let withOpen = 0;
+      let coldAssets = 0;
+      let watching = 0;
+      let warm = 0;
+      let clear = 0;
+      let openFindings = 0;
+      let openInCold = 0;
+      let highInCold = 0;
+      let openInUnobserved = 0;
+      let lastMovement = null;
+      for (const a of list) {
+        openFindings += a.open_findings;
+        if (a.observed) {
+          observed += 1;
+          const at = parseTs(a.last_movement_at);
+          if (at !== null && (lastMovement === null || at > lastMovement)) lastMovement = at;
+        } else {
+          unobserved += 1;
+          openInUnobserved += a.open_findings;
+          if (a.open_findings > 0) unobservedOpen += 1;
+          else unobservedClear += 1;
+        }
+        if (a.bucket !== null) {
+          buckets[a.bucket] += 1;
+          bucketOpen[a.bucket] += a.open_findings;
+        }
+        switch (a.verdict) {
+          case "cold":
+            coldAssets += 1;
+            withOpen += 1;
+            openInCold += a.open_findings;
+            highInCold += a.open_high_risk;
+            break;
+          case "warm":
+            warm += 1;
+            withOpen += 1;
+            break;
+          case "watching":
+            watching += 1;
+            withOpen += 1;
+            break;
+          case "clear":
+            clear += 1;
+            break;
+          default:
+            break;
+        }
+      }
+      const verdict = withOpen === 0 ? "clear" : coldAssets === withOpen ? "fully-cold" : coldAssets > 0 ? "partly-cold" : "warm";
+      out.push({
+        support_group: supportGroup,
+        label: supportGroup != null ? supportGroup : COLD_GROUP_NONE,
+        assets: list.length,
+        assets_observed: observed,
+        assets_unobserved: unobserved,
+        assets_unobserved_open: unobservedOpen,
+        assets_unobserved_clear: unobservedClear,
+        assets_with_open: withOpen,
+        cold_assets: coldAssets,
+        watching_assets: watching,
+        warm_assets: warm,
+        clear_assets: clear,
+        open_findings: openFindings,
+        open_in_cold: openInCold,
+        high_risk_in_cold: highInCold,
+        open_in_unobserved: openInUnobserved,
+        cold_share_pct: safePct(coldAssets, withOpen),
+        last_movement_at: toIso(lastMovement),
+        verdict,
+        // Filled by `rankGroups`, which runs over the finished roll-up: the rank is a fact about
+        // the whole set of groups, so no single group's fold can know it.
+        relative_rank: null,
+        in_coldest_share: false,
+        buckets,
+        bucket_open: bucketOpen
+      });
+    }
+    out.sort(
+      (a, b) => b.cold_assets - a.cold_assets || b.open_in_cold - a.open_in_cold || cmp(a.label, b.label)
+    );
+    return out;
+  }
+  function rankGroups(groups, mode, targetSharePct) {
+    var _a, _b;
+    const ranked = groups.filter((group) => group.assets_with_open > 0).sort(
+      (a, b) => {
+        var _a2, _b2;
+        return ((_a2 = b.cold_share_pct) != null ? _a2 : 0) - ((_b2 = a.cold_share_pct) != null ? _b2 : 0) || b.open_in_cold - a.open_in_cold || cmp(a.label, b.label);
+      }
+    );
+    const rankOf = /* @__PURE__ */ new Map();
+    ranked.forEach((group, i) => rankOf.set(group, i + 1));
+    const total = ranked.length;
+    const withCold = ranked.filter((group) => group.cold_assets > 0).length;
+    let want = 0;
+    if (mode === "relative" && withCold > 0 && targetSharePct !== null) {
+      want = Math.min(withCold, Math.max(1, Math.ceil(targetSharePct / 100 * total)));
+      while (want < withCold && ((_a = ranked[want].cold_share_pct) != null ? _a : 0) === ((_b = ranked[want - 1].cold_share_pct) != null ? _b : 0) && ranked[want].open_in_cold === ranked[want - 1].open_in_cold) {
+        want += 1;
+      }
+    }
+    return groups.map((group) => {
+      var _a2;
+      const rank = (_a2 = rankOf.get(group)) != null ? _a2 : null;
+      return { ...group, relative_rank: rank, in_coldest_share: rank !== null && rank <= want };
+    });
+  }
+  function totalsOf(assets, groups) {
+    const buckets = [0, 0, 0, 0, 0];
+    const bucketOpen = [0, 0, 0, 0, 0];
+    const t = {
+      assets: assets.length,
+      assets_observed: 0,
+      assets_unobserved: 0,
+      assets_unobserved_open: 0,
+      assets_unobserved_clear: 0,
+      assets_with_open: 0,
+      cold_assets: 0,
+      watching_assets: 0,
+      warm_assets: 0,
+      clear_assets: 0,
+      open_findings: 0,
+      open_in_cold: 0,
+      high_risk_in_cold: 0,
+      open_in_unobserved: 0,
+      cold_asset_share_pct: null,
+      cold_backlog_share_pct: null,
+      groups: groups.length,
+      groups_fully_cold: 0,
+      groups_partly_cold: 0,
+      groups_in_coldest_share: 0,
+      assets_no_support_group: 0,
+      buckets,
+      bucket_open: bucketOpen
+    };
+    for (const group of groups) {
+      t.assets_observed += group.assets_observed;
+      t.assets_unobserved += group.assets_unobserved;
+      t.assets_unobserved_open += group.assets_unobserved_open;
+      t.assets_unobserved_clear += group.assets_unobserved_clear;
+      t.assets_with_open += group.assets_with_open;
+      t.cold_assets += group.cold_assets;
+      t.watching_assets += group.watching_assets;
+      t.warm_assets += group.warm_assets;
+      t.clear_assets += group.clear_assets;
+      t.open_findings += group.open_findings;
+      t.open_in_cold += group.open_in_cold;
+      t.high_risk_in_cold += group.high_risk_in_cold;
+      t.open_in_unobserved += group.open_in_unobserved;
+      if (group.verdict === "fully-cold") t.groups_fully_cold += 1;
+      if (group.verdict === "partly-cold") t.groups_partly_cold += 1;
+      if (group.in_coldest_share) t.groups_in_coldest_share += 1;
+      if (group.support_group === null) t.assets_no_support_group = group.assets;
+      for (let i = 0; i < 5; i += 1) {
+        buckets[i] += group.buckets[i];
+        bucketOpen[i] += group.bucket_open[i];
+      }
+    }
+    t.cold_asset_share_pct = safePct(t.cold_assets, t.assets_with_open);
+    t.cold_backlog_share_pct = safePct(t.open_in_cold, t.open_findings);
+    return t;
+  }
+  function coldZoneHeadline(result) {
+    return {
+      measurable: result.measurable,
+      mode: result.mode,
+      cold_after_days: result.cold_after_days,
+      fixed_after_days: result.fixed_after_days,
+      target_share_pct: result.target_share_pct,
+      achieved_share_pct: result.achieved_share_pct,
+      floor_days: result.floor_days,
+      floor_applied: result.floor_applied,
+      derived_days: result.derived_days,
+      eligible_assets: result.eligible_assets,
+      cold_bound_only: result.cold_bound_only,
+      observed_from: result.observed_from,
+      as_of: result.as_of,
+      totals: result.totals,
+      row_count: result.row_count,
+      dropped_no_asset: result.dropped_no_asset,
+      unclassified_rows: result.unclassified_rows,
+      severities_without_scan: result.severities_without_scan
+    };
+  }
+
   // src/domain/fixNext.ts
   var FIX_NEXT_LIMIT = 8;
   var TIER_LABELS = {
@@ -3436,8 +4684,8 @@ var Server = (() => {
   }
 
   // src/domain/remediation.ts
-  var DAY_MS3 = 864e5;
-  var ROLLOUT_MS = parseTs(REMEDIATION_ROLLOUT_ISO);
+  var DAY_MS5 = 864e5;
+  var ROLLOUT_MS2 = parseTs(REMEDIATION_ROLLOUT_ISO);
   var RESOLUTION_BUCKET_EDGES = [1, 7, 30, 90];
   var RESOLUTION_BUCKET_LABELS = ["\u22641d", "2\u20137d", "8\u201330d", "31\u201390d", "90+d"];
   function isOpen2(status) {
@@ -3610,7 +4858,7 @@ var Server = (() => {
       if (first === null) continue;
       const s = "severity" in rec ? normalizeSeverity(rec["severity"]) : "UNKNOWN";
       const target = SLA_TARGETS[s];
-      if (target !== void 0 && (nowMs - first) / DAY_MS3 > target) breached += 1;
+      if (target !== void 0 && (nowMs - first) / DAY_MS5 > target) breached += 1;
     }
     return breached;
   }
@@ -3645,21 +4893,21 @@ var Server = (() => {
   function latencyObservation(row, origin, nowMs) {
     var _a;
     const first = parseTs(row.first_seen);
-    if (first !== null && ROLLOUT_MS !== null && first < ROLLOUT_MS) return null;
+    if (first !== null && ROLLOUT_MS2 !== null && first < ROLLOUT_MS2) return null;
     const originMs = origin === "detection" ? first : parseTs(row.published_date);
     if (originMs === null) return null;
     if (origin === "disclosure" && Number((_a = row.reopened_count) != null ? _a : 0) > 0) return null;
     const fixAvail = parseTs(row.fix_available_at);
     if (fixAvail !== null) {
       const raw = fixAvail - originMs;
-      return { t: Math.max(0, raw) / DAY_MS3, event: true, closedBeforeFix: false };
+      return { t: Math.max(0, raw) / DAY_MS5, event: true, closedBeforeFix: false };
     }
     const resolved = parseTs(row.resolved_at);
     if (resolved !== null) {
-      return { t: Math.max(0, resolved - originMs) / DAY_MS3, event: false, closedBeforeFix: true };
+      return { t: Math.max(0, resolved - originMs) / DAY_MS5, event: false, closedBeforeFix: true };
     }
     if (isOpen2(row.status)) {
-      return { t: Math.max(0, nowMs - originMs) / DAY_MS3, event: false, closedBeforeFix: false };
+      return { t: Math.max(0, nowMs - originMs) / DAY_MS5, event: false, closedBeforeFix: false };
     }
     return null;
   }
@@ -3711,7 +4959,7 @@ var Server = (() => {
     var _a, _b;
     if (!isOpen2(rec["status"])) return false;
     const first = parseTs((_b = (_a = rec["firstDetectedAt"]) != null ? _a : rec["firstSeenAt"]) != null ? _b : rec["createdAt"]);
-    if (first !== null && ROLLOUT_MS !== null && first < ROLLOUT_MS) return false;
+    if (first !== null && ROLLOUT_MS2 !== null && first < ROLLOUT_MS2) return false;
     return !(present(rec["fixedVersion"]) || present(rec["fixDate"]));
   }
   function isEndOfLifeName(name) {
@@ -3721,473 +4969,6 @@ var Server = (() => {
   }
   function recordEol(rec) {
     return rec["isOperatingSystemEndOfLife"] === true || isEndOfLifeName(rec["name"]);
-  }
-
-  // src/domain/reconcile.ts
-  var LEDGER_COLUMNS = [
-    "vuln_key",
-    "cve",
-    "severity",
-    "asset_id",
-    "asset_name",
-    "asset_type",
-    "cloud",
-    "first_seen",
-    "last_seen",
-    "status",
-    "resolved_at",
-    "resolution_src",
-    "reopened_count",
-    "first_scan_id",
-    "last_scan_id",
-    "subscription_name",
-    "subscription_ext_id",
-    "tags_json",
-    "fix_date",
-    "fix_observed_at",
-    "published_date",
-    "has_kev",
-    "has_exploit",
-    "epss",
-    "risk_observed_at"
-  ];
-  var TAGS_PREFIX = "vulnerableAsset.tags.";
-  function tagsJson(record) {
-    const va = record["vulnerableAsset"];
-    let tags = null;
-    if (va && typeof va === "object" && !Array.isArray(va)) {
-      const t = va["tags"];
-      if (t && typeof t === "object" && !Array.isArray(t)) tags = t;
-    }
-    if (tags === null) {
-      const flat = record["vulnerableAsset.tags"];
-      if (flat && typeof flat === "object" && !Array.isArray(flat)) tags = flat;
-    }
-    if (tags === null) {
-      const collected = {};
-      for (const [k, v] of Object.entries(record)) {
-        if (k.startsWith(TAGS_PREFIX) && clean(v) !== null) {
-          collected[k.slice(TAGS_PREFIX.length)] = v;
-        }
-      }
-      tags = collected;
-    }
-    const kept = {};
-    for (const [k, v] of Object.entries(tags)) {
-      if (clean(v) !== null || v === "") kept[String(k)] = v;
-    }
-    const keys = Object.keys(kept).sort();
-    if (!keys.length) return null;
-    const parts = keys.map((k) => `${JSON.stringify(k)}: ${JSON.stringify(kept[k])}`);
-    return `{${parts.join(", ")}}`;
-  }
-  function makeRow(record, key, sev2, firstSeen, scanId, scanTs, fixDate, fixObservedAt) {
-    var _a;
-    return {
-      vuln_key: key,
-      cve: (_a = clean(record["name"])) != null ? _a : null,
-      severity: sev2,
-      asset_id: field(record, "vulnerableAsset.id") || null,
-      asset_name: field(record, "vulnerableAsset.name") || null,
-      asset_type: field(record, "vulnerableAsset.type") || null,
-      cloud: field(record, "vulnerableAsset.cloudPlatform") || null,
-      subscription_name: field(record, "vulnerableAsset.subscriptionName") || null,
-      subscription_ext_id: field(record, "vulnerableAsset.subscriptionExternalId", "vulnerableAsset.subscriptionId") || null,
-      tags_json: tagsJson(record),
-      first_seen: firstSeen,
-      last_seen: scanTs,
-      status: "OPEN",
-      resolved_at: null,
-      resolution_src: null,
-      reopened_count: 0,
-      first_scan_id: scanId,
-      last_scan_id: scanId,
-      fix_date: fixDate,
-      fix_observed_at: fixObservedAt,
-      // Left null here and filled by seedPublished() after the branch, which — like the risk
-      // merge below it — runs identically for new, reopened and persisting rows.
-      published_date: null,
-      // Left empty here and filled by mergeRiskSignals() after the branch, which runs for new,
-      // reopened, and persisting rows alike (the merge is identical in all three).
-      ...emptyRiskSignals()
-    };
-  }
-  function emptyRiskSignals() {
-    return { has_kev: null, has_exploit: null, epss: null, risk_observed_at: null };
-  }
-  function coerceRiskSignals(r) {
-    var _a;
-    const obs = observeRiskSignals({
-      hasCisaKevExploit: r["has_kev"],
-      hasExploit: r["has_exploit"],
-      epssProbability: r["epss"]
-    });
-    return {
-      has_kev: obs.kev,
-      has_exploit: obs.exploit,
-      epss: obs.epss,
-      risk_observed_at: (_a = clean(r["risk_observed_at"])) != null ? _a : null
-    };
-  }
-  function observeRiskSignals(rec) {
-    const bool = (v) => {
-      if (typeof v === "boolean") return v;
-      if (typeof v === "string") {
-        const s = v.trim().toUpperCase();
-        if (s === "TRUE") return true;
-        if (s === "FALSE") return false;
-      }
-      return null;
-    };
-    const rawEpss = clean(rec["epssProbability"]);
-    const n = typeof rawEpss === "number" ? rawEpss : rawEpss === null ? NaN : Number(rawEpss);
-    return {
-      kev: bool(rec["hasCisaKevExploit"]),
-      exploit: bool(rec["hasExploit"]),
-      epss: Number.isFinite(n) ? n : null
-    };
-  }
-  function mergeRiskSignals(row, rec, scanTsIso) {
-    const obs = observeRiskSignals(rec);
-    if (obs.kev !== null && (row.has_kev == null || obs.kev)) row.has_kev = obs.kev;
-    if (obs.exploit !== null && (row.has_exploit == null || obs.exploit)) {
-      row.has_exploit = obs.exploit;
-    }
-    if (obs.epss !== null && (row.epss == null || obs.epss > row.epss)) row.epss = obs.epss;
-    const witnessed = obs.kev !== null || obs.exploit !== null || obs.epss !== null;
-    if (!witnessed) return;
-    if (row.risk_observed_at == null || scanTsIso < row.risk_observed_at) {
-      row.risk_observed_at = scanTsIso;
-    }
-  }
-  function seedPublished(row, rec) {
-    if (row.published_date != null) return;
-    if (!present(rec["publishedDate"])) return;
-    const iso = toIso(parseTs(rec["publishedDate"]));
-    if (iso !== null) row.published_date = iso;
-  }
-  function reconcile(currentRecords, existingLedger, scanId, scanTs, prevScanId, options = {}) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
-    const {
-      disappearanceMode = "scan_ts",
-      prevScanTs = null,
-      scannedSeverities = null,
-      prevScanIdBySeverity: prevScanIdBySeverity2 = null
-    } = options;
-    const updated = {};
-    for (const [key, row] of Object.entries(existingLedger)) updated[key] = { ...row };
-    const seen2 = /* @__PURE__ */ new Set();
-    const observations = [];
-    let newCount = 0;
-    let resolvedCount = 0;
-    let reopenedCount = 0;
-    const scanTsIso = (_a = toIso(parseTs(scanTs))) != null ? _a : String(scanTs);
-    for (const rec of currentRecords) {
-      const key = vulnKey(rec);
-      if (seen2.has(key)) continue;
-      seen2.add(key);
-      const sev2 = normalizeSeverity(clean(rec["severity"]));
-      const apiFirst = (_c = (_b = clean(rec["firstDetectedAt"])) != null ? _b : clean(rec["firstSeenAt"])) != null ? _c : clean(rec["createdAt"]);
-      const apiStatus = String((_d = clean(rec["status"])) != null ? _d : "").toUpperCase();
-      const apiResolved = (_f = (_e = clean(rec["resolvedAt"])) != null ? _e : clean(rec["remediatedAt"])) != null ? _f : clean(rec["fixedAt"]);
-      const apiSaysResolved = present(apiResolved) || RESOLVED_STATUSES.has(apiStatus);
-      const fixSignal = present(rec["fixedVersion"]) || present(rec["fixDate"]);
-      const recFixDate = present(rec["fixDate"]) ? toIso(parseTs(rec["fixDate"])) : null;
-      const seedFix = (r) => {
-        if (r.fix_date == null && recFixDate !== null) r.fix_date = recFixDate;
-        if (r.fix_observed_at == null && fixSignal) r.fix_observed_at = scanTsIso;
-      };
-      let row = updated[key];
-      if (row === void 0) {
-        const firstSeen = (_g = minIso(apiFirst, scanTsIso)) != null ? _g : scanTsIso;
-        row = makeRow(rec, key, sev2, firstSeen, scanId, scanTsIso, recFixDate, fixSignal ? scanTsIso : null);
-        updated[key] = row;
-        newCount += 1;
-      } else if (row.status === "RESOLVED" && !apiSaysResolved) {
-        row.status = "OPEN";
-        row.resolved_at = null;
-        row.resolution_src = null;
-        row.reopened_count = Number((_h = row.reopened_count) != null ? _h : 0) + 1;
-        row.first_seen = (_i = minIso(apiFirst, scanTsIso)) != null ? _i : scanTsIso;
-        row.last_seen = scanTsIso;
-        row.last_scan_id = scanId;
-        row.fix_date = null;
-        row.fix_observed_at = null;
-        seedFix(row);
-        reopenedCount += 1;
-      } else {
-        if (row.status === "OPEN") {
-          row.first_seen = (_j = minIso(row.first_seen, apiFirst)) != null ? _j : row.first_seen;
-        }
-        row.last_seen = scanTsIso;
-        row.last_scan_id = scanId;
-        seedFix(row);
-      }
-      mergeRiskSignals(row, rec, scanTsIso);
-      seedPublished(row, rec);
-      row.severity = sev2;
-      row.cve = (_k = clean(rec["name"])) != null ? _k : null;
-      row.asset_id = field(rec, "vulnerableAsset.id") || row.asset_id;
-      row.asset_name = field(rec, "vulnerableAsset.name") || row.asset_name;
-      row.asset_type = field(rec, "vulnerableAsset.type") || row.asset_type;
-      row.cloud = field(rec, "vulnerableAsset.cloudPlatform") || row.cloud;
-      row.subscription_name = field(rec, "vulnerableAsset.subscriptionName") || row.subscription_name;
-      row.subscription_ext_id = field(rec, "vulnerableAsset.subscriptionExternalId", "vulnerableAsset.subscriptionId") || row.subscription_ext_id;
-      row.tags_json = (_l = tagsJson(rec)) != null ? _l : row.tags_json;
-      if (apiSaysResolved && row.status === "OPEN") {
-        row.status = "RESOLVED";
-        row.resolved_at = present(apiResolved) ? toIso(parseTs(apiResolved)) : scanTsIso;
-        row.resolution_src = "api";
-        resolvedCount += 1;
-      }
-      observations.push({
-        scan_id: scanId,
-        vuln_key: key,
-        present: 1,
-        severity: sev2,
-        status: row.status
-      });
-    }
-    if (prevScanId !== null) {
-      const scope = scannedSeverities !== null ? new Set(scannedSeverities) : null;
-      for (const [key, row] of Object.entries(updated)) {
-        if (seen2.has(key) || row.status === "RESOLVED") continue;
-        const sevRow = row.severity;
-        if (scope !== null && (sevRow === null || !scope.has(sevRow))) {
-          continue;
-        }
-        const expectedPrev = (_m = (prevScanIdBySeverity2 != null ? prevScanIdBySeverity2 : {})[sevRow != null ? sevRow : ""]) != null ? _m : prevScanId;
-        if (row.last_scan_id !== expectedPrev) continue;
-        if (disappearanceMode === "midpoint" && prevScanTs) {
-          row.resolved_at = midpointIso(prevScanTs, scanTsIso);
-        } else {
-          row.resolved_at = scanTsIso;
-        }
-        row.status = "RESOLVED";
-        row.resolution_src = "disappeared";
-        resolvedCount += 1;
-        observations.push({
-          scan_id: scanId,
-          vuln_key: key,
-          present: 0,
-          severity: row.severity,
-          status: "RESOLVED"
-        });
-      }
-    }
-    return {
-      ledger: updated,
-      observations,
-      deltas: {
-        new_count: newCount,
-        resolved_count: resolvedCount,
-        reopened_count: reopenedCount
-      }
-    };
-  }
-
-  // src/domain/ledgerCore.ts
-  function emptyState() {
-    return { scans: [], ledger: {}, episodes: [] };
-  }
-  function scansAsc(scans) {
-    return [...scans].sort((a, b) => {
-      var _a, _b;
-      const ta = (_a = parseTs(a.ts)) != null ? _a : 0;
-      const tb = (_b = parseTs(b.ts)) != null ? _b : 0;
-      if (ta !== tb) return ta - tb;
-      return a.scan_id < b.scan_id ? -1 : a.scan_id > b.scan_id ? 1 : 0;
-    });
-  }
-  function latestScan(scans) {
-    const asc = scansAsc(scans);
-    return asc.length ? asc[asc.length - 1] : null;
-  }
-  function prevScanIdBySeverity(scans) {
-    const remaining = new Set(SEVERITY_ORDER);
-    const mapping = {};
-    const desc = scansAsc(scans).reverse();
-    for (const r of desc) {
-      const scope = parseSeverities(r.severities);
-      const covered = scope === null ? [...remaining] : [...remaining].filter((s) => scope.includes(s));
-      for (const sev2 of covered) mapping[sev2] = r.scan_id;
-      covered.forEach((s) => remaining.delete(s));
-      if (!remaining.size) break;
-    }
-    return Object.keys(mapping).length ? mapping : null;
-  }
-  function existingScanDeltas(scans, scanId) {
-    const row = scans.find((r) => r.scan_id === scanId);
-    if (!row) return null;
-    return {
-      new_count: row.new_count,
-      resolved_count: row.resolved_count,
-      reopened_count: row.reopened_count
-    };
-  }
-  function reconcileEpisodeCollisions(state, updated, existingLedger, deltas, scanId) {
-    var _a;
-    const newKeys = Object.keys(updated).filter((k) => !(k in existingLedger));
-    if (!newKeys.length) return;
-    const episodeReopens = /* @__PURE__ */ new Map();
-    for (const e of state.episodes) {
-      if (e.superseded_by_scan === null && newKeys.includes(e.vuln_key)) {
-        episodeReopens.set(e.vuln_key, e);
-      }
-    }
-    for (const [key, episode] of episodeReopens) {
-      const row = updated[key];
-      if (row.status === "OPEN") {
-        row.reopened_count = Number((_a = episode.reopened_count) != null ? _a : 0) + 1;
-        deltas.new_count -= 1;
-        deltas.reopened_count += 1;
-        episode.superseded_by_scan = scanId;
-      } else {
-        if (!episode.tags_json && row.tags_json) episode.tags_json = row.tags_json;
-        delete updated[key];
-        deltas.new_count -= 1;
-        deltas.resolved_count -= 1;
-      }
-    }
-  }
-  function persistFlatScan(state, records, options) {
-    var _a, _b, _c, _d;
-    const scanId = options.scanId || nowIso(options.now);
-    const scanTs = scanId;
-    const disappearanceMode = (_a = options.disappearanceMode) != null ? _a : DISAPPEARANCE_RESOLUTION;
-    const severitiesText = serializeSeverities((_b = options.scannedSeverities) != null ? _b : null);
-    const scope = parseSeverities(severitiesText);
-    const existing = existingScanDeltas(state.scans, scanId);
-    if (existing !== null) return { deltas: existing, observations: [], scanRow: null };
-    const prev = latestScan(state.scans);
-    const prevScanId = prev ? prev.scan_id : null;
-    const prevScanTs = prev ? prev.ts : null;
-    const prevBySev = prevScanId !== null ? prevScanIdBySeverity(state.scans) : null;
-    const existingLedger = state.ledger;
-    const { ledger: updated, observations, deltas } = reconcile(
-      records,
-      existingLedger,
-      scanId,
-      scanTs,
-      prevScanId,
-      {
-        disappearanceMode,
-        prevScanTs,
-        scannedSeverities: scope,
-        prevScanIdBySeverity: prevBySev
-      }
-    );
-    reconcileEpisodeCollisions(state, updated, existingLedger, deltas, scanId);
-    const scanRow = {
-      scan_id: scanId,
-      ts: scanTs,
-      mode: options.mode,
-      shape: "flat",
-      total: records.length,
-      new_count: deltas.new_count,
-      resolved_count: deltas.resolved_count,
-      reopened_count: deltas.reopened_count,
-      raw_ref: (_c = options.rawRef) != null ? _c : null,
-      obs_ref: (_d = options.obsRef) != null ? _d : null,
-      severities: severitiesText,
-      sealed: 0
-    };
-    state.scans.push(scanRow);
-    state.ledger = updated;
-    return { deltas, observations, scanRow };
-  }
-  function persistGroupedScan(state, nodes, options) {
-    var _a, _b;
-    const scanId = options.scanId || nowIso(options.now);
-    const zero = { new_count: 0, resolved_count: 0, reopened_count: 0 };
-    if (existingScanDeltas(state.scans, scanId) !== null) {
-      return { deltas: zero, scanRow: null };
-    }
-    const scanRow = {
-      scan_id: scanId,
-      ts: scanId,
-      mode: options.mode,
-      shape: "grouped",
-      total: nodes.length,
-      new_count: 0,
-      resolved_count: 0,
-      reopened_count: 0,
-      raw_ref: (_a = options.rawRef) != null ? _a : null,
-      obs_ref: null,
-      severities: serializeSeverities((_b = options.scannedSeverities) != null ? _b : null),
-      sealed: 0
-    };
-    state.scans.push(scanRow);
-    return { deltas: zero, scanRow };
-  }
-  function reinsertScanRow(state, row) {
-    state.scans.push({ ...row });
-  }
-  var DAY_MS4 = 864e5;
-  var COMPACTED_ASSET2 = "(compacted)";
-  var ROLLOUT_MS2 = parseTs(REMEDIATION_ROLLOUT_ISO);
-  function baseRows(state, now) {
-    var _a;
-    const nowMs = now != null ? now : Date.now();
-    const out = [];
-    const withDerived = (row) => {
-      var _a2, _b;
-      const first = parseTs(row.first_seen);
-      const resolved = parseTs(row.resolved_at);
-      const open = row.status === "OPEN";
-      const fixAvailableAt = first !== null && ROLLOUT_MS2 !== null && first < ROLLOUT_MS2 ? row.first_seen : (_b = (_a2 = row.fix_date) != null ? _a2 : row.fix_observed_at) != null ? _b : null;
-      const fixAvailMs = parseTs(fixAvailableAt);
-      const actionableMs = fixAvailMs === null ? null : first === null ? fixAvailMs : Math.max(first, fixAvailMs);
-      const actionableFrom = actionableMs === null ? null : toIso(actionableMs);
-      return {
-        ...row,
-        mttr_days: first !== null && resolved !== null ? (resolved - first) / DAY_MS4 : null,
-        age_days: resolved === null && first !== null ? (nowMs - first) / DAY_MS4 : null,
-        fix_available_at: fixAvailableAt,
-        actionable_from: actionableFrom,
-        mttr_actionable_days: resolved !== null && actionableMs !== null ? (resolved - actionableMs) / DAY_MS4 : null,
-        actionable_age_days: open && actionableMs !== null ? (nowMs - actionableMs) / DAY_MS4 : null,
-        awaiting_vendor_fix: open && fixAvailableAt === null
-      };
-    };
-    for (const row of Object.values(state.ledger)) out.push(withDerived(row));
-    for (const e of state.episodes) {
-      if (e.superseded_by_scan !== null) continue;
-      if (e.vuln_key in state.ledger) continue;
-      out.push(
-        withDerived({
-          vuln_key: e.vuln_key,
-          cve: e.cve,
-          severity: e.severity,
-          asset_id: null,
-          asset_name: COMPACTED_ASSET2,
-          asset_type: null,
-          cloud: null,
-          first_seen: e.first_seen,
-          last_seen: e.resolved_at,
-          status: "RESOLVED",
-          resolved_at: e.resolved_at,
-          resolution_src: e.resolution_src,
-          reopened_count: e.reopened_count,
-          first_scan_id: null,
-          last_scan_id: null,
-          subscription_name: null,
-          subscription_ext_id: null,
-          // Carried through compaction now (see EpisodeRow), so a sealed episode still knows
-          // which domain owned it. Null on episodes written before the column existed, and on
-          // every legacy imported bundle — those read as Not attributable, which is the truth.
-          tags_json: (_a = e.tags_json) != null ? _a : null,
-          fix_date: e.fix_date,
-          fix_observed_at: e.fix_observed_at,
-          published_date: e.published_date,
-          has_kev: e.has_kev,
-          has_exploit: e.has_exploit,
-          epss: e.epss,
-          risk_observed_at: e.risk_observed_at
-        })
-      );
-    }
-    return out;
   }
 
   // src/domain/transform.ts
@@ -4272,7 +5053,7 @@ var Server = (() => {
   }
 
   // src/domain/trend.ts
-  var DAY_MS5 = 864e5;
+  var DAY_MS6 = 864e5;
   function awaitingFixAsOf(firstMs, resolvedMs, fixAvailMs, d) {
     const openAsOfD = firstMs !== null && firstMs <= d && (resolvedMs === null || resolvedMs > d);
     return openAsOfD && (fixAvailMs === null || fixAvailMs > d);
@@ -4310,7 +5091,7 @@ var Server = (() => {
       const slaPct = denom ? within / denom * 100 : null;
       const p90s = [];
       for (const sev2 of SEVERITY_ORDER) {
-        const ages = parsed.filter((r, i) => openMask[i] && r.sev === sev2).map((r) => (ts.ms - r.first) / DAY_MS5);
+        const ages = parsed.filter((r, i) => openMask[i] && r.sev === sev2).map((r) => (ts.ms - r.first) / DAY_MS6);
         if (ages.length) {
           const p = quantile(ages, 0.9);
           if (p !== null) p90s.push(p);
@@ -4492,7 +5273,7 @@ var Server = (() => {
           }
         } else if (r.first !== null && r.first <= ts.ms) {
           if (hideNoFix && awaitingFixAsOf(r.first, r.resolvedAt, r.fixAvail, ts.ms)) continue;
-          ((_f = times[_e = r.group]) != null ? _f : times[_e] = []).push((ts.ms - r.first) / DAY_MS5);
+          ((_f = times[_e = r.group]) != null ? _f : times[_e] = []).push((ts.ms - r.first) / DAY_MS6);
         }
       }
       const byGroup = {};
@@ -4518,9 +5299,9 @@ var Server = (() => {
     const synthetic = [];
     const syntheticIso = /* @__PURE__ */ new Set();
     if (realFlatMs.length && firstSeenMs.length) {
-      const firstScanDay = Math.floor(minNum(realFlatMs) / DAY_MS5) * DAY_MS5;
-      const startDay = Math.floor(minNum(firstSeenMs) / DAY_MS5) * DAY_MS5;
-      for (let day = startDay; day < firstScanDay; day += DAY_MS5) {
+      const firstScanDay = Math.floor(minNum(realFlatMs) / DAY_MS6) * DAY_MS6;
+      const startDay = Math.floor(minNum(firstSeenMs) / DAY_MS6) * DAY_MS6;
+      for (let day = startDay; day < firstScanDay; day += DAY_MS6) {
         const iso = toIso(day);
         if (iso === null) continue;
         synthetic.push({ ts: iso, shape: "flat" });
@@ -4578,7 +5359,7 @@ var Server = (() => {
             }
           } else if (r.first !== null && r.first <= d) {
             if (hideNoFix && awaitingFixAsOf(r.first, r.resolvedAt, r.fixAvail, d)) continue;
-            times.push((d - r.first) / DAY_MS5);
+            times.push((d - r.first) / DAY_MS6);
           }
         }
         med = kmMedianFromCurve(kmCurve(events, times));
@@ -4610,7 +5391,7 @@ var Server = (() => {
       const first = parseTs(r["first_seen"]);
       if (first !== null && first <= d) {
         if (hideNoFix && awaitingFixAsOf(first, resolvedAt, parseTs(r["fix_available_at"]), d)) continue;
-        times.push((d - first) / DAY_MS5);
+        times.push((d - first) / DAY_MS6);
       }
     }
     const med = kmMedianFromCurve(kmCurve(events, times));
@@ -4635,7 +5416,7 @@ var Server = (() => {
           const open = r.origin !== null && r.origin <= d && (r.resolvedAt === null || r.resolvedAt > d);
           if (!open) continue;
           const target = SLA_TARGETS[r.sev];
-          if (target !== void 0 && (d - r.origin) / DAY_MS5 > target) breached += 1;
+          if (target !== void 0 && (d - r.origin) / DAY_MS6 > target) breached += 1;
         }
       }
       return { ...p, open_past_sla: breached };
@@ -4652,7 +5433,7 @@ var Server = (() => {
       const actionable = parseTs(r["actionable_from"]);
       const target = SLA_TARGETS[normalizeSeverity(r["severity"])];
       if (actionable === null || target === void 0) continue;
-      out.push({ deadline: actionable + target * DAY_MS5, resolvedAt: parseTs(r["resolved_at"]) });
+      out.push({ deadline: actionable + target * DAY_MS6, resolvedAt: parseTs(r["resolved_at"]) });
     }
     return out;
   }
@@ -5319,7 +6100,12 @@ var Server = (() => {
       // Not str(): these are tri-state (boolean | null) and numeric. A bundle exported before
       // the risk columns existed simply lacks the keys, and they must stay null — "not
       // captured", never a fabricated false/0. See reconcile.coerceRiskSignals.
-      ...coerceRiskSignals(r)
+      ...coerceRiskSignals(r),
+      // Not str() either, and for a sharper reason than the line above: this value becomes an
+      // href. An imported bundle is a file somebody handed us — the least trusted input this
+      // module has — so it goes through the same rule a live scan does rather than being
+      // copied across. A refused or absent URL imports as "no link".
+      portal_url: normalizeWizUrl(r["portal_url"])
     };
   }
   function coerceEpisode(r) {
@@ -5683,7 +6469,7 @@ var Server = (() => {
     const age = row.age_days;
     return typeof age === "number" && Number.isFinite(age) ? age : null;
   }
-  function rankGroups(rows, keyFn, topN, meta) {
+  function rankGroups2(rows, keyFn, topN, meta) {
     const groups = /* @__PURE__ */ new Map();
     for (const row of rows) {
       const age = openAge2(row);
@@ -5720,7 +6506,7 @@ var Server = (() => {
     }));
     return {
       findings,
-      byAsset: rankGroups(
+      byAsset: rankGroups2(
         rows,
         (r) => {
           var _a;
@@ -5735,7 +6521,7 @@ var Server = (() => {
           };
         }
       ),
-      bySupportGroup: rankGroups(
+      bySupportGroup: rankGroups2(
         rows,
         (r) => {
           var _a;
@@ -5743,7 +6529,7 @@ var Server = (() => {
         },
         topN
       ),
-      byDomain: rankGroups(rows, (r) => {
+      byDomain: rankGroups2(rows, (r) => {
         var _a;
         return String((_a = r._domain) != null ? _a : "");
       }, topN)
@@ -6167,19 +6953,21 @@ var Server = (() => {
     };
   }
   function execGroupSlice(byGroup) {
+    var _a;
     if (!byGroup || typeof byGroup !== "object") return null;
     const b = byGroup;
     const rows = Array.isArray(b["rows"]) ? b["rows"] : [];
     return {
       dimension: b["dimension"],
       rows: rows.map((r) => {
-        var _a;
+        var _a2;
         return {
-          group: (_a = r["group"]) != null ? _a : r["domain"],
+          group: (_a2 = r["group"]) != null ? _a2 : r["domain"],
           kmMedian: r["kmMedian"],
           open: r["open"]
         };
-      })
+      }),
+      cut: (_a = b["cut"]) != null ? _a : null
     };
   }
   function pickRows(rows, keys) {
@@ -6252,9 +7040,14 @@ var Server = (() => {
     return { view: known, rows: Array.isArray(rows) ? rows : [] };
   }
   function mttrGroupTableSlice(byGroup) {
+    var _a;
     if (!byGroup || typeof byGroup !== "object") return null;
     const b = byGroup;
-    return { dimension: b["dimension"], rows: Array.isArray(b["rows"]) ? b["rows"] : [] };
+    return {
+      dimension: b["dimension"],
+      rows: Array.isArray(b["rows"]) ? b["rows"] : [],
+      cut: (_a = b["cut"]) != null ? _a : null
+    };
   }
   function mttrGroupTrendSlice(byGroup) {
     var _a;
@@ -6314,7 +7107,14 @@ var Server = (() => {
     "internet_exposed",
     "mttr_days",
     "age_days",
-    "actionable_age_days"
+    "actionable_age_days",
+    // Wiz's own console link for this finding. NOT A DRAWN COLUMN — no table cell reads it —
+    // but the finding sheet does, and the sheet may only touch keys on this list
+    // (test/findingSheet.test.js hands the model a Proxy row and asserts exactly that). So it
+    // ships here rather than as a second payload, for the same reason `vuln_key` does: one
+    // `api_getRegisterRows` already carries everything the drill-down needs, and a sheet that
+    // had to fetch would cost one call per finding opened.
+    "portal_url"
   ];
   var REGISTER_ROW_SOURCE = {
     support_group: "_supportGroup",
@@ -6425,51 +7225,6 @@ var Server = (() => {
       };
     }
     return (r) => orNull(r[column]);
-  }
-
-  // src/server/errorLog.ts
-  var KEY = "RECENT_ERRORS";
-  var MAX_ENTRIES = 25;
-  var MAX_MESSAGE_LEN = 500;
-  var MAX_BLOB_CHARS = 8500;
-  function truncate(s) {
-    return s.length > MAX_MESSAGE_LEN ? s.slice(0, MAX_MESSAGE_LEN) + "\u2026" : s;
-  }
-  function recentErrors() {
-    const raw = getProp(KEY);
-    if (!raw) return [];
-    try {
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      return parsed.filter((e) => Boolean(e) && typeof e === "object" && !Array.isArray(e)).map((e) => {
-        var _a, _b, _c, _d;
-        return {
-          ts: String((_a = e["ts"]) != null ? _a : ""),
-          op: String((_b = e["op"]) != null ? _b : "api"),
-          kind: String((_c = e["kind"]) != null ? _c : "error"),
-          message: String((_d = e["message"]) != null ? _d : "")
-        };
-      });
-    } catch {
-      return [];
-    }
-  }
-  function recordError(op, err, kind = "error", now) {
-    try {
-      const message = err instanceof Error ? err.message : typeof err === "string" ? err : String(err);
-      const entry = { ts: nowIso(now), op, kind, message: truncate(message) };
-      const next = [entry, ...recentErrors()].slice(0, MAX_ENTRIES);
-      let blob = JSON.stringify(next);
-      while (next.length > 1 && blob.length > MAX_BLOB_CHARS) {
-        next.pop();
-        blob = JSON.stringify(next);
-      }
-      setProp(KEY, blob);
-    } catch {
-    }
-  }
-  function clearErrors() {
-    deleteProp(KEY);
   }
 
   // src/domain/purge.ts
@@ -6976,7 +7731,13 @@ var Server = (() => {
       fix_date: (_s = r["fix_date"]) != null ? _s : null,
       fix_observed_at: (_t = r["fix_observed_at"]) != null ? _t : null,
       published_date: (_u = r["published_date"]) != null ? _u : null,
-      ...coerceRiskSignals(r)
+      ...coerceRiskSignals(r),
+      // NOT a plain cast like its neighbours, and this is the call site that most needs the
+      // difference: this function turns a ROW OF THE LEDGER TAB back into a LedgerRow, and
+      // that tab is a Google Sheet an operator can open and type into. Nothing runs when they
+      // do, so this read is the only place a hand-edited `portal_url` can be caught before it
+      // reaches the wire. gas_shared/domain/wizUrl.ts carries the full argument.
+      portal_url: normalizeWizUrl(r["portal_url"])
     };
   }
   var scanRowsMemo;
@@ -7695,6 +8456,7 @@ var Server = (() => {
   var getIncludeEol2 = () => getIncludeEol(loadSettings());
   var getRiskRule2 = () => getRiskRule(loadSettings());
   var getDomains2 = () => getDomains(loadSettings());
+  var getColdZone = () => effectiveColdZoneSettings(loadSettings());
   var sgMapMemo;
   function supportGroupRowsToMap(rows) {
     const map = {};
@@ -8102,8 +8864,10 @@ var Server = (() => {
   }
   var disabled = false;
   var folderMemo;
-  function readModelFolder() {
-    if (folderMemo === void 0) folderMemo = subfolder("readmodels");
+  function readModelFolder(create) {
+    if (folderMemo === void 0 || create && folderMemo === null) {
+      folderMemo = create ? subfolder("readmodels") : findSubfolder("readmodels");
+    }
     return folderMemo;
   }
   function readModelFileName(name, params) {
@@ -8112,7 +8876,9 @@ var Server = (() => {
   function l2Read(name, params) {
     if (disabled) return { hit: false, why: "disabled" };
     try {
-      const parsed = readGzJsonNamed("readmodels", readModelFileName(name, params));
+      const folder = readModelFolder(false);
+      if (folder === null) return { hit: false, why: "absent" };
+      const parsed = readGzJsonIn(folder, readModelFileName(name, params), "readModelRead");
       if (parsed === null || typeof parsed !== "object") return { hit: false, why: "absent" };
       const env = parsed;
       if (env.v !== ENVELOPE_V || env.name !== name) return { hit: false, why: "stale" };
@@ -8125,6 +8891,7 @@ var Server = (() => {
       return { hit: false, why: "unreadable" };
     }
   }
+  var MAX_L2_JSON_CHARS = 4e6;
   function l2Write(name, params, value) {
     if (disabled) return;
     try {
@@ -8136,7 +8903,16 @@ var Server = (() => {
         writtenAtMs: Date.now(),
         value
       };
-      writeGzJson(readModelFolder(), readModelFileName(name, params), env);
+      const chars = JSON.stringify(env).length;
+      if (chars > MAX_L2_JSON_CHARS) {
+        console.warn(
+          `Durable read-model (${name}) is ${chars} chars, over the ${MAX_L2_JSON_CHARS} cap \u2014 not written`
+        );
+        return;
+      }
+      const folder = readModelFolder(true);
+      if (folder === null) return;
+      writeGzJson(folder, readModelFileName(name, params), env);
     } catch (e) {
       disabled = true;
       console.warn(`Durable read-model write (${name}) failed, L2 disabled for this run: ${e}`);
@@ -8766,7 +9542,13 @@ var Server = (() => {
     // Additive: frames persisted before this simply lack the keys (read as null).
     "fixDate",
     "fixDateBefore",
-    "isOperatingSystemEndOfLife"
+    "isOperatingSystemEndOfLife",
+    // Wiz's own deep link to this finding in the console — the finding sheet's "Open in Wiz"
+    // row. Additive in the same way: frames persisted before this lack the key, and a finding
+    // with no link reads as absent rather than broken. Kept RAW here and normalized at the
+    // ledger boundary (domain/reconcile.ts), so the archived frame stays a faithful record of
+    // what Wiz actually sent even where this register refuses to link to it.
+    "portalUrl"
   ];
   var SLIM_ASSET = [
     "id",
@@ -10095,7 +10877,8 @@ var Server = (() => {
       trend: loadTrend(severities, getShowNoFix2(), rows)
     };
   }
-  var NONE_SUPPORT_GROUP = "(none)";
+  var NONE_BUCKET = "(none)";
+  var ASSET_TOP_N = 20;
   function remediationGroups(rows, keyField, orderedNames, scanRows) {
     var _a, _b, _c, _d;
     const buckets = /* @__PURE__ */ new Map();
@@ -10195,7 +10978,7 @@ var Server = (() => {
       var _a2;
       return String((_a2 = r["_supportGroup"]) != null ? _a2 : "") === supportGroup;
     });
-    for (const r of rows) r["_supportGroup"] = String((_c = r["_supportGroup"]) != null ? _c : "") || NONE_SUPPORT_GROUP;
+    for (const r of rows) r["_supportGroup"] = String((_c = r["_supportGroup"]) != null ? _c : "") || NONE_BUCKET;
     const sizes = /* @__PURE__ */ new Map();
     for (const r of rows) {
       const g = String(r["_supportGroup"]);
@@ -10203,13 +10986,53 @@ var Server = (() => {
     }
     const orderedNames = [...sizes.keys()].sort((a, b) => {
       var _a2, _b2;
-      if (a === NONE_SUPPORT_GROUP) return 1;
-      if (b === NONE_SUPPORT_GROUP) return -1;
+      if (a === NONE_BUCKET) return 1;
+      if (b === NONE_BUCKET) return -1;
       return ((_a2 = sizes.get(b)) != null ? _a2 : 0) - ((_b2 = sizes.get(a)) != null ? _b2 : 0);
     });
     const scanRows = loadScanRows();
     const { rows: out, trend } = remediationGroups(rows, "_supportGroup", orderedNames, scanRows);
     return { dimension: "supportGroup", rows: out, trend };
+  }
+  function mttrByAssetData(p) {
+    var _a, _b, _c;
+    const supportGroup = String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : "");
+    let rows = filterSeverities(
+      loadBaseRows(),
+      readSeverities(p)
+    );
+    rows = visibleBase(rows);
+    attachSupportGroups(rows);
+    if (supportGroup) rows = rows.filter((r) => {
+      var _a2;
+      return String((_a2 = r["_supportGroup"]) != null ? _a2 : "") === supportGroup;
+    });
+    for (const r of rows) r["_asset"] = String((_b = r["asset_name"]) != null ? _b : "").trim() || NONE_BUCKET;
+    const sizes = /* @__PURE__ */ new Map();
+    for (const r of rows) {
+      const g = String(r["_asset"]);
+      let acc = sizes.get(g);
+      if (!acc) sizes.set(g, acc = { open: 0, resolved: 0 });
+      if (String((_c = r["resolved_at"]) != null ? _c : "").trim()) acc.resolved += 1;
+      else acc.open += 1;
+    }
+    const ranked = [...sizes.keys()].sort((a, b) => {
+      if (a === NONE_BUCKET) return 1;
+      if (b === NONE_BUCKET) return -1;
+      const sa = sizes.get(a), sb = sizes.get(b);
+      return sb.open - sa.open || sb.resolved - sa.resolved || (a < b ? -1 : a > b ? 1 : 0);
+    });
+    const orderedNames = ranked.slice(0, ASSET_TOP_N);
+    const cut = ranked.slice(ASSET_TOP_N).reduce(
+      (acc, g) => {
+        const sz = sizes.get(g);
+        return { groups: acc.groups + 1, open: acc.open + sz.open, resolved: acc.resolved + sz.resolved };
+      },
+      { groups: 0, open: 0, resolved: 0 }
+    );
+    const scanRows = loadScanRows();
+    const { rows: out, trend } = remediationGroups(rows, "_asset", orderedNames, scanRows);
+    return { dimension: "asset", rows: out, trend, cut };
   }
   var cachedMttrData = (p) => {
     var _a, _b;
@@ -10290,7 +11113,10 @@ var Server = (() => {
     return cached(
       // "program1" -> "program2": the payload gained `capacityHindcast`; dataVersion persists
       // across deploys, so bump the namespace or a stale hindcast-less entry outlives the ship.
-      "program2",
+      // "program2" -> "program3": `capacity` gained `closedPerMonthMean`, same reasoning — an
+      // entry written before the ship carries no such field and the page would draw the absent
+      // mark beside a live close rate for a full TTL.
+      "program3",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
@@ -10360,10 +11186,11 @@ var Server = (() => {
       // The key still omits `bizDomain`, and that is now correct rather than a defect: it used to
       // be one, because `mttrByDomainData` filtered on a param the key never carried, so a scoped
       // payload could be served from another scope's entry. That dimension is gone. `domain` is
-      // omitted for a different reason and it is NOT a repeat of that bug: both callers route a
-      // domain scope to `cachedMttrBySupportGroupData` instead (getMttrPage, getExecutivePage), so
-      // this entry is only ever reached with `domain === ""` and cannot be read at another. The
-      // `supportGroup` it DOES read is in the key.
+      // omitted for a different reason and it is NOT a repeat of that bug: `cachedMttrGroupSplit`
+      // routes a domain scope to the by-support-group split and a support-group scope to the
+      // by-asset split, so this entry is only ever reached with BOTH scopes empty. `supportGroup`
+      // stays in the key anyway, matching the inert filter it keys: an entry that can only be
+      // reached one way is not a reason to make it wrong for the other.
       "mttrByDomain14",
       {
         supportGroup: String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : ""),
@@ -10391,6 +11218,34 @@ var Server = (() => {
       3600
     );
   };
+  var cachedMttrByAssetData = (p) => {
+    var _a;
+    return cached(
+      // A new namespace rather than a bump: nothing ever served this shape, so no stale entry can
+      // survive the persistent dataVersion. Bump to "mttrByAsset2" on any change to `rows`,
+      // `trend` or `cut` — AND on any change to ASSET_TOP_N. A different cap is not a smaller
+      // version of the same answer, it is a different cut of it, with a different `cut` footnote
+      // attached; that is precisely the case a TTL cannot ride out.
+      //
+      // `domain` is omitted and, unlike the by-domain entry's omission, needs no caveat at all:
+      // `cachedMttrGroupSplit` reaches this only with `supportGroup` non-empty, `scopeKinds()`
+      // makes the two scopes mutually exclusive, and `mttrByAssetData` reads no `domain` at all.
+      "mttrByAsset1",
+      {
+        supportGroup: String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : ""),
+        severities: readSeverities(p),
+        showNoFix: getShowNoFix2()
+      },
+      () => mttrByAssetData(p),
+      3600
+    );
+  };
+  function cachedMttrGroupSplit(p) {
+    var _a, _b;
+    if (String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : "")) return cachedMttrByAssetData(p);
+    if (String((_b = p == null ? void 0 : p["domain"]) != null ? _b : "")) return cachedMttrBySupportGroupData(p);
+    return cachedMttrByDomainData(p);
+  }
   function getMttr(p) {
     return run(() => cachedMttrData(p));
   }
@@ -10398,8 +11253,6 @@ var Server = (() => {
     return run(() => historyTrendSlice(cachedMttrTrendData(p)));
   }
   function getMttrPage(p) {
-    var _a;
-    const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
     return run(() => ({
       // THE SUMMARY IS NOT MISSING — it is the other RPC's job. `mttr.js` already fires
       // `api_getMttr` with identical params, and both endpoints resolve the SAME
@@ -10408,20 +11261,139 @@ var Server = (() => {
       // worse than duplicate transfer — the two RPCs are separate GAS executions, so both
       // computed it. The page composes the two payloads instead; see `mttrPaintPlan`.
       trends: mttrPageTrendSlice(cachedMttrTrendData(p)),
-      byDomain: mttrGroupTableSlice(
-        domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p)
-      )
+      byDomain: mttrGroupTableSlice(cachedMttrGroupSplit(p))
     }));
   }
   function getMttrByDomainTrend(p) {
-    var _a;
-    const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
-    return run(() => mttrGroupTrendSlice(
-      domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p)
-    ));
+    return run(() => mttrGroupTrendSlice(cachedMttrGroupSplit(p)));
   }
   function startRiskBackfill(_p) {
     return mutate(() => startBackfill());
+  }
+  var clockMemo;
+  function ledgerClock() {
+    const version = dataVersion();
+    if (clockMemo && clockMemo.version === version) return clockMemo.clock;
+    const flats = loadScanRows().filter((s) => s.shape === "flat");
+    let newest = null;
+    let earliest = null;
+    let earliestIso = null;
+    for (const s of flats) {
+      const ms = parseTs(s.ts);
+      if (ms === null) continue;
+      if (newest === null || ms > newest) newest = ms;
+      if (earliest === null || ms < earliest) {
+        earliest = ms;
+        earliestIso = s.ts;
+      }
+    }
+    const clock = newest === null ? { asOf: Date.now(), asOfSource: "wallClock", observedFrom: earliestIso } : { asOf: newest, asOfSource: "scan", observedFrom: earliestIso };
+    clockMemo = { version, clock };
+    return clock;
+  }
+  var newestScanMemo;
+  function newestScanBySeverity() {
+    const version = dataVersion();
+    if (newestScanMemo && newestScanMemo.version === version) return newestScanMemo.bySeverity;
+    const bySeverity = newestFlatScanBySeverity(loadScanRows());
+    newestScanMemo = { version, bySeverity };
+    return bySeverity;
+  }
+  function coldZoneData(p) {
+    var _a, _b;
+    const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
+    const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
+    let rows = scopedBaseRows(domain, supportGroup);
+    attachSupportGroups(rows);
+    rows = filterSeverities(rows, readSeverities(p));
+    rows = visibleBase(rows);
+    const rule = getRiskRule2().rule;
+    const cold = getColdZone();
+    const clock = ledgerClock();
+    return {
+      asOf: clock.asOf,
+      asOfSource: clock.asOfSource,
+      observedFrom: clock.observedFrom,
+      // The classifier and its sentence ride along for the same reason they do on the Program
+      // page: "high risk sitting cold" is a derived verdict, and the page says out loud which
+      // rule produced it rather than leaving the reader to go and look.
+      rule,
+      ruleSentence: ruleSentence(rule),
+      coldZone: coldZoneProfile(rows, {
+        now: clock.asOf,
+        observedFrom: clock.observedFrom,
+        coldAfterDays: cold.coldAfterDays,
+        mode: cold.mode,
+        targetSharePct: cold.targetSharePct,
+        floorDays: cold.floorDays,
+        newestScanBySeverity: newestScanBySeverity(),
+        rule
+      }),
+      // Named so the page can state what was excluded before any of this counted.
+      toggles: {
+        showNoFix: getShowNoFix2(),
+        includeEol: getIncludeEol2()
+      },
+      rowCount: rows.length
+    };
+  }
+  var cachedColdZoneData = (p) => {
+    var _a, _b;
+    return (
+      // A NEW NAMESPACE, so no stale entry of any shape can be addressed by it — nothing served
+      // this payload before.
+      //
+      // NO TTL, BECAUSE THERE IS NOTHING FOR ONE TO AGE OUT. Every figure here is dated by
+      // `ledgerClock()` (see its header), so the same ledger answers the same numbers forever and
+      // the durable layer's "only time-invariant read-models" rule is satisfied. That is also what
+      // makes the key below unforgiving: with no TTL, a field this compute READS and the key omits
+      // does not go stale for an hour — it answers with the old value until the next commit happens
+      // to rewrite the file.
+      //
+      // ALL FOUR COLD FIELDS ARE IN THE KEY, IN THIS FIXED ORDER (mode, window, target, floor).
+      // `settingsStore.getColdZone()` is read by the compute, so every one of them changes the
+      // answer: an operator who switches to relative mode and reloads would otherwise read the
+      // fixed mode's verdicts off a warm Drive file indefinitely. The order is fixed so that the
+      // Executive's rebuilt params (see `getExecutivePage`) list the same fields the same way —
+      // two key builders that agree by accident are two chances to drop one.
+      //
+      // `riskRuleVersion` rather than the rule itself, the trick the Program page's key uses: the
+      // payload is a pure function of the rule and the version bumps on every save.
+      durablyCached(
+        "coldZone1",
+        {
+          domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
+          supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
+          severities: readSeverities(p),
+          showNoFix: getShowNoFix2(),
+          includeEol: getIncludeEol2(),
+          riskRuleVersion: getRiskRule2().version,
+          coldZoneMode: getColdZone().mode,
+          coldAfterDays: getColdZone().coldAfterDays,
+          coldTargetSharePct: getColdZone().targetSharePct,
+          coldFloorDays: getColdZone().floorDays
+        },
+        () => coldZoneData(p)
+      )
+    );
+  };
+  function execColdSlice(model) {
+    return {
+      coldZone: coldZoneHeadline(model["coldZone"]),
+      coldZoneAsOfSource: model["asOfSource"]
+    };
+  }
+  function execColdSliceGuarded(p) {
+    try {
+      return execColdSlice(cachedColdZoneData(p));
+    } catch (e) {
+      console.warn(`Executive cold-zone slice failed: ${e}`);
+      recordError("executiveColdZone", e, "error");
+      return { coldZone: null, coldZoneAsOfSource: null };
+    }
+  }
+  function getColdZonePage(p) {
+    return run(() => cachedColdZoneData(p));
   }
   function getRiskBackfillStatus(_p) {
     return run(() => ({ backfill: backfillStatus() }));
@@ -10769,16 +11741,16 @@ var Server = (() => {
       supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
       severities: readSeverities(p)
     };
+    const coldParams = insightsParams;
     return run(() => {
       var _a2;
       return {
         mttr: execMttrSlice(cachedMttrData(p)),
         ...(_a2 = execInsightsSlice(cachedInsightsData(insightsParams))) != null ? _a2 : {},
-        // The same dimension switch getMttrPage makes: splitting BY domain while scoped TO one
-        // domain yields a single row, so a domain scope splits by support group within it instead.
-        byDomain: execGroupSlice(
-          domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p)
-        ),
+        ...execColdSliceGuarded(coldParams),
+        // The same three-way dimension switch getMttrPage makes, through the same function so the
+        // two pages cannot disagree about what a scope means — or miss each other's cache entry.
+        byDomain: execGroupSlice(cachedMttrGroupSplit(p)),
         // Already minimal — four scalars and a per-severity tally — so these two ship whole.
         weekTrend: cachedExecutiveWeekTrend(p),
         severityCounts: cachedExecutiveSeverityCounts(p)
@@ -11190,8 +12162,21 @@ var Server = (() => {
       showNoFix: getShowNoFix2(),
       includeEol: getIncludeEol2(),
       domains: getDomains2(),
-      riskRule: getRiskRule2()
+      riskRule: getRiskRule2(),
+      // The four cold-zone fields, spread from the ONE door (settingsStore.getColdZone) rather
+      // than read field by field — the mode and the two numbers the relative mode needs travel
+      // together or the Cold zone page has a live way to be handed a share with nothing to aim at.
+      ...coldZoneSettingsPayload()
     }));
+  }
+  function coldZoneSettingsPayload() {
+    const cold = getColdZone();
+    return {
+      coldZoneMode: cold.mode,
+      coldAfterDays: cold.coldAfterDays,
+      coldTargetSharePct: cold.targetSharePct,
+      coldFloorDays: cold.floorDays
+    };
   }
   function settingsImpactData() {
     const all = loadBaseRows();
@@ -11252,7 +12237,10 @@ var Server = (() => {
         autoCompact: getAutoCompact2(),
         showNoFix: getShowNoFix2(),
         includeEol: getIncludeEol2(),
-        riskRule: getRiskRule2()
+        riskRule: getRiskRule2(),
+        // Echoed back CLEANED, so the page can report what was actually stored when the server
+        // clamped a value the reader typed (see the Settings page's own save reconciliation).
+        ...coldZoneSettingsPayload()
       };
     });
   }
@@ -11508,6 +12496,9 @@ var Server = (() => {
       warm("mttrBySupportGroup", () => cachedMttrBySupportGroupData(p));
       warm("grouping", () => cachedGroupingData({ ...p, keys: groupingKeys }));
       warm("attribution", () => cachedAttributionData({ severities }));
+    }
+    for (const severities of scopes) {
+      warm("coldZone", () => cachedColdZoneData({ domain: "", supportGroup: "", severities }));
     }
     if (skipped) {
       console.warn(`Cache warm: ran out of budget after ${warmed} entries, ${skipped} left cold`);

@@ -255,7 +255,7 @@ export function pushAll<T>(target: T[], items: Iterable<T>): void {
  * both flattened "vulnerableAsset.name" keys and the raw nested node shape. Returns "" when
  * nothing matches. Literal port of gas/src/domain/lifecycle.ts's field() — including the
  * hardcoded `vulnerableAsset` unwrap, unchanged, because SCA reads the same
- * `vulnerabilityFindings` connection the OS-vuln register does (brick/devsecops/config.py's
+ * `vulnerabilityFindings` connection the OS-vuln register does (brick/config.py's
  * `sca` scope) and so its nodes carry `vulnerableAsset` exactly like gas/'s do. Moved here
  * from lifecycle.ts because it is a general value-access helper, not lifecycle logic — this
  * mirrors the D1 brief's "Add ... field" instruction for util.ts.

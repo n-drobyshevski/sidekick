@@ -85,26 +85,125 @@ const REPO_POOL: readonly RepoSpec[] = [
   { id: "repo-8", name: "dktunited/reporting-etl", branch: "main", cloudPlatform: "GitHub", language: "PYTHON" },
 ];
 
+// Three repos that exist ONLY for the cold-zone section (`domain/coldZone.ts`) to have
+// something to show locally. They are deliberately NOT in REPO_POOL — every sca/sast/secrets
+// default repo assignment below cycles through REPO_POOL by `idx % REPO_POOL.length`, and
+// adding more entries there would shift that modulo and silently reassign every existing
+// finding's repo. Instead a handful of sca indices are pointed at these via
+// `ScaSpec.repoOverride` (see COLD_REPO_STAYS_IDX / COLD_REPO_RESOLVED_IDX / SLOW_REPO_STAYS_IDX
+// / SLOW_REPO_RESOLVED_IDX / UNOBSERVED_REPO_STAYS_IDX below), which changes nothing about the
+// deterministic RNG sequence the rest of the file depends on.
+const COLD_REPO: RepoSpec =
+  { id: "repo-9", name: "dktunited/legacy-batch", branch: "main", cloudPlatform: "GitHub", language: "PYTHON" };
+const UNOBSERVED_REPO: RepoSpec =
+  { id: "repo-10", name: "dktunited/retired-mobile", branch: "main", cloudPlatform: "GitHub", language: "JAVASCRIPT" };
+// repo-11 "warehouse-sync": a SECOND cold repo, idle for a shorter but still-real stretch —
+// its last movement is ~40 days before scan C, short of repo-9's ~151 but past the 14-day
+// floor — so relative mode at 20% has two repositories to rank instead of one, and the derived
+// line (not the floor) decides the count. See SLOW_REPO_STAYS_IDX / SLOW_REPO_RESOLVED_IDX.
+const SLOW_REPO: RepoSpec =
+  { id: "repo-11", name: "dktunited/warehouse-sync", branch: "main", cloudPlatform: "GitHub", language: "PYTHON" };
+
+// The tenant's project shape, as the harness must model it or every new surface looks broken.
+//
+// A repository is filed under a CS/CE/LU SUPPORT GROUP and under a `product-…` PRODUCT, and
+// ONE SUPPORT GROUP HOLDS MANY PRODUCTS (src/domain/projectGrain.ts). A business unit may sit
+// beside them. The pool below is built so the harness can actually exercise every branch of
+// that, rather than passing because the case never arrives:
+//
+//   * `CE-TRANSPORT` covers TWO products — without that, the support-group roll-up would be a
+//     second spelling of the product breakdown and nothing would prove it is not.
+//   * one entry has NO product at all, so the `(no product)` bucket and `productOf`'s
+//     `owner_project` fallback are both on screen.
+//   * one product sits under TWO support groups, so the switcher's `2 support groups` hint and
+//     the cold-zone table's em dash are reachable.
 interface ProjectSpec {
-  folder: string;
-  folderSlug: string;
-  leaf: string;
-  leafSlug: string;
+  /** A business unit, where the tenant filed one. Neither name rule claims it. */
+  unit?: string;
+  unitSlug?: string;
+  /** The CS/CE/LU support group. Present on every repository, as in the tenant. */
+  support: string;
+  supportSlug: string;
+  /** A SECOND support group, on the one entry that is filed under two. */
+  support2?: string;
+  support2Slug?: string;
+  /** The `product-…` project, absent on the one entry that follows no convention. */
+  product?: string;
+  productSlug?: string;
 }
 
 const PROJECT_POOL: readonly ProjectSpec[] = [
-  { folder: "VALUE-CHAIN", folderSlug: "value-chain", leaf: "product-tattoo-idp", leafSlug: "tattoo-idp" },
-  { folder: "CE-TRANSPORT", folderSlug: "ce-transport", leaf: "checkout-svc", leafSlug: "checkout-svc" },
-  { folder: "PLATFORM", folderSlug: "platform", leaf: "payments-core", leafSlug: "payments-core" },
-  { folder: "GROWTH", folderSlug: "growth", leaf: "notifications-team", leafSlug: "notifications-team" },
+  {
+    unit: "VALUE-CHAIN", unitSlug: "value-chain",
+    support: "CE-TRANSPORT", supportSlug: "ce-transport",
+    product: "product-tattoo-idp", productSlug: "product-tattoo-idp",
+  },
+  {
+    // The second product under CE-TRANSPORT — this is the one that makes the support-group
+    // card a roll-up rather than a restatement.
+    support: "CE-TRANSPORT", supportSlug: "ce-transport",
+    product: "product-checkout", productSlug: "product-checkout",
+  },
+  {
+    unit: "PLATFORM", unitSlug: "platform",
+    support: "CS-LOG-ZEN-ECOM", supportSlug: "cs-log-zen-ecom",
+    product: "product-payments", productSlug: "product-payments",
+  },
+  {
+    // NO PRODUCT. The repository still names a support group, so it is not unowned — it is
+    // unowned at the finer grain, which is a different and visible thing.
+    support: "LU-OPS", supportSlug: "lu-ops",
+  },
+  {
+    // ONE PRODUCT, TWO SUPPORT GROUPS. The tenant's convention broken for one repository, which
+    // is a state the app must be able to SAY rather than resolve by picking.
+    support: "CS-LOG-ZEN-ECOM", supportSlug: "cs-log-zen-ecom",
+    support2: "LU-OPS", support2Slug: "lu-ops",
+    product: "product-notifications", productSlug: "product-notifications",
+  },
 ];
 
-function projectsFor(idx: number): Rec[] {
-  const p = PROJECT_POOL[idx % PROJECT_POOL.length]!;
-  return [
-    { id: `proj-folder-${idx % PROJECT_POOL.length}`, name: p.folder, isFolder: true, slug: p.folderSlug },
-    { id: `proj-leaf-${idx % PROJECT_POOL.length}`, name: p.leaf, isFolder: false, slug: p.leafSlug },
-  ];
+// The connector tag the tenant puts on EVERY repository — seeded here for the same reason the
+// pool above exists: so the harness shows what the deployment shows. It is an organisation-wide
+// project (src/domain/config.ts's ORG_WIDE_PROJECTS), so the switcher must NOT offer it and no
+// row may be filed under it as an owner; seeding it is what makes the dev register able to
+// disagree, rather than passing because the case never arrives.
+const ORG_TAG: Rec =
+  { id: "proj-org", name: "GITHUB-DKTUNITED", isFolder: false, slug: "github-dktunited" };
+
+/**
+ * KEYED ON THE REPOSITORY, NOT THE FINDING, and that is a correction rather than a preference.
+ * Wiz files a REPOSITORY under projects; every finding on it carries the same flattened list.
+ * Keying this on a finding index — which it used to be — gave one repository several different
+ * owners across its own findings, which no tenant can produce, and it hid a state the register
+ * has to be able to show: `coldZone.foldRow` takes the first non-blank grain per repository, so
+ * a repository that should have answered "no product" always found one on some other finding
+ * of its own and the `(no product)` bucket could never appear in the dev harness.
+ *
+ * The digits of the id are the key, so the mapping is stable across scans and across runs.
+ */
+function projectsFor(repoId: string): Rec[] {
+  const digits = String(repoId).replace(/\D/g, "");
+  const at = (digits === "" ? 0 : Number(digits)) % PROJECT_POOL.length;
+  const p = PROJECT_POOL[at]!;
+  const out: Rec[] = [];
+  if (p.unit !== undefined) {
+    out.push({ id: `proj-unit-${at}`, name: p.unit, isFolder: true, slug: p.unitSlug! });
+  }
+  out.push({ id: `proj-support-${p.supportSlug}`, name: p.support, isFolder: true, slug: p.supportSlug });
+  if (p.support2 !== undefined) {
+    out.push({
+      id: `proj-support-${p.support2Slug}`, name: p.support2, isFolder: true, slug: p.support2Slug!,
+    });
+  }
+  if (p.product !== undefined) {
+    // isFolder DELIBERATELY ABSENT on the products, not false: Wiz omits it often enough that
+    // the tri-state is load-bearing, and a product classified only by its name is exactly the
+    // case the old "first non-folder" rule got wrong.
+    out.push({ id: `proj-product-${p.productSlug}`, name: p.product, slug: p.productSlug! });
+  }
+  out.push(ORG_TAG);
+  return out;
 }
 
 const SCA_PACKAGES: readonly string[] = [
@@ -163,7 +262,37 @@ interface ScaSpec {
   hasCisaKevExploit: boolean;
   epssProbability: number;
   repo: RepoSpec;
+  // Cold-zone dev-seed overrides (WP4) — see COLD_REPO_STAYS_IDX / COLD_REPO_RESOLVED_IDX /
+  // SLOW_REPO_STAYS_IDX / SLOW_REPO_RESOLVED_IDX / UNOBSERVED_REPO_STAYS_IDX below. All
+  // optional; unset for the other 387 of 400 specs.
+  repoOverride?: RepoSpec;
+  firstDetectedAtOverride?: string;
+  resolvedAtOverride?: string;
+  scanAOnly?: boolean;
 }
+
+// repo-9 "legacy-batch": three STAYS indices keep it open every scan with no movement, plus
+// two API_RESOLVED indices whose resolvedAt is pinned to 2026-01-15 — ~151 days before scan C
+// (2026-06-15), past the 90-day default threshold — so the repo is fully observed, carries
+// open findings, and has a real (if old) last-movement date ⇒ verdict `cold`, measured.
+const COLD_REPO_STAYS_IDX = new Set([10, 11, 12]);
+const COLD_REPO_RESOLVED_IDX = new Set([340, 341]);
+const COLD_REPO_FIRST_DETECTED = "2025-11-01T00:00:00.000Z";
+const COLD_REPO_RESOLVED_AT = "2026-01-15T00:00:00.000Z";
+
+// repo-11 "warehouse-sync": same shape as repo-9 — three STAYS indices plus two API_RESOLVED
+// indices — but the resolvedAt is pinned closer in, to 2026-05-06 — ~40 days before scan C
+// (2026-06-15), past the 14-day floor but well short of repo-9's ~151 — so relative mode has a
+// second, more-recently-quiet repository for the derived line to rank against repo-9.
+const SLOW_REPO_STAYS_IDX = new Set([30, 31, 32]);
+const SLOW_REPO_RESOLVED_IDX = new Set([342, 343]);
+const SLOW_REPO_FIRST_DETECTED = "2026-01-15T00:00:00.000Z";
+const SLOW_REPO_RESOLVED_AT = "2026-05-06T00:00:00.000Z";
+
+// repo-10 "retired-mobile": three STAYS indices reassigned here and flagged scan-A-only, so
+// `scaNodesForScan` emits them at scan A and never again — they close by disappearance at
+// scan B, and the repo never reaches scan C's newest-scan id ⇒ verdict `unobserved`.
+const UNOBSERVED_REPO_STAYS_IDX = new Set([20, 21, 22]);
 
 function buildScaSpecs(): ScaSpec[] {
   const specs: ScaSpec[] = [];
@@ -174,6 +303,28 @@ function buildScaSpecs(): ScaSpec[] {
     const hasCisaKevExploit = idx % 20 === 0; // 5%
     const firstDetectedAt =
       bucket === "NEW_AT_C" ? isoBefore(DAY2_C, 1, 10) : isoBefore(DAY1_A, 10, 200);
+    // Cold-zone overrides below are pure lookups against the fixed idx — they consume no rng
+    // calls, so every other spec's random fields are unaffected by their presence.
+    let repoOverride: RepoSpec | undefined;
+    let firstDetectedAtOverride: string | undefined;
+    let resolvedAtOverride: string | undefined;
+    let scanAOnly: boolean | undefined;
+    if (COLD_REPO_STAYS_IDX.has(idx)) {
+      repoOverride = COLD_REPO;
+    } else if (COLD_REPO_RESOLVED_IDX.has(idx)) {
+      repoOverride = COLD_REPO;
+      firstDetectedAtOverride = COLD_REPO_FIRST_DETECTED;
+      resolvedAtOverride = COLD_REPO_RESOLVED_AT;
+    } else if (SLOW_REPO_STAYS_IDX.has(idx)) {
+      repoOverride = SLOW_REPO;
+    } else if (SLOW_REPO_RESOLVED_IDX.has(idx)) {
+      repoOverride = SLOW_REPO;
+      firstDetectedAtOverride = SLOW_REPO_FIRST_DETECTED;
+      resolvedAtOverride = SLOW_REPO_RESOLVED_AT;
+    } else if (UNOBSERVED_REPO_STAYS_IDX.has(idx)) {
+      repoOverride = UNOBSERVED_REPO;
+      scanAOnly = true;
+    }
     specs.push({
       idx,
       id: `sca-${idx + 1}`,
@@ -189,6 +340,10 @@ function buildScaSpecs(): ScaSpec[] {
       hasCisaKevExploit,
       epssProbability: Math.round(range01() * range01() * 10_000) / 10_000, // skewed low
       repo,
+      repoOverride,
+      firstDetectedAtOverride,
+      resolvedAtOverride,
+      scanAOnly,
     });
   }
   return specs;
@@ -198,31 +353,32 @@ const SCA_SPECS = buildScaSpecs();
 
 /** One raw sca node, shaped exactly like a `vulnerabilityFindings` connection node. */
 function scaRawNode(spec: ScaSpec, scanTs: string, resolved: boolean): Rec {
+  const repo = spec.repoOverride ?? spec.repo;
   return {
     id: spec.id,
     name: spec.name,
     detailedName: spec.detailedName,
     severity: spec.severity,
     status: resolved ? "RESOLVED" : "OPEN",
-    firstDetectedAt: spec.firstDetectedAt,
+    firstDetectedAt: spec.firstDetectedAtOverride ?? spec.firstDetectedAt,
     lastDetectedAt: scanTs,
-    resolvedAt: resolved ? DAY1_B : null,
+    resolvedAt: resolved ? (spec.resolvedAtOverride ?? DAY1_B) : null,
     fixDate: spec.fixDate,
     fixedVersion: spec.fixedVersion,
     hasExploit: spec.hasExploit,
     hasCisaKevExploit: spec.hasCisaKevExploit,
     epssProbability: spec.epssProbability,
     vulnerableAsset: {
-      id: spec.repo.id,
+      id: repo.id,
       type: "REPOSITORY_BRANCH",
-      name: `${spec.repo.name}/${spec.repo.branch}`,
-      cloudPlatform: spec.repo.cloudPlatform,
+      name: `${repo.name}/${repo.branch}`,
+      cloudPlatform: repo.cloudPlatform,
       subscriptionName: null,
       subscriptionExternalId: null,
-      tags: { team: spec.repo.name.split("/")[1] ?? "platform" },
+      tags: { team: repo.name.split("/")[1] ?? "platform" },
     },
-    artifactType: { codeLibraryLanguage: spec.repo.language },
-    projects: projectsFor(spec.idx),
+    artifactType: { codeLibraryLanguage: repo.language },
+    projects: projectsFor(repo.id),
   };
 }
 
@@ -231,7 +387,12 @@ function scaNodesForScan(scanIndex: 0 | 1 | 2, scanTs: string): Rec[] {
   const out: Rec[] = [];
   for (const spec of SCA_SPECS) {
     const { bucket } = spec;
-    if (bucket === "STAYS") { out.push(scaRawNode(spec, scanTs, false)); continue; }
+    if (bucket === "STAYS") {
+      // scan-A-only override (UNOBSERVED_REPO_STAYS_IDX): present at scan A, never again.
+      if (spec.scanAOnly && scanIndex !== 0) continue;
+      out.push(scaRawNode(spec, scanTs, false));
+      continue;
+    }
     if (bucket === "EARLY_GONE") { if (scanIndex === 0) out.push(scaRawNode(spec, scanTs, false)); continue; }
     if (bucket === "LATE_GONE") { if (scanIndex <= 1) out.push(scaRawNode(spec, scanTs, false)); continue; }
     if (bucket === "API_RESOLVED") { out.push(scaRawNode(spec, scanTs, scanIndex >= 1)); continue; }
@@ -348,7 +509,7 @@ function sastRawNode(spec: SastSpec, scanTs: string): Rec {
     firstDetectedAtSource: null,
     resource: { id: spec.repo.id, name: `${spec.repo.name}/${spec.repo.branch}`, type: "REPOSITORY_BRANCH" },
     weaknesses: [{ id: spec.cwe, name: spec.name }],
-    projects: projectsFor(spec.idx + 1),
+    projects: projectsFor(spec.repo.id),
     vcsDetails: { commitHash: `c${(spec.idx + 1).toString(16).padStart(7, "0")}` },
     // This tenant's measured reality (CLAUDE.md): every node's aiAnalysis is null.
     aiAnalysis: null,
@@ -496,7 +657,7 @@ function secretRawNode(spec: SecretRawSpec, scanTs: string): Rec {
       cloudPlatform: spec.repo.cloudPlatform,
     },
     vcsDetails: { initialCommitHash: `s${(spec.physicalIndex + 1).toString(16).padStart(7, "0")}` },
-    projects: projectsFor(spec.physicalIndex + 2),
+    projects: projectsFor(spec.repo.id),
   };
 }
 

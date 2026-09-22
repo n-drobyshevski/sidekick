@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 import { findingKey, mttrFromLedger } from "../src/domain/lifecycle";
-import { sha1Hex } from "../src/domain/sha1";
+import { sha1Hex } from "../../gas_shared/domain/sha1";
 import { expectParity, fixture } from "./helpers";
 
 describe("sha1Hex", () => {

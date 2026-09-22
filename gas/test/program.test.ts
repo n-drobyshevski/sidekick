@@ -378,6 +378,51 @@ describe("capacityByMonth", () => {
     expect(out.oneInN).toBeCloseTo(2.4, 6);
   });
 
+  it("means the CLOSED counts over exactly the months the rate is taken over", () => {
+    // The same two months, counted rather than rated: Feb closed 1, Mar closed 1 -> 1.0.
+    // This is the figure that turns "about one in 2.4 a month" into a number of findings, so
+    // it has to be the same population as `mmcrMean` or the two cannot be read together.
+    expect(out.closedPerMonthMean).toBeCloseTo(1, 6);
+    expect(out.monthsCounted).toBe(2);
+  });
+
+  it("does not move when maxMonths trims the months it returns", () => {
+    // THE WHOLE REASON THIS LIVES IN THE DOMAIN. The page is handed a trimmed `months` array
+    // (api.ts passes maxMonths: 24, and the renderer takes the last 12 of that), so a mean
+    // computed there would silently be over a narrower window than `monthsCounted` claims.
+    // Feb closes 3 and Mar closes 1, so the true mean is 2 and a mean over the trailing two
+    // months alone would be 1 — the two answers are told apart on purpose.
+    const skewed = [
+      cap({ first_seen: "2026-01-05T00:00:00Z", resolved_at: "2026-02-10T00:00:00Z" }),
+      cap({ first_seen: "2026-01-06T00:00:00Z", resolved_at: "2026-02-11T00:00:00Z" }),
+      cap({ first_seen: "2026-01-07T00:00:00Z", resolved_at: "2026-02-12T00:00:00Z" }),
+      cap({ first_seen: "2026-01-08T00:00:00Z", resolved_at: "2026-03-10T00:00:00Z" }),
+      cap({ first_seen: "2026-01-09T00:00:00Z", resolved_at: null }),
+    ];
+    const full = capacityByMonth(skewed, scans, { rule: RULE, now: NOW });
+    expect(full.months.map((m) => m.month)).toHaveLength(4);
+    expect(full.closedPerMonthMean).toBeCloseTo(2, 6);
+
+    const trimmed = capacityByMonth(skewed, scans, { rule: RULE, now: NOW, maxMonths: 2 });
+    expect(trimmed.months.map((m) => m.month)).toEqual(["2026-03", "2026-04"]);
+    expect(trimmed.monthsCounted).toBe(2);
+    expect(trimmed.closedPerMonthMean).toBeCloseTo(2, 6);
+    expect(trimmed.mmcrMean).toBeCloseTo(full.mmcrMean as number, 6);
+  });
+
+  it("is null, never zero, when no month was fully observed", () => {
+    // "We closed nothing" and "nobody was watching" are different claims, and a 0 here would
+    // make the second read as the first — the same refusal `mmcrMean` already makes.
+    const youngOnly = capacityByMonth(
+      [cap({ first_seen: "2026-04-02T00:00:00Z", resolved_at: null })],
+      scans,
+      { rule: RULE, now: NOW },
+    );
+    expect(youngOnly.monthsCounted).toBe(0);
+    expect(youngOnly.mmcrMean).toBeNull();
+    expect(youngOnly.closedPerMonthMean).toBeNull();
+  });
+
   it("carries the scan-delta cross-check and ignores grouped scans", () => {
     const byKey = Object.fromEntries(out.months.map((m) => [m.month, m]));
     expect(byKey["2026-02"].scanClosed).toBe(1);
@@ -445,6 +490,7 @@ describe("capacityByMonth", () => {
     const empty = capacityByMonth([], scans, { rule: RULE, now: NOW });
     expect(empty.months).toEqual([]);
     expect(empty.mmcrMean).toBeNull();
+    expect(empty.closedPerMonthMean).toBeNull();
     expect(empty.verdict).toBeNull();
   });
 });
@@ -756,6 +802,7 @@ describe("compaction preserves coverage & efficiency", () => {
       published_date: null,
       has_kev: true, has_exploit: false, epss: 0.44,
       risk_observed_at: "2026-01-01T00:00:00Z",
+      portal_url: null,
     };
     const ep = toEpisodeRow(live, "cmp-1");
     expect(ep.has_kev).toBe(true);
@@ -796,6 +843,7 @@ describe("risk-signal backfill (pure core)", () => {
     fix_date: null, fix_observed_at: null,
     published_date: null,
     has_kev: null, has_exploit: null, epss: null, risk_observed_at: null,
+    portal_url: null,
     ...over,
   });
   const rec = (id: string, over: Record<string, unknown> = {}) =>

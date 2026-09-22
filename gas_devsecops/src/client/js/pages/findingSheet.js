@@ -48,6 +48,8 @@ import {
   tipLabel, triCell,
 } from "../ui.js";
 import { PROVENANCE, PROVENANCE_HELP, PROVENANCE_LABEL, REGISTERS, provenance } from "./registerModel.js";
+// NOT through ../ui.js, which is the design system's barrel — a URL rule is not a component.
+import { safeWizUrl } from "../../../../../gas_shared/wizUrl.js";
 
 /* ------------------------------------------------------------------ value formatting */
 
@@ -87,6 +89,29 @@ function locationOf(path, line) {
 /** One `{label, value}` row, with an optional tip and an optional render kind. */
 function row(label, value, help, extra) {
   return { label, value, help: help || null, ...(extra || {}) };
+}
+
+/**
+ * The "Open in Wiz" row, or null for "draw nothing".
+ *
+ * `safeWizUrl` re-checks the stored value here rather than trusting the wire: the ledger is
+ * a Google Sheet tab an operator can type into, and this is the last gate before the value
+ * becomes an href. gas_shared/domain/wizUrl.ts carries the argument.
+ *
+ * NULL RATHER THAN A DASHED ROW, which inverts this sheet's own habit deliberately. Every
+ * other absent value here becomes a muted dash meaning "nobody reported this property of
+ * the finding". A missing link is not a property of the finding — it is a fact about this
+ * register's record of it, and for sast and secrets it is a fact about the QUERY: neither
+ * `sastFindings` nor `secretInstances` is confirmed to carry a portalUrl, so neither asks
+ * for one. A dash would file all of that under the finding's own attributes.
+ */
+function wizRow(r) {
+  const href = safeWizUrl((r || {}).portal_url);
+  if (!href) return null;
+  return row("Wiz", "Open in Wiz",
+    "Opens this finding in the Wiz console. The link is the one Wiz reports for the "
+    + "finding; the register does not build it.",
+    { kind: "link", href });
 }
 
 /* ------------------------------------------------------------------- the header chips */
@@ -182,7 +207,10 @@ function scaSections(r, reg) {
         row("Repository", textOf(r.repo_name)),
         row("Branch", textOf(r.branch)),
         row("Key", textOf(r.finding_key)),
-      ],
+        // sca only, and no row at all when there is no link — see gas/'s finding sheet for
+        // why this one absence is not drawn as a dash like every other one in this sheet.
+        wizRow(r),
+      ].filter(Boolean),
     },
     clockSection(r, { age: true, mttr: true }),
     {
@@ -352,9 +380,26 @@ export function findingSheetModel(scope, row_) {
       ? `${reg.caveat} No resolution date is recorded for code findings; last seen is the `
         + "last scan that returned this one."
       : reg.caveat || "",
-    // The one sentence that says where the record ends. No URL is on the wire for any scope
-    // — the ledger stores none — so this states that rather than drawing a dead link.
-    footnote: "Search Wiz for this id; the register carries no link to the finding.",
+    // The one sentence that says where the record ends — now scope-aware, because the answer
+    // stopped being the same for all three.
+    //
+    // `sca` findings come off `vulnerabilityFindings`, the same Wiz root the OS register
+    // reads, and carry the `portalUrl` Wiz reports; `sast` and `secrets` come off
+    // `sastFindings` and `secretInstances`, where nothing confirms such a field, so their
+    // queries do not ask for one and their sentence is unchanged. The secrets case is the
+    // one worth naming out loud: that register deliberately carries no credential value and
+    // says triage opens Wiz for it, so it is the scope that would most want this link and
+    // the one least able to have it yet.
+    // GATED ON THE SCOPE, not just on the value, and the test that forced this is the point
+    // rather than an inconvenience: `portal_url` is on the sca wire list and on neither
+    // other, and `findingSheetModel reads only columns the wire actually carries` hands the
+    // model a Proxy row and fails if sast or secrets so much as TOUCHES the key. Reading a
+    // column a scope does not ship is how a sheet starts quietly depending on a payload it
+    // was never promised.
+    footnote: scope === "sca" && safeWizUrl(r.portal_url)
+      ? "The Wiz row opens this finding in the console. Everything else here is the "
+        + "register's own record of it."
+      : "Search Wiz for this id; the register carries no link to this finding.",
   };
 }
 
@@ -380,6 +425,12 @@ function kvRow(r) {
     value = r.value === absentText
       ? el("span", { class: "muted" }, absentText)
       : codeBlock(r.value, { label: `${r.label}: ${r.value}` });
+  } else if (r.kind === "link") {
+    // The port of gas/'s own `kind: "link"` branch, which this file had no need of until
+    // the Wiz row existed. `target`/`rel` are stated here as they are there: the shell's
+    // `<base target="_top">` already escapes the HtmlService sandbox iframe, and _blank
+    // keeps the register open behind the console rather than navigating away from it.
+    value = el("a", { href: r.href, target: "_blank", rel: "noopener" }, r.value);
   } else if (r.value === absentText) value = el("span", { class: "muted" }, absentText);
   else value = r.value;
   return [dt, el("dd", {}, value)];

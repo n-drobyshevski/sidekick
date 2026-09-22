@@ -31,16 +31,13 @@ from devlake import run as devlake_run  # noqa: E402
 from devlake import session as devlake_session  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-FORKS = {
-    "brick": REPO_ROOT / "brick",
-    "devsecops": REPO_ROOT / "brick" / "devsecops",
-}
+BRICK_DIR = REPO_ROOT / "brick"
 
 
 @contextlib.contextmanager
 def _isolated_sys_path():
     """Swap ``sys.path`` for a throwaway copy for the duration of the block -- the same pattern
-    ``test_lake.py``'s ``_load_by_path`` uses, needed here because loading a fork's own
+    ``test_lake.py``'s ``_load_by_path`` uses, needed here because loading ``brick``'s own
     ``tests/test_notebooks.py`` runs its module-level ``sys.path.insert(0, str(BRICK_DIR))``."""
     original = sys.path
     sys.path = list(original)
@@ -50,12 +47,12 @@ def _isolated_sys_path():
         sys.path = original
 
 
-def _load_test_notebooks(fork: str):
-    """The fork's own ``tests/test_notebooks.py``, loaded by path -- the oracle for the
+def _load_test_notebooks():
+    """``brick``'s own ``tests/test_notebooks.py``, loaded by path -- the oracle for the
     ``%sql`` rule, read from rather than reimplemented (``devlake.notebook.split_sql_cell``'s
     own docstring)."""
-    path = FORKS[fork] / "tests" / "test_notebooks.py"
-    spec = importlib.util.spec_from_file_location(f"_devlake_test_notebooks_{fork}", path)
+    path = BRICK_DIR / "tests" / "test_notebooks.py"
+    spec = importlib.util.spec_from_file_location("_devlake_test_notebooks_brick", path)
     module = importlib.util.module_from_spec(spec)
     with _isolated_sys_path():
         spec.loader.exec_module(module)
@@ -66,44 +63,43 @@ def _load_test_notebooks(fork: str):
 
 
 def test_the_sql_transformer_splits_exactly_as_the_notebook_test_does():
-    """Over every ``.ipynb`` under both forks' ``notebooks/``, for every code cell:
+    """Over every ``.ipynb`` under ``brick/notebooks/``, for every code cell:
     ``split_sql_cell`` agrees with ``test_notebooks.sql_cells`` on which cells are SQL, and the
     SQL bodies it extracts are identical."""
     sql_cells_seen = 0
-    for fork in FORKS:
-        upstream = _load_test_notebooks(fork)
-        for notebook_path in upstream.NOTEBOOKS:
-            doc = upstream.load(notebook_path)
-            oracle_sql = {id(cell): query for cell, query in upstream.sql_cells(doc)}
-            for cell in upstream.cells(doc, "code"):
-                text = upstream.source(cell)
-                got = devlake_notebook.split_sql_cell(text)
-                expected = oracle_sql.get(id(cell))
-                assert (got is not None) == (expected is not None), (
-                    f"{fork}/{notebook_path.name}: split_sql_cell disagrees with sql_cells on "
-                    f"cell starting {text[:40]!r}"
+    upstream = _load_test_notebooks()
+    for notebook_path in upstream.NOTEBOOKS:
+        doc = upstream.load(notebook_path)
+        oracle_sql = {id(cell): query for cell, query in upstream.sql_cells(doc)}
+        for cell in upstream.cells(doc, "code"):
+            text = upstream.source(cell)
+            got = devlake_notebook.split_sql_cell(text)
+            expected = oracle_sql.get(id(cell))
+            assert (got is not None) == (expected is not None), (
+                f"{notebook_path.name}: split_sql_cell disagrees with sql_cells on "
+                f"cell starting {text[:40]!r}"
+            )
+            if expected is not None:
+                sql_cells_seen += 1
+                assert got == expected, (
+                    f"{notebook_path.name}: SQL body differs from sql_cells' own"
                 )
-                if expected is not None:
-                    sql_cells_seen += 1
-                    assert got == expected, (
-                        f"{fork}/{notebook_path.name}: SQL body differs from sql_cells' own"
-                    )
-    assert sql_cells_seen > 0, "no %sql cell found in either fork -- this check would be vacuous"
+    assert sql_cells_seen > 0, "no %sql cell found -- this check would be vacuous"
 
 
 # -------------------------------------------------------------------------- widgets through dbx
 
 
 def test_widgets_resolve_through_dbx():
-    """With the shim installed in a real ``InteractiveShell.instance()`` (no kernel), the brick
-    fork's ``dbx.widget`` resolves through it -- and ``cache_clear`` is exercised: a
-    pre-install call that would otherwise cache ``None`` forever is not still cached afterwards.
+    """With the shim installed in a real ``InteractiveShell.instance()`` (no kernel), ``brick``'s
+    own ``dbx.widget`` resolves through it -- and ``cache_clear`` is exercised: a pre-install
+    call that would otherwise cache ``None`` forever is not still cached afterwards.
     """
     from IPython.core.interactiveshell import InteractiveShell
 
     ip = InteractiveShell.instance()
     try:
-        devlake_session.put_fork_on_path("brick")
+        devlake_session.put_brick_on_path()
         import dbx as dbx_module
 
         dbx_module.get_dbutils.cache_clear()
@@ -122,7 +118,7 @@ def test_widgets_resolve_through_dbx():
         assert dbx_module.get_dbutils() is ip.user_ns["dbutils"]
     finally:
         InteractiveShell.clear_instance()
-        devlake_run.purge_fork_state()
+        devlake_run.purge_brick_state()
 
 
 def test_widget_env_override_beats_the_seed():
@@ -143,8 +139,8 @@ def test_widget_env_override_beats_the_seed():
     # text()/dropdown() must not stomp a value that is already there (real dbutils' own rule).
     fake.text("catalog", "some-other-default")
     assert fake.get("catalog") == "seeded-value"
-    fake.dropdown("scope", "all", ["os", "all"])
-    assert fake.get("scope") == "all"
+    fake.dropdown("scope", "os", ["os", "sca", "sast"])
+    assert fake.get("scope") == "os"
     fake.remove("scope")
     with pytest.raises(KeyError):
         fake.get("scope")
@@ -161,12 +157,12 @@ class NotebookLake:
     tables: Any
     ledger_count: int
     open_count: int
-    scans_count: int
+    metrics_count: int
 
 
 @pytest.fixture(scope="module")
 def notebook_lake(tmp_path_factory) -> NotebookLake:
-    """Two brick/os scans through the real pipeline, in-process, then the session is stopped --
+    """Two ``os``-scope scans through the real pipeline, in-process, then the session is stopped --
     freeing the JVM this fixture used before the notebook test boots a second one of its own
     (see this file's module docstring).
 
@@ -188,25 +184,29 @@ def notebook_lake(tmp_path_factory) -> NotebookLake:
     lake_dir = tmp_path_factory.mktemp("notebook_lake")
     spark = devlake_session.build(lake_dir, app_name="devlake-notebook-fixture")
     try:
-        _, scan1_nodes, scan2_nodes = devlake_run.default_fixture("brick", "os")
+        _, scan1_nodes, scan2_nodes = devlake_run.default_fixture("os")
         devlake_run.scan(
-            "brick", "os", scan1_nodes,
+            "os", scan1_nodes,
             lake=lake_dir, schema="wiz", scan_id=FIXTURE_LAKE_SCAN_IDS[0],
             scan_ts="2026-06-01T00:00:00Z", spark=spark,
         )
         result2 = devlake_run.scan(
-            "brick", "os", scan2_nodes,
+            "os", scan2_nodes,
             lake=lake_dir, schema="wiz", scan_id=FIXTURE_LAKE_SCAN_IDS[1],
             scan_ts="2026-06-02T00:00:00Z", spark=spark,
         )
         tables = result2.tables
         ledger_count = spark.table(tables.ledger).count()
         open_count = spark.table(tables.ledger).filter("status = 'OPEN'").count()
-        scans_count = spark.table(tables.scans).count()
+        # The whole `metrics` table now, not just the `family='scan'` rows -- it is the
+        # deletion-vector-free control table the DuckDB test below reads (see CLUSTERING in
+        # run_pipeline.py: only `ledger` and `bronze` are clustered), and `delta_scan` there
+        # reads every row in it, gold families included.
+        metrics_count = spark.table(tables.metrics).count()
     finally:
         spark.stop()
-        devlake_run.purge_fork_state()
-    return NotebookLake(lake_dir, tables, ledger_count, open_count, scans_count)
+        devlake_run.purge_brick_state()
+    return NotebookLake(lake_dir, tables, ledger_count, open_count, metrics_count)
 
 
 @pytest.fixture()
@@ -226,7 +226,6 @@ def ipythondir(tmp_path) -> Path:
 def _kernel_env(monkeypatch, notebook_lake: NotebookLake, ipythondir: Path, **widgets) -> None:
     monkeypatch.setenv("DEVLAKE_LAKE", str(notebook_lake.lake_dir))
     monkeypatch.setenv("DEVLAKE_SCHEMA", "wiz")
-    monkeypatch.setenv("DEVLAKE_FORK", "brick")
     monkeypatch.setenv("SPARK_LOCAL_IP", "127.0.0.1")
     monkeypatch.setenv("IPYTHONDIR", str(ipythondir))
     for name, value in widgets.items():
@@ -323,28 +322,29 @@ def test_the_mttr_sla_notebook_runs_and_its_sql_cell_reads_the_actionable_clock(
 
 def test_duckdb_reads_the_clustered_ledger_with_deletion_vectors(notebook_lake):
     """DuckDB's ``delta`` extension against the ledger (``CLUSTER BY``,
-    ``delta.enableDeletionVectors=true`` -- reader v3) and, as a control, the scans log (no
-    deletion vectors) -- so a failure on the ledger alone isolates to deletion vectors
-    specifically rather than to ``delta_scan`` itself."""
+    ``delta.enableDeletionVectors=true`` -- reader v3) and, as a control, ``metrics`` (no
+    deletion vectors -- it is not in ``run_pipeline.CLUSTERING`` at all, gold family rows
+    included) -- so a failure on the ledger alone isolates to deletion vectors specifically
+    rather than to ``delta_scan`` itself."""
     duckdb = pytest.importorskip("duckdb")
 
     ledger_table_name = notebook_lake.tables.ledger.split(".")[-1]
-    scans_table_name = notebook_lake.tables.scans.split(".")[-1]
+    metrics_table_name = notebook_lake.tables.metrics.split(".")[-1]
     ledger_path = (notebook_lake.lake_dir / "wiz.db" / ledger_table_name).resolve()
-    scans_path = (notebook_lake.lake_dir / "wiz.db" / scans_table_name).resolve()
+    metrics_path = (notebook_lake.lake_dir / "wiz.db" / metrics_table_name).resolve()
 
     con = duckdb.connect()
     con.execute("INSTALL delta")
     con.execute("LOAD delta")
 
-    # Control: the scans log carries no deletion vectors at all.
-    scans_count = con.execute(
-        f"SELECT count(*) FROM delta_scan('file://{scans_path}')"
+    # Control: `metrics` carries no deletion vectors at all.
+    metrics_count = con.execute(
+        f"SELECT count(*) FROM delta_scan('file://{metrics_path}')"
     ).fetchone()[0]
-    assert scans_count == notebook_lake.scans_count, (
-        f"duckdb {duckdb.__version__}: scans table row count differs from Spark's "
-        f"({scans_count} vs {notebook_lake.scans_count}) -- delta_scan itself is suspect, not "
-        "deletion vectors"
+    assert metrics_count == notebook_lake.metrics_count, (
+        f"duckdb {duckdb.__version__}: metrics table row count differs from Spark's "
+        f"({metrics_count} vs {notebook_lake.metrics_count}) -- delta_scan itself is suspect, "
+        "not deletion vectors"
     )
 
     # The measurement this test exists for: the ledger, which DOES carry deletion vectors.
@@ -355,9 +355,9 @@ def test_duckdb_reads_the_clustered_ledger_with_deletion_vectors(notebook_lake):
     except Exception as exc:  # noqa: BLE001 -- the failure IS the measurement; report it plainly
         pytest.fail(
             f"duckdb {duckdb.__version__} could not read the deletion-vector-enabled ledger "
-            f"table at {ledger_path}: {exc!r}. The scans table (no deletion vectors) read fine "
-            f"above ({scans_count} rows), so this isolates the failure to deletion vectors, not "
-            "delta_scan or the lake in general."
+            f"table at {ledger_path}: {exc!r}. The metrics table (no deletion vectors) read "
+            f"fine above ({metrics_count} rows), so this isolates the failure to deletion "
+            "vectors, not delta_scan or the lake in general."
         )
     assert ledger_count == notebook_lake.ledger_count, (
         f"duckdb {duckdb.__version__}: ledger row count differs from Spark's "

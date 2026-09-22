@@ -59,8 +59,12 @@ function firstContentIndex(stripped) {
   return idxs.length ? Math.min(...idxs) : Infinity;
 }
 
-describe("history and overview return before drawing any content on first run", () => {
-  for (const route of ["history", "overview"]) {
+describe("history, overview and coldZone return before drawing any content on first run", () => {
+  // `coldZone` joined with the cold-zone family. Its gate sits above every host it owns — the
+  // KPI row, the census, both tables and the scatter's canvas are appended by the paint
+  // closure, which the first-run return never reaches — so a register with no scan saved shows
+  // one notice rather than four dashed figures over a population nobody has looked at.
+  for (const route of ["history", "overview", "coldZone"]) {
     it(`pages/${route}.js's first-run branch precedes its own canvas/kpiCard content`, () => {
       const stripped = pageSource(route);
       const returnAt = firstRunReturnIndex(stripped);

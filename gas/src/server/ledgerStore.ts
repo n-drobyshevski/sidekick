@@ -9,6 +9,7 @@
 //   5. LAST: append the scans row — the commit. No scans row => the scan never happened
 //      and recoverIfNeeded() rolls the tabs back from the journal.
 
+import { normalizeWizUrl } from "../../../gas_shared/domain/wizUrl";
 import type { Checkpoint } from "../domain/compaction";
 import {
   importBundleCore,
@@ -128,6 +129,12 @@ function rowToLedger(r: Rec): LedgerRow {
     fix_observed_at: (r["fix_observed_at"] as string | null) ?? null,
     published_date: (r["published_date"] as string | null) ?? null,
     ...coerceRiskSignals(r),
+    // NOT a plain cast like its neighbours, and this is the call site that most needs the
+    // difference: this function turns a ROW OF THE LEDGER TAB back into a LedgerRow, and
+    // that tab is a Google Sheet an operator can open and type into. Nothing runs when they
+    // do, so this read is the only place a hand-edited `portal_url` can be caught before it
+    // reaches the wire. gas_shared/domain/wizUrl.ts carries the full argument.
+    portal_url: normalizeWizUrl(r["portal_url"]),
   };
 }
 

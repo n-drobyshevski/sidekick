@@ -2,6 +2,17 @@
 // `tip` carries `{ term }` or a `bookTip` names one. The tip card shows the first two lines
 // (gas_shared/ui/tipPlace.js's `glossaryTipLines`); the Key sheet page shows the whole entry.
 //
+// THE FIRST TWO LINES ARE A CARD, AND A CARD IS 300px WIDE. That is about 45 characters to a
+// rendered row, so the budget is: line one says what the thing IS in 110 characters or fewer,
+// line two says the one consequence worth a row in 90 or fewer, and the card totals ~150.
+// Everything after line two is Key-sheet prose and can breathe. This file used to run 218-
+// character opening lines against a 220-character ceiling and painted seven-row walls on
+// hover; the reduction moved sentences DOWN into line three and after, it did not delete
+// them. `test/helpContent.test.js` pins the budget with MAX_TIP_LINE_LENGTH, and its
+// measurement assertions read `lines.join(" ")` — the whole entry — so a claim the register
+// owes a reader is just as load-bearing on line four as it was on line one. Root DESIGN.md
+// carries the rule for the family.
+//
 // 42 ENTRIES NOW, NOT THE 23 THIS FILE OPENED WITH. The first 21 (P7) were lifted out of this
 // register's own `tip(` call sites — not one of those call sites passed `term:`, so a reader
 // who wanted the rest of a definition had nowhere to go, and the two pages that both define
@@ -40,8 +51,8 @@ const ENTRIES = [
     term: "Quick refresh",
     lines: [
       "Fetch only findings changed since the last full scan and merge them in.",
-      "Deletions aren't detected — a finding that has gone quiet still reads as open, so run a full scan to clear resolved findings.",
-      "The full scan is what dates a remediation: a vuln that disappears between scans is resolved as of the scan that noticed.",
+      "Deletions aren't detected, so a finding gone quiet still reads as open.",
+      "Run a full scan to clear resolved findings. The full scan is what dates a remediation: a vuln that disappears between scans is resolved as of the scan that noticed.",
     ],
   },
   {
@@ -49,7 +60,8 @@ const ENTRIES = [
     id: "rule-health",
     term: "Rule health",
     lines: [
-      "How each mapping rule performed against this scan, under first-match priority: a finding is claimed by the first rule that matches it, so a rule's health is relative to the ones above it.",
+      "How each mapping rule fared against this scan, under first-match priority.",
+      "A rule's health is relative to the ones above it, which claim first.",
       "Fires — the rule claims findings. Shadowed — it matches findings, but an earlier rule or group claims them first. Never matches — it matches nothing in this scan, a dead rule.",
       "Malformed — the rule failed to compile, so it never matches anything. Malformed and Never matches both claim nothing, and only one of them is a typo.",
     ],
@@ -62,7 +74,8 @@ const ENTRIES = [
     id: "km-median",
     term: "Median MTTR (Kaplan–Meier)",
     lines: [
-      "Median days from first detection to remediation, read off a Kaplan–Meier survival curve. Still-open findings count as censored observations instead of being ignored, so a wave of fresh open findings can't bias it down.",
+      "Median days from first detection to remediation, off a Kaplan–Meier survival curve.",
+      "Still-open findings are censored, not ignored, so fresh ones can't bias it down.",
       "Where the curve never falls to half within the window, there is no median: the longest thing observed becomes a lower bound, printed \"at least N days\" in prose and \"≥ N d\" in a cell.",
       "A vuln that disappears between scans counts as resolved, dated to the scan that noticed. Mean remediation time (KM · RMST) is marked on the survival curve rather than published as a second headline.",
     ],
@@ -72,8 +85,8 @@ const ENTRIES = [
     id: "naive-median",
     term: "Median (naive, closed)",
     lines: [
-      "Median days from first detection to remediation, counting closed findings only — no censoring.",
-      "A wave of fresh open findings biases this down, which is exactly what the Kaplan–Meier headline corrects for.",
+      "Median days from detection to remediation over closed findings only — no censoring.",
+      "A wave of fresh findings biases this down, which the Kaplan–Meier headline corrects for.",
       "It is published because it is the one MTTR figure with a saved history series, not because it is the better number.",
     ],
   },
@@ -82,8 +95,9 @@ const ENTRIES = [
     id: "vendor-fix-wait",
     term: "Wait for a vendor fix",
     lines: [
-      "Kaplan–Meier median wait for a fix to become available, measured from our first detection and from CVE publication.",
-      "Findings still awaiting one are censored, not dropped: excluding them would leave only the vulnerabilities that got fixed and measure how fast the fixed ones were fixed.",
+      "Kaplan–Meier median wait for a fix to exist, from our first detection and from CVE publication.",
+      "Findings still awaiting one are censored, not dropped.",
+      "Excluding them would leave only the vulnerabilities that got fixed, and measure how fast the fixed ones were fixed.",
       "This is the vendor's half of the exposure — our half is the actionable clock, which starts where this one ends. A wait whose origin or availability date was never captured is unmeasured and excluded, never counted as a zero-length wait.",
     ],
   },
@@ -92,8 +106,9 @@ const ENTRIES = [
     id: "mttr-by-dimension",
     term: "MTTR by dimension",
     lines: [
-      "The same remediation clock, split by whichever dimension the page is grouped on and replayed as of each scan.",
-      "KM is the principal figure: per-group Kaplan–Meier medians, still-open findings censored. Naive is the median of closed findings only, kept alongside as the biased comparison KM corrects for.",
+      "The same remediation clock, split by the active grouping and replayed as of each scan.",
+      "KM is the principal figure: per-group medians, still-open findings censored.",
+      "Naive is the median of closed findings only, kept alongside as the biased comparison KM corrects for.",
     ],
   },
   {
@@ -101,8 +116,9 @@ const ENTRIES = [
     id: "mttr-contribution",
     term: "Contribution to MTTR",
     lines: [
-      "Each group's resolved findings × (its KM median − the overall KM median), in finding·days. Right of the zero line the group dragged the headline MTTR up; left of it, it held MTTR down.",
-      "Leverage, not rate: a slightly-slow group that closes a lot outweighs a very-slow one that closes little.",
+      "Resolved findings × (the group's KM median − the overall one), in finding·days.",
+      "Leverage, not rate: a slightly-slow group closing a lot outweighs a fast-closing few.",
+      "Right of the zero line the group dragged the headline MTTR up; left of it, it held MTTR down.",
       "A proxy rather than an exact split — the overall KM median is a censored-survival statistic, not a weighted average of the per-group ones — so read the magnitudes as relative.",
     ],
   },
@@ -111,8 +127,9 @@ const ENTRIES = [
     id: "median-mttr-by-dimension",
     term: "Median MTTR by dimension",
     lines: [
-      "Each group's Kaplan–Meier median, ranked slowest first against a dashed line at the overall KM median. Bars past the line take longer than the register median.",
-      "The pure rate, ignoring volume: a very-slow group tops this even if it closed only a handful. Contribution to MTTR is the same medians weighted by resolved count, which is where the real leverage shows.",
+      "Each group's Kaplan–Meier median, slowest first, against a dashed line at the overall one.",
+      "The pure rate: a very-slow group tops this even if it closed a handful.",
+      "Bars past the line take longer than the register median. Contribution to MTTR is the same medians weighted by resolved count, which is where the real leverage shows.",
     ],
   },
   {
@@ -120,9 +137,9 @@ const ENTRIES = [
     id: "triage-funnel",
     term: "Triage funnel",
     lines: [
-      "Open findings only. Each step is a strict subset of the one above it, so the counts narrow rather than overlapping.",
-      "Exploit intelligence comes from the durable ledger; internet exposure comes from the current scan and cannot be replayed over history.",
-      "Which is why the funnel STOPS rather than reading zero when a scan did not capture exposure: two steps of zero would say none, and none is not what was measured.",
+      "Open findings only, each step a strict subset of the one above it, so counts narrow.",
+      "Exploit intelligence comes from the ledger; exposure comes from the current scan.",
+      "Exposure cannot be replayed over history, which is why the funnel STOPS rather than reading zero when a scan did not capture it: two steps of zero would say none, and none is not what was measured.",
     ],
   },
   {
@@ -130,9 +147,9 @@ const ENTRIES = [
     id: "risk-tiers",
     term: "Risk tiers",
     lines: [
-      "A refinement of the same high-risk rule the Program page scores against, applied one finding at a time.",
-      "A finding takes its strongest signal, so the tiers partition the backlog rather than overlapping — every open finding sits in exactly one.",
-      "The unclassified count here and on the Program page always agree, because they are the same population read through the same rule.",
+      "The same high-risk rule the Program page scores against, applied one finding at a time.",
+      "A finding takes its strongest signal, so every open finding sits in exactly one tier.",
+      "The tiers partition the backlog rather than overlapping. The unclassified count here and on the Program page always agree, because they are the same population read through the same rule.",
     ],
   },
   {
@@ -140,9 +157,9 @@ const ENTRIES = [
     id: "coverage",
     term: "Remediation coverage",
     lines: [
-      "Of every finding the active rule calls high risk, the share that has been remediated: TP / (TP + FN).",
+      "Of what the active rule calls high risk, the share remediated: TP / (TP + FN).",
+      "Easy to buy by fixing everything, so it is never published apart from efficiency.",
       "The bracketed range is what coverage would be if every unclassified finding turned out to be high risk (low end) or not (high end). It closes to a single number once every finding carries a captured exploit signal.",
-      "Higher is better, but coverage alone is easy to buy by fixing everything — it is never published apart from efficiency.",
     ],
   },
   {
@@ -151,7 +168,8 @@ const ENTRIES = [
     term: "Efficiency",
     lines: [
       "Of everything remediated, the share that was actually high risk: TP / (TP + FP).",
-      "The remainder is effort spent on findings the rule did not flag. Some of that is unavoidable — one patch often closes several CVEs at once, and only one of them may be the dangerous one.",
+      "The remainder is effort spent on findings the rule did not flag.",
+      "Some of that is unavoidable — one patch often closes several CVEs at once, and only one of them may be the dangerous one.",
       "Picking findings at random would score about the prevalence of high risk among classified findings, so efficiency at or below that means the program is not prioritizing.",
     ],
   },
@@ -161,7 +179,8 @@ const ENTRIES = [
     term: "Fixed, and it mattered (TP)",
     lines: [
       "High risk under the active rule, and remediated.",
-      "The numerator of both coverage and efficiency — the one cell that moves both numbers the same way.",
+      "The numerator of both coverage and efficiency.",
+      "The one cell that moves both numbers the same way.",
     ],
   },
   {
@@ -170,7 +189,8 @@ const ENTRIES = [
     term: "Fixed, but low risk (FP)",
     lines: [
       "Not high risk under the active rule, but remediated anyway.",
-      "Effort that may have been more productive elsewhere — this is what pulls efficiency down. It leaves coverage untouched, which is why efficiency has to be read beside it.",
+      "Effort better spent elsewhere — this is what pulls efficiency down.",
+      "It leaves coverage untouched, which is why efficiency has to be read beside it.",
     ],
   },
   {
@@ -179,7 +199,8 @@ const ENTRIES = [
     term: "High risk, still open (FN)",
     lines: [
       "High risk under the active rule and not yet remediated.",
-      "Unremediated risk — this is what pulls coverage down, and the only cell that shrinks by doing the work rather than by moving the rule.",
+      "Unremediated risk — this is what pulls coverage down.",
+      "The only cell that shrinks by doing the work rather than by moving the rule.",
     ],
   },
   {
@@ -188,7 +209,8 @@ const ENTRIES = [
     term: "Correctly deprioritized (TN)",
     lines: [
       "Not high risk under the active rule, and still open.",
-      "Work correctly left undone. It appears in neither rate's numerator nor either denominator, so a large TN is neither good news nor bad on its own.",
+      "Work correctly left undone, in neither rate's numerator nor either denominator.",
+      "So a large TN is neither good news nor bad on its own.",
     ],
   },
   {
@@ -196,8 +218,9 @@ const ENTRIES = [
     id: "cell-unclassified-remediated",
     term: "Unclassified, remediated",
     lines: [
-      "Remediated, but no exploit signal was ever captured for it, so it cannot be scored either way.",
-      "Excluded from both rates and reflected in their published ranges — never folded into a corner of the 2×2.",
+      "Remediated, but no exploit signal was ever captured, so it cannot be scored either way.",
+      "Excluded from both rates and reflected in their published ranges.",
+      "Never folded into a corner of the 2×2.",
     ],
   },
   {
@@ -206,7 +229,8 @@ const ENTRIES = [
     term: "Unclassified, still open",
     lines: [
       "Still open, and no exploit signal was ever captured for it.",
-      "Excluded from both rates and reflected in their published ranges. Still open is not the same claim as not high risk.",
+      "Still open is not the same claim as not high risk.",
+      "Excluded from both rates and reflected in their published ranges.",
     ],
   },
   {
@@ -215,8 +239,8 @@ const ENTRIES = [
     term: "No captured signal",
     lines: [
       "Outside the 2×2 on purpose: these findings are not low risk, they are unscored.",
+      "Absent is never zero — a signal nobody evaluated is not one that came back clean.",
       "Counting them as low risk would inflate efficiency and deflate coverage at the same time, so they are excluded from both and reported separately.",
-      "Absent is never zero. A signal nobody evaluated is a different fact from a signal that came back clean.",
     ],
   },
   {
@@ -224,8 +248,9 @@ const ENTRIES = [
     id: "coverage-efficiency-trend",
     term: "Coverage & efficiency over time",
     lines: [
-      "Both rates recomputed at each date over the findings that existed then: a finding counts as remediated from its resolution date onward, and as open before it.",
-      "Risk classification is NOT re-evaluated per date: each finding carries the signals ever observed for it, so a CVE that only reached the KEV catalog later counts as high risk in earlier points too.",
+      "Both rates recomputed at each date over the findings that existed then.",
+      "Risk classification is NOT re-evaluated per date: signals attach once, for all time.",
+      "So a finding counts as remediated from its resolution date onward and open before it, while a CVE that only reached the KEV catalog later counts as high risk in earlier points too.",
       "That reads pessimistically early, and it is what stops last week's plotted value from moving every time a scan lands. The shaded stretch before the first saved scan is reconstructed from first-detection dates, so closures there are under-counted.",
     ],
   },
@@ -234,8 +259,9 @@ const ENTRIES = [
     id: "rule-sensitivity",
     term: "How much the rule choice matters",
     lines: [
-      "Each point is one combination of signals scored over this same register: how much of what THAT rule calls high risk got fixed (coverage, across) against how much of the fixing it would credit (efficiency, up).",
-      "Up and to the right is better, and no rule reaches the corner — that trade-off is the whole reason both numbers are published.",
+      "One point per combination of signals, scored over this same register: coverage across, efficiency up.",
+      "Up and to the right is better, and no rule reaches the corner.",
+      "That trade-off is the whole reason both numbers are published.",
       "It measures sensitivity to the rule, not which rule is right: the ground truth here is the rule itself, so a narrow rule can look flattering simply by flagging less.",
     ],
   },
@@ -245,7 +271,8 @@ const ENTRIES = [
     term: "SLA band",
     lines: [
       "An SLA is a band the population is kept inside, not a wall a single finding hits.",
-      "Read it as a distribution: how much of the window each open finding has consumed, and how many are already past it.",
+      "Read it as a distribution: how much of the window each open finding has consumed.",
+      "And how many are already past it.",
     ],
   },
   {
@@ -253,8 +280,24 @@ const ENTRIES = [
     id: "capacity",
     term: "Remediation capacity",
     lines: [
-      "Only capacity absorbs inflow: the verdict compares the close rate with the arrival rate, not a count.",
-      "Gaining ground, keeping up and falling behind are the three readings of that comparison, with a dead band so a flat month is not a verdict.",
+      "Only capacity absorbs inflow: the verdict compares close rate with arrival rate, not counts.",
+      "Gaining ground, keeping up and falling behind are its three readings.",
+      "There is a dead band, so a flat month is not a verdict.",
+    ],
+  },
+  {
+    // pages/program.js's "Closed per month" hero mini.
+    //
+    // ITS OWN ENTRY RATHER THAN A THIRD LINE ON `capacity` ABOVE, and the tip card is why: it
+    // renders the first TWO lines, so folding this in would have pushed the verdict's own
+    // definition off the surface the verdict is defined on. The same reason gas_devsecops
+    // keeps `mmcr` apart from `capacity`.
+    id: "closed-per-month",
+    term: "Findings closed per month",
+    lines: [
+      "Findings closed in a mean calendar month, over the months the close rate averages over.",
+      "The close rate's absolute half, which the rate alone cannot supply.",
+      "One in ten a month is four findings on a small register and four hundred on a large one.",
     ],
   },
   // ---------------------------------------------------------------- the Executive front door
@@ -272,7 +315,7 @@ const ENTRIES = [
     term: "Remediation half-life",
     lines: [
       "How long it takes for half of what is open today to be remediated.",
-      "Read off a Kaplan–Meier survival curve, so findings that are still open count as evidence rather than being dropped.",
+      "Off a Kaplan–Meier curve, so still-open findings count as evidence, not as gaps.",
       "Preferred to a mean because remediation is long-tailed: a mean moves when a batch of easy findings closes, and can improve while real exposure does not.",
     ],
   },
@@ -281,7 +324,8 @@ const ENTRIES = [
     id: "lower-bound",
     term: "Lower bound",
     lines: [
-      "A duration the curve never reached: more than half of what was tracked is still open, so the median is at least this far out and cannot be read exactly.",
+      "A duration the curve never reached, so the median is at least this far out.",
+      "More than half of what was tracked is still open and it cannot be read exactly.",
       "Prose says \"at least N days\" and a figure says \"≥ N\" — one notation per context, and inclusive either way, which is why \"more than\" would be a different claim.",
     ],
   },
@@ -290,8 +334,8 @@ const ENTRIES = [
     id: "censoring",
     term: "Censored",
     lines: [
-      "A finding that is still open has been open at least this long, but we do not know how long it will end up taking.",
-      "Dropping those rows and averaging what is left is the single most common way a remediation figure flatters its owner.",
+      "A still-open finding has been open at least this long; how long it will take is unknown.",
+      "Dropping those rows and averaging the rest is how a remediation figure flatters its owner.",
       "The curve keeps them as right-censored observations, which is what makes the half-life honest.",
     ],
   },
@@ -302,8 +346,9 @@ const ENTRIES = [
     id: "fix-next",
     term: "Fix next",
     lines: [
-      "Ranked by what cannot wait rather than by severity: a known-exploited finding on a reachable host, then an exploitable finding already past its window, then a critical one already past its window.",
-      "Grouped by the team or subscription that would be asked, because that is the smallest unit somebody can be asked to own.",
+      "Ranked by what cannot wait rather than by severity.",
+      "Grouped by the team or subscription that would be asked — the smallest ownable unit.",
+      "The order is: a known-exploited finding on a reachable host, then an exploitable finding already past its window, then a critical one already past its window.",
     ],
   },
   {
@@ -313,9 +358,9 @@ const ENTRIES = [
     id: "movement",
     term: "Movement",
     lines: [
-      "The open backlog now against the same register a week or more of scanning ago. A rising count is worse.",
-      "The comparison is between two scans, not between two calendar dates — a register only learns anything on the days it looks.",
-      "The two scans have to be at least a week apart. Closer than that and no comparison is published rather than a noisy one.",
+      "The open backlog now against the same register a week or more of scanning ago.",
+      "A rising count is worse. The comparison is between two scans, not two calendar dates.",
+      "A register only learns anything on the days it looks, so the two scans have to be at least a week apart. Closer than that and no comparison is published rather than a noisy one.",
     ],
   },
 
@@ -336,16 +381,18 @@ const ENTRIES = [
     id: "scan",
     term: "Scan",
     lines: [
-      "The act, and the record it leaves: running one reads the register from Wiz and saves a row in Scan History for what it found.",
-      "Wiz's own detectors run continuously and are a different thing — this word names the read-and-save operation this app runs, on demand.",
+      "The act and the record both: it reads the register from Wiz and saves a row in Scan History.",
+      "Wiz's own detectors run continuously and are a different thing.",
+      "This word names the read-and-save operation this app runs, on demand.",
     ],
   },
   {
     id: "disappearance",
     term: "Dated by disappearance",
     lines: [
-      "A finding dated resolved at the first scan that stopped returning it, because the API publishes no resolution date for it.",
-      "An upper bound whose error is the interval between two scans: \"gone by 12 Aug\", never \"resolved 12 Aug\".",
+      "A finding dated resolved at the first scan that stopped returning it.",
+      "An upper bound: \"gone by 12 Aug\", never \"resolved 12 Aug\".",
+      "The API publishes no resolution date for it, so the error is the interval between two scans.",
       "Until two scans have run and findings have begun to disappear between them, a register dated this way reads near-zero — an absence of observations, not a fast team.",
     ],
   },
@@ -362,15 +409,16 @@ const ENTRIES = [
     term: "Awaiting a vendor fix",
     lines: [
       "An open finding whose vendor has not published a fixed version yet.",
-      "Counting the wait for a vendor as remediation time measures the vendor, not the team, so these findings are reported separately.",
+      "Reported separately: the wait measures the vendor, not the team.",
+      "Counting it as remediation time would credit or blame the wrong party.",
     ],
   },
   {
     id: "two-clocks",
     term: "The two clocks",
     lines: [
-      "Detection to remediation is one clock; it includes any time spent waiting for a vendor fix to exist.",
-      "The actionable clock is the second: it starts once a fix becomes available, and is the only one the team controls.",
+      "Detection to remediation is one clock, including any wait for a vendor fix to exist.",
+      "The actionable clock starts once a fix exists — the only one the team controls.",
       "Both are published, because either alone can be read as the whole story.",
     ],
   },
@@ -378,8 +426,9 @@ const ENTRIES = [
     id: "kev",
     term: "On KEV",
     lines: [
-      "CISA's Known Exploited Vulnerabilities catalogue: CVEs with reliable evidence that someone, somewhere, has actually exploited them.",
-      "Observed exploitation of the CVE — not a statement that this finding is reachable here. It raises the priority of a finding; it does not decide it.",
+      "CISA's Known Exploited Vulnerabilities catalogue: CVEs someone has actually exploited.",
+      "Reliable evidence about the CVE, not a claim this finding is reachable here.",
+      "It raises the priority of a finding; it does not decide it.",
       "A row Wiz never evaluated against the catalogue is unknown, not absent from it, which is why these counts are reported as a floor.",
     ],
   },
@@ -388,23 +437,74 @@ const ENTRIES = [
     term: "Known exploit",
     lines: [
       "Public exploit code exists for the CVE.",
-      "A weaker claim than KEV and a different one: code being published is not the same as exploitation having been observed. A CVE can carry this and not be on KEV, and the reverse.",
+      "Weaker than KEV: code published is not exploitation observed.",
+      "A CVE can carry this and not be on KEV, and the reverse.",
     ],
   },
   {
     id: "epss",
     term: "EPSS score",
     lines: [
-      "Exploit Prediction Scoring System: the estimated probability that a CVE will be exploited in the next 30 days.",
-      "A FORECAST, not an observation — the one signal here that says what may happen rather than what has. It is a probability, so a high score on a large register still describes many findings that will never be attacked.",
+      "Exploit Prediction Scoring System: the odds a CVE is exploited in the next 30 days.",
+      "A FORECAST, not an observation — what may happen rather than what has.",
+      "It is a probability, so a high score on a large register still describes many findings that will never be attacked.",
     ],
   },
   {
     id: "sla-edge",
     term: "SLA edge",
     lines: [
-      "The day count that splits one severity's open findings into late and not late — its own SLA target, read against the age buckets.",
+      "The day count splitting one severity's open findings into late and not late.",
+      "Its own SLA target, read against the age buckets.",
       "A deadline rarely lands on a bucket's boundary, so a bucket is usually part in and part out; a rule is drawn on the chart only where every severity shares one exact edge.",
+    ],
+  },
+  {
+    // THE COLD ZONE'S THREE WORDS, ported from gas_devsecops/helpContent.js and reworded for
+    // this grain. `cold-zone` is the state and its clock; `unobserved` is the state that must
+    // never be mistaken for it (a fact about the scanner, not about a support group); `idle` is
+    // the number both of them are read off. Three entries rather than one because the tip card
+    // renders an entry's first two lines — a definition folded in as a third line is a
+    // definition nobody can reach — and because the Cold zone page puts the three in three
+    // different places: the page header, a verdict column, and a figure column.
+    id: "cold-zone",
+    term: "Cold zone",
+    lines: [
+      "An asset with open findings and nothing resolved on it for the whole cold-zone window.",
+      "Measured at the last scan, never against today, so a saved ledger always reads the same.",
+      "With no movement on record the figure is a lower bound \u2014 see Lower bound.",
+      "The window is either a fixed number of days or a share of the estate, set on the Lifecycle tab in Settings. An asset the scanner has stopped returning is Unobserved instead: counted apart, and never counted as warm.",
+    ],
+  },
+  {
+    // The support-group half of relative mode. A rank is not a verdict, and this is where that
+    // distinction is settled for a reader who found the mark on the group table.
+    id: "coldest-share",
+    term: "Coldest share",
+    lines: [
+      "In relative mode, the groups with the highest share of their open-finding assets cold.",
+      "A position relative to the other groups, never a verdict about any one of them.",
+      "A group with no cold asset is never marked, however small the estate; groups tied at the cutoff are all marked rather than split by name.",
+      "Ranked over the support groups that have at least one asset with an open finding. A group with nothing open has no share to rank and carries no position at all.",
+    ],
+  },
+  {
+    id: "unobserved",
+    term: "Unobserved",
+    lines: [
+      "The scanner stopped returning this asset: nothing on it reached the newest scan.",
+      "Its findings close by disappearance, which looks like a whole asset remediated at once.",
+      "So it is tested first, counted apart, and never counted as warm or cold. No finding on it reached the newest scan of any severity it has rows in.",
+      "Two very different things land here, and the census draws them apart. An asset that was fixed and then decommissioned is unobserved for as long as the ledger remembers it — nothing open, nothing to do, and on a long-lived register most of the figure. The one worth acting on is an asset the scanner lost while findings were still open on it: that backlog is real and nobody will be told about it again.",
+    ],
+  },
+  {
+    id: "idle",
+    term: "Idle days",
+    lines: [
+      "Days since the last movement on an asset: the most recent finding resolved on it.",
+      "Measured from the last scan, never from today.",
+      "Where nothing has ever moved there is no measurement, so the count runs from when we started watching and is published as a lower bound.",
     ],
   },
   {
@@ -412,22 +512,23 @@ const ENTRIES = [
     term: "Returned",
     lines: [
       "Seen again after it had been resolved. Its clock restarted on this sighting.",
-      "The earlier episode is not in this figure — a returned finding's age counts only from the return.",
+      "The earlier episode is not in this figure: age counts only from the return.",
     ],
   },
   {
     id: "rail-status",
     term: "Rail status",
     lines: [
-      "Only exceptions speak: a scan running, a scan that failed, no register collected, never scanned, an unreadable date, or stale.",
-      "Never-scanned outranks stale: a register nobody has looked at is unmeasured, not old.",
+      "Only exceptions speak: running, failed, nothing collected, never scanned, bad date, or stale.",
+      "Never-scanned outranks stale: a register nobody looked at is unmeasured, not old.",
     ],
   },
   {
     id: "compaction",
     term: "Compaction",
     lines: [
-      "Sealing rolls the oldest closed findings into exact episode rows and prunes their raw archives — MTTR and every trend stay identical.",
+      "Rolls the oldest closed findings into exact episode rows and prunes their raw archives.",
+      "MTTR and every trend stay identical — the arithmetic is exact, not approximated.",
       "The two most recent full scans are never candidates, and the dry run states what would go before anything goes.",
     ],
   },
@@ -435,32 +536,34 @@ const ENTRIES = [
     id: "sealed",
     term: "Sealed",
     lines: [
-      "A saved scan whose closed findings compaction has already rolled into episode rows and whose raw archive has been pruned.",
-      "A sealed scan can't be deleted from Scan History — its archive was reclaimed when it was sealed.",
+      "A saved scan compaction has already rolled into episode rows and pruned.",
+      "It can't be deleted from Scan History — its archive was reclaimed when it was sealed.",
     ],
   },
   {
     id: "episode",
     term: "Episode",
     lines: [
-      "One finding's settled lifetime — first seen, how it ended, when — kept after the scan that carried it was sealed.",
-      "The clock survives compaction; the per-scan observations behind it do not. A finding seen again after its episode begins a new one.",
+      "One finding's settled lifetime — first seen, how it ended, when.",
+      "The clock survives compaction; the per-scan observations behind it do not.",
+      "A finding seen again after its episode begins a new one.",
     ],
   },
   {
     id: "unclassified",
     term: "Unclassified",
     lines: [
-      "A finding no exploit signal was ever captured for, so the high-risk rule could not place it either way.",
-      "Not the same as low risk: absent is never zero. It is reported separately rather than folded into a corner of the matrix or the tier breakdown.",
+      "A finding no exploit signal was captured for, so the rule could not place it either way.",
+      "Not the same as low risk: absent is never zero.",
+      "Reported separately rather than folded into a corner of the matrix or the tier breakdown.",
     ],
   },
   {
     id: "reconstructed",
     term: "Reconstructed",
     lines: [
-      "A point whose figures were rebuilt rather than directly observed, because it falls before this register's first saved scan.",
-      "Marked so it is not read as measured — the backlog it describes is real, but nobody was looking in real time.",
+      "A point rebuilt rather than observed, falling before the first saved scan.",
+      "Marked so it is not read as measured: the backlog is real, but nobody was watching then.",
     ],
   },
   {
@@ -471,7 +574,7 @@ const ENTRIES = [
     term: "Internet exposed",
     lines: [
       "A host reachable from outside the network, as reported by the current scan.",
-      "Captured only in the scan snapshot, not the durable ledger, so it can't be replayed over older scans or trended.",
+      "In the scan snapshot only, not the ledger, so it can't be replayed or trended.",
     ],
   },
   {
@@ -481,7 +584,7 @@ const ENTRIES = [
     term: "Age",
     lines: [
       "Time since a finding was first detected, whether or not a fix is available yet.",
-      "The simpler of the two clocks this register keeps — see The two clocks for the one that starts later.",
+      "The simpler of the two clocks — see The two clocks for the one that starts later.",
     ],
   },
   {

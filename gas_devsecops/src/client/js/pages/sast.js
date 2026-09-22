@@ -103,7 +103,7 @@ export function sastModel(payload, opts) {
   // code the weakness is in — but it is still an attribute nobody remediates against, and it
   // sat beside `cwe`, which is the weakness axis a reader actually acts on. Three breakdown
   // cards where the third is never the one you open is a page paying rent on a habit.
-  const concentration = concentrationModel(p.concentration, ["cwe", "repo", "owner_project"]);
+  const concentration = concentrationModel(p.concentration, ["cwe", "repo", "product", "support_group", "domain"]);
   const weakness = concentration.find((c) => c.dim === "cwe") || null;
   const tiers = tierModel(p.tiers, RISK_TIER_ORDER, RISK_TIER_LABELS);
   const firstRun = registerFirstRunView(p.rowCount, opts && opts.synced, opts && opts.at);
@@ -262,7 +262,10 @@ function paintSast(host, vm, filters) {
   // register nobody has read is one more confident zero, and `firstRunNotice` below already
   // says what is missing.
   const population = vm.firstRun.show ? null : populationLine(vm);
-  if (population) host.append(el("p", { class: "small muted" }, population.text));
+  if (population) host.append(el("div", { class: "scope-chips", role: "group", "aria-label": population.text },
+          ...population.parts.map((part, i) => el("span", {
+            class: "scope-chip" + (i === 0 ? " scope-chip--lead" : ""),
+          }, part))));
 
   // FIRST RUN STOPS HERE — see sca.js's paintSca for why every section past this point would
   // otherwise print its own confident "0", including both chart canvases.
@@ -381,10 +384,9 @@ function paintSast(host, vm, filters) {
   host.append(sectionCard("AI triage coverage", {
     term: "sast",
     lines: [
-      "One of the rule's three clauses reads the scanner's own verdict; this is how much of"
-      + " the register that verdict was ever recorded for.",
-      "Shown rather than inferred from a clause that never fires — a rule whose clause cannot"
-      + " fire is a coverage gap to publish, not one to paper over.",
+      "How much of the register the scanner's own verdict was ever recorded for.",
+      "One of the rule's three clauses reads it.",
+      "A clause that cannot fire is a coverage gap to publish, not one to paper over.",
     ],
   },
     el("div", { class: "signal-rows" },
@@ -505,7 +507,7 @@ function paintSast(host, vm, filters) {
             help: { term: "sast" },
           },
           { key: "repo", label: "Repository", cell: (r) => r.repo || absent() },
-          { key: "owner", label: "Owning project", cell: (r) => r.ownerProject || absent() },
+          { key: "product", label: "Product", cell: (r) => r.product || absent() },
           { key: "sev", label: "Severity", cell: (r) => sevBadge(r.severity) },
           {
             key: "age",
@@ -529,8 +531,8 @@ function paintSast(host, vm, filters) {
   // `sastModel`'s `missingColumns: null` records.
   host.append(sectionCard("Every finding in the register", {
     lines: [
-      "Click a column to ask the server for a different order rather than re-sorting what is"
-      + " already on screen; open a row for everything the register holds about that finding.",
+      "Open a row for everything the register holds about that finding.",
+      "A column asks the server for a different order, it does not re-sort the page.",
     ],
   },
     el("p", { class: "small muted" }, "Open and resolved, server-paged and server-sorted."),

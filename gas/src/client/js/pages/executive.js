@@ -51,15 +51,19 @@
 
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  clear, dataTable, disclosure, el, emptyState, errorState, fmtCount,
+  clear, collapsibleSection, dataTable, disclosure, el, emptyState, errorState, fmtCount,
   fmtDate, fmtDateTime, fmtDays, fmtSpan, heroStat, num, pageHeader, pluralize, relativeAge,
   scopeBar, sectionLabel, sevKeyRow, sevSegmentBar, skeleton, statRow, statusPill, tipLabel,
+  FINE_UNITS, unitRow, unitScale,
+  absent, days1,
+  absentText, figureCard, pct1,
 } from "../ui.js";
 // THE HALF-LIFE DECISION IS IMPORTED, NOT REPEATED. `execMttrSlice` is a slice of the MTTR
 // page's own payload (api.ts says so), so the rule that turns `{median, medianLowerBound}`
 // into a sentence has to be the same rule on both pages or the front door and the detail page
 // could describe the same estimate differently. It lives on the page that owns the clock.
 import { kmHalfLifeView } from "./mttr.js";
+import { groupCutNote } from "./_groupSplit.js";
 // `findEntry` READS THE BOOK'S OWN "fix-next" LINES so the heading's tip can carry BOTH the
 // ranking rule and what a click does, in one trigger — see `renderFixNext`'s own comment on
 // why `linkNote` moved off the surface and onto here rather than growing a second `?`.
@@ -151,10 +155,47 @@ const PENDING = "…";
  * is what `sevSegmentBar` needs, and deriving one from the other at the call site would put a
  * parse in front of a figure that was a number the whole way down.
  *
+ * THE MOVEMENT STRIP SUPERSEDES THIS BLOCK WHENEVER IT CAN BE DRAWN, and that is what
+ * `movement` decides. The two describe ONE population — `api.ts` builds both from the same
+ * `baseVisible` rows under the same severity gate — and the movement strip says strictly more
+ * about it: a row per severity with the open count, a `unitRow` tally of that count, the
+ * previous count and the direction. Drawn together, this page stated 27 CRITICAL and 39 HIGH
+ * twice, a screen apart, in two different pictures — and only the copy down here had to
+ * apologise for its own arithmetic, because dropping UNKNOWN from the key row is what makes
+ * 27 + 39 = 66 sit under a hero that counts 70. The movement rows carry UNKNOWN and sum to
+ * their own total; there is nothing to reconcile up there.
+ *
+ * SO IT IS A FALLBACK, NOT A DELETION. `openMovement` needs two scans at least seven days
+ * apart (`insights.ts`), which a register in its first week does not have — and in that state
+ * the movement strip prints "No open-backlog comparison" and this block is the ONLY thing on
+ * the front door that breaks the open backlog down at all. Exactly one of the two is on the
+ * page at any time, and it is always the richer one available.
+ *
+ * WHAT THAT COSTS, STATED RATHER THAN HIDDEN. With no severity gate in force, `openMovement`
+ * publishes only the severities PRESENT at either endpoint, so a level the register held
+ * nothing in all week loses the "LOW 0" key the paragraph above insists on. That rule still
+ * governs this block wherever it IS drawn; what is given up is a zero for a level nobody has
+ * a finding in this week or last, which is the emptiest bucket on the page.
+ *
+ * `movement` UNDEFINED MEANS "NOT COMPARABLE", so a caller that does not pass it gets the
+ * block — the shape every test in test/executiveView.test.js was written against.
+ *
  * @param {{order: string[], scope: string[], bootCounts: object,
- *          payload: object|null|undefined, scoped: boolean}} args
+ *          payload: object|null|undefined, scoped: boolean,
+ *          movement?: object|null}} args
  */
-export function executiveSeverityView({ order, scope, bootCounts, payload, scoped }) {
+export function executiveSeverityView({ order, scope, bootCounts, payload, scoped, movement }) {
+  // READ THROUGH `openMovementView`, never through a second copy of its rule. Whether a
+  // comparison exists is `insights.openMovement`'s decision, published as `comparable` and
+  // already interpreted once on this page; asking "does `movement.rows` have anything in it"
+  // here would be a second opinion that could disagree with the strip actually rendered.
+  if (openMovementView(movement).show) {
+    return {
+      show: false, supersededBy: "movement",
+      pending: false, tiles: [], open: null, openAll: null, note: null,
+      populationLine: null, populationExplain: null,
+    };
+  }
   const all = order || [];
   const sevs = all.filter((s) => scope.includes(s));
   const build = (read) => sevs.map((sev) => {
@@ -166,6 +207,7 @@ export function executiveSeverityView({ order, scope, bootCounts, payload, scope
     const open = sum(tiles);
     const pop = line(open, openAll);
     return {
+      show: true, supersededBy: null,
       pending: false, tiles, open, openAll, note,
       populationLine: pop.text,
       // NULL WHEN THE TWO POPULATIONS AGREE — there is nothing to explain, and `renderSeverity`
@@ -192,6 +234,7 @@ export function executiveSeverityView({ order, scope, bootCounts, payload, scope
   }
   if (!payload) {
     return {
+      show: true, supersededBy: null,
       pending: true, tiles: build(() => null), open: null, openAll: null, note: null,
       populationLine: null, populationExplain: null,
     };
@@ -248,37 +291,54 @@ function line(open, openAll) {
  * What the per-group remediation split says, and whether it is worth drawing at all.
  *
  * THE DIMENSION FOLLOWS THE SCOPE, server-tagged: per-domain at the whole-register view,
- * per-support-group when a domain is picked — because splitting BY domain while scoped TO one
- * domain is a single row restating the hero. Only `mttrByDomainData` aliases `group` into
- * `domain`, so the name has to be read through `group ?? domain` or the support-group split
- * renders a column of blanks.
+ * per-support-group when a domain is picked, per-ASSET when a support group is picked. Only the
+ * middle one is a degeneracy fix — splitting BY domain while scoped TO one domain is a single
+ * row restating the hero. The asset case replaces a split that worked (by-domain inside a
+ * support group was a real multi-row answer); it is an editorial choice, because a support
+ * group is a team and the thing a team patches is a host. Only `mttrByDomainData` aliases
+ * `group` into `domain`, so the name has to be read through `group ?? domain` or the other two
+ * splits render a column of blanks.
  *
- * THE ONE-ROW GUARD APPLIES TO BOTH DIMENSIONS HERE, which is a deliberate divergence from
- * mttr.js (it guards only the support-group branch). Under a support-group scope the dimension
- * is still "domain" while `domainNames` stays register-wide, so that gate alone would happily
- * draw a one-row table for a group living in a single domain.
+ * THE ONE-ROW GUARD APPLIES TO EVERY DIMENSION HERE. It used to be a deliberate divergence from
+ * mttr.js, which guarded only the support-group branch; mttr.js now guards all three too, so
+ * the two pages agree. The `domainNames` gate stays on the domain dimension alone: it is the
+ * CONFIGURED universe, and a register with one configured domain has nothing to split by.
  *
- * EVERY GROUP IS LISTED. This used to cap at five and call itself a summary, which quietly made
- * the section unable to answer the question it poses: a domain outside the top five by open
- * backlog could carry the worst MTTR on the page and never appear, with nothing on screen
- * saying rows had been dropped. Ordering still puts the biggest backlog first.
+ * EVERY GROUP IT IS GIVEN IS LISTED. This used to cap at five and call itself a summary, which
+ * quietly made the section unable to answer the question it poses: a domain outside the top five
+ * by open backlog could carry the worst MTTR on the page and never appear, with nothing on
+ * screen saying rows had been dropped. That is still the rule — but for an ESTATE-SIZED
+ * dimension "everything" is not a payload the landing page can carry, so the asset split is
+ * bounded upstream (`ASSET_TOP_N`) and arrives with a `cut` describing exactly what it lost.
+ * The difference from the old five-row cap is the whole point: the bound is stated on the page.
+ * Ordering still puts the biggest backlog first.
  *
  * @param {object|null|undefined} byDomain  the server's `byDomain` slice
  * @param {{domainNames: string[]}} args
  */
 export function executiveByDomainView(byDomain, { domainNames }) {
   if (!byDomain || !byDomain.rows || !byDomain.rows.length) return { show: false };
-  const isSg = byDomain.dimension === "supportGroup";
-  if (!isSg && (domainNames || []).length < 2) return { show: false };
+  const dim = byDomain.dimension;
+  if (dim !== "supportGroup" && dim !== "asset" && (domainNames || []).length < 2) {
+    return { show: false };
+  }
   if (byDomain.rows.length < 2) return { show: false };
   const rows = [...byDomain.rows]
     .sort((a, b) => (b.open ?? 0) - (a.open ?? 0))
     .map((r) => ({ name: r.group ?? r.domain, kmMedian: r.kmMedian, open: r.open ?? 0 }));
+  const TITLES = {
+    supportGroup: "MTTR by support group",
+    asset: "MTTR by asset",
+  };
+  const HEADERS = { supportGroup: "Support group", asset: "Asset" };
   return {
     show: true,
-    title: isSg ? "MTTR by support group" : "MTTR by domain",
-    columnHeader: isSg ? "Support group" : "Domain",
+    title: TITLES[dim] || "MTTR by domain",
+    columnHeader: HEADERS[dim] || "Domain",
     rows,
+    // What the split's cap dropped, or null where nothing did. Read off the payload, not off
+    // the dimension: which dimensions are bounded is the server's fact to state.
+    cutNote: groupCutNote(byDomain.cut, (HEADERS[dim] || "Domain").toLowerCase()),
     // True where at least one group's curve never fell to half. `execGroupSlice` ships
     // `kmMedian` and drops `kmMedianLowerBound`, so such a group arrives as null with no
     // bound behind it: the cell is a dash and the footnote says what the dash means.
@@ -679,6 +739,96 @@ export function fixNextView(payload, boot) {
 }
 
 /**
+ * The cold zone, as the one figure a leader reads about it: how much of the open backlog is
+ * sitting on assets where nothing is moving.
+ *
+ * ONE NUMBER, AND IT IS A SHARE RATHER THAN A COUNT. "412 open findings are cold" is a figure
+ * whose meaning changes with the size of the register; "31.4% of the backlog is cold" is the
+ * same fact read against the only denominator that makes it comparable week to week. Both are
+ * published — the share is the value, the pair behind it is the sentence underneath — because
+ * a rate without its denominator is not a measurement.
+ *
+ * NULL IS AN ANSWER AND IT IS NOT ZERO. `cold_backlog_share_pct` is null over an empty
+ * denominator — a register with no open findings at all has no cold SHARE, and rendering that
+ * as 0.0% would say the backlog is all warm when there is no backlog. The card draws the muted
+ * dash instead, which is what every other absent figure on this page draws.
+ *
+ * THE SHAPE IS CHECKED, NOT THE FLAG. `api_getExecutivePage` ships `coldZone` as a
+ * `ColdZoneHeadline` — the totals and the clock, never the per-asset or per-group arrays — and
+ * sets `totals` to null in exactly the case `measurable: false` describes. A payload that said
+ * `measurable: true` over a null `totals` (an older server answering a newer client) would pass
+ * a flag check and then throw inside the renderer, which `guard()` would dress as a red error
+ * box for what is really an absence. So this decides for itself from what arrived.
+ *
+ * `coldZoneAsOfSource` IS CARRIED BECAUSE THE CLOCK CAN SLIP. Every duration in the cold-zone
+ * family is measured at the LEDGER's clock — the newest flat scan's timestamp — so the same
+ * saved ledger always reads the same number. Where the server could not find that clock it
+ * falls back to the wall clock and says so, and a figure measured against "now" grows a little
+ * every time the page is opened. That is a different reading from the one the card otherwise
+ * promises, so the denominator sentence says which it is rather than quietly printing both the
+ * same way. TRUE unless the server SAID it fell back: an older payload that carries no source
+ * at all is not evidence of a wall-clock reading.
+ *
+ * AND THE MODE RIDES ALONG, for the reason the Cold zone page's caption spells out at length:
+ * `cold_after_days` is the EFFECTIVE line in both modes, so one number reaches this card
+ * whichever definition drew it, and "at least 47 days" means something different when a person
+ * chose 47 than when the estate's tenth-idlest asset did. The card still prints ONE figure; the
+ * denominator sentence is where the difference is stated.
+ *
+ * @param {object|null|undefined} payload  `api_getExecutivePage`'s reply
+ */
+export function coldShareView(payload) {
+  const cz = payload && typeof payload === "object" && !Array.isArray(payload)
+    ? payload.coldZone
+    : null;
+  const present = !!cz && typeof cz === "object" && !Array.isArray(cz);
+  const totals = present && cz.totals && typeof cz.totals === "object" && !Array.isArray(cz.totals)
+    ? cz.totals
+    : null;
+  const measurable = present && cz.measurable === true && totals !== null;
+  const source = payload && typeof payload.coldZoneAsOfSource === "string"
+    ? payload.coldZoneAsOfSource
+    : null;
+  // Absent means the older contract — the fixed window — and only the literal "relative" is
+  // relative. Same refusal as pages/coldZoneModel.js's `coldZoneView`, for the same reason.
+  const mode = present && cz.mode === "relative" ? "relative" : "fixed";
+  const modeFields = {
+    mode,
+    targetSharePct: present ? num(cz.target_share_pct) : null,
+    achievedSharePct: present ? num(cz.achieved_share_pct) : null,
+    floorApplied: present && cz.floor_applied === true,
+    derivedDays: present ? num(cz.derived_days) : null,
+    floorDays: present ? num(cz.floor_days) : null,
+  };
+  if (!measurable) {
+    return {
+      show: false,
+      measurable: false,
+      atLedgerClock: source !== "wallClock",
+      pct: null,
+      openInCold: 0,
+      openFindings: 0,
+      coldAssets: 0,
+      assetsWithOpen: 0,
+      coldAfterDays: present ? num(cz.cold_after_days) : null,
+      ...modeFields,
+    };
+  }
+  return {
+    show: true,
+    measurable: true,
+    ...modeFields,
+    atLedgerClock: source !== "wallClock",
+    pct: num(totals.cold_backlog_share_pct),
+    openInCold: num(totals.open_in_cold, 0),
+    openFindings: num(totals.open_findings, 0),
+    coldAssets: num(totals.cold_assets, 0),
+    assetsWithOpen: num(totals.assets_with_open, 0),
+    coldAfterDays: num(cz.cold_after_days),
+  };
+}
+
+/**
  * The front door on a ledger nobody has read, and what would change that.
  *
  * WHAT THIS REPLACES. With no scan saved, this page rendered `0 tracked lifecycles · 0
@@ -796,12 +946,35 @@ export async function renderExecutive(main, _params, ctx) {
 
   const noticeHost = el("div", {});
   const heroHost = el("div", {});
-  // Directly under the hero and ABOVE the severity picture: the hero states the register's
-  // claim about itself, this states what follows from it, and only then comes the description.
-  const fixHost = el("div", {});
   const sevHost = el("div", {});
+  // AFTER THE SEVERITY STRIP AND BEFORE THE BY-DOMAIN TABLE — inside the run of one-glance
+  // blocks that qualify the hero, not next to the worklist folded at the foot of the page.
+  // That run reads hero (how fast risk closes) -> the open distribution (what there is) -> the
+  // cold zone (where none of it is moving) -> who owns it (by domain) -> when we last looked.
+  // Below the severity slot because the cold zone is a share OF the open backlog whichever
+  // block broke that backlog down just above it — the strip, or the movement aside that
+  // withholds it; above the by-domain table because the cold zone is the first block on this
+  // page about the ABSENCE of movement rather than about the backlog itself, which is the turn
+  // the by-domain table then answers ("whose").
+  const coldHost = el("div", {});
   const byDomainHost = el("div", {});
   const scanHost = el("div", {});
+  // LAST ON THE PAGE, AND SHUT. It sat directly under the hero for its whole life on the
+  // argument that the hero states the register's claim about itself and this states what
+  // follows from it. That order put the page's single longest block — an eight-row table of
+  // eight columns, its denominator, its disclosure and up to three task notes — between the
+  // one figure a leader opens this page for and every other figure that qualifies it. The
+  // severity strip, the by-domain split and the last-scan caption are all one glance each and
+  // are now all above the fold together; the ranked list is a WORKLIST, which is a different
+  // reader on a different errand, and it is where a worklist belongs: at the end, behind its
+  // own heading, opened on purpose.
+  //
+  // `fixOpen` OUTLIVES THE PAINT. swrCall paints twice on a warm cache (the stored answer,
+  // then the fresh one), so a section whose open state lived on the node would snap shut under
+  // a reader who had just expanded it. The flag is the page's; the node is handed it and hands
+  // back every change.
+  const fixHost = el("div", {});
+  let fixOpen = false;
   // THE TITLE BLOCK IS STATIC, AND THE h1 DOES NOT WAIT ON AN RPC. The metric header below is
   // built inside `renderHero`, which runs only once the fetch resolves — so the loading
   // skeleton and the fetch-failure errorState each rendered a page with NO `<h1>` in it at
@@ -813,7 +986,7 @@ export async function renderExecutive(main, _params, ctx) {
   // the first of them. Null when nothing is scoped.
   const scopeChips = scopeBar({ domain, supportGroup, onClear: ctx.clearScope });
   if (scopeChips) main.append(scopeChips);
-  main.append(noticeHost, heroHost, fixHost, sevHost, byDomainHost, scanHost);
+  main.append(noticeHost, heroHost, sevHost, coldHost, byDomainHost, scanHost, fixHost);
 
   // This is the default landing page, so a single failing section must never blank the whole
   // view. Each section renders inside a guard: on error it logs a tagged trace (so a
@@ -839,12 +1012,17 @@ export async function renderExecutive(main, _params, ctx) {
       skeleton("stat", { width: "260px", height: "56px" })),
   );
   guard("the last-scan caption", scanHost, renderScan);
-  // Painted early ONLY where the numbers are already in hand: unscoped, they come off
-  // bootstrap and the repaint below is a no-op (see executiveSeverityView). With no scan at
-  // all this is certainly a first run, so nothing is drawn and the panel speaks instead.
-  if (boot.latestScan) {
-    guard("open findings by severity", sevHost, () => renderSeverity(null));
-  }
+  // NO EARLY PAINT FOR THE SEVERITY BLOCK ANY MORE, and that is the price of making it the
+  // movement strip's fallback rather than its second copy. It used to be drawn here from
+  // bootstrap's own tally, unscoped, so the landing page showed real numbers on the first
+  // synchronous pass; whether it belongs on the page at all is now a question about the
+  // PAYLOAD (is there a week of scans to compare?), which is not answered until the RPC
+  // lands. The two ways to keep an early paint are both worse than nothing: computing
+  // comparability here from bootstrap would be a second copy of `insights.openMovement`'s own
+  // rule, free to disagree with the strip that actually renders, and painting it anyway would
+  // flash a full section that then vanishes on every load of a mature register. A skeleton is
+  // the same flash wearing a shimmer. So the slot stays empty until the answer is known — the
+  // hero's own skeleton above already says the page is loading.
 
   paint = (payload) => {
     const first = executiveFirstRunView(payload, boot);
@@ -856,12 +1034,14 @@ export async function renderExecutive(main, _params, ctx) {
     if (first.show) {
       clear(fixHost);
       clear(sevHost);
+      clear(coldHost);
       clear(byDomainHost);
       return;
     }
     guard("the fix-next list", fixHost, () => renderFixNext(payload));
     guard("open findings by severity", sevHost, () => renderSeverity(payload));
-    guard("MTTR by domain", byDomainHost, () => renderByDomain(payload && payload.byDomain));
+    guard("the cold zone", coldHost, () => renderColdShare(payload));
+    guard("the remediation split", byDomainHost, () => renderByDomain(payload && payload.byDomain));
   };
 
   try {
@@ -872,13 +1052,13 @@ export async function renderExecutive(main, _params, ctx) {
       detail: String((e && e.message) || e),
       onRetry: () => ctx.refresh(),
     }));
-    // Unscoped, the severity block already holds bootstrap's numbers and those are still
-    // true — leave them. Scoped, it holds the pending placeholder, and falling back to the
-    // register-wide tally would be exactly the lie this page was rewired to stop telling.
-    if (scoped) {
-      clear(sevHost).append(errorState("Couldn't load counts for this scope.",
-        { detail: String((e && e.message) || e) }));
-    }
+    // NOTHING GOES IN THE SEVERITY SLOT ON A FAILED LOAD, and the branch that used to is gone
+    // with the early paint above. It existed to REPLACE something: unscoped the block held
+    // bootstrap's register-wide tally and scoped it held a pending placeholder, and leaving
+    // either one under a failed scoped fetch was the lie this page was rewired to stop
+    // telling. Both are gone, so there is nothing to replace — and an error box here would
+    // now claim a section that this register may not have at all, on a page whose hero
+    // already carries the one failure and the retry.
   }
 
   // ------------------------------------------------------------------- the first run
@@ -938,10 +1118,8 @@ export async function renderExecutive(main, _params, ctx) {
       return {
         term: "half-life",
         lines: [
-          "The survival curve never falls to half within the observed window, so there is no"
-          + " median to publish.",
-          "More than half of what is tracked is still open, so the half-life is at least the"
-          + " longest thing observed, which is the figure above.",
+          "The curve never falls to half inside the window, so there is no median.",
+          "The half-life is at least the longest thing observed — the figure above.",
         ],
       };
     }
@@ -949,8 +1127,8 @@ export async function renderExecutive(main, _params, ctx) {
       return {
         term: "half-life",
         lines: [
-          "No lifecycle has a readable clock yet. This is not measured, not zero: the"
-          + " half-life needs at least one observation to rest on.",
+          "No lifecycle has a readable clock yet: not measured, not zero.",
+          "The half-life needs at least one observation to rest on.",
         ],
       };
     }
@@ -968,8 +1146,8 @@ export async function renderExecutive(main, _params, ctx) {
     return el("p", { class: "small muted" },
       tipLabel("Survival curve", {
         lines: [
-          "This page is sent the estimate only, not the curve behind it. The curve, its"
-          + " censor markers and the per-severity split are on MTTR & SLA.",
+          "This page is sent the estimate only, not the curve behind it.",
+          "The curve, its censor markers and the per-severity split are on MTTR & SLA.",
         ],
       }),
       " → ",
@@ -977,20 +1155,45 @@ export async function renderExecutive(main, _params, ctx) {
   }
 
   /**
-   * One row of the movement strip: a severity, its pill, and the pair the pill is FROM.
+   * One row of the movement strip: a severity, how much of it there is, its pill, and the pair
+   * the pill is FROM.
    *
    * The raw pair rides beside the delta on purpose. A pill reading "down 9" is a claim about
    * two numbers, and a reader who cannot see both has to trust it; "27 open, was 36" is the
    * arithmetic in the open. A null chip means the previous count was not measurable, and that
    * renders as words rather than as a ±0 (see `deltaChipView`).
    *
+   * THE TALLY IS THE ONE PICTURE THIS PAGE MAY DRAW. The module header's hard rule is no chart
+   * and no canvas on the front door, and `test/executiveFixNext.test.js` holds it; `unitRow` is
+   * DOM and CSS, so the rule is not bent to add it. What it buys is the comparison six numbers
+   * down a column do not make on their own — 27 against 170 is a ratio a reader had to compute,
+   * and marks in one unit are that ratio at a glance. The counts stay exactly where they were:
+   * the marks are a second encoding of a figure already in words, never the readout.
+   *
+   * `unit` IS THE STRIP'S, PASSED IN, and it comes from the largest SEVERITY row rather than
+   * from the total. A total an order of magnitude above every part would pick a unit that drew
+   * the parts as nothing — and the comparison this strip exists for is severity against
+   * severity. The total row keeps its pill and its pair and draws no marks, because "all
+   * severities against one severity" is not the question the tally answers.
+   *
    * THE GLYPH NEVER CARRIES THE MEANING. It is `aria-hidden` and the pill's own visible text
    * spells the direction ("up 4" / "down 4" / "unchanged"), so neither the triangle nor the
    * tint is the only cue.
    */
-  function movementRow(label, r) {
-    const row = el("div", { class: "movement-row" },
+  function movementRow(label, r, unit) {
+    // The modifier, not a rule on `.movement-row` itself: `gas_devsecops` draws the same shared
+    // class with no tally in it, and its counts are right-aligned by an auto margin that is
+    // correct for a three-part row and wraps a four-part one. A row that gained a picture gets
+    // the flow layout; a row that did not keeps exactly what it had.
+    const row = el("div", { class: "movement-row" + (unit ? " movement-row--tally" : "") },
       el("span", { class: "movement-label small" }, label));
+    if (unit) {
+      row.append(unitRow(r.open, {
+        unit,
+        label: label + ", " + fmtCount(r.open) + " open, one mark per "
+          + (unit === 1 ? "finding" : fmtCount(unit) + " findings"),
+      }));
+    }
     if (r.chip) {
       const glyph = r.chip.direction === "up" ? "▲" : r.chip.direction === "down" ? "▼" : "=";
       row.append(el("span", {
@@ -1029,9 +1232,31 @@ export async function renderExecutive(main, _params, ctx) {
       box.append(el("div", { class: "small muted" },
         "No open-backlog comparison. " + open.reason));
     } else {
-      box.append(el("div", { class: "movement-rows" },
-        movementRow(open.total.label, open.total),
-        ...open.rows.map((r) => movementRow(r.label, r))));
+      // ONE UNIT FOR THE WHOLE STRIP, from the largest severity row — see `movementRow`.
+      //
+      // TWELVE MARKS, NOT FORTY, AND THAT IS A PROPERTY OF THIS ROW RATHER THAN OF THE LADDER.
+      // `MAX_MARKS` is the point past which a reader stops counting and starts estimating from
+      // length, which is still honest in a table cell that owns its whole column. This is an
+      // inline strip capped at 46ch beside a label, a pill and a count pair: at the default
+      // ceiling the largest severity drew 39 marks, the row wrapped, and the pill landed on a
+      // line of its own under a rule of ink. Measured, not guessed — the first screenshot of
+      // this change is what found it. Twelve is also where the icon-array literature puts the
+      // count a reader can still take in at a glance.
+      //
+      // The FINE ladder with it: a severity's open count is tens, and the coarse ladder's
+      // finest rung would draw the whole strip as three clipped marks.
+      const stripUnit = unitScale(
+        open.rows.reduce(
+          (m, r) => (typeof r.open === "number" && Number.isFinite(r.open) && r.open > m
+            ? r.open
+            : m),
+          0,
+        ),
+        { units: FINE_UNITS, maxMarks: 12 },
+      );
+      box.append(el("div", { class: "movement-rows movement-rows--tally" },
+        movementRow(open.total.label, open.total, null),
+        ...open.rows.map((r) => movementRow(r.label, r, stripUnit))));
       box.append(el("div", { class: "small muted" }, open.dates));
     }
 
@@ -1048,21 +1273,33 @@ export async function renderExecutive(main, _params, ctx) {
   // ------------------------------------------------------------------------- fix next
 
   /**
-   * The ranked list, as an ordered list of GROUPS.
+   * The ranked list of GROUPS — last on the page, and behind its own heading.
    *
    * NO CHART AND NO CANVAS, which is the module header's hard rule and is not relaxed for a
-   * ranking. `<ol>` is the right element because the order IS the claim — a reader using a
-   * screen reader hears "1 of 8" and gets the same argument the page is making visually.
+   * ranking. The order IS the claim, so it is a table with a rank column rather than a stack
+   * of divs: a screen reader hears "row 1 of 8" and gets the same argument the page is making
+   * visually. (It was an `<ol>` until the prose round — see DESIGN.md §9.)
    *
    * EVERY ROW CARRIES ITS UNITS. "7" is not a figure; "7 open findings" is. A group whose
    * rows have no readable age, no CVE and no single domain simply says less, rather than
    * printing a dash where each of those would have gone.
+   *
+   * COLLAPSIBLE, AND SHUT UNTIL A READER OPENS IT. This is the page's one WORKLIST — a
+   * different reader on a different errand from the leader the hero is written for — and it
+   * is also its longest block by a wide margin. Everything it holds folds together, the
+   * caveats with the figures they qualify, so nothing in it is ever on screen without its
+   * caveat; the denominator rides on the heading so the shut section still says how much of
+   * the backlog is behind it. See the host declaration above for why `fixOpen` is the page's
+   * and not the node's.
    */
   function renderFixNext(payload) {
     const view = fixNextView(payload, boot);
     clear(fixHost);
     if (!view.show) {
       if (view.missing) {
+        // NOT COLLAPSIBLE, and that is not an inconsistency. There is no section here to fold
+        // — one sentence saying why the list is absent is the whole block, and a toggle over
+        // a single sentence is a control that hides an honesty statement and buys nothing.
         fixHost.append(sectionLabel("Fix next", { term: "fix-next" }));
         fixHost.append(el("p", { class: "small muted" }, view.missingNote));
       }
@@ -1079,48 +1316,122 @@ export async function renderExecutive(main, _params, ctx) {
     // them — the same "own copy first, book's copy behind it" order `figureCard`'s
     // `figureCardModel` uses for a denominator.
     const fixNextEntry = findEntry("fix-next");
-    fixHost.append(sectionLabel("Fix next", {
-      term: "fix-next",
-      lines: [...(fixNextEntry ? fixNextEntry.lines : []), view.linkNote],
-    }));
+    // THE DENOMINATOR IS THE SHUT SECTION'S OWN CAPTION. "25 of 70 open findings ranked" used
+    // to sit under the table as a surface paragraph; it is the one line that tells a reader
+    // what is behind the toggle and how much of the backlog it speaks for, so it rides on the
+    // heading instead and is legible whether the section is open or closed. It is NOT moved
+    // behind a signifier — the disclosure under it still holds the four reasons, exactly as
+    // before — it moved UP, onto the thing it measures.
+    const section = collapsibleSection("Fix next", {
+      help: {
+        term: "fix-next",
+        lines: [...(fixNextEntry ? fixNextEntry.lines : []), view.linkNote],
+      },
+      hint: view.rankedShort,
+      open: fixOpen,
+      // Per reader, across visits — the flag above only survives this page's own repaints.
+      remember: "execFixNext",
+      onToggle: (o) => { fixOpen = o; },
+    });
+    fixHost.append(section.node);
+    const fix = section.body;
 
     if (view.empty) {
-      fixHost.append(emptyState("Nothing is ranked.", view.emptyReason));
+      fix.append(emptyState("Nothing is ranked.", view.emptyReason));
     } else {
-      const list = el("ol", { class: "fixnext" });
-      for (const it of view.items) {
-        list.append(el("li", { class: "fixnext-item" },
-          el("div", { class: "fixnext-head" },
-            statusPill(it.kind, it.tierLabel),
-            el("a", {
-              class: "linklike fixnext-repo",
-              href: it.href,
-              "aria-label": it.tierLabel + " — " + it.ownerText + ", " + it.meta + ". "
-                + it.linkLabel,
-            }, it.ownerText),
-            it.ownerKindWord
-              ? el("span", { class: "small muted" }, it.ownerKindWord)
-              : null),
-          el("div", { class: "fixnext-meta small muted" }, it.meta),
-        ));
-      }
-      fixHost.append(list);
+      // A RANKED TABLE, NOT AN ORDERED LIST — and the order is still the claim. The `<ol>`
+      // this replaces drew each group as a pill, a link and a `·`-joined meta sentence ("2
+      // open findings · 1 host · CVE-2026-90001 (1) · oldest 210 days · domain CROSS"), which
+      // is five facts in five different units set as one run of prose. Eight of them were
+      // eight of this page's nine prose blocks under the density walker, and a reader
+      // comparing "oldest 210 days" against "oldest 46 days" three rows down was scanning
+      // sentences for a number. A table gives every fact its own column, so the ages compare
+      // down one column and the counts down another; the rank column keeps "1 of 8" as a
+      // statement a screen reader makes ("row 1 of 8"), which is what the `<ol>` was for.
+      //
+      // THE OPEN COLUMN CARRIES A TALLY, one unit for the whole table (the shipped DevSecOps
+      // Executive pattern), so the magnitudes read against each other at a glance. The fine
+      // ladder, capped at twelve marks, because these are small counts in a narrow column.
+      //
+      // `it.meta` STAYS ON THE VIEW and on every link's accessible name: the sentence is still
+      // the right shape for a screen reader announcing one row, and the tests pin it.
+      const tableUnit = unitScale(
+        view.items.reduce((m, it) => (it.count > m ? it.count : m), 0),
+        { units: FINE_UNITS, maxMarks: 12 },
+      );
+      fix.append(dataTable({
+        className: "fixnext-table",
+        columns: [
+          { key: "rank", label: "#", className: "num", cell: (r) => String(r.rank) },
+          { key: "tier", label: "Tier", cell: (r) => statusPill(r.kind, r.tierLabel) },
+          {
+            key: "owner",
+            label: "Group",
+            cell: (r) => el("span", {},
+              el("a", {
+                class: "linklike fixnext-repo",
+                href: r.href,
+                "aria-label": r.tierLabel + " — " + r.ownerText + ", " + r.meta + ". "
+                  + r.linkLabel,
+              }, r.ownerText),
+              r.ownerKindWord ? el("span", { class: "small muted" }, r.ownerKindWord) : null),
+          },
+          {
+            key: "count",
+            label: "Open",
+            className: "num",
+            cell: (r) => el("span", {},
+              unitRow(r.count, {
+                unit: tableUnit,
+                label: fmtCount(r.count) + " open, one mark per "
+                  + (tableUnit === 1 ? "finding" : fmtCount(tableUnit) + " findings"),
+              }),
+              el("span", { class: "num" }, fmtCount(r.count))),
+          },
+          {
+            key: "assets",
+            label: "Hosts",
+            className: "num",
+            cell: (r) => (r.assets > 0 ? fmtCount(r.assets) : absent()),
+          },
+          {
+            key: "cve",
+            label: "Leading CVE",
+            help: ["The CVE carried by the most findings in the group, and how many of them."],
+            cell: (r) => (r.topCve
+              ? el("span", {}, r.topCve.cve, " ",
+                el("span", { class: "small muted num" }, "(" + fmtCount(r.topCve.count) + ")"))
+              : absent()),
+          },
+          {
+            key: "oldest",
+            label: "Oldest",
+            className: "num",
+            // `days1` in a cell, `fmtDays` in a sentence — the grain is the context's, and the
+            // meta sentence on the link keeps its worded whole days.
+            cell: (r) => (r.oldestDays === null ? absent() : days1(r.oldestDays)),
+          },
+          { key: "domain", label: "Domain", cell: (r) => (r.domain === null ? absent() : r.domain) },
+        ],
+        rows: view.items,
+      }));
     }
 
-    // The two numbers on the surface; the four reasons behind the rest in a closed
-    // `disclosure` under it. NOT a tip: the sentence is an ACCOUNTING, and a hover card is
-    // the wrong shape for something a reader may want to read twice and compare against the
-    // register pages.
-    fixHost.append(el("p", { class: "small muted" }, view.rankedShort));
-    fixHost.append(disclosure(
+    // The four reasons behind the unranked rest, in a closed `disclosure`. NOT a tip: the
+    // sentence is an ACCOUNTING, and a hover card is the wrong shape for something a reader
+    // may want to read twice and compare against the register pages. The two numbers it
+    // accounts for are on the section's own heading now — see `hint` above.
+    fix.append(disclosure(
       "Why the rest are not ranked",
       el("p", { class: "small muted" }, view.unrankedSentence),
     ));
-    // KEPT ON THE SURFACE. A cap is a task constraint — the reader is looking at a list that
-    // stops before the backlog does — and so is a tier that could not be measured at all.
-    if (view.cutNote) fixHost.append(el("p", { class: "small muted" }, view.cutNote));
+    // KEPT ON THIS SECTION'S SURFACE. A cap is a task constraint — the reader is looking at a
+    // list that stops before the backlog does — and so is a tier that could not be measured at
+    // all. Neither is behind a second signifier: they fold with the table they qualify, which
+    // is the one arrangement in which a figure is never on screen without its caveat.
+    if (view.cutNote) fix.append(el("p", { class: "small muted" }, view.cutNote));
     if (view.exposureNote) {
-      fixHost.append(el("p", { class: "small muted" }, view.exposureNote));
+      fix.append(el("p", { class: "small muted" }, view.exposureNote));
     }
     // `view.linkNote` ITSELF IS UNCHANGED AND STILL ON THE VIEW MODEL — only the render moved,
     // onto the heading's own tip above. See that append for why.
@@ -1146,6 +1457,11 @@ export async function renderExecutive(main, _params, ctx) {
    * THE COUNTS ARE MANDATORY, not decoration. The bar is colour, and colour is never the only
    * cue here — the key row carries the level's word and its number, and the population line
    * under it carries the total the bar is a picture of.
+   *
+   * IT IS THE MOVEMENT STRIP'S FALLBACK NOW, not a second copy of it. `executiveSeverityView`
+   * owns that decision and the reasoning is on it; what this function does with it is return
+   * without drawing a heading, so a page whose movement strip is comparable has no empty
+   * "Open findings by severity" slot where this used to be.
    */
   function renderSeverity(data) {
     const view = executiveSeverityView({
@@ -1154,9 +1470,10 @@ export async function renderExecutive(main, _params, ctx) {
       bootCounts: boot.openCounts,
       payload: data && data.severityCounts,
       scoped,
+      movement: data && data.movement,
     });
     clear(sevHost);
-    if (!view.tiles.length) return;
+    if (!view.show || !view.tiles.length) return;
     // The method note is a DEFINITION of the axis — what a severity grades, and over which
     // rows — so it sits on the heading rather than under the picture.
     sevHost.append(sectionLabel("Open findings by severity", {
@@ -1197,6 +1514,71 @@ export async function renderExecutive(main, _params, ctx) {
     if (view.note) sevHost.append(el("p", { class: "small muted" }, view.note));
   }
 
+  // ------------------------------------------------------------------------ cold zone
+
+  /**
+   * One card: the share of the open backlog sitting where nothing is moving.
+   *
+   * ONE FIGURE AND NO TABLE, which is the same slice rule the hero follows. The Cold zone page
+   * draws the whole family — every cold asset, every support group, the idle-bucket grid and
+   * the scatter — and `coldZoneHeadline` (src/domain/coldZone.ts) is the projection that keeps
+   * the per-asset arrays off this payload entirely rather than shipping them and rendering one
+   * number out of them.
+   *
+   * THE LINK IS THE REST OF THE ANSWER. A reader who wants to know WHICH assets is one click
+   * away, and that is a cross-reference rather than a second copy of the page.
+   */
+  function renderColdShare(payload) {
+    const view = coldShareView(payload);
+    clear(coldHost);
+    coldHost.append(sectionLabel("The cold zone", { term: "cold-zone" }));
+    if (!view.show) {
+      // A NOTICE, NEVER AN ERROR. No flat scan on record means there is no clock to measure
+      // idleness against — a state this block renders correctly, not a failure of it.
+      coldHost.append(emptyState(
+        "The cold zone is not measured yet.",
+        "Idle time is counted from the last scan back to the movement before it, so this"
+        + " figure appears once a scan has saved one.",
+        { variant: "notice" },
+      ));
+      return;
+    }
+    const windowText = view.coldAfterDays === null
+      ? "the cold-zone window"
+      : "at least " + fmtDays(view.coldAfterDays);
+    // WHERE THAT WINDOW CAME FROM. Nothing here branches on the mode to read a NUMBER — the
+    // line above is the effective one in both modes — but a derived line and a chosen one are
+    // different claims about the same figure, and the floor case is the one where the zone is
+    // deliberately smaller than the share that was asked for.
+    const targetText = fmtCount(view.targetSharePct) + "%";
+    const modeClause = view.mode !== "relative"
+      ? ""
+      : view.floorApplied === true
+        ? " — the floor, which holds the zone smaller than the " + targetText + " asked for"
+        : " — the line relative mode set so the idlest " + targetText + " of assets with open"
+          + " findings are cold";
+    const clock = view.atLedgerClock
+      ? "Measured at the last scan, never against today."
+      : "Measured against the current time rather than the last scan — the clock the ledger"
+        + " was measured at could not be read, so this figure moves as the page is reopened.";
+    coldHost.append(el("div", { class: "kpi-row" }, figureCard({
+      label: "Backlog in the cold zone",
+      // NULL IS NOT 0.0%. A register with no open finding at all has no cold share, and the
+      // muted dash is what this page draws for every other figure nobody could measure.
+      value: view.pct === null ? absentText : pct1(view.pct),
+      sub: fmtCount(view.openInCold) + " of " + fmtCount(view.openFindings) + " open findings",
+      help: { term: "cold-zone" },
+      denominator:
+        fmtCount(view.openInCold) + " of " + fmtCount(view.openFindings) + " open findings, on "
+        + fmtCount(view.coldAssets) + " of " + fmtCount(view.assetsWithOpen) + " assets with"
+        + " open findings where nothing has been resolved for " + windowText + modeClause + ". "
+        + clock,
+    })));
+    coldHost.append(el("p", { class: "small muted" },
+      "Which assets, and which support groups → ",
+      el("a", { class: "linklike", href: "#/coldZone" }, "Cold zone")));
+  }
+
   // ------------------------------------------------------------------------ by domain
 
   /**
@@ -1224,11 +1606,10 @@ export async function renderExecutive(main, _params, ctx) {
           help: {
             term: "half-life",
             lines: [
-              "Kaplan-Meier median time to remediation for this group, with still-open"
-              + " findings censored so it is not biased low by fresh, fast-patched findings.",
+              "Kaplan-Meier median time to remediation for this group.",
+              "Still-open findings are censored, so fresh fast-patched ones can't bias it low.",
               ...(view.anyBoundMissing
-                ? ["A dash means this group's curve never falls to half. The lower bound that"
-                  + " would replace it is not in this payload; MTTR & SLA publishes it."]
+                ? ["A dash means the curve never falls to half; MTTR & SLA publishes the bound."]
                 : []),
             ],
           },
@@ -1247,12 +1628,19 @@ export async function renderExecutive(main, _params, ctx) {
       ],
       rows: view.rows,
     }));
-    // NO FOOTNOTE HERE ANY MORE. The dash was explained twice: once on the KM-median column's
+    // NO DEFINITION FOOTNOTE HERE. The dash was once explained twice: on the KM-median column's
     // own heading tip (`view.anyBoundMissing`'s extra line above, "A dash means this group's
     // curve never falls to half…") and again in a paragraph under the table restating the same
     // fact in different words. A column heading is asked once — that is `ui/tip.js`'s own rule
     // for a definition — so the second statement was the explanation repeating itself one level
     // UP rather than staying down, and it is gone rather than kept as a second surface sentence.
+    //
+    // THE CUT NOTE BELOW IS NOT THAT, and the rule above is not a reason to delete it. A bound
+    // is not a definition: nothing else on this page says the asset split is a top-20, so this
+    // sentence is asked once too, and §6 puts a population statement on the SURFACE of its
+    // section — never in a tip, never behind a disclosure. `wordsOneLevelDown.test.js` holds it
+    // there.
+    if (view.cutNote) byDomainHost.append(el("p", { class: "small muted" }, view.cutNote));
   }
 
   // ------------------------------------------------------------------------- last scan
@@ -1294,7 +1682,7 @@ export async function renderExecutive(main, _params, ctx) {
         ],
       }),
       " → ",
-      el("a", { class: "linklike", href: "#/history" }, "Scan History")));
+      el("a", { class: "linklike", href: "#/history" }, "Scan history")));
     // A STATE, DRAWN AS A STATE. "Dry run" is what these figures ARE, and a pill is the
     // component this design system already has for a state: two words plus a tint, with the
     // sentence behind it.

@@ -562,11 +562,6 @@ export function cutoffMs(nowMs: number, retentionDays: number): number {
   return nowMs - Math.max(retentionDays, RETENTION_MIN_DAYS) * 86_400_000;
 }
 
-export function isAfter(ts: string | null, ms: number): boolean {
-  const t = parseTs(ts);
-  return t !== null && t > ms;
-}
-
 // --------------------------------------------------------------------------- #
 //  History backfill — recovering exploit intelligence AND attribution from archives
 // --------------------------------------------------------------------------- #

@@ -33,8 +33,8 @@ export const SETTINGS_TABS = [
 export const DEFAULT_TAB = "register";
 
 /**
- * Every knob the page-level save bar batches, and where it lives. Deliberately six of the
- * seven Settings fields `pages/settings.js`'s `draftFromSettings` lifts: `showExperimental` is
+ * Every knob the page-level save bar batches, and where it lives. Deliberately all but one of
+ * the Settings fields `pages/settings.js`'s `draftFromSettings` lifts: `showExperimental` is
  * a real Settings field but saves itself the moment its switch is flipped (see that page's own
  * module header), so it carries no tab here and never goes dirty. `projectView` is a real
  * Settings key too and is not in this registry at all — it is view-scope chrome with its own
@@ -49,12 +49,32 @@ export const SETTING_FIELDS = {
   scopes: { tab: "register", label: "registers collected" },
   fetchSeverities: { tab: "register", label: "severities requested" },
   slaTargets: { tab: "deadlines", label: "remediation windows" },
+  // On Deadlines beside the SLA windows, and not one of them: an SLA window is a promise about
+  // one finding, this is a threshold on a whole repository's silence. See Settings.coldAfterDays
+  // in domain/settingsLogic.ts for why they share a tab and nothing else.
+  coldAfterDays: { tab: "deadlines", label: "cold-zone window" },
+  // The mode and its two relative-mode numbers sit on Deadlines beside the window they
+  // govern, for the reason the window itself does and one more: the mode DECIDES which of
+  // these three controls is on screen, so a registry that housed them on different tabs would
+  // let the save bar offer "jump to" a tab whose control the current mode has hidden.
+  coldZoneMode: { tab: "deadlines", label: "cold-zone mode" },
+  coldTargetSharePct: { tab: "deadlines", label: "cold-zone target share" },
+  coldFloorDays: { tab: "deadlines", label: "cold-zone floor" },
+  // The fifth cold-zone knob, and the only one that is not about WHERE the line falls: it
+  // decides who is measured at all. On Deadlines with the other four because a reader setting
+  // a cold-zone window is already deciding what "cold" means on their estate, and "does a
+  // repository we retired count" is that same decision one step earlier.
+  excludeEndOfLifeFromColdZone: { tab: "deadlines", label: "cold-zone end-of-life exclusion" },
+  // ITS TWIN, AND A SEPARATE FIELD RATHER THAN THE SAME ONE READ TWICE. Same tab, because a
+  // remediation window and a remediation-speed figure are the same reader's business, and it
+  // sits beside the SLA rows rather than beside the cold-zone block — each switch next to the
+  // figures it governs. The two labels both name the family they reach, so the save bar's
+  // summary can never leave a reader guessing which one they changed.
+  excludeEndOfLifeFromMttr: { tab: "deadlines", label: "remediation-speed end-of-life exclusion" },
   syncSchedule: { tab: "system", label: "sync hour" },
   autoCompact: { tab: "system", label: "automatic compaction" },
   retentionDays: { tab: "system", label: "retention window" },
 };
-
-export const SETTING_KEYS = Object.keys(SETTING_FIELDS);
 
 const kernel = settingsForm({ tabs: SETTINGS_TABS, fields: SETTING_FIELDS, defaultTab: DEFAULT_TAB });
 
@@ -213,7 +233,7 @@ export function draftWarnings(saved, draft, ctx) {
 
   // ---- diverging from the other three sidekicks
   //
-  // SLA_TARGETS is byte-identical across gas/, gas_ai/, brick/devsecops and this register, and
+  // SLA_TARGETS is byte-identical across gas/, gas_ai/, brick/ and this register, and
   // that is a decision rather than an accident: a CRITICAL finding gets the same window whether
   // it is a host CVE, a dependency CVE or a hardcoded secret, so the four surfaces cannot
   // report different SLA attainment for the same estate.

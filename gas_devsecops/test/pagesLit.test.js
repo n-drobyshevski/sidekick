@@ -34,6 +34,7 @@ const SRC = Object.fromEntries(
   ROUTES.map((r) => [r, readFileSync(new URL(`${r}.js`, PAGES_DIR), "utf8")]),
 );
 const APP_SRC = readFileSync(new URL("../src/client/js/app.js", import.meta.url), "utf8");
+const PAGES_SRC = readFileSync(new URL("../src/client/js/pages.js", import.meta.url), "utf8");
 const STUB_SRC = readFileSync(new URL("../src/client/js/pages/_stub.js", import.meta.url), "utf8");
 const HELP_SRC = readFileSync(new URL("../src/client/js/helpContent.js", import.meta.url), "utf8");
 
@@ -85,11 +86,14 @@ describe("exit gate 1/7: no page still draws p.stub-status", () => {
 //  2. Every route in PAGES has a real, reachable renderer
 // =========================================================================================
 
-/** Read the PAGES table out of app.js as text — mirrors test/shared.test.js's parser. */
+/** Read the PAGES table out of pages.js as text. STILL TEXT, deliberately: the gate below
+ *  is about the render function's IDENTIFIER following the render<Route> convention, and an
+ *  imported table holds the function, not the name it was written under. shared.test.js
+ *  imports the same table for every claim that is about values rather than about source. */
 function parsePages() {
-  const body = APP_SRC.slice(
-    APP_SRC.indexOf("const PAGES = {"),
-    APP_SRC.indexOf("\n};", APP_SRC.indexOf("const PAGES = {")),
+  const body = PAGES_SRC.slice(
+    PAGES_SRC.indexOf("export const PAGES = {"),
+    PAGES_SRC.indexOf("\n};", PAGES_SRC.indexOf("export const PAGES = {")),
   );
   const out = [];
   for (const line of body.split("\n")) {
@@ -117,7 +121,7 @@ describe("exit gate 2/7: every route has a real renderer, and a file behind it",
 
   it("app.js imports that render function from the route's own pages/<route>.js", () => {
     for (const p of PAGES) {
-      expect(APP_SRC, `${p.route} has no import from pages/${p.route}.js`).toMatch(
+      expect(PAGES_SRC, `${p.route} has no import from pages/${p.route}.js`).toMatch(
         new RegExp(`import \\{ ${p.render} \\} from "\\./pages/${p.route}\\.js";`),
       );
     }

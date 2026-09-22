@@ -443,6 +443,11 @@ export const REGISTER_ROW_COLUMNS: Record<string, readonly string[]> = {
     "identifier", "component", "severity", "status", "resolution_src", "reopened_count",
     "repo_name", "branch", "first_seen", "last_seen", "fixed_version", "fix_available_at",
     "awaiting_vendor_fix", "has_kev", "has_exploit", "epss", "mttr_days", "age_days",
+    // Wiz's own console link — NOT a drawn column, but the finding sheet reads it, and a
+    // sheet may only touch keys on its scope's list. sca ONLY: `vulnerabilityFindings` is
+    // the one root known to carry `portalUrl`, so listing it for sast or secrets would
+    // promise a column their queries never fetch.
+    "portal_url",
   ],
   sast: [
     "identifier", "cwe", "file_path", "start_line", "language", "origin", "ai_verdict",

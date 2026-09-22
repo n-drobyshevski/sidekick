@@ -7,6 +7,7 @@ import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import { mttrPaintPlan } from "./mttrPaintPlan.js";
 import { denominatorNode, fmtPct, rateCell } from "./_rates.js";
 import { agingTableModel, barsTableModel, trendTableModel } from "./_charts.js";
+import { groupCutNote } from "./_groupSplit.js";
 import {
   absent, absentText, boundedDays, changeChip, chartTable, clear, dataTable,
   el, emptyState, errorState, firstRunNotice, fmtCount, fmtDays, fmtSpan, heroLines,
@@ -20,11 +21,23 @@ import {
 // somehow carries buckets without labels.
 const RESOLUTION_LABELS = ["≤1d", "2–7d", "8–30d", "31–90d", "90+d"];
 
-// The breakdown section (renderByDomain) serves two dimensions from one renderer, chosen by
-// the server payload's `dimension`: per-domain at the unscoped view, per-support-group
-// when a domain is selected (that split would be a single row then). These carry the
-// visible copy; the group-name reads go through a `.group ?? .domain` accessor so the same code
-// paints both. Keep the phrasing parallel so the two views read the same.
+// The breakdown section (renderByDomain) serves three dimensions from one renderer, chosen by
+// the server payload's `dimension`: per-domain at the unscoped view, per-support-group when a
+// domain is selected (that split would be a single row then), and per-ASSET when a support
+// group is selected. These carry the visible copy; the group-name reads go through a
+// `.group ?? .domain` accessor so the same code paints all three. Keep the phrasing parallel so
+// the views read the same.
+//
+// THE ASSET CASE IS NOT THE SAME KIND OF SWAP as the support-group one, and the copy must not
+// pretend it is. Splitting by domain inside one domain is a single row restating the hero —
+// a degeneracy. Splitting by domain inside one support group was a real multi-row answer
+// ("which domains does this team carry risk in?"); it is replaced because a support group is a
+// team, and the thing a team patches is a host. That is an editorial choice, not a repair.
+//
+// The asset split is the only one that is CAPPED (ASSET_TOP_N, server-side) — domains and
+// support groups are operator-configured, assets are estate-sized. What fell off arrives as
+// `cut` and is said under the table, never in the tip: DESIGN.md §6 keeps a bound on the
+// surface of its section.
 //
 // "By domain", not "By manual group": the split is over the RESOLVED domain — the `Wiz/Domain`
 // tag where the tenant wrote one, a manual group where it did not — so naming it after the
@@ -57,6 +70,24 @@ const SUPPORT_GROUP_DIM = {
     "The two cards read the same medians differently: contribution weights each group's"
     + " median by how much it closed, the median lens is the rate on its own.",
   ],
+};
+const ASSET_DIM = {
+  noun: "asset",
+  Noun: "Asset",
+  title: "By asset",
+  help: [
+    "The assets inside the selected support group, ranked by open backlog — a support group is"
+    + " a team, and the thing a team patches is a host.",
+    "The two cards read the same medians differently: contribution weights each asset's"
+    + " median by how much it closed, the median lens is the rate on its own.",
+  ],
+};
+// Dimension tag → copy. A lookup rather than the pair of booleans this used to be: a third
+// dimension turns `isSg` into `isSg || isAsset` at every read, and the fourth would be worse.
+const DIMS = {
+  domain: DOMAIN_DIM,
+  supportGroup: SUPPORT_GROUP_DIM,
+  asset: ASSET_DIM,
 };
 
 // Timeframe presets for the Trends charts. null = no window (full history).
@@ -975,16 +1006,19 @@ export async function renderMttr(main, _params, ctx) {
   function renderByDomain(byDomain, mttr) {
     clear(byDomainHost);
     if (!byDomain || !byDomain.rows.length) return;
-    // The dimension follows the sidebar scope (server-tagged): per-domain at the whole-chain
-    // view, per-support-group when a manual group is selected. `dim` carries the copy and
-    // `groupOf` reads the group name regardless of which payload shape arrived.
-    const isSg = byDomain.dimension === "supportGroup";
-    if (isSg) {
-      if (byDomain.rows.length < 2) return; // a single support group isn't a split
-    } else if (boot.domainNames.length < 2) {
-      return;
-    }
-    const dim = isSg ? SUPPORT_GROUP_DIM : DOMAIN_DIM;
+    // The dimension follows the header scope (server-tagged): per-domain at the whole-register
+    // view, per-support-group inside a domain, per-asset inside a support group. `dim` carries
+    // the copy and `groupOf` reads the group name regardless of which payload shape arrived.
+    const dim = DIMS[byDomain.dimension] || DOMAIN_DIM;
+    // ONE ROW IS NOT A SPLIT, whatever the dimension — this used to gate only the support-group
+    // branch, which let a register with three configured domains but findings in one draw a
+    // one-row table restating the hero. `executiveByDomainView` already guards all dimensions;
+    // this brings the two pages into line.
+    if (byDomain.rows.length < 2) return;
+    // The domain branch keeps its extra gate: `domainNames` is the CONFIGURED universe, and a
+    // register with one domain has nothing to split by even if its rows say otherwise.
+    if (byDomain.dimension !== "supportGroup" && byDomain.dimension !== "asset"
+      && boot.domainNames.length < 2) return;
     const groupOf = (r) => r.group ?? r.domain;
     // The overall KM median (same scope as these rows) — the reference line the contribution bars
     // are read against. Null when the payload is a stale pre-KM cache or the overall median is
@@ -1043,9 +1077,16 @@ export async function renderMttr(main, _params, ctx) {
       // Rows outside the canonical groups pool into an "Other" line series iff any exist — the same
       // pooled remainder the server replays as its "Other" trend point. (The two snapshot lenses show
       // named groups only; this pooled check is just for the trend line's series list.)
+      //
+      // `cut.resolved` IS PART OF THAT REMAINDER. Under a capped dimension `byDomain.rows` is the
+      // kept top-N, not the whole split, while the server's "Other" replay pools every unlisted
+      // row — so without this term a tail whose resolved work lives entirely past the cap would
+      // have the server drawing a series this series list omits, and the line would vanish with
+      // nothing saying why.
       const resolvedOther = byDomain.rows
         .filter((r) => !inGroups.has(groupOf(r)))
-        .reduce((a, r) => a + (r.resolved ?? 0), 0);
+        .reduce((a, r) => a + (r.resolved ?? 0), 0)
+        + ((byDomain.cut && byDomain.cut.resolved) || 0);
       const series = groups.map((name) => ({ name, color: colors.get(name) }));
       if (resolvedOther > 0) series.push({ name: "Other", color: colors.get("Other") });
 
@@ -1342,9 +1383,8 @@ export async function renderMttr(main, _params, ctx) {
           key: "kmMedian",
           label: "Median MTTR (KM)",
           className: "num num--key",
-          help: [`Kaplan–Meier median time-to-remediation for this ${dim.noun} — the principal MTTR figure. `
-            + "Still-open findings count as censored instead of being ignored, so it isn't biased "
-            + "low by fresh fast-patched vulns."],
+          help: [`Kaplan–Meier median time-to-remediation for this ${dim.noun} — the principal figure.`,
+            "Still-open findings are censored, so fresh fast-patched vulns can't bias it low."],
           cell: (r) => fmtSpan(r.kmMedian),
         },
         {
@@ -1416,6 +1456,15 @@ export async function renderMttr(main, _params, ctx) {
         + `these ${dim.noun}s are awaiting a vendor fix — excluded from Open past SLA until a fix appears.`)
       : null;
 
+    // WHAT THE CAP DROPPED, on the surface beside the awaiting footnote. Only the asset
+    // dimension is capped, so this is null for the other two — but it is read off the payload
+    // rather than off the dimension, because which dimensions are bounded is the server's fact
+    // to state, not a thing this renderer should have a second opinion about.
+    const cutText = groupCutNote(byDomain.cut, dim.noun);
+    const cutNote = cutText
+      ? el("p", { class: "small muted", style: "margin:8px 0 0" }, cutText)
+      : null;
+
     // NOTHING IS SET ASIDE ANY MORE, and this is where a footnote used to say otherwise.
     // Resolved history carrying no attribution input — compacted episodes and imported rows —
     // was dropped from the split and reported here, because counting it as Unassigned would
@@ -1465,6 +1514,7 @@ export async function renderMttr(main, _params, ctx) {
 
     byDomainHost.append(sectionLabel(dim.title, { lines: dim.help }));
     byDomainHost.append(chartHost, tableWrap);
+    if (cutNote) byDomainHost.append(cutNote);
     if (footnote) byDomainHost.append(footnote);
 
     swrCall("api_getMttrByDomainTrend",
@@ -1732,12 +1782,9 @@ export async function renderMttr(main, _params, ctx) {
         term: "sla-target",
         lines: [
           rate.baseEmpty
-            ? "Resolved inside the SLA window: not measured — nothing has closed yet, so there"
-              + " is no resolved population to compare against the target."
-            : "Taken over what CLOSED: of the findings that resolved, the share that resolved"
-              + " on or before their severity's target.",
-          "The clock starts when a vendor fix became available, and the comparison is"
-          + " inclusive — on or before the target.",
+            ? "Not measured: nothing has closed yet, so there is no resolved population."
+            : "Taken over what CLOSED: of what resolved, the share inside target.",
+          "The clock starts at a vendor fix, and the comparison is inclusive.",
         ],
       },
     );
@@ -1771,10 +1818,8 @@ export async function renderMttr(main, _params, ctx) {
       {
         term: "sla-target",
         lines: [
-          "Taken over what is still RUNNING: of the findings still open, the share already past"
-          + " their severity's target, measured from when a vendor fix became available.",
-          "Unlike In SLA — which only scores findings that closed — an aged-out open CRITICAL"
-          + " counts here.",
+          "Taken over what is still RUNNING: of what is open, the share past target.",
+          "Unlike In SLA, an aged-out open CRITICAL counts here.",
         ],
       },
     );
@@ -1787,9 +1832,8 @@ export async function renderMttr(main, _params, ctx) {
     return statRow("MTTR p90", p.value, p.note, null, {
       term: "half-life",
       lines: [
-        "Kaplan–Meier 90th-percentile time-to-remediation — the slow tail, read off the same"
-        + " survival curve as the half-life above.",
-        "Censoring-aware, so a wave of fresh fast-patched findings cannot bias it low.",
+        "Kaplan–Meier 90th-percentile time-to-remediation — the slow tail.",
+        "Off the same curve as the half-life, so fresh fast-patched findings cannot bias it low.",
       ],
     });
   }
@@ -1833,10 +1877,9 @@ export async function renderMttr(main, _params, ctx) {
       {
         term: "awaiting-fix",
         lines: [
-          "Open findings with no published fix. Those sit outside every deadline until a fix"
-          + " exists, which is why the actionable clock starts there and not at detection.",
-          "They are still counted in the survival estimate above as censored observations —"
-          + " dropping them would leave only the findings that got fixed.",
+          "Open findings with no published fix, outside every deadline until one exists.",
+          "Which is why the actionable clock starts at the fix and not at detection.",
+          "Still censored in the estimate above, not dropped.",
         ],
       },
     );
@@ -1875,10 +1918,9 @@ export async function renderMttr(main, _params, ctx) {
     fanHost.append(sectionLabel("The clock, by severity", {
       term: "half-life",
       lines: [
-        "Each severity's curve here and its row in the table below are one estimate read two"
-        + " ways — the table is that curve's median, its lower bound and its P90.",
-        "Open findings are in every curve as right-censored observations, so a staircase that"
-        + " stops stepping is a severity that stopped closing.",
+        "Each curve here and its row below are one estimate read two ways.",
+        "A staircase that stops stepping is a severity that stopped closing.",
+        "The table is that curve's median, its lower bound and its P90.",
       ],
     }));
 
@@ -1970,8 +2012,8 @@ export async function renderMttr(main, _params, ctx) {
     const heading = sectionLabel("Open findings by age", {
       term: "age",
       lines: [
-        "Open findings only, aged from first detection to now — a resolved finding stopped"
-        + " ageing and its lifetime is the survival curve's subject, not this one's.",
+        "Open findings only, aged from first detection to now.",
+        "A resolved finding stopped ageing; its lifetime is the survival curve's subject.",
         vm.denominator,
       ],
     });
@@ -2505,12 +2547,9 @@ export async function renderMttr(main, _params, ctx) {
           help: {
             term: "half-life",
             lines: [
-              "Kaplan–Meier median time-to-remediation for this severity — the principal MTTR "
-              + "figure. Still-open findings count as censored instead of being ignored, so it "
-              + "isn't biased low by fresh fast-patched vulns.",
-              "\u201c\u2265 N d\u201d means this severity's curve never fell to half inside the "
-              + "observed window, so the median is at least that far out and no exact figure "
-              + "exists to print.",
+              "Kaplan–Meier median time-to-remediation for this severity — the principal figure.",
+              "Still-open findings are censored, so fresh fast-patched vulns can't bias it low.",
+              "\u201c\u2265 N d\u201d means the curve never fell to half: no exact figure exists.",
             ],
           },
           cell: kmMedianCell,
@@ -2542,12 +2581,9 @@ export async function renderMttr(main, _params, ctx) {
           // per row.
           help: {
             lines: [
-              "Taken over what is still RUNNING: of the findings still open at this severity, "
-              + "the share already past the target, measured from when a vendor fix became "
-              + "available.",
-              "Unlike In SLA — which only scores findings that CLOSED — an aged-out open "
-              + "CRITICAL counts here. A single SLA percentage over everything would be "
-              + "neither of the two.",
+              "Taken over what is still RUNNING: of what is open here, the share past target.",
+              "Unlike In SLA, which scores only what CLOSED, an aged-out open CRITICAL counts.",
+              "Measured from when a vendor fix became available.",
             ],
           },
           // The count AND the rate AND the base. The count alone hides how big the backlog it
@@ -2564,9 +2600,9 @@ export async function renderMttr(main, _params, ctx) {
           help: {
             term: "sla-target",
             lines: [
-              "Taken over what CLOSED: of the findings that resolved at this severity, the "
-              + "share that resolved on or before the target. The comparison is inclusive.",
+              "Taken over what CLOSED: of what resolved here, the share inside the target.",
               "Targets are CRITICAL 7d · HIGH 14d · MEDIUM 30d · LOW 90d · INFO 180d.",
+              "The comparison is inclusive — on or before the target.",
             ],
           },
           // `rateCell(rateView(...))` — the figure, then the base it was taken over in a

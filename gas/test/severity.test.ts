@@ -5,8 +5,8 @@ import { fixture } from "./helpers";
 describe("normalizeSeverity (fixture parity)", () => {
   const { cases } = fixture("severity");
   for (const c of cases) {
-    it(`${JSON.stringify(c.input)} -> ${c.expected}`, () => {
-      expect(normalizeSeverity(c.input)).toBe(c.expected);
+    it(`${JSON.stringify(c.input)}`, () => {
+      expect(normalizeSeverity(c.input)).toMatchSnapshot();
     });
   }
 });

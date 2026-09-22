@@ -57,6 +57,17 @@ vi.mock("chart.js", () => {
   };
 });
 
+/** A `fakeCanvas` that REMEMBERS its attributes — `describe()` writes the chart's aria-label
+ *  there, and that label is the whole non-visual reading of a canvas. */
+function describedCanvas() {
+  const canvas = fakeCanvas();
+  canvas.attrs = {};
+  canvas.setAttribute = (k, v) => {
+    canvas.attrs[k] = v;
+  };
+  return canvas;
+}
+
 function fakeCanvas() {
   return {
     setAttribute() {},
@@ -139,6 +150,14 @@ function drawEverything(charts) {
   ]);
   charts.trendLine(c(), [{ x: "2026-01-01", y: 3 }]);
   charts.coverCurve(c(), [{ rank: 1, cumulative: 5, share: 0.5 }]);
+  charts.coldZoneScatter(
+    c(),
+    [
+      { label: "repo-a", idleDays: 151, open: 12, cold: true, bounded: false },
+      { label: "repo-b", idleDays: 12, open: 40, cold: false, bounded: true },
+    ],
+    { thresholdDays: 90 },
+  );
   return state.calls.slice();
 }
 
@@ -359,4 +378,238 @@ it("coverageEfficiencyScatter marks the active rule with the accent, not #ffcb13
   expect(ds.pointBackgroundColor[0]).toBe(charts.ACCENT);
   expect(ds.pointStyle[0]).toBe("rectRot");
   expect(ds.pointStyle[1]).toBe("circle");
+});
+
+
+// ---------------------------------------------------------------------------- the cold zone
+
+describe("coldZoneScatter", () => {
+  it("marks the cold repositories with the accent INK and a second, non-colour cue", async () => {
+    // `--accent` (#ffcb13) is 1.52:1 on the canvas ground — a fill token, never ink
+    // (DESIGN.md's Split-Accent Rule). `CATEGORICAL[0]` is `--accent-text`, which is what
+    // `charts.ACCENT` exports, and the diamond is the cue that survives greyscale and CVD.
+    const charts = await loadCharts();
+    charts.coldZoneScatter(
+      fakeCanvas(),
+      [
+        { label: "cold-one", idleDays: 151, open: 12, cold: true, bounded: false },
+        { label: "warm-one", idleDays: 12, open: 40, cold: false, bounded: true },
+      ],
+      { thresholdDays: 90 },
+    );
+    const cfg = state.calls[state.calls.length - 1];
+    const ds = cfg.data.datasets[0];
+    expect(ds.pointBackgroundColor[0]).toBe(charts.ACCENT);
+    expect(ds.pointBackgroundColor[1]).toBe("#ffffff");
+    expect(ds.pointStyle).toEqual(["rectRot", "circle"]);
+    // A line dataset with the line switched off IS a scatter — ScatterController is not
+    // registered in this bundle and a genuine type:"scatter" would throw at runtime.
+    expect(cfg.type).toBe("line");
+    expect(ds.showLine).toBe(false);
+  });
+
+  it("names no #ffcb13 anywhere in its own source", () => {
+    const fn = CHARTS_SRC.slice(CHARTS_SRC.indexOf("export function coldZoneScatter"));
+    expect(fn.length).toBeGreaterThan(200); // the slice found the function
+    expect(fn).not.toContain("#ffcb13");
+  });
+
+  it("draws the threshold as a labelled rule, in the hairline and the secondary ink", () => {
+    const fn = CHARTS_SRC.slice(CHARTS_SRC.indexOf("export function coldZoneScatter"));
+    expect(fn).toMatch(/afterDatasetsDraw/);
+    expect(fn).toMatch(/setLineDash/);
+    expect(fn).toMatch(/cold at \$\{Math\.round\(threshold\)\} d/);
+    expect(fn).toMatch(/strokeStyle = HAIRLINE/);
+    expect(fn).toMatch(/fillStyle = INK2/);
+  });
+
+  // ------------------------------------------------------------------ which line is it
+  //
+  // A DASHED RULE AT 47 DAYS IS TWO DIFFERENT CLAIMS. In fixed mode it is an operator's
+  // standing window; in relative mode it is the idle time of the k-th idlest repository on
+  // this estate at this scan, and it MOVES when the population moves. The canvas receives one
+  // number either way (`cold_after_days` is the effective line in both modes), so the only
+  // place that difference can be stated is the rule's own label and the description — and a
+  // reader comparing two screenshots a week apart needs it stated.
+
+  it("adds \"(relative)\" to the rule's label only when the line was derived", () => {
+    const fn = CHARTS_SRC.slice(CHARTS_SRC.indexOf("export function coldZoneScatter"));
+    // The label is still built from the same template the check above pins, with one word
+    // appended — not a second, separately-spelled label that could drift from it.
+    expect(fn).toMatch(
+      /const label = `cold at \$\{Math\.round\(threshold\)\} d` \+ \(relative \? " \(relative\)" : ""\);/,
+    );
+    expect(fn).toMatch(/const relative = mode === "relative";/);
+    // No second colour and no second rule to carry the distinction — one more word.
+    expect(fn).not.toMatch(/relative \? CATEGORICAL/);
+  });
+
+  it("names the mode in the description, and an absent mode is the fixed window", async () => {
+    const charts = await loadCharts();
+    const points = [
+      { label: "cold-one", idleDays: 151, open: 12, cold: true, bounded: false },
+      { label: "warm-one", idleDays: 12, open: 40, cold: false, bounded: true },
+    ];
+    const relative = describedCanvas();
+    charts.coldZoneScatter(relative, points, { thresholdDays: 47, mode: "relative" });
+    expect(relative.attrs["aria-label"]).toContain("47 days, from relative mode.");
+
+    const fixed = describedCanvas();
+    charts.coldZoneScatter(fixed, points, { thresholdDays: 90 });
+    expect(fixed.attrs["aria-label"]).toContain("90 days, from the fixed window.");
+    expect(fixed.attrs["aria-label"]).not.toContain("relative");
+
+    // No threshold to name, and the description still says which definition is in force.
+    const noLine = describedCanvas();
+    charts.coldZoneScatter(noLine, points, { mode: "relative" });
+    expect(noLine.attrs["aria-label"]).toContain("The cold-zone line comes from relative mode.");
+  });
+});
+
+describe("chartsBundle.js hands the loader every wrapper a page calls", () => {
+  // A WRAPPER MISSING HERE BUILDS AND SHIPS. `chartsBundle.js` is the entry point of the
+  // second bundle (dist/js_charts.html); `chartsLoader.js` executes it and reads
+  // `window.__WSK_CHARTS__`, so a wrapper exported from charts.js but absent from EITHER of
+  // this file's two lists is `undefined` at the call site and throws "not a function" on the
+  // one route that draws it — with nothing failing at build time. Both lists are checked.
+  const BUNDLE_SRC = readFileSync(
+    new URL("../src/client/js/chartsBundle.js", import.meta.url), "utf8",
+  );
+  const importBlock = BUNDLE_SRC.slice(
+    BUNDLE_SRC.indexOf("import {"), BUNDLE_SRC.indexOf('} from "./charts.js"'),
+  );
+  const globalBlock = BUNDLE_SRC.slice(BUNDLE_SRC.indexOf("window.__WSK_CHARTS__ = {"));
+
+  it("exposes coldZoneScatter in BOTH places — the import and the global", () => {
+    expect(importBlock, "coldZoneScatter is not imported into the charts bundle")
+      .toMatch(/\bcoldZoneScatter\b/);
+    expect(globalBlock, "coldZoneScatter is not on window.__WSK_CHARTS__")
+      .toMatch(/\bcoldZoneScatter\b/);
+  });
+
+  it("is not a vacuous check — every wrapper charts.js exports as a chart is in both lists", () => {
+    const exported = [...CHARTS_SRC.matchAll(/^export function (\w+)\(canvas/gm)].map((m) => m[1]);
+    expect(exported.length).toBeGreaterThan(8);
+    for (const name of exported) {
+      expect(importBlock, `${name} is exported by charts.js but not imported by the bundle`)
+        .toMatch(new RegExp("\\b" + name + "\\b"));
+      expect(globalBlock, `${name} is exported by charts.js but not on the global`)
+        .toMatch(new RegExp("\\b" + name + "\\b"));
+    }
+  });
+});
+
+// =========================================================================================
+//  trendLine — the axis IS the date
+//
+//  `trend.trendFromBase` emits one point per DAY of rebuilt pre-scan history and then one
+//  per SAVED SCAN, and the estimator reports on very few of the first kind. Drawn on
+//  Chart.js's default CATEGORY axis that is a line crushed into the right-hand edge of its
+//  box, because a category axis spaces points BY INDEX and every unmeasured day costs a slot.
+//  `gas/`'s `trendLine` has always put the x value back on the date; this register's port
+//  dropped it, and these are the guards on putting it back.
+// =========================================================================================
+
+describe("trendLine: the day axis", () => {
+  const POINTS = [
+    { x: "2026-01-16", y: 75 },
+    { x: "2026-06-01", y: 199 },
+    { x: "2026-06-15", y: 204 },
+  ];
+  const DAY = 86400000;
+  const day = (iso) => Math.floor(Date.parse(iso) / DAY);
+
+  it("puts the x value on the date, and the range on the data, BY DEFAULT", async () => {
+    const charts = await loadCharts();
+    charts.trendLine(fakeCanvas(), POINTS, { yLabel: "days" });
+    const cfg = state.calls[state.calls.length - 1];
+    expect(cfg.options.scales.x.type).toBe("linear");
+    // `bounds: "data"` and NO min/max: the axis ends where the readings do rather than at a
+    // round tick or a pinned window — which is what "dynamic range" means here.
+    expect(cfg.options.scales.x.bounds).toBe("data");
+    expect(cfg.options.scales.x.min).toBeUndefined();
+    expect(cfg.options.scales.x.max).toBeUndefined();
+    expect(cfg.data.datasets[0].data).toEqual([
+      { x: day("2026-01-16"), y: 75 },
+      { x: day("2026-06-01"), y: 199 },
+      { x: day("2026-06-15"), y: 204 },
+    ]);
+    // A `labels` array beside {x, y} data would be a second, index-ordered claim about the
+    // same points — Chart.js would read it, and it would disagree.
+    expect(cfg.data.labels).toBeUndefined();
+  });
+
+  it("is not a relabelling — the gap between readings is DRAWN, not spaced away", async () => {
+    const charts = await loadCharts();
+    charts.trendLine(fakeCanvas(), POINTS, { yLabel: "days" });
+    const xs = state.calls[state.calls.length - 1].data.datasets[0].data.map((p) => p.x);
+    // 136 days, then 14. On the category axis both are one slot; here they are not within
+    // an order of magnitude of each other, which is what makes the slope honest.
+    expect(xs[1] - xs[0]).toBe(136);
+    expect(xs[2] - xs[1]).toBe(14);
+    expect(xs[1] - xs[0]).toBeGreaterThan((xs[2] - xs[1]) * 9);
+  });
+
+  it("names the date in the tooltip, since the x value is now a number", async () => {
+    const charts = await loadCharts();
+    charts.trendLine(fakeCanvas(), POINTS, { yLabel: "days" });
+    const cfg = state.calls[state.calls.length - 1];
+    const title = cfg.options.plugins.tooltip.callbacks.title;
+    expect(title([{ parsed: { x: day("2026-06-15") } }])).toBe("15-jun-2026");
+    expect(title([])).toBe("");
+  });
+
+  it("shades the rebuilt prefix, and only when a point says it is rebuilt", async () => {
+    const charts = await loadCharts();
+    charts.trendLine(fakeCanvas(), POINTS, { yLabel: "days" });
+    expect(state.calls[state.calls.length - 1].plugins).toEqual([]);
+    charts.trendLine(
+      fakeCanvas(),
+      [{ ...POINTS[0], reconstructed: true }, POINTS[1], POINTS[2]],
+      { yLabel: "days" },
+    );
+    const withBand = state.calls[state.calls.length - 1];
+    expect(withBand.plugins.map((pl) => pl.id)).toEqual(["reconstructedBand"]);
+  });
+
+  // =======================================================================================
+  //  THE ONE ESCAPE, AND THE CALLER IT EXISTS FOR
+  // =======================================================================================
+
+  it("hands the labels back on categoryAxis, for a series whose x is not a date", async () => {
+    const charts = await loadCharts();
+    const ranked = [{ x: "repo-alpha", y: 310 }, { x: "repo-beta", y: 204 }];
+    charts.trendLine(fakeCanvas(), ranked, { yLabel: "days", categoryAxis: true });
+    const cfg = state.calls[state.calls.length - 1];
+    expect(cfg.data.labels).toEqual(["repo-alpha", "repo-beta"]);
+    expect(cfg.options.scales.x.type).toBeUndefined();
+    expect(cfg.data.datasets[0].data).toEqual([310, 204]);
+    expect(cfg.plugins).toEqual([]);
+  });
+
+  // PERTURBATION. The escape is not decoration: the default path run over the same ranked
+  // input puts NaN on every x, which is a chart with nothing drawable on it. That is what
+  // `repos.js` would get if the flag were ever dropped from its call.
+  it("is not a vacuous flag — the day axis cannot read a repository name", async () => {
+    const charts = await loadCharts();
+    const ranked = [{ x: "repo-alpha", y: 310 }, { x: "repo-beta", y: 204 }];
+    charts.trendLine(fakeCanvas(), ranked, { yLabel: "days" });
+    const xs = state.calls[state.calls.length - 1].data.datasets[0].data.map((p) => p.x);
+    expect(xs.every((v) => Number.isNaN(v))).toBe(true);
+  });
+
+  it("the ONE caller that passes it is the ranked one, and it says why", () => {
+    const reposSrc = readFileSync(
+      new URL("../src/client/js/pages/repos.js", import.meta.url), "utf8",
+    );
+    expect(reposSrc).toMatch(/categoryAxis: true/);
+    expect(reposSrc).toContain("NOT A TIME SERIES");
+    // And nobody else reaches for it: the other two callers are dates and take the default.
+    for (const page of ["mttr.js", "history.js"]) {
+      const src = readFileSync(
+        new URL(`../src/client/js/pages/${page}`, import.meta.url), "utf8",
+      );
+      expect(src, `${page} should not opt out of the day axis`).not.toMatch(/categoryAxis/);
+    }
+  });
 });
