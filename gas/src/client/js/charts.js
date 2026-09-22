@@ -1123,6 +1123,28 @@ const CATEGORICAL = ["#2563eb", "#0d9488", "#90396a", "#7fba04", "#f66bb9"];
 // Neutral gray for the folded-in "Other" bucket — reads as "everything else", not a hue,
 // and never collides with a real group's color.
 const OTHER_COLOR = "#94a3b8";
+
+/**
+ * The share of its own ink a mark keeps when a selection elsewhere on the page does not reach
+ * it. 0.22 is not a taste: it is the value `.bandbar__seg[data-on="false"]` already uses in
+ * gas_shared/styles/components.css, so one press dims the band bars and a canvas by the same
+ * amount and the page speaks one language about "not what you asked for".
+ */
+const DIM_ALPHA = 0.22;
+
+/**
+ * A 6-digit hex fill, optionally faded to `DIM_ALPHA`.
+ *
+ * CANVAS CANNOT READ A CSS VARIABLE and it cannot inherit an opacity from a parent rule, so a
+ * dimmed mark has to be a colour rather than a state. Taking the LIT colour as the source
+ * keeps the one place each hue is written: nothing here introduces a literal, and a change to
+ * `CATEGORICAL[0]` moves both halves together.
+ */
+function fade(hex, dim) {
+  if (!dim) return hex;
+  const at = (i) => parseInt(hex.slice(1 + i * 2, 3 + i * 2), 16);
+  return "rgba(" + at(0) + "," + at(1) + "," + at(2) + "," + DIM_ALPHA + ")";
+}
 // One distinct marker per group series so each vertex carries a shape cue, not color alone
 // (mirrors SEV_POINT_STYLE). More styles than hues so the pooled "Other" series (a 6th line
 // past the 5 groups) still gets its own marker rather than reusing slot 1's.
@@ -1851,13 +1873,41 @@ export function coverageEfficiencyScatter(canvas, points) {
  * "open findings", the dot rules read `cold`, and the caller's `chartTable` twin is where the
  * row header is named. `unit` absent means assets — the older contract, unchanged.
  *
+ * THE CROSS-FILTER HIGHLIGHTS, IT DOES NOT FILTER, and that is a decision about what this
+ * chart is FOR. A point may carry `on: false`, meaning the page's support-group/idle-band
+ * selection does not reach it; it is still in the dataset, so Chart.js still computes the
+ * scales over the whole estate and the dashed rule stays where it was. A reader pressing a
+ * support group is asking "where does this group sit against everyone else" — a chart that
+ * dropped the everyone-else and rescaled around the answer would have thrown away the
+ * comparison the press was making. `on` absent means lit, so every existing caller is
+ * unchanged.
+ *
+ * THE HIGHLIGHT'S LOAD-BEARING CHANNEL IS RADIUS, NOT OPACITY. The fade is 0.22, the same
+ * value `.bandbar__seg[data-on="false"]` uses in gas_shared/styles/components.css, so a press
+ * dims the same amount in the band bars and here. But that CSS rule is CANCELLED under
+ * `forced-colors: active` — an alpha is a hue claim, and the bars fall back to full opacity
+ * there — and a canvas gets no such rescue, because forced colors do not repaint canvas
+ * pixels at all. So the dim also SHRINKS the dot, from 5-7px to 3px, and that is the half of
+ * the cue that survives greyscale, every CVD simulation and any colour transform. The fade is
+ * what makes it comfortable; the radius is what makes it true.
+ *
+ * `pointStyle` NEVER MOVES WITH THE HIGHLIGHT. Cold-versus-not rides on the shape first (see
+ * two paragraphs up), so a dimmed cold asset is a small faint DIAMOND and a dimmed warm one a
+ * small faint CIRCLE. Spending the shape channel on the selection as well would collapse the
+ * two claims into one and leave the register's own verdict unreadable in exactly the mode the
+ * shape exists for.
+ *
  * @param {*} canvas
  * @param {Array<{label: string, idleDays: number, open: number, cold: boolean,
- *                bounded: boolean}>} points  one per observed asset with open findings, or
- *                                            one per support group when `unit` is `"group"`
- * @param {{thresholdDays: number, mode: string, unit: string}} opts
+ *                bounded: boolean, on?: boolean}>} points  one per observed asset with open
+ *                                            findings, or one per support group when `unit`
+ *                                            is `"group"`. `on: false` draws the point dimmed.
+ * @param {{thresholdDays: number, mode: string, unit: string,
+ *          selectionNote: string|null}} opts
  */
-export function coldZoneScatter(canvas, points, { thresholdDays, mode, unit } = {}) {
+export function coldZoneScatter(
+  canvas, points, { thresholdDays, mode, unit, selectionNote } = {},
+) {
   destroyExisting(canvas);
   const plotted = (points || []).filter(
     (p) => typeof p.idleDays === "number" && Number.isFinite(p.idleDays)
@@ -1871,16 +1921,24 @@ export function coldZoneScatter(canvas, points, { thresholdDays, mode, unit } = 
   const subject = unit === "group"
     ? "each support group that still has an open finding"
     : "each asset the newest scan still returns";
+  // A DIMMED POINT IS STILL A POINT, and the reader who cannot see the canvas is the one who
+  // most needs telling which of them the press reached. The note opens the sentence (it is
+  // the news), and each lit point is named as such inline — `dimming` is false when nothing
+  // is dimmed, so an unfiltered chart's description is byte-for-byte what it always was.
+  const dimming = plotted.some((p) => p.on === false);
+  const note = typeof selectionNote === "string" && selectionNote ? selectionNote : null;
   describe(
     canvas,
-    "Idle days against open findings for " + subject + ": "
+    (note ? note + " " : "")
+      + "Idle days against open findings for " + subject + ": "
       + plotted
         .map(
           (p) =>
             // "at least" in prose, "≥" in a cell — the register's notation rule. An alt text
             // is prose, so a bound reads the long way here and the short way in the table.
             p.label + ", idle " + (p.bounded ? "at least " : "") + Math.round(p.idleDays)
-            + " days, " + localeNum(p.open) + " open" + (p.cold ? " (in the cold zone)" : ""),
+            + " days, " + localeNum(p.open) + " open" + (p.cold ? " (in the cold zone)" : "")
+            + (dimming && p.on !== false ? " (in this selection)" : ""),
         )
         .join("; ")
       + "."
@@ -1949,12 +2007,21 @@ export function coldZoneScatter(canvas, points, { thresholdDays, mode, unit } = 
         {
           data: plotted.map((p) => ({ x: p.idleDays, y: p.open })),
           showLine: false,
-          pointRadius: plotted.map((p) => (p.cold ? 7 : 5)),
+          // RADIUS IS THE HIGHLIGHT'S HONEST CHANNEL (see the header): 3px against 5-7px is a
+          // difference in SIZE, which no colour transform, greyscale print or forced-colors
+          // mode can flatten.
+          pointRadius: plotted.map((p) => (p.on === false ? 3 : p.cold ? 7 : 5)),
           pointHoverRadius: 9,
-          pointBackgroundColor: plotted.map((p) => (p.cold ? CATEGORICAL[0] : "#ffffff")),
-          pointBorderColor: plotted.map((p) => (p.cold ? CATEGORICAL[0] : OTHER_COLOR)),
-          pointBorderWidth: 2,
-          // The non-colour cue: a filled diamond is cold, a hollow circle is not.
+          pointBackgroundColor: plotted.map(
+            (p) => fade(p.cold ? CATEGORICAL[0] : "#ffffff", p.on === false),
+          ),
+          pointBorderColor: plotted.map(
+            (p) => fade(p.cold ? CATEGORICAL[0] : OTHER_COLOR, p.on === false),
+          ),
+          pointBorderWidth: plotted.map((p) => (p.on === false ? 1 : 2)),
+          // The non-colour cue: a filled diamond is cold, a hollow circle is not. UNTOUCHED by
+          // the highlight — the shape says which verdict, the size says whether the press
+          // reached it, and the two never borrow each other's channel.
           pointStyle: plotted.map((p) => (p.cold ? "rectRot" : "circle")),
         },
       ],

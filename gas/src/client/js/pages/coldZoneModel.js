@@ -48,6 +48,20 @@ import { MAX_EXACT_CELLS, unitChartModel } from "../../../../../gas_shared/ui/un
  */
 export const NO_GROUP = "(no support group)";
 
+/**
+ * ONE SPELLING OF A SUPPORT-GROUP KEY, because a selection now has to match across four
+ * producers of it: the group table's row key, the assets table's row, and both scatter
+ * grains. Three of them already agreed; `coldGroupScatterPoints` spelled it
+ * `a.support_group || NO_GROUP`, which files an asset whose joined value is the EMPTY STRING
+ * under "(no support group)" where the other three file it under `""`. That asset would then
+ * be listed by one control and lit by neither, which is the quiet kind of drift — the picture
+ * and the list disagree and nothing errors. A falsy test cannot tell "no support group
+ * recorded" from "a support group whose name is empty"; only the null test can.
+ */
+function groupKeyOf(value) {
+  return value === null || value === undefined ? NO_GROUP : String(value);
+}
+
 /** The word an asset's verdict is printed as. The word is the signal; the dot repeats it. */
 export const COLD_VERDICT_LABEL = {
   cold: "Cold",
@@ -560,9 +574,7 @@ export function coldKpiCards(view) {
 export function coldGroupRows(view) {
   const groups = view && Array.isArray(view.groups) ? view.groups : [];
   return groups.map((g) => ({
-    key: g.support_group === null || g.support_group === undefined
-      ? NO_GROUP
-      : String(g.support_group),
+    key: groupKeyOf(g.support_group),
     label: g.label || NO_GROUP,
     verdict: g.verdict || null,
     verdictWord: GROUP_VERDICT_LABEL[g.verdict] || absentText,
@@ -641,6 +653,91 @@ export function applyColdSelection(view, sel) {
       ? base.filter((r) => !r.observed && r.open > 0)
       : base;
   return s.group === null ? rows : rows.filter((r) => r.group === s.group);
+}
+
+/**
+ * Whether a selection is one the scatter can answer at all.
+ *
+ * TWO AXES OF THE THREE. The cut's other two values are deliberately NOT scatter filters.
+ * "out of sight" is unobserved assets, and this chart's population excludes them by
+ * construction (`coldScatterPoints` refuses them: an unobserved asset's idle time measures a
+ * scanner outage rather than a support group's silence), so that cut could only ever light
+ * nothing. "cold" is already drawn, as the filled diamond — dimming the complement of a
+ * distinction the picture makes in SHAPE would be the same claim twice in two instruments.
+ * So the group and the band drive the scatter, and nothing else does.
+ */
+export function scatterSelectionActive(sel) {
+  const s = sel || coldSelection("all", null);
+  return s.group !== null || s.band !== null;
+}
+
+/**
+ * The selection, applied to scatter points as a MARK rather than a filter.
+ *
+ * MARK, NEVER DROP — the caller decides whether a dimmed point is drawn or withheld, and by
+ * default it is drawn. The reading this chart exists for is WHERE a selection sits against
+ * the estate: a group whose dots are all left of the cold line is a different piece of news
+ * from a group whose dots straddle it, and a chart that plotted only the selection would
+ * rescale its axes around it and answer neither question. So the whole population stays in
+ * the dataset and the selection moves ink, not scale.
+ *
+ * ONE RULE FOR BOTH GRAINS. An asset point's `band` is its own bucket and a group point's is
+ * its median member's, so the predicate does not need to know which grain it is looking at —
+ * the difference was settled where the points were built.
+ */
+export function markScatterPoints(points, sel) {
+  const s = sel || coldSelection("all", null);
+  const active = scatterSelectionActive(s);
+  return (points || []).map((p) => ({
+    ...p,
+    // WITH NO SELECTION EVERY POINT IS LIT, which is not the same as every point being
+    // dimmed: the chart must look exactly as it did before anyone pressed anything.
+    on: !active
+      || ((s.group === null || p.group === s.group)
+        && (s.band === null || p.band === s.band)),
+  }));
+}
+
+/**
+ * What the scatter is highlighting, in words — for the canvas's alt text and the caption over
+ * its table twin.
+ *
+ * A SEPARATE SENTENCE FROM `coldSelectionNote`, and the difference is load-bearing. That one
+ * says how many assets are LISTED, over a population that includes unobserved assets; this
+ * one says how many dots are LIT, over a population that cannot hold them. Reusing the first
+ * here would print a count the picture does not contain.
+ *
+ * THE VERB MOVES WITH WHAT IS ACTUALLY DRAWN. "Highlighting 2 of 41" over a canvas holding two
+ * dots would be a count of a population the reader cannot see, and on this page that is the
+ * exact defect the denominator rules exist to stop — so a collapsed chart says "Showing 2"
+ * and names no denominator it is not drawing.
+ *
+ * @param {object} view
+ * @param {{cut: string, band: number|null, group: string|null}} sel
+ * @param {{lit: number, total: number, unit: string, collapsed: boolean}} opts
+ */
+export function coldScatterSelectionNote(view, sel, opts) {
+  const s = sel || coldSelection("all", null);
+  if (!scatterSelectionActive(s)) return null;
+  const o = opts || {};
+  const parts = [];
+  if (s.group !== null) parts.push(s.group);
+  if (s.band !== null) {
+    const def = coldBandDefs(view).find((d) => d.index === s.band);
+    if (def) parts.push("idle " + def.label);
+  }
+  const lit = num(o.lit, 0);
+  const total = num(o.total, 0);
+  const noun = o.unit === "group" ? "support group" : "asset";
+  const head = lit === 0
+    // THE ZERO CASE IS ITS OWN SENTENCE, because "0 of 41 highlighted" invites the reader to
+    // conclude the selection is empty, and it is not — it is full of assets this chart cannot
+    // plot. The reason belongs with the number.
+    ? "Nothing in this selection has a dot here"
+    : o.collapsed === true
+      ? "Showing " + fmtCount(lit) + " " + pluralize(lit, noun) + " only"
+      : fmtCount(lit) + " of " + fmtCount(total) + " " + pluralize(total, noun) + " highlighted";
+  return parts.length ? head + ": " + parts.join(", ") + "." : head + ".";
 }
 
 /**
@@ -854,9 +951,7 @@ function coldAssetRow(a) {
   return {
     key: a.asset_id || label,
     label,
-    group: a.support_group === null || a.support_group === undefined
-      ? NO_GROUP
-      : String(a.support_group),
+    group: groupKeyOf(a.support_group),
     assetType: a.asset_type === null || a.asset_type === undefined
       ? absentText
       : String(a.asset_type),
@@ -910,6 +1005,13 @@ band: num(a.bucket),
  * `bounded` rides along because the x value is a MEASUREMENT for some assets and a LOWER BOUND
  * for others, and the canvas draws one dot either way: the tooltip and the table beside it are
  * where the difference is stated.
+ *
+ * `group` AND `band` RIDE ALONG TOO, and neither is a new measurement: they are the two axes
+ * of the cross-filter the rest of the page already runs on, carried onto the point so
+ * `markScatterPoints` can light a dot without re-deriving which support group an asset is in
+ * or which bucket its reading fell in. `band` is the domain's own `bucket` — null is a real
+ * answer there, and `num` keeps it null rather than casting it to 0, which is what makes an
+ * asset with no bucket match no band instead of falling into the first one.
  */
 export function coldScatterPoints(view) {
   const assets = view && Array.isArray(view.assets) ? view.assets : [];
@@ -925,6 +1027,8 @@ export function coldScatterPoints(view) {
       open,
       cold: a.cold === true,
       bounded: a.idle_is_bound === true,
+      group: groupKeyOf(a.support_group),
+      band: num(a.bucket),
     });
   }
   return points;
@@ -962,7 +1066,7 @@ export function coldGroupScatterPoints(view) {
     const open = num(a.open_findings, 0);
     const idle = num(a.idle_reading_days);
     if (open <= 0 || idle === null) continue;
-    const label = a.support_group || NO_GROUP;
+    const label = groupKeyOf(a.support_group);
     let bucket = byGroup.get(label);
     if (!bucket) {
       bucket = { label, open: 0, members: [] };
@@ -973,6 +1077,7 @@ export function coldGroupScatterPoints(view) {
       idleDays: idle,
       cold: a.cold === true,
       bounded: a.idle_is_bound === true,
+      band: num(a.bucket),
       // Only a tiebreak, so two members on the same reading always yield the same median
       // whatever order the payload listed them in.
       key: String(a.asset_name || a.asset_id || ""),
@@ -991,6 +1096,15 @@ export function coldGroupScatterPoints(view) {
       open: bucket.open,
       cold: mid.cold,
       bounded: mid.bounded,
+      // THE GROUP *IS* THE POINT at this grain, so the key and the label are one value.
+      group: bucket.label,
+      // AND THE BAND IS THE MEDIAN MEMBER'S, from the same asset `idleDays`, `cold` and
+      // `bounded` already come from. That is what makes a band press checkable by eye here:
+      // the dot sits at the median's reading, so the dots a band lights are exactly the dots
+      // inside that band's x range. A group's own distribution spans several bands — lighting
+      // a group because SOME member is in the band would put a lit dot in band 0's stretch of
+      // the axis, and a reader would be right to call that a contradiction.
+      band: mid.band,
     });
   }
   points.sort((a, b) => {

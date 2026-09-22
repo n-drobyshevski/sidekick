@@ -34,17 +34,17 @@
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
   applyColdSelection, coldBandKeyModel, coldBandScale, coldCensusModel, coldGroupRows,
-  coldGroupScatterPoints, coldKpiCards, coldModeCaption, coldScatterPoints, coldSelection,
-  coldSelectionNote, coldZoneView, coldestShareNote, groupCountNote, severitiesNote,
-  unmeasurableNote,
+  coldGroupScatterPoints, coldKpiCards, coldModeCaption, coldScatterPoints,
+  coldScatterSelectionNote, coldSelection, coldSelectionNote, coldZoneView, coldestShareNote,
+  groupCountNote, markScatterPoints, scatterSelectionActive, severitiesNote, unmeasurableNote,
 } from "./coldZoneModel.js";
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import {
   DEFAULT_PAGE_SIZE, absent, absentText, bandBar, bandBarModel, chartTable, chartTableModel,
   clear, dataTable, days1, denomNote, el, emptyState, errorState, figureCard, filterChipRow,
   firstRunNotice, fmtCount, meter, onPageTeardown, pageHeader, pageOf, pct1, scopeBar,
-  sectionLabel, segmented, skeletonStack, sortRows, statusPill, tableFooter, tipLabel,
-  unitGrid, unitKeyRow, verdictMark,
+  sectionLabel, segmented, skeletonStack, sortRows, statusPill, tableFooter, tipAnchor,
+  tipLabel, unitGrid, unitKeyRow, verdictMark,
 } from "../ui.js";
 
 // ------------------------------------------------------------------------- local helpers
@@ -146,6 +146,16 @@ export async function renderColdZone(main, _params, ctx) {
   // re-render, and a lens on one chart is not a different question being asked of the server.
   let scatterGrain = "asset";
 
+  // THE THIRD PIECE OF SECTION-LOCAL STATE, and this file has argued hard for keeping that
+  // count low — so it earns its place or it does not exist. The scatter HIGHLIGHTS a
+  // selection rather than filtering to it, because the reading it is for is where a group
+  // sits against the estate; this is the opt-in for the reader who has finished making that
+  // comparison and now wants the selection alone, axes and all. Same reasoning as the two
+  // above for why it is a module-local `let` and not a URL parameter, and it is reset by
+  // `syncSelection` the moment there is no selection left to collapse to — a reader who let
+  // go of a filter must never be left with a chart quietly holding back its population.
+  let onlyScatterSelection = false;
+
   // The same reasoning, for the assets table's cut. A reader who narrowed to the backlog left
   // behind means it about the section, not about the paint that happened to be on screen.
   //
@@ -163,8 +173,16 @@ export async function renderColdZone(main, _params, ctx) {
   // really does refetch, and the two could disagree.
   let coldGroup = null;
 
-  // Set by `renderAssets`, called by whichever control changed the selection.
+  // Set by `renderAssets` and `renderChart`, called by whichever control changed the
+  // selection.
+  //
+  // CLEARED BY `paint` BEFORE THE SECTIONS REBUILD, which is not bookkeeping. `renderChart`
+  // returns early when there is nothing to plot, and a hook left over from the previous paint
+  // would be a closure over the PREVIOUS `view` — so an SWR refresh into an estate with
+  // nothing to plot would leave a press repainting a chart that is no longer on the page,
+  // from a payload that is no longer current.
   let repaintAssets = null;
+  let repaintScatter = null;
 
   let paint = null;
   const promise = swrCall(
@@ -186,6 +204,10 @@ export async function renderColdZone(main, _params, ctx) {
   paint = (model) => {
     const view = coldZoneView(model);
     clear(host);
+    // See the declarations: every section below either reassigns its hook or does not exist
+    // this paint, and a stale one closes over the payload that just went away.
+    repaintAssets = null;
+    repaintScatter = null;
     // FIRST, IN ALL THREE BRANCHES. Every figure below is read off one line in days, and the
     // same number means different things depending on which mode drew it — so the sentence
     // that says which one goes ABOVE the figures rather than under them, and it is printed on
@@ -541,6 +563,18 @@ export async function renderColdZone(main, _params, ctx) {
       clear(cell).append(bandBar(cell.bandModel, { selected: band }));
     }
     if (repaintAssets) repaintAssets();
+    // THE SCATTER IS THE FOURTH REACTOR, and it marks in place like the bars rather than
+    // rebuilding like the table: its toolbar holds two controls a reader could be mid-press
+    // on, so `paintScatter` moves their attributes and repaints only the canvas and the
+    // table twin beneath it.
+    //
+    // THE COLLAPSE LETS GO WITH THE SELECTION. Dropping the filter from a chip four sections
+    // away must not leave the chart holding back the estate behind a control that just went
+    // dead — there would be no way to press it again.
+    if (!scatterSelectionActive(coldSelection(assetCut, coldGroup))) {
+      onlyScatterSelection = false;
+    }
+    if (repaintScatter) repaintScatter();
   }
   /**
    * Cold assets and the ones the scanner has lost sight of, over one table with three cuts.
@@ -836,6 +870,27 @@ export async function renderColdZone(main, _params, ctx) {
         paintScatter();
       },
     });
+    // THE COLLAPSE, AND WHY IT IS A `.bandkey` RATHER THAN A SEGMENTED PAIR. `segmented` is
+    // the exclusive-choice recipe and takes no disabled state; this control has exactly one
+    // thing to say and spends most of its life unable to say it, because there is usually no
+    // selection to collapse to. `.bandkey` is the pill this page ALREADY filters with, three
+    // sections up, and its pressed state is a ring and a weight rather than a wash alone — so
+    // this costs no rule and reads as one more of a vocabulary the reader has already met.
+    //
+    // `tipAnchor`, NOT `tip`: a disabled button dispatches no pointer events, so a reason
+    // anchored on it is inert in silence — and "why can't I press this" is exactly the
+    // question it has while disabled. The helper wraps it and the reason stays readable.
+    const onlyBtn = el("button", {
+      type: "button", class: "bandkey", "aria-pressed": "false", disabled: true,
+      onclick: () => {
+        onlyScatterSelection = !onlyScatterSelection;
+        paintScatter();
+      },
+    }, "Only the selection");
+    const onlyAnchor = tipAnchor(onlyBtn, () => (onlyBtn.disabled
+      ? ["Pick a support group or an idle band above to have something to collapse to."]
+      : ["Plot only the dots in the current selection. The axes rescale to them, so the rest"
+        + " of the estate is no longer behind them to compare against."]));
     // NAMED FOR WHAT A DOT IS, so the control, the lead-in and the table's first column agree
     // word for word — and drawn ABOVE the empty branch, so a reader is never shown a control
     // that vanished with the thing it controls.
@@ -843,7 +898,8 @@ export async function renderColdZone(main, _params, ctx) {
       el("h3", { class: "section-label" }, "Idle time against backlog"),
       el("div", { class: "toolbar-group" },
         el("span", { class: "small muted" }, "One dot per"),
-        toggle)));
+        toggle,
+        onlyAnchor)));
     // ONE EMPTY STATE FOR BOTH GRAINS, and it is not a shortcut: the group points are folded
     // out of exactly the assets the other grain plots, so the two are empty together and there
     // is no grain a reader could be stranded on.
@@ -856,6 +912,13 @@ export async function renderColdZone(main, _params, ctx) {
       ));
       return;
     }
+    // WHAT THIS CHART CANNOT ANSWER, SAID ON THE SURFACE. Two sentences live here, both
+    // rebuilt with the picture and both usually absent — an honesty statement stays on the
+    // surface (this page's own rule), and neither of these is an explanation of something
+    // already on screen. It sits ABOVE the canvas for the reason the mode caption sits above
+    // the figures: a qualification printed under the thing it qualifies is read second.
+    const noteHost = el("div", {});
+    host.append(noteHost);
     const canvas = el("canvas");
     const tableHost = el("div", {});
     host.append(el("div", { class: "chart-card" },
@@ -863,22 +926,58 @@ export async function renderColdZone(main, _params, ctx) {
       tableHost));
 
     let bound = false;
+    repaintScatter = paintScatter;
     paintScatter();
 
     function paintScatter() {
       const group = scatterGrain === "group";
-      const points = group ? byGroup : byAsset;
+      const sel = coldSelection(assetCut, coldGroup);
+      const active = scatterSelectionActive(sel);
+      // MARKED, NOT FILTERED — every point is still here, and `on` says which the press
+      // reached. `markScatterPoints` needs no grain branch: an asset point's band is its own
+      // and a group point's is its median member's, settled where the points were built.
+      const marked = markScatterPoints(group ? byGroup : byAsset, sel);
+      const lit = marked.filter((p) => p.on);
+      // THE COLLAPSE REFUSES ITSELF WHEN IT WOULD EMPTY THE CANVAS. A support group whose
+      // assets are all out of sight is a real selection with no dot on this chart at all, and
+      // an empty plot would read as a broken chart rather than as the answer. So the dimmed
+      // picture stays and the note below says why — the reader keeps both the reason and the
+      // estate they were comparing against.
+      const only = active && onlyScatterSelection && lit.length > 0;
+      const points = only ? lit : marked;
+      const note = coldScatterSelectionNote(view, sel, {
+        lit: lit.length, total: marked.length, unit: scatterGrain, collapsed: only,
+      });
+      // MARKED IN PLACE. The reader may be mid-press on this very button.
+      onlyBtn.disabled = !active;
+      onlyBtn.setAttribute("aria-pressed", only ? "true" : "false");
+      clear(noteHost);
+      if (active && lit.length === 0) {
+        noteHost.append(denomNote("Nothing in this selection has a dot here. This chart plots"
+          + " only assets the newest scan still returns, and an asset it has lost sight of has"
+          + " an idle time that measures the outage rather than a silence anyone can act on."));
+      }
+      // THE CUT THAT DOES NOT REACH THIS CHART. "Out of sight, backlog open" narrows the list
+      // above to exactly the assets this picture excludes by construction, so a reader who
+      // pressed it and saw nothing move here is owed the reason rather than left to guess
+      // that the wiring is broken.
+      if (sel.cut === "lost") {
+        noteHost.append(denomNote("The “out of sight” cut doesn’t narrow this chart: every"
+          + " asset it lists is one the scanner no longer returns, and none of them is plotted"
+          + " here. A support group picked above still applies."));
+      }
       clear(tableHost).append(chartTable({
         canvas,
-        caption: group
-          ? "Every support group that still has an open finding, its median asset's idle time"
-            + " and the backlog of all of them. \"at least\" marks a group whose median asset"
-            + " has no movement on record — that figure is a lower bound counted from when"
-            + " this register started watching, not a measured silence."
-          : "Every asset the newest scan still returns that has an open finding, its idle"
-            + " time and its backlog. \"at least\" marks an asset with no movement on record —"
-            + " that figure is a lower bound counted from when this register started watching,"
-            + " not a measured silence.",
+        caption: (note ? note + " " : "")
+          + (group
+            ? "Every support group that still has an open finding, its median asset's idle time"
+              + " and the backlog of all of them. \"at least\" marks a group whose median asset"
+              + " has no movement on record — that figure is a lower bound counted from when"
+              + " this register started watching, not a measured silence."
+            : "Every asset the newest scan still returns that has an open finding, its idle"
+              + " time and its backlog. \"at least\" marks an asset with no movement on record —"
+              + " that figure is a lower bound counted from when this register started watching,"
+              + " not a measured silence."),
         model: chartTableModel({
           columns: [
             { key: "label", label: group ? "Support group" : "Asset", format: "text" },
@@ -891,6 +990,19 @@ export async function renderColdZone(main, _params, ctx) {
               align: "text",
               value: (p) => (p.bounded ? "at least" : "measured"),
             },
+            // THE HIGHLIGHT, IN WORDS. The twin is what a reader who cannot see the canvas
+            // reads instead of it, so a distinction drawn only in ink would be one this page
+            // made and then withheld. Absent when nothing is dimmed — in the collapsed mode
+            // every listed row is in the selection, and a column of one value says nothing.
+            ...(active && !only
+              ? [{
+                key: "on",
+                label: "In selection",
+                format: "text",
+                align: "text",
+                value: (p) => (p.on ? "in" : absentText),
+              }]
+              : []),
           ],
           rows: points,
         }),
@@ -905,6 +1017,9 @@ export async function renderColdZone(main, _params, ctx) {
             // Only the alt text moves with the grain: a description naming assets over a canvas
             // of support groups would mislead exactly the reader who cannot check it.
             unit: scatterGrain,
+            // The same sentence the twin's caption opens with — one spelling of "what is lit",
+            // for the reader of the canvas and the reader of the table alike.
+            selectionNote: note,
           });
           // ONCE PER CANVAS, not once per paint. The canvas outlives every switch, and a second
           // registration would only destroy an already-destroyed chart on the way out.

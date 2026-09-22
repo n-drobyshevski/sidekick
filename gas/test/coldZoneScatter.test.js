@@ -247,3 +247,125 @@ describe("coldZoneScatter: the threshold rule, and the one word that moves on it
     expect(config.plugins).toEqual([]);
   });
 });
+
+// A FIFTH CLAIM, ADDED WITH THE CROSS-FILTER: the highlight moves ink without moving the
+// picture, and it never spends a channel the verdict is already using.
+//
+//   5. `on: false` DIMS, IT DOES NOT DROP. Every point stays in the dataset, so Chart.js
+//      computes the scales over the whole estate and the dashed rule stays where it was. A
+//      filter here would rescale the chart around the answer and throw away the comparison
+//      the reader's press was making — the page collapses to the selection only when the
+//      reader asks for it, and then by passing a shorter array, not by a flag here.
+//   6. `pointStyle` IS UNTOUCHED BY THE HIGHLIGHT. Cold-versus-warm rides on the shape
+//      (claim 2) and the selection rides on SIZE; a dimmed cold asset must still be a
+//      diamond, or the two encodings collapse into one that cannot be taken apart.
+//   7. RADIUS CARRIES THE DIM, NOT ALPHA ALONE. The fade matches the band bars' own 0.22, but
+//      that CSS rule is cancelled under forced colors and a canvas gets no such rescue, so
+//      the size difference is the half that has to survive.
+
+/** The same three points, with a selection reaching only the first. */
+const MARKED = [
+  { ...POINTS[0], on: true },
+  { ...POINTS[1], on: false },
+  { ...POINTS[2], on: false },
+];
+
+async function buildMarked(points, opts) {
+  const charts = await loadCharts();
+  const canvas = fakeCanvas();
+  charts.coldZoneScatter(canvas, points, opts);
+  expect(state.calls).toHaveLength(1);
+  return { canvas, config: state.calls[0].config };
+}
+
+describe("coldZoneScatter: the cross-filter dims, it never drops", () => {
+  it("keeps every point in the dataset, so the axes are still the estate's", async () => {
+    const plain = await build({ thresholdDays: 90, mode: "fixed" });
+    const marked = await buildMarked(MARKED, { thresholdDays: 90, mode: "fixed" });
+    expect(marked.config.data.datasets[0].data).toEqual(plain.config.data.datasets[0].data);
+    expect(marked.config.options.scales.x.suggestedMax)
+      .toBe(plain.config.options.scales.x.suggestedMax);
+  });
+
+  it("leaves the shape channel entirely to the verdict", async () => {
+    const plain = await build({ thresholdDays: 90, mode: "fixed" });
+    const marked = await buildMarked(MARKED, { thresholdDays: 90, mode: "fixed" });
+    // The dimmed point at index 1 is COLD, so it must still be a diamond.
+    expect(marked.config.data.datasets[0].pointStyle)
+      .toEqual(plain.config.data.datasets[0].pointStyle);
+    expect(marked.config.data.datasets[0].pointStyle[1]).toBe("rectRot");
+  });
+
+  it("shrinks the dimmed marks, which is the cue forced colors cannot flatten", async () => {
+    const { config } = await buildMarked(MARKED, { thresholdDays: 90, mode: "fixed" });
+    // 7 for the lit cold point, 3 for both dimmed ones — a cold one and a warm one alike,
+    // because at this point the question is no longer which verdict but whether the press
+    // reached it.
+    expect(config.data.datasets[0].pointRadius).toEqual([7, 3, 3]);
+    expect(config.data.datasets[0].pointBorderWidth).toEqual([2, 1, 1]);
+  });
+
+  it("fades the dimmed ink to the same 0.22 the band bars dim to", async () => {
+    const { config } = await buildMarked(MARKED, { thresholdDays: 90, mode: "fixed" });
+    const ds = config.data.datasets[0];
+    expect(ds.pointBackgroundColor[0]).toBe("#2563eb");
+    expect(ds.pointBackgroundColor[1]).toBe("rgba(37,99,235,0.22)");
+    expect(ds.pointBorderColor[2]).toBe("rgba(148,163,184,0.22)");
+  });
+
+  it("draws exactly as it always did when no point carries `on`", async () => {
+    // THE BACKWARD-COMPATIBILITY CONTRACT. `on` absent is lit, so every caller that never
+    // heard of a selection is byte-identical — which is what lets claims 1-4 above keep
+    // asserting bare values.
+    const plain = await build({ thresholdDays: 90, mode: "fixed" });
+    const all = await buildMarked(
+      POINTS.map((p) => ({ ...p, on: true })), { thresholdDays: 90, mode: "fixed" },
+    );
+    for (const key of [
+      "pointRadius", "pointBorderWidth", "pointBackgroundColor", "pointBorderColor",
+      "pointStyle",
+    ]) {
+      expect(all.config.data.datasets[0][key]).toEqual(plain.config.data.datasets[0][key]);
+    }
+  });
+
+  // PERTURBATION: spending the shape channel on the selection would keep every colour and
+  // size assertion above true, and would leave the register's own verdict unreadable in
+  // exactly the mode the shape exists for.
+  it("a selection-keyed pointStyle is what the shape check exists to catch", () => {
+    const shapeKeyedToSelection = MARKED.map((p) => (p.on ? "rectRot" : "circle"));
+    expect(shapeKeyedToSelection[1]).toBe("circle");
+    expect(shapeKeyedToSelection[1]).not.toBe("rectRot");
+  });
+});
+
+describe("coldZoneScatter: the highlight reaches the reader who cannot see it", () => {
+  it("opens the alt text with the selection and marks the lit points inline", async () => {
+    const { canvas } = await buildMarked(MARKED, {
+      thresholdDays: 90, mode: "fixed", selectionNote: "1 of 3 assets highlighted: Payments.",
+    });
+    const alt = canvas.attrs["aria-label"];
+    expect(alt.startsWith("1 of 3 assets highlighted: Payments. Idle days against")).toBe(true);
+    expect(alt).toContain("vm-payments-01, idle 210 days, 12 open (in the cold zone)"
+      + " (in this selection)");
+    // And the dimmed cold point keeps its verdict clause and loses only the selection one.
+    expect(alt).toContain("vm-retail-04, idle at least 150 days, 3 open (in the cold zone);");
+  });
+
+  it("says nothing about a selection when there is none", async () => {
+    const { canvas } = await build({ thresholdDays: 90, mode: "fixed" });
+    expect(canvas.attrs["aria-label"]).not.toContain("in this selection");
+    expect(canvas.attrs["aria-label"].startsWith("Idle days against")).toBe(true);
+  });
+
+  it("marks nothing when the caller collapsed the points to the selection already", async () => {
+    // Every point lit means nothing is dimmed, so an "(in this selection)" on all three would
+    // be a clause that distinguishes nothing — noise in a sentence read linearly.
+    const { canvas } = await buildMarked(
+      POINTS.map((p) => ({ ...p, on: true })),
+      { thresholdDays: 90, mode: "fixed", selectionNote: "Showing 3 assets." },
+    );
+    expect(canvas.attrs["aria-label"]).not.toContain("in this selection");
+    expect(canvas.attrs["aria-label"]).toContain("Showing 3 assets.");
+  });
+});
