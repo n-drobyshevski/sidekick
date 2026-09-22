@@ -276,6 +276,7 @@ function node(scope: Scope, seq: number): Rec {
       hasExploit: true,
       hasCisaKevExploit: false,
       epssProbability: 0.42,
+      portalUrl: `https://app.wiz.io/explorer/vulnerability-findings#~(entity~(~'sca-${seq}))`,
       vulnerableAsset: {
         id: "repo-1",
         type: "REPOSITORY_BRANCH",
@@ -1181,6 +1182,7 @@ const FILLABLE: Record<Scope, readonly string[]> = {
     "has_kev", "has_exploit", "epss", "risk_observed_at",
     "language",
     "owner_project", "owner_path", "tags_json", "projects_json",
+    "portal_url",
   ],
   sast: [
     "finding_key", "scope", "identifier", "severity",
@@ -1231,6 +1233,11 @@ const UNFILLABLE_REASON: Record<string, string> = {
   validated_at: "secrets only",
   language: "no language on the secrets node",
   identifier: "unreachable — every scope fills it",
+  // Q_SCA selects `portalUrl`; Q_SAST and Q_SECRETS do not, because `sastFindings` and
+  // `secretInstances` are different Wiz types and nothing confirms the field on either — and
+  // an unknown field fails the whole document rather than returning null. See wizQueries.ts's
+  // Q_SCA header. Reverse this line, not just the query, if wizDiagnostic says otherwise.
+  portal_url: "Wiz's console link is confirmed on vulnerabilityFindings (sca) only",
 };
 
 describe("the silent-mismatch guard: slimRecord -> reconcile fills the ledger", () => {

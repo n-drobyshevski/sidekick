@@ -483,7 +483,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "df5ab8d43820" : "dev";
+  var BUILD_ID = true ? "4a96082d714a" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -923,6 +923,21 @@ var Server = (() => {
     return v === null || v === void 0 || typeof v === "number" && Number.isNaN(v);
   }
 
+  // ../gas_shared/domain/wizUrl.ts
+  var PORTAL_PREFIXES = [
+    ["https:", "", "app.wiz.io", ""].join("/"),
+    ["https:", "", "app.wiz.us", ""].join("/")
+  ];
+  function isLegal(url) {
+    return PORTAL_PREFIXES.some((prefix) => url.indexOf(prefix) === 0);
+  }
+  function normalizeWizUrl(raw) {
+    if (typeof raw !== "string") return null;
+    const url = raw.trim();
+    if (!url) return null;
+    return isLegal(url) ? url : null;
+  }
+
   // src/domain/metrics.ts
   var DAY_MS = 864e5;
   function summarize(workIn, now, scope, slaTargets = SLA_TARGETS) {
@@ -1211,7 +1226,13 @@ var Server = (() => {
       tags_json: (_a = projectsJson(rec)) != null ? _a : tagsJson(rec),
       // The flat projects[] list, uncollapsed — see projectsListJson's own comment for why this
       // is additive alongside tags_json rather than a replacement for it.
-      projects_json: projectsListJson(rec)
+      projects_json: projectsListJson(rec),
+      // Wiz's own console link. IN THE SHARED DEFAULT RATHER THAN THE sca BRANCH, even though
+      // only Q_SCA selects it: `normalizeWizUrl` reads a key the other two scopes' nodes simply
+      // do not have and answers null, which is the same answer a per-scope branch would give
+      // with one more place to forget. If sast or secrets later gain the field, selecting it in
+      // their query is the whole change.
+      portal_url: normalizeWizUrl(rec["portalUrl"])
     };
     if (scope === "sast") {
       const parts2 = splitRepoBranch(str(rec, "resource.name"), str(rec, "resource.type"));
@@ -1438,7 +1459,8 @@ var Server = (() => {
       owner_project: attrs.owner_project,
       owner_path: attrs.owner_path,
       tags_json: attrs.tags_json,
-      projects_json: attrs.projects_json
+      projects_json: attrs.projects_json,
+      portal_url: attrs.portal_url
     };
   }
   function applyValidation(row, rec, scanTsIso) {
@@ -1457,7 +1479,7 @@ var Server = (() => {
     }
   }
   function reconcile(currentRecords, existingLedger, scanId, scanTs, prevScanId, options) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E;
     const {
       scope,
       disappearanceMode = "scan_ts",
@@ -1553,6 +1575,7 @@ var Server = (() => {
       row.owner_path = (_z = attrs.owner_path) != null ? _z : row.owner_path;
       row.tags_json = (_A = attrs.tags_json) != null ? _A : row.tags_json;
       row.projects_json = (_B = attrs.projects_json) != null ? _B : row.projects_json;
+      row.portal_url = (_D = (_C = attrs.portal_url) != null ? _C : row.portal_url) != null ? _D : null;
       if (apiSaysResolved && row.status === STATUS_OPEN) {
         row.status = STATUS_RESOLVED;
         row.resolved_at = present(apiResolved) ? toIso(parseTs(apiResolved)) : scanTsIso;
@@ -1576,7 +1599,7 @@ var Server = (() => {
         if (inScope !== null && (sevRow === null || !inScope.has(sevRow))) {
           continue;
         }
-        const expectedPrev = (_C = (prevScanIdBySeverity2 != null ? prevScanIdBySeverity2 : {})[sevRow != null ? sevRow : ""]) != null ? _C : prevScanId;
+        const expectedPrev = (_E = (prevScanIdBySeverity2 != null ? prevScanIdBySeverity2 : {})[sevRow != null ? sevRow : ""]) != null ? _E : prevScanId;
         if (row.last_scan_id !== expectedPrev) continue;
         if (disappearanceMode === "midpoint" && prevScanTs) {
           row.resolved_at = midpointIso(prevScanTs, scanTsIso);
@@ -1807,7 +1830,10 @@ var Server = (() => {
       // EpisodeRow carries no projects_json (compaction.ts's EpisodeRow has no such column, and
       // a sealed episode's owner_path is already null above for the same reason) — nothing to
       // expand it from.
-      projects_json: null
+      projects_json: null,
+      // No link either, for the same reason and with the same consequence: a sealed episode
+      // has dropped the per-finding detail it summarizes, so the sheet draws no Wiz row.
+      portal_url: null
     };
   }
   function baseRows(state, options = {}) {
@@ -3769,7 +3795,12 @@ var Server = (() => {
       "owner_project",
       "owner_path",
       "tags_json",
-      "projects_json"
+      "projects_json",
+      // sca only in practice — Q_SCA is the one query that selects `portalUrl` — but a column
+      // of the ONE ledger all three scopes share, so it exists structurally and reads null for
+      // sast and secrets. Last, which is where a newly-added column is appended on an existing
+      // deployment.
+      "portal_url"
     ],
     [TABS.episodes]: [
       "finding_key",
@@ -4281,6 +4312,7 @@ var Server = (() => {
   vulnerabilityFindings(filterBy: $filterBy, first: $first, after: $after) {
     nodes {
       id
+      portalUrl
       name
       detailedName
       severity
@@ -5504,7 +5536,12 @@ var Server = (() => {
       "has_exploit",
       "epss",
       "mttr_days",
-      "age_days"
+      "age_days",
+      // Wiz's own console link — NOT a drawn column, but the finding sheet reads it, and a
+      // sheet may only touch keys on its scope's list. sca ONLY: `vulnerabilityFindings` is
+      // the one root known to carry `portalUrl`, so listing it for sast or secrets would
+      // promise a column their queries never fetch.
+      "portal_url"
     ],
     sast: [
       "identifier",
@@ -5920,7 +5957,12 @@ var Server = (() => {
       owner_project: ownerOf(r),
       owner_path: s(r, "owner_path"),
       tags_json: s(r, "tags_json"),
-      projects_json: s(r, "projects_json")
+      projects_json: s(r, "projects_json"),
+      // NOT `s(r, ...)` like its neighbours: this one becomes an href, and this function is
+      // where a row of the ledger TAB — a Google Sheet an operator can type into — turns back
+      // into a LedgerRow. It is the only place a hand-edited link can be caught before it
+      // reaches the wire. See gas_shared/domain/wizUrl.ts.
+      portal_url: normalizeWizUrl(r["portal_url"])
     };
   }
   function rowToEpisode(r) {
@@ -9069,7 +9111,10 @@ var Server = (() => {
       "fixedVersion",
       "hasExploit",
       "hasCisaKevExploit",
-      "epssProbability"
+      "epssProbability",
+      // Wiz's own console link. sca only — Q_SCA is the one document that selects it, and a
+      // field listed here that the query never returns is simply never present to copy.
+      "portalUrl"
     ],
     sast: [
       "id",

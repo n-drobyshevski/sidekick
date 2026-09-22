@@ -248,7 +248,7 @@ function row(over: Partial<BaseRow> & { finding_key: string; scope: Scope }): Ba
     owner_project: "proj-a",
     owner_path: "org/proj-a",
     tags_json: null,
-    projects_json: null,
+    projects_json: null, portal_url: null,
     mttr_days: resolved ? (Date.parse(resolved) - Date.parse(first)) / DAY : null,
     age_days: resolved ? null : days(first),
     fix_available_at: null,

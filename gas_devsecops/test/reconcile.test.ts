@@ -904,7 +904,7 @@ describe("update disciplines (rule 6)", () => {
         cwe: null, ai_verdict: null, language: "JAVASCRIPT", file_path: null, start_line: null,
         origin: null, secret_kind: null, rotated_at: null, removed_at: null,
         validation_state: null, validated_at: null, confidence: null,
-        owner_project: null, owner_path: null, tags_json: null, projects_json: null,
+        owner_project: null, owner_path: null, tags_json: null, projects_json: null, portal_url: null,
       },
     };
     const { ledger, deltas } = run("sca", [scaNode()], resolved, S2);
@@ -1066,7 +1066,7 @@ describe("validation is latest-wins among MEASURED states only (rule 7)", () => 
         rotated_at: "2026-03-05T00:00:00Z", removed_at: S1,
         validation_state: "INVALID", validated_at: "2026-03-05T00:00:00Z",
         confidence: "High", owner_project: null, owner_path: null, tags_json: null,
-        projects_json: null,
+        projects_json: null, portal_url: null,
       },
     };
     // The string is back in HEAD; nobody re-checked the credential (UNKNOWN).
@@ -1193,7 +1193,7 @@ describe("failure of absence: the severity-scope guard (rule 9)", () => {
       cwe: null, ai_verdict: null, language: null, file_path: null, start_line: null,
       origin: null, secret_kind: null, rotated_at: null, removed_at: null,
       validation_state: null, validated_at: null, confidence: null,
-      owner_project: null, owner_path: null, tags_json: null, projects_json: null,
+      owner_project: null, owner_path: null, tags_json: null, projects_json: null, portal_url: null,
     };
     const before = JSON.stringify(medium);
 

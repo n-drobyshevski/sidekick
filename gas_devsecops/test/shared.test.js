@@ -59,6 +59,7 @@ import {
 import { registerSyncCaptionContract } from "../../gas_shared/test/contracts/syncCaption.js";
 import { registerScanStepContract } from "../../gas_shared/test/contracts/scanSteps.js";
 import { registerHubUrlContract } from "../../gas_shared/test/contracts/hubUrl.js";
+import { registerWizUrlContract } from "../../gas_shared/test/contracts/wizUrl.js";
 import { normalizeHubUrl } from "../src/server/hubUrl";
 import { registerSettingsFormContract } from "../../gas_shared/test/contracts/settingsForm.js";
 import { DEFAULT_TAB, SETTINGS_TABS, SETTING_FIELDS } from "../src/client/js/settingsModel.js";
@@ -311,6 +312,16 @@ registerFigureCardContract({ ...base, figureCardModel });
 // exist because no `src/server/**` module here imports gas_shared (tsconfig has no `allowJs`),
 // and this table is what holds them to the same rule.
 registerHubUrlContract({ ...base, normalizeHubUrl });
+
+// The Wiz console link's rule. No per-app boundary to hand in — the ingestion copy is one
+// shared TypeScript module — so what this register contributes is its own finding sheet's
+// source, for the wiring half of the contract.
+registerWizUrlContract({
+  ...base,
+  sheetSrc: readFileSync(
+    new URL("../src/client/js/pages/findingSheet.js", import.meta.url), "utf8",
+  ),
+});
 
 // =========================================================================================
 //  The scope-walk chip: one mark per register, not two

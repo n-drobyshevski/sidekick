@@ -51,8 +51,9 @@
 //   latest-wins (erasable)      severity, status, identifier, component
 //   latest-wins, never erased   repo_*, owner_*, cwe, language, ai_verdict, secret_kind,
 //                               confidence, file_path, start_line, origin, fixed_version,
-//                               tags_json — a blank in this scan must not erase what an
-//                               earlier scan saw (brick's `_keep`, gas/'s `x || row.x`)
+//                               tags_json, portal_url — a blank in this scan must not erase
+//                               what an earlier scan saw (brick's `_keep`, gas/'s
+//                               `x || row.x`)
 //   sticky first-wins,          fix_date, fix_observed_at, rotated_at, removed_at
 //     reset by a reopen
 //   monotone, never reset       has_kev / has_exploit (null -> false -> true), epss keeps
@@ -73,6 +74,7 @@ import {
   STATUS_RESOLVED,
   type Scope,
 } from "./config";
+import { normalizeWizUrl } from "../../../gas_shared/domain/wizUrl";
 import { findingKey } from "./lifecycle";
 import { isProduct } from "./projectGrain";
 import { normalizeSeverity } from "./severity";
@@ -434,6 +436,7 @@ interface Attributes {
   owner_path: string | null;
   tags_json: string | null;
   projects_json: string | null;
+  portal_url: string | null;
 }
 
 /**
@@ -462,6 +465,12 @@ function attributes(rec: Rec, scope: Scope): Attributes {
     // The flat projects[] list, uncollapsed — see projectsListJson's own comment for why this
     // is additive alongside tags_json rather than a replacement for it.
     projects_json: projectsListJson(rec),
+    // Wiz's own console link. IN THE SHARED DEFAULT RATHER THAN THE sca BRANCH, even though
+    // only Q_SCA selects it: `normalizeWizUrl` reads a key the other two scopes' nodes simply
+    // do not have and answers null, which is the same answer a per-scope branch would give
+    // with one more place to forget. If sast or secrets later gain the field, selecting it in
+    // their query is the whole change.
+    portal_url: normalizeWizUrl(rec["portalUrl"]),
   };
 
   if (scope === "sast") {
@@ -816,6 +825,7 @@ function makeRow(
     owner_path: attrs.owner_path,
     tags_json: attrs.tags_json,
     projects_json: attrs.projects_json,
+    portal_url: attrs.portal_url,
   };
 }
 
@@ -1031,6 +1041,10 @@ export function reconcile(
     row.owner_path = attrs.owner_path ?? row.owner_path;
     row.tags_json = attrs.tags_json ?? row.tags_json;
     row.projects_json = attrs.projects_json ?? row.projects_json;
+    // The Wiz console link, on the same never-erased footing as its neighbours: a scan that
+    // did not carry one must not blank a link an earlier scan captured. That is also the
+    // whole backfill — an open sca row picks one up on its next scan, and nothing migrates.
+    row.portal_url = attrs.portal_url ?? row.portal_url ?? null;
 
     // API-declared resolution closes a currently-open row.
     if (apiSaysResolved && row.status === STATUS_OPEN) {

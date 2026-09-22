@@ -26,6 +26,7 @@
 // storage addresses; `PersistOutcome` carries counts and scan ids only, and no thrown message
 // names a token or the contents of a record.
 
+import { normalizeWizUrl } from "../../../gas_shared/domain/wizUrl";
 import { isOrgWideProject, type Scope } from "../domain/config";
 import {
   baseRows,
@@ -266,6 +267,11 @@ function rowToLedger(r: Rec): LedgerRow {
     owner_path: s(r, "owner_path"),
     tags_json: s(r, "tags_json"),
     projects_json: s(r, "projects_json"),
+    // NOT `s(r, ...)` like its neighbours: this one becomes an href, and this function is
+    // where a row of the ledger TAB — a Google Sheet an operator can type into — turns back
+    // into a LedgerRow. It is the only place a hand-edited link can be caught before it
+    // reaches the wire. See gas_shared/domain/wizUrl.ts.
+    portal_url: normalizeWizUrl(r["portal_url"]),
   };
 }
 
