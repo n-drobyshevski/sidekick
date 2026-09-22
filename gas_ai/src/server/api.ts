@@ -135,6 +135,7 @@ import {
 } from "../domain/complianceOverview";
 import { dropUnselected, scopeFiveRs, withCountsFrom } from "../domain/complianceScope";
 import { fiveRsDerivedPosture } from "../domain/fiveRsPosture";
+import { landscapeDerivedPosture } from "../domain/landscapePosture";
 import { CANDIDATE_CATEGORIES, registerScopeSignature } from "../domain/registerScope";
 import * as settingsImpact from "../domain/settingsImpact";
 import { cleanFiveRsPins } from "../domain/settingsLogic";
@@ -2145,9 +2146,10 @@ function cachedComplianceModel(): Rec {
       // never from Wiz), so passing the unmerged array would silently report every
       // framework as uncollected.
       const merged = catalogue.map((f) => ({ ...f, selected: selected.indexOf(f.id) >= 0 }));
+      const kpis = complianceKpis(posture, policies);
       return {
         trees,
-        kpis: complianceKpis(posture, policies),
+        kpis,
         selected,
         // The Overview's four bands. Computed here rather than in the browser because the
         // client bundle cannot import the domain layer at all — every client-side copy of
@@ -2175,6 +2177,18 @@ function cachedComplianceModel(): Rec {
         // payload is already shipped whole and cached, so there is no second scope for a
         // mirror to reconcile against — computing it here instead buys nothing but risk.
         fiveRsPosture,
+        // THE ASSURANCE HERO'S OWN PERCENTAGE — derived over the controls that apply to
+        // this landscape, rather than the mean of Wiz's per-framework scores `kpis`
+        // carries. landscapePosture.ts says at length why those are two different claims
+        // and why both ship: the mean is what has a history (the trend line beside the hero
+        // draws it) and what the Wiz Scans page reports, so it is carried INSIDE this object
+        // rather than replaced anywhere.
+        //
+        // Built from `trees`, which are the 5Rs-scoped ones this payload renders — the same
+        // population as the register below the hero, which is the entire point. Under a
+        // project view they are the project's trees, so this figure narrows with the rest of
+        // the page rather than being the one number left describing the register.
+        landscapePosture: landscapeDerivedPosture(trees, kpis),
         coverage: coverageSummary(trees, merged),
         // POSTURE OVER TIME — one point per sync, every framework plus the cross-framework
         // mean, read off `sync_history`'s own column (domain/complianceTrend.ts). It replaces
