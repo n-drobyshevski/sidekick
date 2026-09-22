@@ -368,30 +368,38 @@ describe("the caching audit is per model, and the header states it", () => {
       H.cacheCalls.filter((c) => c.name === name).map((c) => c.layer);
 
     // Clock models: age buckets, SLA arithmetic and open exposure all drift within a day.
-    expect(layerOf("dsExecutive1")).toEqual(["cached"]);
+    //
+    // "dsExecutive1" -> "dsExecutive2", "dsMttr2" -> "dsMttr3", "dsSecrets1" -> "dsSecrets2",
+    // "dsHistory2" -> "dsHistory3" (MTTR delayed-entry package, all four below): each payload's
+    // Kaplan-Meier fields changed shape (new `q25`/`q75`/`reliableUntil`/`excludedPreEntry`/
+    // `maxObserved`, and existing `median`/`mean`/`restrictionTime` now read a reliability-cut,
+    // horizon-capped curve) — see each model's own cache-key comment in readModels.ts. The
+    // CLAIM every line below encodes is the LAYER a model caches in, not the spelling of its
+    // namespace, and that is unchanged by any of these bumps.
+    expect(layerOf("dsExecutive2")).toEqual(["cached"]);
     // "dsMttr1" -> "dsMttr2": the namespace was bumped when `remediation` gained its
-    // `slaConsumed` block. The CLAIM this line encodes is the LAYER the model caches in, not
-    // the spelling of its namespace, and that is unchanged — a warm entry from the old
-    // namespace carries no deciles, and a section missing for a cache reason reads as a
-    // register with nothing inside its SLA windows.
-    expect(layerOf("dsMttr2")).toEqual(["cached"]);
-    expect(layerOf("dsSecrets1")).toEqual(["cached"]);
+    // `slaConsumed` block. A warm entry from THAT old namespace carries no deciles, and a
+    // section missing for a cache reason reads as a register with nothing inside its SLA
+    // windows — the same shape of risk the newer dsMttr2 -> dsMttr3 bump above guards against.
+    expect(layerOf("dsMttr3")).toEqual(["cached"]);
+    expect(layerOf("dsSecrets2")).toEqual(["cached"]);
     // "dsRegister1" -> "dsRegister2": the namespace was bumped when the payload gained its
     // `population` block. The CLAIM these three lines encode is the LAYER each model caches
     // in, not the spelling of its namespace, and that is unchanged — a warm entry from the
     // old namespace has no population block, and a page drawing no provenance line at all
-    // over figures that have one is a silently missing caveat.
+    // over figures that have one is a silently missing caveat. (Unlike its three siblings
+    // above, `registerModel`'s own build never calls `kaplanMeier`, so the delayed-entry
+    // package left this namespace untouched.)
     expect(layerOf("dsRegister2")).toEqual(["cached", "cached", "cached"]);
 
     // Time-invariant models: dated by the ledger's own clock, so a stored copy stays true.
     expect(layerOf("dsProgram1")).toEqual(["durablyCached"]);
     expect(layerOf("dsRepos1")).toEqual(["durablyCached"]);
     // "dsHistory1" -> "dsHistory2": the namespace was bumped when the payload gained its
-    // per-register `movement` / `movementNote` blocks. The CLAIM this line encodes is the
-    // LAYER the model caches in, not the spelling of its namespace, and that is unchanged — a
-    // warm entry from the old namespace carries no movement block, and the new section would
-    // draw "no movement decomposition in this payload" over a window that is measurable.
-    expect(layerOf("dsHistory2")).toEqual(["durablyCached"]);
+    // per-register `movement` / `movementNote` blocks. A warm entry from THAT old namespace
+    // carries no movement block, and the new section would draw "no movement decomposition in
+    // this payload" over a window that is measurable.
+    expect(layerOf("dsHistory3")).toEqual(["durablyCached"]);
     expect(layerOf("dsStorage1")).toEqual(["durablyCached"]);
 
     // And nothing reached both layers, which is the failure the spelling-out above exists to
@@ -519,6 +527,29 @@ describe("mttrModel", () => {
   // `KMPoint` carries {t, s, atRisk, events}; the chart plots two of them, and the register
   // decides the array's length.
   it("ships the curve as {t, s} only", () => {
+    // MTTR delayed-entry package: the shared 8-row seed fails the Gebski reliability floor at
+    // its very first event (n(t) never reaches the required 50 near S=1 — see
+    // test/kmDelayedEntry.test.ts's own "first event already fails" case), so its curve is
+    // empty regardless of shape. This test needs a real point to check field-narrowing on, so
+    // it builds its own register-scale population instead: 55 rows resolving one per day
+    // (days 1..55) plus 5 still open, all `sca` — the same "pure removals, N > 50" arithmetic
+    // test/kmPerSev.test.ts's CRITICAL/LOW fixtures use, which clears the floor through day 51.
+    const ANCHOR = "2026-01-01T00:00:00Z";
+    const plusDays = (n: number) => new Date(Date.parse(ANCHOR) + n * DAY).toISOString();
+    const rows: BaseRow[] = [];
+    for (let day = 1; day <= 55; day++) {
+      rows.push(coincident(row({
+        finding_key: `big:${day}`, scope: "sca", severity: "HIGH",
+        first_seen: ANCHOR, resolved_at: plusDays(day),
+      })));
+    }
+    for (let i = 0; i < 5; i++) {
+      rows.push(coincident(row({
+        finding_key: `big-open:${i}`, scope: "sca", severity: "HIGH", first_seen: ANCHOR,
+      })));
+    }
+    H.rows = rows;
+
     const m = mttrModel(ALL) as any;
     expect(m.remediation.km.curve.length).toBeGreaterThan(0);
     expect(Object.keys(m.remediation.km.curve[0]).sort()).toEqual(["s", "t"]);
@@ -649,7 +680,7 @@ describe("effective SLA windows reach the models that publish them", () => {
     H.slaTargets = { CRITICAL: 90 };
     __resetModelMemosForTest();
     mttrModel(ALL);
-    const keys = H.cacheCalls.filter((c) => c.name === "dsMttr2").map((c) => JSON.stringify(c.params));
+    const keys = H.cacheCalls.filter((c) => c.name === "dsMttr3").map((c) => JSON.stringify(c.params));
     expect(new Set(keys).size).toBe(2);
   });
 });
@@ -706,7 +737,7 @@ describe("secretsModel has no severity axis", () => {
     secretsModel(ALL);
     secretsModel({ ...ALL, severities: ["CRITICAL"] });
     const keys = H.cacheCalls
-      .filter((c) => c.name === "dsSecrets1")
+      .filter((c) => c.name === "dsSecrets2")
       .map((c) => JSON.stringify(c.params));
     expect(new Set(keys).size).toBe(1);
   });
@@ -738,8 +769,15 @@ describe("secretsModel has no severity axis", () => {
   });
 
   it("censors the live credentials rather than dropping them", () => {
+    // MTTR delayed-entry package: the seeded scan log's only secrets scan is "sync-2" at
+    // 2026-03-01, so `ledgerClock("secrets").observedFrom` = 2026-03-01 — this register's
+    // tracking start. k2 was born 2026-01-05 and rotated 2026-02-05, 31 d later, entirely
+    // BEFORE tracking began (entry = Mar1 - Jan5 = 55 d > the 31 d exit) — an event this
+    // register could never have observed, so `kaplanMeier` drops it (excludedPreEntry) rather
+    // than counting it. k1 (born the same day, still VALID as of NOW = Mar 11) is unaffected:
+    // its exit (age 65 d) is well past its own entry (55 d), so it stays censored.
     const m = secretsModel(ALL) as any;
-    expect(m.timeToRevoke.events).toBe(1); // k2, confirmed dead
+    expect(m.timeToRevoke.events).toBe(0); // k2 — pre-entry excluded, not a confirmed death
     expect(m.timeToRevoke.censored).toBe(1); // k1, measured live
     expect(m.timeToRevoke.excludedUnmeasured).toBe(1); // k3, nobody looked
     expect(m.timeToRevoke.total).toBe(3);
@@ -1307,8 +1345,8 @@ describe("warmReadModels", () => {
     expect(report.skipped).toBe(0);
     expect(H.swept).toBe(1);
     expect(new Set(H.cacheCalls.map((c) => c.name))).toEqual(new Set([
-      "dsHistory2", "dsProgram1", "dsRepos1", "dsStorage1",
-      "dsExecutive1", "dsMttr2", "dsSecrets1", "dsRegister2",
+      "dsHistory3", "dsProgram1", "dsRepos1", "dsStorage1",
+      "dsExecutive2", "dsMttr3", "dsSecrets2", "dsRegister2",
     ]));
   });
 

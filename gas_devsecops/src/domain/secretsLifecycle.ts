@@ -94,7 +94,7 @@
 //     null, says that no twin statistics were recorded rather than printing zeros. Pure: no
 //     clock, no locale, no I/O.
 
-import { RESOLVED_STATUSES, STATUS_OPEN, STATUS_RESOLVED } from "./config";
+import { RESOLVED_STATUSES, RMST_HORIZON_DAYS, STATUS_OPEN, STATUS_RESOLVED } from "./config";
 import type { LedgerRow } from "./ledgerTypes";
 import {
   kaplanMeier,
@@ -102,7 +102,7 @@ import {
   type KMResult,
   type RemediationRow,
 } from "./remediation";
-import { cmp, parseTs, present } from "./util";
+import { cmp, entryDaysFrom, parseTs, present } from "./util";
 
 /** Milliseconds in a day — the same constant lifecycle.ts keeps privately for mttr/age. */
 const DAY_MS = 86_400_000;
@@ -227,6 +227,15 @@ export interface TimeToRevokeOptions {
   now: number;
   /** Revocation target in days. A chosen operational goal, not a measurement — decision 7. */
   sla?: number;
+  /**
+   * MTTR delayed-entry package: ISO tracking-start for the secrets register (the earliest saved
+   * secrets scan — `server/readModels.ts`'s `ledgerClock("secrets").observedFrom`). This
+   * register's own clock ALSO starts at `first_seen` (the `born` variable below, same as
+   * decision 4/5's detection-to-rotation window), so the entry offset uses the identical
+   * `entryDaysFrom` origin the detection clock does elsewhere in this product — there is no
+   * second, secrets-specific formula to keep in sync.
+   */
+  trackingStart?: string | null;
 }
 
 export interface TimeToRevoke {
@@ -277,6 +286,10 @@ export function timeToRevoke(rows: readonly SecretRow[], opts: TimeToRevokeOptio
       excludedNoClock += 1;
       continue;
     }
+    // MTTR delayed-entry package: this row's entry offset, on the SAME first_seen-relative
+    // clock `days`/`age` below measure from — computed once per row since both the event and
+    // the censored branch need it.
+    const entryDays = entryDaysFrom(opts.trackingStart, row.first_seen);
     const died = parseTs(row.rotated_at);
     if (died !== null) {
       const days = (died - born) / DAY_MS;
@@ -290,6 +303,7 @@ export function timeToRevoke(rows: readonly SecretRow[], opts: TimeToRevokeOptio
         status: STATUS_RESOLVED,
         mttr_days: days,
         age_days: null,
+        entry_days: entryDays,
       });
       continue;
     }
@@ -307,10 +321,22 @@ export function timeToRevoke(rows: readonly SecretRow[], opts: TimeToRevokeOptio
       excludedNoClock += 1;
       continue;
     }
-    projected.push({ severity: null, status: STATUS_OPEN, mttr_days: null, age_days: age });
+    projected.push({
+      severity: null,
+      status: STATUS_OPEN,
+      mttr_days: null,
+      age_days: age,
+      entry_days: entryDays,
+    });
   }
 
-  const km = kaplanMeier(projected);
+  // {horizonDays, minRisk: true} — same call shape every kaplanMeier site in this product
+  // makes (server/readModels.ts's own comment on its six call sites): the RMST is capped at
+  // RMST_HORIZON_DAYS and the curve/median/p90 are cut at the Gebski et al. reliability
+  // boundary, so a secrets register with heavy left truncation (few validated rows, most of
+  // this tenant's population is UNKNOWN) does not publish a headline reading past the point
+  // its own risk set can support.
+  const km = kaplanMeier(projected, { horizonDays: RMST_HORIZON_DAYS, minRisk: true });
   let withinSla = 0;
   for (const d of eventDays) if (d <= sla) withinSla += 1;
 

@@ -54,9 +54,14 @@ import {
   type RiskClass,
   type RiskRow,
 } from "./program";
-import { kmCurve, kmMedianFromCurve } from "./remediation";
+import {
+  kmCurveEntry,
+  kmMedianFromCurve,
+  reliableUntilFromCurve,
+  type KMObservation,
+} from "./remediation";
 import { normalizeSeverity } from "./severity";
-import { maxNum, median, minNum, parseTs, quantile, toIso, type Rec } from "./util";
+import { entryDaysFrom, maxNum, median, minNum, parseTs, quantile, toIso, type Rec } from "./util";
 
 export interface TrendPoint {
   date: string; // the scan ts (ISO)
@@ -480,6 +485,56 @@ export function medianMttrByGroupTrend(
   });
 }
 
+// --------------------------------------------------------------------------- #
+//  MTTR delayed-entry package: the shared bit behind every KM replay below
+// --------------------------------------------------------------------------- #
+
+/**
+ * `opts` every KM replay below (`kmMedianByGroupTrend` / `withKmMedian` / `kmMedianAsOf`) takes
+ * for the delayed-entry / reliability-cut package, on top of whichever hideNoFix/scope fields
+ * it already had:
+ *
+ *   trackingStartByScope  ISO tracking-start PER SCOPE (server/readModels.ts's
+ *                         `ledgerClock(scope).observedFrom`) — a row's entry offset is
+ *                         `entryDaysFrom(trackingStartByScope[row.scope], row.first_seen)`,
+ *                         relative to the TRACKING START, never to the as-of replay date these
+ *                         functions walk (the plan's own instruction this package shipped
+ *                         against: an old finding's entry age does not shrink as the replay
+ *                         date advances toward it). Omitted entirely: every row's entry is 0,
+ *                         same as before this package.
+ *   minRisk               Apply the Gebski et al. reliability cut (remediation.ts's
+ *                         `reliableUntilFromCurve`) before reading the median off the curve —
+ *                         same boundary `server/readModels.ts`'s `KM_OPTS` applies to the
+ *                         CURRENT-state estimate, so a week-over-week comparison
+ *                         (`weekTrend`, `readModels.ts`) is not reading a cut "now" against an
+ *                         uncut "then". Default false: no cut, matching every call site that
+ *                         existed before this package.
+ */
+export interface TrendKmOptions {
+  trackingStartByScope?: Partial<Record<Scope, string | null>>;
+  minRisk?: boolean;
+}
+
+/**
+ * The one place a `{event, risk}` population built by a KM replay turns into a median — so the
+ * three functions below cannot disagree on how entry or the reliability cut are applied.
+ * `events`/`risk` already carry each observation's entry (0 where `trackingStartByScope` was
+ * never supplied, via `entryDaysFrom`'s own default — see each call site), and a row whose
+ * exit fell at-or-before its own entry has ALREADY been dropped by the caller (mirroring
+ * `kaplanMeierExtended`'s `excludedPreEntry` rule — see that function's comment on why
+ * `kmCurveEntry` requires entry < exit for every observation it is handed).
+ */
+function kmMedianOf(
+  events: KMObservation[],
+  risk: KMObservation[],
+  opts: TrendKmOptions,
+): number | null {
+  const curve = kmCurveEntry(events, risk);
+  if (!opts.minRisk) return kmMedianFromCurve(curve);
+  const cutAt = reliableUntilFromCurve(curve);
+  return kmMedianFromCurve(cutAt === null ? [] : curve.filter((p) => p.t <= cutAt));
+}
+
 /**
  * Kaplan–Meier median time-to-remediation per breakdown group over time — the censoring-aware
  * companion of `medianMttrByGroupTrend`, and the MTTR page's default series. For each saved
@@ -487,13 +542,15 @@ export function medianMttrByGroupTrend(
  * as of that instant (resolved_at <= ts) are events at their stored `mttr_days`; rows still
  * open as of ts (first_seen <= ts, not resolved by ts) are right-censored at age
  * (ts − first_seen)/day. The KM median is the smallest event time whose survival has fallen
- * to <= 0.5 (`kmMedianFromCurve` over `kmCurve` — the same estimator `remediation.kaplanMeier`
- * and `withKmMedian` use, shared so the three can't drift), rounded to 3 decimals; null before
- * any event or when survival never reaches 0.5 (too much censoring) — where the curve never
- * reaches half, the register publishes the lower bound elsewhere rather than a number here.
+ * to <= 0.5 (`kmMedianFromCurve` over `kmCurveEntry` — the same estimator `remediation.
+ * kaplanMeier` and `withKmMedian` use, shared so the three can't drift), rounded to 3 decimals;
+ * null before any event or when survival never reaches 0.5 (too much censoring) — where the
+ * curve never reaches half, the register publishes the lower bound elsewhere rather than a
+ * number here.
  *
  * opts.hideNoFix drops an open-as-of-ts finding from the CENSORED risk set when it was still
- * awaiting a vendor fix then; resolved rows (events) are always kept.
+ * awaiting a vendor fix then; resolved rows (events) are always kept. See `TrendKmOptions` for
+ * the delayed-entry / reliability-cut fields this package added.
  */
 export function kmMedianByGroupTrend(
   scans: Rec[],
@@ -506,7 +563,7 @@ export function kmMedianByGroupTrend(
     otherLabel?: string;
     hideNoFix?: boolean;
     scope?: Scope;
-  } = {},
+  } & TrendKmOptions = {},
 ): MttrByGroupPoint[] {
   const includeOther = opts.includeOther ?? true;
   const otherLabel = opts.otherLabel ?? "Other";
@@ -524,6 +581,9 @@ export function kmMedianByGroupTrend(
     resolvedAt: parseTs(r["resolved_at"]),
     mttr: mttrOf(r),
     fixAvail: parseTs(r["fix_available_at"]),
+    // MTTR delayed-entry package: relative to the TRACKING START, never to `ts` below —
+    // TrendKmOptions's own note.
+    entry: entryDaysFrom(opts.trackingStartByScope?.[r["scope"] as Scope], r["first_seen"]),
     ...foldGroup(keyOf(r), inGroup, otherLabel, includeOther),
   }));
 
@@ -531,26 +591,29 @@ export function kmMedianByGroupTrend(
   const names = hasOther ? [...groups, otherLabel] : groups;
 
   return times.map((ts) => {
-    const events: Record<string, number[]> = {}; // per group: resolved-by-ts mttr_days
-    const risk: Record<string, number[]> = {}; // per group: risk set (events + censored ages)
+    const events: Record<string, KMObservation[]> = {}; // per group: resolved-by-ts mttr_days
+    const risk: Record<string, KMObservation[]> = {}; // per group: risk set (events + censored)
     for (const r of parsed) {
       if (!r.kept) continue;
       if (r.resolvedAt !== null && r.resolvedAt <= ts.ms) {
         // Resolved by ts: an event at its final mttr_days (a null-mttr resolution drops out).
-        if (r.mttr !== null) {
-          (events[r.group] ??= []).push(r.mttr);
-          (risk[r.group] ??= []).push(r.mttr);
+        // A row resolved at-or-before its own entry was never observable by this register —
+        // drop it, mirroring kaplanMeierExtended's excludedPreEntry rule.
+        if (r.mttr !== null && r.mttr > r.entry) {
+          (events[r.group] ??= []).push({ t: r.mttr, entry: r.entry });
+          (risk[r.group] ??= []).push({ t: r.mttr, entry: r.entry });
         }
       } else if (r.first !== null && r.first <= ts.ms) {
         // Open as of ts: right-censored at its current age — unless hiding no-fix rows and
         // this one was still awaiting a vendor fix as of ts (not yet on the clock).
         if (hideNoFix && awaitingFixAsOf(r.first, r.resolvedAt, r.fixAvail, ts.ms)) continue;
-        (risk[r.group] ??= []).push((ts.ms - r.first) / DAY_MS);
+        const age = (ts.ms - r.first) / DAY_MS;
+        if (age > r.entry) (risk[r.group] ??= []).push({ t: age, entry: r.entry });
       }
     }
     const byGroup: Record<string, number | null> = {};
     for (const name of names) {
-      byGroup[name] = round3(kmMedianFromCurve(kmCurve(events[name] ?? [], risk[name] ?? [])));
+      byGroup[name] = round3(kmMedianOf(events[name] ?? [], risk[name] ?? [], opts));
     }
     return { date: ts.iso, byGroup };
   });
@@ -693,7 +756,7 @@ export function withKmMedian<T extends { date: string; reconstructed?: boolean }
   points: T[],
   base: Rec[],
   severities: string[] | null = null,
-  opts: { hideNoFix?: boolean; maxReconstructed?: number; scope?: Scope } = {},
+  opts: { hideNoFix?: boolean; maxReconstructed?: number; scope?: Scope } & TrendKmOptions = {},
 ): (T & { km_median_days: number | null })[] {
   const hideNoFix = opts.hideNoFix ?? false;
   const rows = scopeRows(base, severities, opts.scope);
@@ -702,6 +765,9 @@ export function withKmMedian<T extends { date: string; reconstructed?: boolean }
     resolvedAt: parseTs(r["resolved_at"]),
     mttr: mttrOf(r),
     fixAvail: parseTs(r["fix_available_at"]),
+    // MTTR delayed-entry package: relative to the TRACKING START, never to `d` below —
+    // TrendKmOptions's own note.
+    entry: entryDaysFrom(opts.trackingStartByScope?.[r["scope"] as Scope], r["first_seen"]),
   }));
 
   // Which point indices actually get a KM build. Default: all. With a cap, thin only the
@@ -713,20 +779,22 @@ export function withKmMedian<T extends { date: string; reconstructed?: boolean }
     const d = parseTs(p.date);
     let med: number | null = null;
     if (d !== null) {
-      const events: number[] = []; // resolved by d, at their stored mttr_days
-      const risk: number[] = []; // the risk set: events + open-as-of-d censored ages
+      const events: KMObservation[] = []; // resolved by d, at their stored mttr_days
+      const risk: KMObservation[] = []; // the risk set: events + open-as-of-d censored ages
       for (const r of parsed) {
         if (r.resolvedAt !== null && r.resolvedAt <= d) {
-          if (r.mttr !== null) {
-            events.push(r.mttr);
-            risk.push(r.mttr);
+          // A row resolved at-or-before its own entry was never observable by this register.
+          if (r.mttr !== null && r.mttr > r.entry) {
+            events.push({ t: r.mttr, entry: r.entry });
+            risk.push({ t: r.mttr, entry: r.entry });
           }
         } else if (r.first !== null && r.first <= d) {
           if (hideNoFix && awaitingFixAsOf(r.first, r.resolvedAt, r.fixAvail, d)) continue;
-          risk.push((d - r.first) / DAY_MS);
+          const age = (d - r.first) / DAY_MS;
+          if (age > r.entry) risk.push({ t: age, entry: r.entry });
         }
       }
-      med = kmMedianFromCurve(kmCurve(events, risk));
+      med = kmMedianOf(events, risk, opts);
     }
     return { ...p, km_median_days: round3(med) };
   });
@@ -744,7 +812,7 @@ export function kmMedianAsOf(
   base: Rec[],
   severities: string[] | null,
   d: number | null,
-  opts: { hideNoFix?: boolean; scope?: Scope } = {},
+  opts: { hideNoFix?: boolean; scope?: Scope } & TrendKmOptions = {},
 ): number | null {
   if (d === null || !base.length) return null;
   const hideNoFix = opts.hideNoFix ?? false;
@@ -752,15 +820,19 @@ export function kmMedianAsOf(
   // returned above for an empty base), and so does this. `scopeRows` collapses to the same
   // thing on a non-empty base.
   const rows = scopeRows(base, severities, opts.scope);
-  const events: number[] = []; // resolved by d, at their stored mttr_days
-  const risk: number[] = []; // risk set: events + open-as-of-d censored ages
+  const events: KMObservation[] = []; // resolved by d, at their stored mttr_days
+  const risk: KMObservation[] = []; // risk set: events + open-as-of-d censored ages
   for (const r of rows) {
+    // MTTR delayed-entry package: relative to the TRACKING START, never to `d` — TrendKmOptions's
+    // own note.
+    const entry = entryDaysFrom(opts.trackingStartByScope?.[r["scope"] as Scope], r["first_seen"]);
     const resolvedAt = parseTs(r["resolved_at"]);
     if (resolvedAt !== null && resolvedAt <= d) {
       const mttr = mttrOf(r);
-      if (mttr !== null) {
-        events.push(mttr);
-        risk.push(mttr);
+      // A row resolved at-or-before its own entry was never observable by this register.
+      if (mttr !== null && mttr > entry) {
+        events.push({ t: mttr, entry });
+        risk.push({ t: mttr, entry });
       }
       continue;
     }
@@ -769,10 +841,11 @@ export function kmMedianAsOf(
       if (hideNoFix && awaitingFixAsOf(first, resolvedAt, parseTs(r["fix_available_at"]), d)) {
         continue;
       }
-      risk.push((d - first) / DAY_MS);
+      const age = (d - first) / DAY_MS;
+      if (age > entry) risk.push({ t: age, entry });
     }
   }
-  return round3(kmMedianFromCurve(kmCurve(events, risk)));
+  return round3(kmMedianOf(events, risk, opts));
 }
 
 // --------------------------------------------------------------------------- the SLA family

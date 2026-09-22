@@ -106,6 +106,7 @@ import {
   DEFAULT_RISK_RULE,
   DEFAULT_SAST_RISK_RULE,
   RESOLVED_STATUSES,
+  RMST_HORIZON_DAYS,
   SCOPES,
   SEVERITY_ORDER,
   ruleForScope,
@@ -299,7 +300,13 @@ function baseSnapshot(): BaseSnapshot {
   const version = dataVersion();
   if (!baseMemo || baseMemo.version !== version) {
     const now = Date.now();
-    baseMemo = { version, now, rows: loadBaseRows({ now }) };
+    // MTTR delayed-entry package: every row's DETECTION-clock entry age is computed HERE, once,
+    // off each scope's OWN tracking start — never Date.now() (see `ledgerClock`'s own header on
+    // why a stored fact and the wall clock must not be mixed).
+    baseMemo = {
+      version, now,
+      rows: loadBaseRows({ now, trackingStartByScope: trackingStartByScopeMap() }),
+    };
   }
   return baseMemo;
 }
@@ -361,6 +368,45 @@ function buildClock(scope: Scope | null): LedgerClock {
     ? { asOf: Date.now(), asOfSource: "wallClock", observedFrom: earliestIso }
     : { asOf: newest, asOfSource: "scan", observedFrom: earliestIso };
 }
+
+/**
+ * ISO tracking-start per scope, off `ledgerClock` (memoized per `dataVersion()`, so calling
+ * this from several read models in one execution costs nothing extra). The one place every
+ * `loadBaseRows` / `loadTrend` / `kmMedianAsOf` caller in this file gets its `trackingStart{,
+ * ByScope}` option from, so they cannot read three different tracking starts for the same
+ * execution.
+ */
+function trackingStartByScopeMap(): Partial<Record<Scope, string | null>> {
+  const out: Partial<Record<Scope, string | null>> = {};
+  for (const scope of SCOPES) out[scope] = ledgerClock(scope).observedFrom;
+  return out;
+}
+
+/**
+ * `trackingSince` — the payload field, not the internal `trackingStartByScope` map: ISO
+ * tracking-start per scope CURRENTLY IN VIEW (one scope when `n.scope` narrows it, all three
+ * otherwise), with any scope carrying no scans yet simply absent from the map (never a
+ * fabricated key with a null date). `mttrModel` and `executiveModel` are the two payloads that
+ * publish this — see their own comments — so the page can caption "Tracking since <date> —
+ * earlier fixes are not visible" beside a half-life it now knows may be left-truncated.
+ */
+function trackingSinceFor(n: NormParams): Partial<Record<Scope, string>> {
+  const scopes = n.scope ? [n.scope] : [...SCOPES];
+  const out: Partial<Record<Scope, string>> = {};
+  for (const scope of scopes) {
+    const iso = ledgerClock(scope).observedFrom;
+    if (iso !== null) out[scope] = iso;
+  }
+  return out;
+}
+
+/**
+ * The `KMOptions` every `kaplanMeier` call in this file (and `secretsLifecycle.ts`'s own) now
+ * passes — MTTR delayed-entry package. One shared constant rather than six repeated literals,
+ * so the day `RMST_HORIZON_DAYS` or the reliability cut's on/off switch changes, there is
+ * exactly one call site to update rather than an audit of every `kaplanMeier(...)` in the file.
+ */
+const KM_OPTS = { horizonDays: RMST_HORIZON_DAYS, minRisk: true } as const;
 
 // --------------------------------------------------------------------------------------- //
 //  Row pipelines
@@ -519,12 +565,18 @@ export function signalCoverage(rows: BaseRow[]): RiskSignalCoverage {
 export interface ShippedKM {
   /** `{t, s}` only. The estimator needs `atRisk`/`events` to BUILD the curve; the chart
    *  plots two fields, and one point per distinct resolution time means the register decides
-   *  this array's length. Narrowed here because it is a transfer concern, not a domain one. */
+   *  this array's length. Narrowed here because it is a transfer concern, not a domain one.
+   *  MTTR delayed-entry package: this is already the RELIABILITY-CUT curve, not the full one —
+   *  `kaplanMeier`'s own `curve` field IS the cut curve when `opts.minRisk` is set (which every
+   *  caller of `shipKM` now passes via `KM_OPTS`), so nothing here has to cut it a second time. */
   curve: { t: number; s: number }[];
   median: number | null;
   /** Published INSTEAD of a median where the curve never reaches half. Never collapsed into
    *  `median` — "> 41 d" and "41 d" are different claims. */
   medianLowerBound: number | null;
+  /** Computed off the SAME (already-cut) `km.curve` `median` reads — see this interface's own
+   *  `curve` note. Was already true before this package; stated explicitly now that "the curve"
+   *  is no longer simply "every observed event". */
   p90: number | null;
   mean: number | null;
   meanTruncated: boolean;
@@ -532,6 +584,20 @@ export interface ShippedKM {
   events: number;
   censored: number;
   total: number;
+  /** The time by which 25% of findings were remediated, off the cut curve. Null under heavy
+   *  censoring/truncation, same as `median`/`p90`. */
+  q25: number | null;
+  /** The time by which 75% of findings were remediated, off the cut curve. */
+  q75: number | null;
+  /** The Gebski et al. reliability boundary this curve is cut at — see `kaplanMeier`'s own
+   *  docstring. Null when nothing on the curve was reliable enough to publish ANY of it. */
+  reliableUntil: number | null;
+  /** Rows dropped because their own exit fell at-or-before their own entry — never observable
+   *  by this register at all. 0 when nothing was excluded. */
+  excludedPreEntry: number;
+  /** The max exit time across the observed population, UNCAPPED by the reliability cut or the
+   *  RMST horizon — what `restrictionTime` unconditionally meant before this package. */
+  maxObserved: number | null;
 }
 
 function shipKM(km: KMResult): ShippedKM {
@@ -546,13 +612,18 @@ function shipKM(km: KMResult): ShippedKM {
     events: km.events,
     censored: km.censored,
     total: km.total,
+    q25: km.q25 ?? null,
+    q75: km.q75 ?? null,
+    reliableUntil: km.reliableUntil ?? null,
+    excludedPreEntry: km.excludedPreEntry ?? 0,
+    maxObserved: km.maxObserved ?? null,
   };
 }
 
 /** The KM stats WITHOUT the curve, plus the segment counts that say how much of the
  *  population was measured at all. gas/'s `latencySummary`, scoped. */
 function latencySummary(rows: BaseRow[], now: number, scope: Scope | undefined): Rec {
-  const km = kaplanMeier(latencyView(rows, "detection", now, { scope }));
+  const km = kaplanMeier(latencyView(rows, "detection", now, { scope }), KM_OPTS);
   return {
     median: km.median,
     medianLowerBound: km.medianLowerBound,
@@ -621,7 +692,7 @@ function buildMttr(n: NormParams): Rec {
       .filter((s) => seen.indexOf(s) >= 0)
       .concat(seen.filter((s) => (SEVERITY_ORDER as readonly string[]).indexOf(s) < 0));
     for (const s of ordered) {
-      const k = kaplanMeier(bySev[s]!);
+      const k = kaplanMeier(bySev[s]!, KM_OPTS);
       kmMedianPerSev[s] = k.median;
       kmLowerBoundPerSev[s] = k.medianLowerBound;
       kmP90PerSev[s] = kmQuantileFromCurve(k.curve, 0.9);
@@ -634,6 +705,14 @@ function buildMttr(n: NormParams): Rec {
   // here would leave only the findings that got a fix and report how fast those were fixed.
   const scaScoped = scoped.filter((r) => r.scope === "sca");
   const scaVisible = rows.filter((r) => r.scope === "sca");
+  // The actionable clock's OWN tracking start: entry is relative to `actionable_from`, not
+  // `first_seen`, so it is computed fresh here rather than reusing `entry_days` off the row
+  // (`actionableView`'s own comment). One projection serves both readers below —
+  // `openPastSla` ignores `entry_days` entirely, but there is no reason to project the same
+  // rows twice just to hand it a copy without one.
+  const scaActionable = actionableView(scaVisible, {
+    trackingStart: ledgerClock("sca").observedFrom,
+  });
 
   return {
     asOf: snap.now,
@@ -648,7 +727,7 @@ function buildMttr(n: NormParams): Rec {
     remediation: {
       pctiles: mttrPercentiles(rows),
       buckets: resolutionBuckets(rows),
-      km: shipKM(kaplanMeier(rows)),
+      km: shipKM(kaplanMeier(rows, KM_OPTS)),
       kmMedianPerSev,
       kmP90PerSev,
       kmLowerBoundPerSev,
@@ -696,14 +775,17 @@ function buildMttr(n: NormParams): Rec {
         scope: "sca" as const,
         rowCount: scaVisible.length,
         notMeasured: rows.length - scaVisible.length,
-        openPastSla: openPastSla(actionableView(scaVisible), { slaTargets: n.slaTargets }),
-        km: shipKM(kaplanMeier(actionableView(scaVisible))),
+        openPastSla: openPastSla(scaActionable, { slaTargets: n.slaTargets }),
+        km: shipKM(kaplanMeier(scaActionable, KM_OPTS)),
         /** How long we waited for a fix to EXIST, over the pre-toggle sca population. Pairs
          *  additively with the clock above: exposure = latency + actionable. */
         vendorLatency: latencySummary(scaScoped, snap.now, "sca"),
       },
     },
     signalCoverage: signalCoverage(rows),
+    // MTTR delayed-entry package: ISO tracking-start per scope in view, so the page can caption
+    // "Tracking since <date>" beside a half-life that may be left-truncated. See its own note.
+    trackingSince: trackingSinceFor(n),
   };
 }
 
@@ -714,13 +796,20 @@ export function mttrModel(p?: ModelParams): Rec {
   // figures are drawn — a chart absent for a cache reason reads as a register with nothing
   // inside its windows.
   //
+  // "dsMttr2" -> "dsMttr3" (MTTR delayed-entry package): every `ShippedKM` in this payload
+  // gained `q25`/`q75`/`reliableUntil`/`excludedPreEntry`/`maxObserved`, `median`/`mean`/
+  // `restrictionTime` now read a reliability-cut, horizon-capped curve rather than the
+  // uncut one, and the payload gained `trackingSince`. A warm dsMttr2 entry has none of the
+  // new fields and carries the OLD numbers under the field names the page still reads —
+  // silently wrong rather than silently missing, which is worse.
+  //
   // `slaTargets` JOINS THE KEY (not just `keyOf`'s base four) because this compute reads it —
   // `openPastSla`, `agingDistribution` and `mttrFromLedger`'s `sla_target`/`sla_pct` all take
   // it as an argument below. Without it in the key, an operator saving a new Deadlines window
   // would keep serving the OLD attainment figures for up to `CLOCK_TTL_SEC`, off a cache entry
   // whose params look identical to the one now in effect. `secretsModel`'s own key (below)
   // shows the mirror rule: a param the compute does not read never joins a key either.
-  return cached("dsMttr2", { ...keyOf(n), slaTargets: n.slaTargets }, () => buildMttr(n), CLOCK_TTL_SEC);
+  return cached("dsMttr3", { ...keyOf(n), slaTargets: n.slaTargets }, () => buildMttr(n), CLOCK_TTL_SEC);
 }
 
 // --------------------------------------------------------------------------------------- //
@@ -757,7 +846,7 @@ function buildExecutive(n: NormParams): Rec {
 
   const byScope = (n.scope ? [n.scope] : [...SCOPES]).map((scope) => {
     const sub = rows.filter((r) => r.scope === scope);
-    const km = kaplanMeier(sub);
+    const km = kaplanMeier(sub, KM_OPTS);
     return {
       group: scope,
       dimension: "scope",
@@ -766,6 +855,10 @@ function buildExecutive(n: NormParams): Rec {
       resolved: sub.filter((r) => !isOpen(r.status)).length,
       kmMedian: km.median,
       kmMedianLowerBound: km.medianLowerBound,
+      // MTTR delayed-entry package: the "25% fixed within" figure — the honest thing to show
+      // beside a null `kmMedian` under the reliability cut, same reasoning as `mttrModel`'s
+      // per-severity `kmPerSev`.
+      kmQ25: km.q25 ?? null,
       awaiting: awaitingVendorFix(sub).overall,
     };
   });
@@ -786,6 +879,8 @@ function buildExecutive(n: NormParams): Rec {
     movement: openMovement(rows, n),
     tiers: riskTierStats(scopedTierRows(rows), undefined),
     signalCoverage: signalCoverage(rows),
+    // MTTR delayed-entry package — see `mttrModel`'s matching field for the caption it feeds.
+    trackingSince: trackingSinceFor(n),
   };
 }
 
@@ -804,7 +899,16 @@ function weekTrend(scoped: BaseRow[], n: NormParams, now: number): Rec | null {
   const weekAgo = now - WEEK_MS;
   if (!Number.isFinite(earliest) || earliest > weekAgo) return null;
   const base = scoped as unknown as Rec[];
-  const opts = { hideNoFix: !n.showNoFix, ...(n.scope ? { scope: n.scope } : {}) };
+  // MTTR delayed-entry package: `minRisk: true` so this comparison "compares like with like"
+  // against the CURRENT KM median shown elsewhere on this page (which goes through the same
+  // reliability cut via `KM_OPTS`) — otherwise a cut "now" could be compared against an uncut
+  // "a week ago", or vice versa.
+  const opts = {
+    hideNoFix: !n.showNoFix,
+    ...(n.scope ? { scope: n.scope } : {}),
+    trackingStartByScope: trackingStartByScopeMap(),
+    minRisk: true,
+  };
   const current = kmMedianAsOf(base, n.severities, now, opts);
   const previous = kmMedianAsOf(base, n.severities, weekAgo, opts);
   if (current === null || previous === null) return null;
@@ -935,8 +1039,13 @@ export function executiveModel(p?: ModelParams): Rec {
   const n = norm(p);
   // `slaTargets` joins the key because `fixNext` (inside `buildExecutive`) reads it — see
   // `mttrModel`'s matching comment for why a param the compute reads has to be in the key.
+  //
+  // "dsExecutive1" -> "dsExecutive2" (MTTR delayed-entry package): `byScope` rows gained
+  // `kmQ25` and their `kmMedian`/`kmMedianLowerBound` now read a reliability-cut curve; the
+  // payload gained `trackingSince`. Same "silently wrong beats silently missing" reasoning as
+  // `mttrModel`'s own bump.
   return cached(
-    "dsExecutive1",
+    "dsExecutive2",
     { ...keyOf(n), slaTargets: n.slaTargets },
     () => buildExecutive(n),
     CLOCK_TTL_SEC,
@@ -1402,7 +1511,13 @@ function buildSecrets(n: NormParams): Rec {
     open: rows.filter((r) => isOpen(r.status)).length,
     coverage: validationCoverage(secretRows),
     validity: postDetectionValidityRate(secretRows),
-    timeToRevoke: timeToRevoke(secretRows, { now: snap.now }),
+    // MTTR delayed-entry package: `trackingStart` is this register's own scan history, not
+    // `snap.now` — `secretsLifecycle.ts`'s `TimeToRevokeOptions.trackingStart` note explains
+    // why the entry offset shares the detection clock's origin (`first_seen`) here too.
+    timeToRevoke: timeToRevoke(secretRows, {
+      now: snap.now,
+      trackingStart: ledgerClock("secrets").observedFrom,
+    }),
     removalVsRotation: removalVsRotation(secretRows),
     segments: {
       validation_state: bySegment(secretRows, "validation_state"),
@@ -1424,8 +1539,14 @@ export function secretsModel(p?: ModelParams): Rec {
   const n = norm(p);
   // The key omits `severities` because the model does. Carrying a param the compute ignores
   // would mint one entry per severity selection, all holding the same bytes.
+  //
+  // "dsSecrets1" -> "dsSecrets2" (MTTR delayed-entry package): `timeToRevoke.km` now carries
+  // `q25`/`q75`/`reliableUntil`/`excludedPreEntry`/`maxObserved`, and its `median`/`p90`/
+  // `mean`/`restrictionTime` read a reliability-cut, horizon-capped curve — this register's
+  // own coverage numbers (mostly UNKNOWN validation state) make the cut bite harder here than
+  // anywhere else in the product, so a warm dsSecrets1 entry would be the most misleading one.
   return cached(
-    "dsSecrets1",
+    "dsSecrets2",
     { scope: "secrets", showNoFix: n.showNoFix },
     () => buildSecrets(n),
     CLOCK_TTL_SEC,
@@ -1712,7 +1833,7 @@ function buildHistory(n: NormParams): Rec {
       // reads is the next reader's trap (CLAUDE.md's "a settings key nothing reads is worse
       // than no key", applied to a payload field) — so `km` is the only median this page can
       // publish, and where the curve never reaches half `medianLowerBound` is what is true.
-      km: shipKM(kaplanMeier(rows)),
+      km: shipKM(kaplanMeier(rows, KM_OPTS)),
     },
     // `mttrPageTrendSlice` reads both of these keys.
     history: listHistory(),
@@ -1733,11 +1854,17 @@ function trendFor(n: NormParams, all: BaseRow[]): Rec[] {
   // PRE-TOGGLE rows on purpose: `loadTrend` excludes no-fix findings AS OF each date, so a
   // finding whose fix landed in March re-enters the series at March. Filtering up front would
   // delete it from the whole history instead.
+  //
+  // MTTR delayed-entry package: `minRisk: true` so the KM-median LINE this trend draws reads
+  // on the same reliability standard as every other KM figure this app publishes — see
+  // `weekTrend`'s matching comment.
   return loadTrend({
     severities: n.severities,
     showNoFix: n.showNoFix,
     base: scopedRows(all, n),
     ...(n.scope ? { scope: n.scope } : {}),
+    trackingStartByScope: trackingStartByScopeMap(),
+    minRisk: true,
   });
 }
 
@@ -1763,7 +1890,12 @@ export function historyModel(p?: ModelParams): Rec {
   // per register. A warm dsHistory1 entry carries neither, and this page's new section would
   // draw its empty state — "no movement decomposition in this payload" — over a window that is
   // perfectly measurable, for up to a week of durable-store MAX_AGE.
-  return durablyCached("dsHistory2", keyOf(n), () => buildHistory(n));
+  //
+  // "dsHistory2" -> "dsHistory3" (MTTR delayed-entry package): `kpis.km` gained
+  // `q25`/`q75`/`reliableUntil`/`excludedPreEntry`/`maxObserved`, and its `median`/`mean`/
+  // `restrictionTime` now read a reliability-cut, horizon-capped curve — the same shape change
+  // `mttrModel`'s own bump documents.
+  return durablyCached("dsHistory3", keyOf(n), () => buildHistory(n));
 }
 
 // --------------------------------------------------------------------------------------- //

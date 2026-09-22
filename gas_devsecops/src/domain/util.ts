@@ -155,6 +155,30 @@ export function nowIso(now?: number): string {
   return toIso(now ?? Date.now())!;
 }
 
+const ENTRY_DAY_MS = 86_400_000;
+
+/**
+ * Delayed-entry offset, in days: how old a row already was, ON ITS OWN CLOCK, the day tracking
+ * for it started — `max(0, trackingStart - origin) / DAY_MS`, or 0 when either timestamp is
+ * missing or unparseable (remediation.ts's RemediationRow.entry_days carries the same
+ * absent/null/<=0-means-0 rule; this is the formula that rule is computed BY).
+ *
+ * ONE FORMULA, THREE ORIGINS. Every clock this register measures needs this same delayed-entry
+ * correction, but each measures a different origin: `ledgerCore.ts`'s `withDerived` calls it
+ * with `origin = first_seen` for the DETECTION clock (which `remediation.ts`'s `latencyView`
+ * also rides on, since its own `t` is first_seen-relative too — see that function's comment);
+ * `remediation.ts`'s `actionableView` calls it with `origin = actionable_from` for the
+ * ACTIONABLE clock; `secretsLifecycle.ts`'s `timeToRevoke` calls it with `origin = first_seen`
+ * again, because that register's own clock starts there too. Keeping the arithmetic in exactly
+ * one place means a future fourth clock gets this rule by calling it, not by copying it.
+ */
+export function entryDaysFrom(trackingStart: unknown, origin: unknown): number {
+  const t = parseTs(trackingStart);
+  const o = parseTs(origin);
+  if (t === null || o === null) return 0;
+  return Math.max(0, (t - o) / ENTRY_DAY_MS);
+}
+
 /** Arithmetic mean, or null for an empty list. */
 export function mean(values: number[]): number | null {
   if (!values.length) return null;
@@ -195,6 +219,25 @@ export function maxNum(values: number[]): number {
 /** Min counterpart of maxNum — see its note on why this avoids `Math.min(...arr)`. */
 export function minNum(values: number[]): number {
   return values.reduce((m, v) => Math.min(m, v), Infinity);
+}
+
+/**
+ * Count of elements strictly less than `value` in a SORTED ASCENDING array, by binary search
+ * (bisect-left). `remediation.ts`'s delayed-entry Kaplan–Meier sweep is built on this: the risk
+ * set at an event time t is `#{entry < t} - #{exit < t}`, and doing that as a linear `.filter()`
+ * per distinct event time is the O(n * events) scan the register-scale (50k row) requirement
+ * rules out. Binary search makes each query O(log n), so a curve with m distinct event times
+ * costs O(m log n) atop the O(n log n) sort — no different in order from the sort itself.
+ */
+export function countBelow(sortedAsc: number[], value: number): number {
+  let lo = 0;
+  let hi = sortedAsc.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (sortedAsc[mid] < value) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
 }
 
 /**

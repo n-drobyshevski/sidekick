@@ -644,7 +644,14 @@ const readPayloadForRow: PayloadReader = (row: ScanRow) => {
   return pages.length ? pages : null;
 };
 
-export function loadBaseRows(options: { now?: number; scope?: Scope } = {}): BaseRow[] {
+export function loadBaseRows(
+  options: {
+    now?: number;
+    scope?: Scope;
+    /** MTTR delayed-entry package — see `ledgerCore.BaseRowsOptions`'s own comment. */
+    trackingStartByScope?: Partial<Record<Scope, string | null>>;
+  } = {},
+): BaseRow[] {
   return baseRows(loadState(), options);
 }
 
@@ -667,6 +674,14 @@ export interface TrendOptions {
   scope?: Scope;
   /** Pre-scoped base rows (already narrowed by the caller). */
   base?: BaseRow[];
+  /**
+   * MTTR delayed-entry package: forwarded straight to `trend.withKmMedian` — see
+   * `trend.TrendKmOptions`'s own note on why entry is relative to the tracking start rather
+   * than each replayed date, and why the caller (`readModels.ts`'s `trendFor`) sets
+   * `minRisk: true`.
+   */
+  trackingStartByScope?: Partial<Record<Scope, string | null>>;
+  minRisk?: boolean;
 }
 
 /**
@@ -706,6 +721,8 @@ export function loadTrend(options: TrendOptions = {}): Rec[] {
     hideNoFix,
     maxReconstructed: KM_TREND_MAX_RECONSTRUCTED,
     scope,
+    trackingStartByScope: options.trackingStartByScope,
+    minRisk: options.minRisk,
   }) as unknown as Rec[];
 }
 

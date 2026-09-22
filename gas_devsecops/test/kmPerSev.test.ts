@@ -139,30 +139,55 @@ function row(key: string, severity: string, first: string, resolved: string | nu
   } as BaseRow;
 }
 
-// Three severities, three DIFFERENT survival shapes — the point of drawing six curves at all:
+// Three severities, three DIFFERENT survival shapes — the point of drawing six curves at all.
 //
-//   CRITICAL  closes fast: three of four resolved inside nine days, so the curve crosses half
-//             and there is a real median.
-//   HIGH      stalls: one early closure and three findings open since January, so the curve
-//             never falls to half and only `medianLowerBound` is publishable.
-//   LOW       moves slowly but does move: both resolved, one at ten days and one at forty.
+// MTTR delayed-entry package: `buildMttr`'s per-severity `kaplanMeier` call now passes
+// `{ horizonDays, minRisk: true }` (server/readModels.ts's `KM_OPTS`), so every curve here is
+// ALSO cut at the Gebski et al. reliability boundary — `n(t) >= max(10, 50*S(t-))`, which near
+// S=1 (the first event) requires a risk set of at least 50. The original 2-4-row-per-severity
+// fixture failed that at its very first event every time (any population under 50 does — see
+// test/kmDelayedEntry.test.ts's own "first event already fails" case), which would have made
+// every curve here empty regardless of its actual survival shape — not a demonstration of
+// anything. Each severity below is rescaled to >= 60 rows, keeping the SAME qualitative shape
+// the original hand-picked rows told:
+//
+//   CRITICAL  closes fast: 55 of 60 resolve within the first 11 days (5/day — ties, not one
+//             row at a time), 5 stay open. Pure removals with no intervening censoring mean
+//             survival after D cumulative removals out of N is exactly (N-D)/N regardless of
+//             how they group into ties, so S(day 6) = (60 - 30)/60 = 0.5 exactly -> median 6.
+//             Reliability holds through day 11 (n(11) = 10 lands exactly on the floor of 10,
+//             and the fail condition is strict "<", so it still passes).
+//   HIGH      stalls: 5 of 60 resolve, one per day across days 1..5; 55 stay open. Survival
+//             never drops below (60-5)/60 ~= 0.917, so the median never crosses — only
+//             `medianLowerBound` is publishable. All 5 events clear reliability (the tightest
+//             check, day 5: n=56 against a threshold of 50*S(4) ~= 46.7).
+//   LOW       moves slowly but does move: all 60 resolve, one per day across days 1..60 — the
+//             same "pure removals" identity as CRITICAL, just spread six times as wide, so the
+//             median crosses on day 30 instead of day 6: slower, but real, and (50/60 < 1, so
+//             only the absolute floor of 10 can ever bind here) still safely inside the
+//             reliable region, which only starts failing past day 51.
 //
 // INFO/UNKNOWN have no rows at all, which is the "one entry per severity PRESENT" case.
 function seed(): void {
-  H.rows = [
-    row("c1", "CRITICAL", "2026-01-01T00:00:00Z", "2026-01-06T00:00:00Z"),
-    row("c2", "CRITICAL", "2026-01-01T00:00:00Z", "2026-01-08T00:00:00Z"),
-    row("c3", "CRITICAL", "2026-01-01T00:00:00Z", "2026-01-10T00:00:00Z"),
-    row("c4", "CRITICAL", "2026-01-01T00:00:00Z", null),
+  const ANCHOR = "2026-01-01T00:00:00Z";
+  const plusDays = (iso: string, n: number) => new Date(Date.parse(iso) + n * DAY).toISOString();
+  const rows: BaseRow[] = [];
 
-    row("h1", "HIGH", "2026-01-02T00:00:00Z", "2026-01-05T00:00:00Z"),
-    row("h2", "HIGH", "2026-01-02T00:00:00Z", null),
-    row("h3", "HIGH", "2026-01-02T00:00:00Z", null),
-    row("h4", "HIGH", "2026-01-02T00:00:00Z", null),
+  for (let day = 1; day <= 11; day++) {
+    for (let i = 0; i < 5; i++) {
+      rows.push(row(`c-${day}-${i}`, "CRITICAL", ANCHOR, plusDays(ANCHOR, day)));
+    }
+  }
+  for (let i = 0; i < 5; i++) rows.push(row(`c-open-${i}`, "CRITICAL", ANCHOR, null));
 
-    row("l1", "LOW", "2026-01-03T00:00:00Z", "2026-01-13T00:00:00Z"),
-    row("l2", "LOW", "2026-01-03T00:00:00Z", "2026-02-12T00:00:00Z"),
-  ];
+  for (let day = 1; day <= 5; day++) {
+    rows.push(row(`h-${day}`, "HIGH", ANCHOR, plusDays(ANCHOR, day)));
+  }
+  for (let i = 0; i < 55; i++) rows.push(row(`h-open-${i}`, "HIGH", ANCHOR, null));
+
+  for (let day = 1; day <= 60; day++) rows.push(row(`l-${day}`, "LOW", ANCHOR, plusDays(ANCHOR, day)));
+
+  H.rows = rows;
 }
 
 interface ShippedCurve {
@@ -247,9 +272,9 @@ describe("buildMttr ships one Kaplan-Meier curve per severity", () => {
 
   it("carries the censoring counts the card's caption has to print, and they add up", () => {
     const high = rem.kmPerSev["HIGH"]!;
-    expect(high.events).toBe(1);
-    expect(high.censored).toBe(3);
-    expect(high.total).toBe(4);
+    expect(high.events).toBe(5); // days 1..5
+    expect(high.censored).toBe(55); // still open
+    expect(high.total).toBe(60);
     const crit = rem.kmPerSev["CRITICAL"]!;
     expect(crit.events + crit.censored).toBe(crit.total);
   });
