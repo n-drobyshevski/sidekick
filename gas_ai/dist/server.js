@@ -4061,7 +4061,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "1f1a95d93656" : "dev";
+  var BUILD_ID = true ? "8ad5885c4933" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -20949,7 +20949,7 @@ var Server = (() => {
     return value && value.trim() ? `(set, ${value.trim().length} chars)` : "(unset)";
   }
   function wizDiagnostic() {
-    var _a5, _b, _c;
+    var _a5, _b, _c, _d;
     const lines = [];
     const log = (m) => {
       lines.push(m);
@@ -21033,6 +21033,34 @@ var Server = (() => {
         );
       }
       return lines.join("\n");
+    }
+    try {
+      const probe = fetchConnectionPage("issuesV2", {
+        query: "query AiIssuePortalUrlProbe($first: Int) { issuesV2(first: $first) { nodes { id portalUrl } } }",
+        first: 1
+      });
+      const first = (_d = probe.rows[0]) != null ? _d : null;
+      const url = first === null ? null : first["portalUrl"];
+      if (typeof url === "string" && url.trim()) {
+        log(`Step 4 OK: this tenant DOES report a console link on an issue (${url.trim()}).`);
+        log(
+          "\u2192 Worth acting on: gas_ai could carry an 'Open in Wiz' row on the issue sheet the way gas/ and gas_devsecops' sca register already do. The field exists here."
+        );
+      } else if (first === null) {
+        log("Step 4 SKIPPED: the tenant returned no issues, so there was no row to read.");
+      } else {
+        log("Step 4: the field exists on this type but this issue carried no link.");
+      }
+    } catch (e) {
+      const msg = e.message;
+      if (/cannot query field/i.test(msg)) {
+        log(`Step 4: this tenant's issue type has NO portalUrl \u2014 ${msg}`);
+        log(
+          "\u2192 Expected, and not a failure. It is why this register has no 'Open in Wiz' row while the two finding registers do, and the error above names the exact type, which is the thing to quote if Wiz is ever asked to expose one."
+        );
+      } else {
+        log(`Step 4 SKIPPED: the probe could not run \u2014 ${msg}`);
+      }
     }
     return lines.join("\n");
   }
