@@ -52,7 +52,17 @@ import { RESOLVED_STATUSES, SEVERITY_ORDER, SLA_TARGETS, type Scope } from "./co
 import type { BaseRow } from "./ledgerTypes";
 import { findCol, recordColumns } from "./metrics";
 import { normalizeSeverity } from "./severity";
-import { maxNum, mean, median, parseTs, present, quantile, type Rec } from "./util";
+import {
+  countBelow,
+  entryDaysFrom,
+  maxNum,
+  mean,
+  median,
+  parseTs,
+  present,
+  quantile,
+  type Rec,
+} from "./util";
 
 const DAY_MS = 86_400_000;
 
@@ -60,7 +70,36 @@ const DAY_MS = 86_400_000;
 // helpers read only this projection. `severity` rides along for callers that filter a
 // register down to one severity (or OVERALL) before calling kaplanMeier — the estimator
 // itself never reads it.
-export type RemediationRow = Pick<BaseRow, "severity" | "status" | "mttr_days" | "age_days">;
+//
+// `entry_days` (MTTR delayed-entry package) is a fifth, OPTIONAL column: the age, on this
+// row's own clock, at which the row entered observation — e.g. a finding already 90 days old
+// the day this register started scanning enters at age 90, not age 0, because nothing before
+// that day was ever observable. It is declared as its own intersected field rather than via
+// `Pick<BaseRow, ...>` so this file does not have to wait on BaseRow gaining the column
+// (a later package's job) to compile. Absent, null, or <= 0 all mean "no delayed entry" (0) —
+// see `normalizedEntry` below, the single place that rule is applied.
+export type RemediationRow = Pick<BaseRow, "severity" | "status" | "mttr_days" | "age_days"> & {
+  entry_days?: number | null;
+};
+
+/**
+ * Options that switch `kaplanMeier` from its original scalar-population estimator into the
+ * delayed-entry / reliability-cut / RMST-horizon estimator this package adds. Deliberately a
+ * single optional second argument rather than a new function: every existing call site
+ * (`kaplanMeier(rows)`, no second argument) keeps its exact original behavior — see
+ * `kaplanMeier`'s own docstring for the precise bit-identical guarantee this rests on.
+ */
+export interface KMOptions {
+  /** RMST horizon τ, in days. Unset ⇒ τ = max observed time, same as the original estimator. */
+  horizonDays?: number;
+  /**
+   * Apply the Gebski et al. (Int J Epidemiol 2018) sensitivity-index reliability cut and report
+   * it via `reliableUntil`. Unset/false ⇒ no cut: `curve`/`median`/`q25`/`q75`/RMST are computed
+   * over the WHOLE curve, same as before this package (still delayed-entry-aware if any row
+   * carries `entry_days`, but never truncated for reliability).
+   */
+  minRisk?: boolean;
+}
 
 // Same open/resolved status test the rest of the domain uses: a row is open unless its
 // status is one of the remediated/closed set.
@@ -102,6 +141,43 @@ export interface KMResult {
   events: number;
   censored: number;
   total: number;
+
+  // ----------------------------------------------------------- delayed-entry package additions
+  //
+  // Every field below is OPTIONAL and, on the ORIGINAL one-argument call shape
+  // (`kaplanMeier(rows)`, no `entry_days` on any row), is simply ABSENT from the returned
+  // object — not present-and-null, not present-and-zero, genuinely not a key on the result —
+  // so every pre-existing `toEqual({...11 fields...})` assertion in test/remediation.test.ts
+  // still matches exactly (vitest's `toEqual` treats an absent key and an `undefined`-valued
+  // key alike, but NOT an absent key and a `null`- or `0`-valued one — verified directly before
+  // relying on it here). Call with a `KMOptions` (even `{}`) or put `entry_days` on a row and
+  // every field below is populated for real, per its own note.
+
+  /** The time by which 25% of findings were remediated (kmQuantileFromCurve(cutCurve, 0.25)). */
+  q25?: number | null;
+  /** The time by which 75% of findings were remediated (kmQuantileFromCurve(cutCurve, 0.75)). */
+  q75?: number | null;
+  /**
+   * The last event time the Gebski reliability cut still trusts (see kaplanMeier's docstring).
+   * `curve`/`median`/`q25`/`q75` are all read off the curve cut at this point. Null either
+   * because `opts.minRisk` was not requested (no cut — the WHOLE curve ships) or because the
+   * very first event already fails the reliability test (nothing is trustworthy).
+   */
+  reliableUntil?: number | null;
+  /**
+   * Rows dropped entirely because their own exit fell at-or-before their own entry — a finding
+   * that resolved (or was already this old) before this register could have observed it. Never
+   * an event, a censored observation, or part of any risk set. 0 (not absent) whenever the
+   * extended estimator ran, even if nothing was actually excluded.
+   */
+  excludedPreEntry?: number;
+  /**
+   * The max exit time across the observed (post pre-entry-exclusion) population — what
+   * `restrictionTime` unconditionally meant before this package let τ be capped by
+   * `opts.horizonDays` or the reliability cut. `restrictionTime` itself now reports τ; this
+   * field keeps the uncapped figure available (e.g. for "≥ N d still open" phrasing).
+   */
+  maxObserved?: number | null;
 }
 
 /**
@@ -119,6 +195,54 @@ export function kmCurve(events: number[], times: number[]): KMPoint[] {
     const atRisk = times.filter((x) => x >= t).length;
     if (atRisk === 0) continue;
     const d = events.filter((x) => x === t).length;
+    s *= 1 - d / atRisk;
+    curve.push({ t, s, atRisk, events: d });
+  }
+  return curve;
+}
+
+/** One observation for `kmCurveEntry`: its exit time `t` (event OR censoring time, matching
+ * `kmCurve`'s own `events`/`times` numbers) and the age at which it entered observation. */
+export interface KMObservation {
+  t: number;
+  entry: number;
+}
+
+/**
+ * `kmCurve`'s delayed-entry (left-truncation) sibling: the risk set at event time t is
+ * `#{obs : entry < t <= exit}` rather than `kmCurve`'s `#{exit >= t}` — a finding only counts
+ * as at risk once this register could have observed it (its own entry age), not from t=0. The
+ * `entry < t` side is STRICT: a row whose entry lands exactly on another row's event time has
+ * not yet entered as of that instant (test/kmDelayedEntry.test.ts pins this boundary by hand).
+ * `kmCurve` itself is untouched — this is an addition, not a rewrite, so trend.ts's existing
+ * calls and every pre-delayed-entry test keep reading the original function.
+ *
+ * O(n log n), same complexity class as `kmCurve`'s own sort, and NOT the O(n · distinct-times)
+ * a delayed-entry port of `kmCurve`'s per-event `.filter()` would cost: every observation
+ * carries two numbers now (entry and exit) rather than one, so a per-event linear scan over a
+ * 50k-row register would double the cost `kmCurve` already pays. Instead:
+ *   atRisk(t) = #{entry < t} − #{exit < t}
+ * which holds because every observation here already has entry < exit (kaplanMeier's caller
+ * drops exit <= entry rows before this function ever sees them — see `excludedPreEntry`), so
+ * `exit < t` already implies `entry < exit < t`, making the two counts share no observation
+ * that needs correcting for.  Each count is a binary search (`util.countBelow`) over a SORTED
+ * copy of just the entries or just the exits, so `events` distinct times cost
+ * O(events · log n) atop the O(n log n) sort — table-stakes for a register-scale curve.
+ */
+export function kmCurveEntry(events: KMObservation[], times: KMObservation[]): KMPoint[] {
+  const eventCounts = new Map<number, number>();
+  for (const e of events) eventCounts.set(e.t, (eventCounts.get(e.t) ?? 0) + 1);
+  const distinctEventTimes = [...eventCounts.keys()].sort((a, b) => a - b);
+
+  const sortedEntries = times.map((o) => o.entry).sort((a, b) => a - b);
+  const sortedExits = times.map((o) => o.t).sort((a, b) => a - b);
+
+  const curve: KMPoint[] = [];
+  let s = 1;
+  for (const t of distinctEventTimes) {
+    const atRisk = countBelow(sortedEntries, t) - countBelow(sortedExits, t);
+    if (atRisk <= 0) continue; // mirrors kmCurve's own atRisk === 0 skip
+    const d = eventCounts.get(t)!;
     s *= 1 - d / atRisk;
     curve.push({ t, s, atRisk, events: d });
   }
@@ -187,8 +311,44 @@ export function kmMedianFromCurve(curve: KMPoint[]): number | null {
  *
  * No events → `curve: []`, median/mean null, `medianLowerBound = restrictionTime = max(times)`
  * (null when there are no observations at all), meanTruncated false, counts still filled.
+ *
+ * DELAYED ENTRY / RELIABILITY CUT / RMST HORIZON (this package): `kaplanMeier(rows)` — this
+ * EXACT one-argument shape, on rows carrying no `entry_days` — is guaranteed bit-identical to
+ * every line above and to every pre-existing caller, dispatching straight to
+ * `kaplanMeierLegacy`, the original function unchanged. That guarantee is deliberately narrow
+ * (bullet 2 of the plan this shipped against): the moment a row carries a positive `entry_days`
+ * OR the caller passes a second argument (even `{}`), `kaplanMeierExtended` runs instead and:
+ *
+ *   - treats each row as entering observation at `entry_days` on ITS OWN clock rather than at
+ *     0 — a row whose exit falls at-or-before its own entry was never observable at all and is
+ *     dropped outright (events/censored/risk-set), counted instead in `excludedPreEntry`;
+ *   - computes the risk set with `kmCurveEntry` (entry < t <= exit) instead of `kmCurve`;
+ *   - when `opts.minRisk`, cuts the curve at the Gebski et al. (Int J Epidemiol 2018)
+ *     reliability boundary and reads `median`/`q25`/`q75` off the CUT curve only (see
+ *     `reliableUntilFromCurve`);
+ *   - when `opts.horizonDays`, restricts RMST to τ = min(horizonDays, the reliability cut (if
+ *     any) else the max observed time), reporting that τ as `restrictionTime` and keeping the
+ *     uncapped figure in the new `maxObserved` field.
+ *
+ * See `KMOptions`, `kmCurveEntry`, `reliableUntilFromCurve` and the new KMResult fields for the
+ * per-mechanism detail; `test/kmDelayedEntry.test.ts` pins all of it, including a randomized
+ * "no entry, no opts" property test run against a literal copy of the pre-package algorithm.
  */
-export function kaplanMeier(rows: RemediationRow[]): KMResult {
+export function kaplanMeier(rows: RemediationRow[], opts?: KMOptions): KMResult {
+  if (opts === undefined && !rows.some((r) => normalizedEntry(r) > 0)) {
+    return kaplanMeierLegacy(rows);
+  }
+  return kaplanMeierExtended(rows, opts);
+}
+
+/**
+ * The estimator as it existed before this package, PRESERVED VERBATIM (not merely "equivalent
+ * to") — the dispatch in `kaplanMeier` routes here whenever nothing about the call could
+ * possibly invoke delayed entry, so this is what makes that path bit-identical by construction
+ * rather than by argument. Do not "clean this up" into `kaplanMeierExtended` — that is exactly
+ * the refactor this split exists to avoid needing to prove safe.
+ */
+function kaplanMeierLegacy(rows: RemediationRow[]): KMResult {
   const events: number[] = []; // resolved times
   const censored: number[] = []; // open ages
   for (const row of rows) {
@@ -254,6 +414,184 @@ export function kaplanMeier(rows: RemediationRow[]): KMResult {
     events: events.length,
     censored: censored.length,
     total,
+  };
+}
+
+// entry_days's normalization rule (D-entry bullet 1): absent, null, non-finite, or <= 0 all
+// mean "no delayed entry" — a plain 0. The single place that rule is applied.
+function normalizedEntry(row: RemediationRow): number {
+  const e = row.entry_days;
+  return typeof e === "number" && Number.isFinite(e) && e > 0 ? e : 0;
+}
+
+/**
+ * RMST integration shared by both the pre-cut and post-cut curve: the area under the KM
+ * staircase from 0 to τ. Written once so `kaplanMeierExtended` never has to choose between
+ * "integrate the full curve" and "integrate the cut curve" — it always integrates whichever
+ * curve it is handed, and callers decide which curve and which τ that is. Works whether τ lands
+ * exactly on a curve point, strictly between two, or past the last one (the final rectangle
+ * just runs longer) — same shape as kaplanMeierLegacy's own RMST loop, deliberately, since
+ * that loop is exactly this function called with (curve, restrictionTime).
+ */
+function rmstToTau(curve: KMPoint[], tau: number): { rmst: number; sAtTau: number } {
+  let rmst = 0;
+  let prevT = 0;
+  let prevS = 1;
+  for (const p of curve) {
+    if (p.t > tau) break; // curve is ascending; nothing past τ contributes
+    rmst += prevS * (p.t - prevT);
+    prevT = p.t;
+    prevS = p.s;
+  }
+  rmst += prevS * (tau - prevT);
+  return { rmst, sAtTau: prevS };
+}
+
+/**
+ * The Gebski et al. (Int J Epidemiol 2018) sensitivity-index reliability cut: a KM curve is
+ * only as trustworthy as its risk set is large relative to how far survival has already
+ * fallen, because ONE MORE EVENT moves S(t) by S(t⁻)/n(t) — the size of the next possible drop.
+ * Capping that drop at 2 percentage points (0.02) means requiring
+ *   n(t) >= S(t⁻) / 0.02 = 50 · S(t⁻),
+ * with an absolute floor of 10 so a curve that has already fallen very low (where 50·S is tiny)
+ * doesn't get called "reliable" on a near-empty risk set. `S(t⁻)` is the survival level GOING
+ * INTO event t — the previous curve point's `s`, or 1 for the first event (nothing has dropped
+ * yet).
+ *
+ * Walks the curve ascending and returns the LAST event time before the first failure: null if
+ * the very first event already fails (nothing on the curve is trustworthy), or the final event
+ * time if nothing ever fails. `kaplanMeierExtended` cuts the shipped curve here and reads
+ * median/q25/q75 off the cut curve only — see its own comment for why.
+ *
+ * Exported for `trend.ts`'s KM replays (`kmMedianAsOf` / `withKmMedian` /
+ * `kmMedianByGroupTrend`), which build their own `KMPoint[]` curves via `kmCurveEntry` (one
+ * per as-of date, rather than one per current-state call) and need the identical cut applied
+ * so a week-over-week comparison is not reading a cut current figure against an uncut replay.
+ */
+export function reliableUntilFromCurve(curve: KMPoint[]): number | null {
+  let prevS = 1;
+  let lastReliable: number | null = null;
+  for (const p of curve) {
+    if (p.atRisk < Math.max(10, 50 * prevS)) return lastReliable;
+    lastReliable = p.t;
+    prevS = p.s;
+  }
+  return lastReliable;
+}
+
+/**
+ * The delayed-entry / reliability-cut / RMST-horizon estimator — see `kaplanMeier`'s own
+ * docstring for the contract. Structurally this mirrors `kaplanMeierLegacy` closely on purpose
+ * (same event/censored split, same no-events early return, same RMST shape via `rmstToTau`) so
+ * the two are easy to read against each other; the differences are exactly the four bullets
+ * `kaplanMeier`'s docstring lists.
+ */
+function kaplanMeierExtended(rows: RemediationRow[], opts: KMOptions | undefined): KMResult {
+  const events: { t: number; entry: number }[] = [];
+  const censored: { t: number; entry: number }[] = [];
+  let excludedPreEntry = 0;
+  for (const row of rows) {
+    const entry = normalizedEntry(row);
+    const m = resolvedMttr(row);
+    if (m !== null) {
+      if (m <= entry) {
+        excludedPreEntry += 1; // resolved before this register could have observed it
+      } else {
+        events.push({ t: m, entry });
+      }
+      continue;
+    }
+    const c = openAge(row);
+    if (c !== null) {
+      if (c <= entry) {
+        excludedPreEntry += 1; // already this old, on this clock, before entry
+      } else {
+        censored.push({ t: c, entry });
+      }
+    }
+  }
+
+  const total = events.length + censored.length;
+  const obsTimes = events.concat(censored).map((o) => o.t);
+  // maxNum, not Math.max(...arr) — same register-scale reason kaplanMeierLegacy avoids the
+  // spread (see its own comment).
+  const maxObserved = obsTimes.length ? maxNum(obsTimes) : null;
+  // Naive stats are computed over the SAME post-exclusion event population as the KM estimate:
+  // an excludedPreEntry row was never observed by this register at all, so it can no more
+  // contribute to the naive average than to the censoring-aware one.
+  const eventTimes = events.map((e) => e.t);
+  const naiveMean = mean(eventTimes);
+  const naiveMedian = median(eventTimes);
+
+  if (!events.length) {
+    // No observed events (all-censored, all-excluded, or empty): no curve, no median/mean/
+    // quantiles, same shape kaplanMeierLegacy returns in this case — including restrictionTime
+    // staying at the UNCAPPED max observed time rather than any horizon, because there is no
+    // RMST here to cap in the first place.
+    return {
+      curve: [],
+      median: null,
+      medianLowerBound: maxObserved,
+      mean: null,
+      restrictionTime: maxObserved,
+      meanTruncated: false,
+      naiveMean,
+      naiveMedian,
+      events: 0,
+      censored: censored.length,
+      total,
+      q25: null,
+      q75: null,
+      reliableUntil: null,
+      excludedPreEntry,
+      maxObserved,
+    };
+  }
+
+  const fullCurve = kmCurveEntry(events, events.concat(censored));
+
+  let reliableUntil: number | null = null;
+  let curve = fullCurve;
+  if (opts?.minRisk) {
+    reliableUntil = reliableUntilFromCurve(fullCurve);
+    // First event already unreliable -> nothing on the curve is trustworthy; ship none of it.
+    curve = reliableUntil === null ? [] : fullCurve.filter((p) => p.t <= reliableUntil!);
+  }
+
+  const median_ = kmMedianFromCurve(curve);
+  const q25 = kmQuantileFromCurve(curve, 0.25);
+  const q75 = kmQuantileFromCurve(curve, 0.75);
+
+  // τ: capped to the horizon AND to the reliability cut (if either applies), else the max
+  // observed time — same "τ = max observed" legacy default when neither opts field is set.
+  const tau =
+    opts?.horizonDays !== undefined
+      ? Math.min(opts.horizonDays, reliableUntil ?? maxObserved!)
+      : maxObserved!;
+  const { rmst, sAtTau } = rmstToTau(curve, tau);
+
+  const medianLowerBound =
+    median_ !== null ? null
+    : opts?.minRisk ? (reliableUntil ?? maxObserved)
+    : maxObserved;
+
+  return {
+    curve,
+    median: median_,
+    medianLowerBound,
+    mean: rmst,
+    restrictionTime: tau,
+    meanTruncated: sAtTau > 0,
+    naiveMean,
+    naiveMedian,
+    events: events.length,
+    censored: censored.length,
+    total,
+    q25,
+    q75,
+    reliableUntil,
+    excludedPreEntry,
+    maxObserved,
   };
 }
 
@@ -468,15 +806,42 @@ export function openPastSlaFromRecords(records: Rec[], now?: number): number {
  * Awaiting-vendor-fix rows carry null actionable fields, so they drop out of every clock here
  * automatically (a resolved row with no fix ever observed likewise has a null
  * mttr_actionable_days) while still counting in awaitingVendorFix / the open backlog.
+ *
+ * MTTR delayed-entry package: `opts.trackingStart` carries the tracking-start this clock's own
+ * entry is measured against. UNLIKE the detection clock (whose entry rides on `BaseRow.
+ * entry_days`, already relative to `first_seen`), the actionable clock starts at
+ * `actionable_from` — a DIFFERENT origin whenever a fix arrives after detection — so its entry
+ * has to be computed fresh here: `max(0, trackingStart - actionable_from) / DAY_MS`. Only sca
+ * rows ever reach this view with a genuine `actionable_from` (D4b rule 3 / this file's own
+ * header), so `opts.trackingStart` is a single scalar (that scope's tracking start) rather than
+ * a per-scope map — every caller of this function already narrows to one scope first.
  */
 export function actionableView(
-  rows: Pick<BaseRow, "severity" | "status" | "mttr_actionable_days" | "actionable_age_days">[],
+  rows: (Pick<BaseRow, "severity" | "status" | "mttr_actionable_days" | "actionable_age_days"> &
+    // `actionable_from` is OPTIONAL on the accepted row, not required: test/remediation.test.ts's
+    // pre-existing bRes/bOpen fixtures (D4b, before this package) build rows without it, and
+    // every one of those calls also omits `opts.trackingStart` — so `entryDaysFrom` reads
+    // `undefined` for both its arguments and returns 0 regardless of whether this field was
+    // supplied. Real callers (readModels.ts) always pass genuine `BaseRow`s, which carry it.
+    Partial<Pick<BaseRow, "actionable_from">>)[],
+  opts?: { trackingStart?: string | null },
 ): RemediationRow[] {
+  // `entry_days` is left OFF the projected row entirely — not even `0` — when no
+  // `opts.trackingStart` was supplied, rather than always computing `entryDaysFrom(undefined,
+  // …)` (which would itself return 0). Both read the same to `kaplanMeier`'s own normalization
+  // (RemediationRow.entry_days: absent/null/<=0 all mean "no delayed entry"), but an ALWAYS-
+  // present `entry_days: 0` breaks the exact-shape `toEqual` assertions test/remediation.test.ts
+  // already pins against this function's D4b-era output — the same reasoning KMResult's own new
+  // fields follow (remediation.ts's `kaplanMeier` docstring).
+  const hasTrackingStart = opts?.trackingStart !== undefined && opts?.trackingStart !== null;
   return rows.map((r) => ({
     severity: r.severity,
     status: r.status,
     mttr_days: r.mttr_actionable_days,
     age_days: r.actionable_age_days,
+    entry_days: hasTrackingStart
+      ? entryDaysFrom(opts!.trackingStart, r.actionable_from ?? null)
+      : undefined,
   }));
 }
 
@@ -584,10 +949,18 @@ export interface LatencySegments {
   total: number;
 }
 
-/** A base row projected onto just the columns the latency clock reads. */
+/**
+ * A base row projected onto just the columns the latency clock reads.
+ *
+ * `entry_days` rides straight through from `BaseRow` rather than being recomputed: every
+ * `latencyObservation` time `t` below is measured relative to `first_seen` (fixAvail-first,
+ * resolved-first, now-first), the SAME origin `BaseRow.entry_days` is already relative to
+ * (ledgerCore.ts's `withDerived`), so this clock's delayed-entry offset IS the detection
+ * clock's — no second `entryDaysFrom` call needed, unlike `actionableView`'s different origin.
+ */
 type LatencyRow = Pick<
   BaseRow,
-  "severity" | "status" | "first_seen" | "fix_available_at" | "resolved_at"
+  "severity" | "status" | "first_seen" | "fix_available_at" | "resolved_at" | "entry_days"
 > & { scope?: Scope };
 
 /** One row's classification: null when it contributes to no clock. */
@@ -652,6 +1025,7 @@ export function latencyView(
       status: obs.event ? "RESOLVED" : "OPEN",
       mttr_days: obs.event ? obs.t : null,
       age_days: obs.event ? null : obs.t,
+      entry_days: row.entry_days,
     });
   }
   return out;

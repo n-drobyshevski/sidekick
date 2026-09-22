@@ -54,6 +54,7 @@ const ENTRIES = [
       "How long it takes for half of what is open today to be remediated.",
       "Off a Kaplan–Meier curve, so still-open findings count as evidence, not as gaps.",
       "Preferred to a mean because remediation is long-tailed: a mean moves when a batch of easy findings closes, and can improve while real exposure does not.",
+      "Fixes are only visible from the day this register started scanning, so each finding counts from the age it had on that day (delayed entry). The curve stops where too few findings remain to trust it. When fewer than half have been fixed within that range the median is \"Not reached\" and the page shows the time by which 25% were fixed instead.",
     ],
   },
   {

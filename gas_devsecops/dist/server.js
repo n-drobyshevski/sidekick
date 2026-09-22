@@ -483,7 +483,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "4a96082d714a" : "dev";
+  var BUILD_ID = true ? "3e2c83c1c64f" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -773,6 +773,7 @@ var Server = (() => {
   var DISAPPEARANCE_RESOLUTION = "scan_ts";
   var MIN_UNSEALED_FLAT_SCANS = 2;
   var DEFAULT_RETENTION_DAYS = 180;
+  var RMST_HORIZON_DAYS = 365;
   var AGE_HISTOGRAM_CAP_DAYS = 730;
 
   // src/domain/severity.ts
@@ -840,6 +841,13 @@ var Server = (() => {
   function nowIso(now) {
     return toIso(now != null ? now : Date.now());
   }
+  var ENTRY_DAY_MS = 864e5;
+  function entryDaysFrom(trackingStart, origin) {
+    const t = parseTs(trackingStart);
+    const o = parseTs(origin);
+    if (t === null || o === null) return 0;
+    return Math.max(0, (t - o) / ENTRY_DAY_MS);
+  }
   function mean(values) {
     if (!values.length) return null;
     return values.reduce((a, b) => a + b, 0) / values.length;
@@ -861,6 +869,16 @@ var Server = (() => {
   }
   function minNum(values) {
     return values.reduce((m, v) => Math.min(m, v), Infinity);
+  }
+  function countBelow(sortedAsc, value) {
+    let lo = 0;
+    let hi = sortedAsc.length;
+    while (lo < hi) {
+      const mid = lo + hi >>> 1;
+      if (sortedAsc[mid] < value) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
   }
   function pushAll(target, items) {
     for (const item of items) target.push(item);
@@ -1757,7 +1775,7 @@ var Server = (() => {
     state.ledger = { ...otherScopes, ...updated };
     return { deltas, observations, scanRow, twinStats };
   }
-  function withDerived(row, nowMs) {
+  function withDerived(row, nowMs, trackingStart) {
     var _a, _b;
     const first = parseTs(row.first_seen);
     const resolved = parseTs(row.resolved_at);
@@ -1771,6 +1789,10 @@ var Server = (() => {
       ...row,
       mttr_days: first !== null && resolved !== null ? (resolved - first) / DAY_MS3 : null,
       age_days: resolved === null && first !== null ? (nowMs - first) / DAY_MS3 : null,
+      // MTTR delayed-entry package (BaseRowsOptions.trackingStartByScope's own comment): the
+      // DETECTION clock's entry age, relative to `first_seen` — the same origin `mttr_days` /
+      // `age_days` above measure from, so `entryDaysFrom`'s one formula applies unchanged.
+      entry_days: entryDaysFrom(trackingStart, row.first_seen),
       fix_available_at: fixAvailableAt,
       actionable_from: actionableFrom,
       mttr_actionable_days: resolved !== null && actionableMs !== null ? (resolved - actionableMs) / DAY_MS3 : null,
@@ -1840,16 +1862,17 @@ var Server = (() => {
     var _a;
     const nowMs = (_a = options.now) != null ? _a : Date.now();
     const scope = options.scope;
+    const trackingStartByScope = options.trackingStartByScope;
     const out = [];
     for (const row of Object.values(state.ledger)) {
       if (scope !== void 0 && row.scope !== scope) continue;
-      out.push(withDerived(row, nowMs));
+      out.push(withDerived(row, nowMs, trackingStartByScope == null ? void 0 : trackingStartByScope[row.scope]));
     }
     for (const e of state.episodes) {
       if (e.superseded_by_scan !== null) continue;
       if (e.finding_key in state.ledger) continue;
       if (scope !== void 0 && e.scope !== scope) continue;
-      out.push(withDerived(rowFromEpisode(e), nowMs));
+      out.push(withDerived(rowFromEpisode(e), nowMs, trackingStartByScope == null ? void 0 : trackingStartByScope[e.scope]));
     }
     return out;
   }
@@ -2569,6 +2592,24 @@ var Server = (() => {
     }
     return curve;
   }
+  function kmCurveEntry(events, times) {
+    var _a;
+    const eventCounts = /* @__PURE__ */ new Map();
+    for (const e of events) eventCounts.set(e.t, ((_a = eventCounts.get(e.t)) != null ? _a : 0) + 1);
+    const distinctEventTimes = [...eventCounts.keys()].sort((a, b) => a - b);
+    const sortedEntries = times.map((o) => o.entry).sort((a, b) => a - b);
+    const sortedExits = times.map((o) => o.t).sort((a, b) => a - b);
+    const curve = [];
+    let s2 = 1;
+    for (const t of distinctEventTimes) {
+      const atRisk = countBelow(sortedEntries, t) - countBelow(sortedExits, t);
+      if (atRisk <= 0) continue;
+      const d = eventCounts.get(t);
+      s2 *= 1 - d / atRisk;
+      curve.push({ t, s: s2, atRisk, events: d });
+    }
+    return curve;
+  }
   var CROSSING_EPSILON = 1e-9;
   function kmQuantileFromCurve(curve, q) {
     const threshold = 1 - q;
@@ -2578,7 +2619,13 @@ var Server = (() => {
   function kmMedianFromCurve(curve) {
     return kmQuantileFromCurve(curve, 0.5);
   }
-  function kaplanMeier(rows) {
+  function kaplanMeier(rows, opts) {
+    if (opts === void 0 && !rows.some((r) => normalizedEntry(r) > 0)) {
+      return kaplanMeierLegacy(rows);
+    }
+    return kaplanMeierExtended(rows, opts);
+  }
+  function kaplanMeierLegacy(rows) {
     const events = [];
     const censored = [];
     for (const row of rows) {
@@ -2635,6 +2682,115 @@ var Server = (() => {
       events: events.length,
       censored: censored.length,
       total
+    };
+  }
+  function normalizedEntry(row) {
+    const e = row.entry_days;
+    return typeof e === "number" && Number.isFinite(e) && e > 0 ? e : 0;
+  }
+  function rmstToTau(curve, tau) {
+    let rmst = 0;
+    let prevT = 0;
+    let prevS = 1;
+    for (const p of curve) {
+      if (p.t > tau) break;
+      rmst += prevS * (p.t - prevT);
+      prevT = p.t;
+      prevS = p.s;
+    }
+    rmst += prevS * (tau - prevT);
+    return { rmst, sAtTau: prevS };
+  }
+  function reliableUntilFromCurve(curve) {
+    let prevS = 1;
+    let lastReliable = null;
+    for (const p of curve) {
+      if (p.atRisk < Math.max(10, 50 * prevS)) return lastReliable;
+      lastReliable = p.t;
+      prevS = p.s;
+    }
+    return lastReliable;
+  }
+  function kaplanMeierExtended(rows, opts) {
+    const events = [];
+    const censored = [];
+    let excludedPreEntry = 0;
+    for (const row of rows) {
+      const entry = normalizedEntry(row);
+      const m = resolvedMttr(row);
+      if (m !== null) {
+        if (m <= entry) {
+          excludedPreEntry += 1;
+        } else {
+          events.push({ t: m, entry });
+        }
+        continue;
+      }
+      const c = openAge2(row);
+      if (c !== null) {
+        if (c <= entry) {
+          excludedPreEntry += 1;
+        } else {
+          censored.push({ t: c, entry });
+        }
+      }
+    }
+    const total = events.length + censored.length;
+    const obsTimes = events.concat(censored).map((o) => o.t);
+    const maxObserved = obsTimes.length ? maxNum(obsTimes) : null;
+    const eventTimes = events.map((e) => e.t);
+    const naiveMean = mean(eventTimes);
+    const naiveMedian = median(eventTimes);
+    if (!events.length) {
+      return {
+        curve: [],
+        median: null,
+        medianLowerBound: maxObserved,
+        mean: null,
+        restrictionTime: maxObserved,
+        meanTruncated: false,
+        naiveMean,
+        naiveMedian,
+        events: 0,
+        censored: censored.length,
+        total,
+        q25: null,
+        q75: null,
+        reliableUntil: null,
+        excludedPreEntry,
+        maxObserved
+      };
+    }
+    const fullCurve = kmCurveEntry(events, events.concat(censored));
+    let reliableUntil = null;
+    let curve = fullCurve;
+    if (opts == null ? void 0 : opts.minRisk) {
+      reliableUntil = reliableUntilFromCurve(fullCurve);
+      curve = reliableUntil === null ? [] : fullCurve.filter((p) => p.t <= reliableUntil);
+    }
+    const median_ = kmMedianFromCurve(curve);
+    const q25 = kmQuantileFromCurve(curve, 0.25);
+    const q75 = kmQuantileFromCurve(curve, 0.75);
+    const tau = (opts == null ? void 0 : opts.horizonDays) !== void 0 ? Math.min(opts.horizonDays, reliableUntil != null ? reliableUntil : maxObserved) : maxObserved;
+    const { rmst, sAtTau } = rmstToTau(curve, tau);
+    const medianLowerBound = median_ !== null ? null : (opts == null ? void 0 : opts.minRisk) ? reliableUntil != null ? reliableUntil : maxObserved : maxObserved;
+    return {
+      curve,
+      median: median_,
+      medianLowerBound,
+      mean: rmst,
+      restrictionTime: tau,
+      meanTruncated: sAtTau > 0,
+      naiveMean,
+      naiveMedian,
+      events: events.length,
+      censored: censored.length,
+      total,
+      q25,
+      q75,
+      reliableUntil,
+      excludedPreEntry,
+      maxObserved
     };
   }
   function filterScope(rows, scope) {
@@ -2712,13 +2868,18 @@ var Server = (() => {
       }
     };
   }
-  function actionableView(rows) {
-    return rows.map((r) => ({
-      severity: r.severity,
-      status: r.status,
-      mttr_days: r.mttr_actionable_days,
-      age_days: r.actionable_age_days
-    }));
+  function actionableView(rows, opts) {
+    const hasTrackingStart = (opts == null ? void 0 : opts.trackingStart) !== void 0 && (opts == null ? void 0 : opts.trackingStart) !== null;
+    return rows.map((r) => {
+      var _a;
+      return {
+        severity: r.severity,
+        status: r.status,
+        mttr_days: r.mttr_actionable_days,
+        age_days: r.actionable_age_days,
+        entry_days: hasTrackingStart ? entryDaysFrom(opts.trackingStart, (_a = r.actionable_from) != null ? _a : null) : void 0
+      };
+    });
   }
   function awaitingVendorFix(rows, opts) {
     var _a;
@@ -2775,7 +2936,8 @@ var Server = (() => {
         severity: row.severity,
         status: obs.event ? "RESOLVED" : "OPEN",
         mttr_days: obs.event ? obs.t : null,
-        age_days: obs.event ? null : obs.t
+        age_days: obs.event ? null : obs.t,
+        entry_days: row.entry_days
       });
     }
     return out;
@@ -2884,6 +3046,12 @@ var Server = (() => {
     }
     return out;
   }
+  function kmMedianOf(events, risk, opts) {
+    const curve = kmCurveEntry(events, risk);
+    if (!opts.minRisk) return kmMedianFromCurve(curve);
+    const cutAt = reliableUntilFromCurve(curve);
+    return kmMedianFromCurve(cutAt === null ? [] : curve.filter((p) => p.t <= cutAt));
+  }
   function trendFromBase(scans, base, severities = null, opts = {}) {
     var _a;
     const hideNoFix = (_a = opts.hideNoFix) != null ? _a : false;
@@ -2934,12 +3102,18 @@ var Server = (() => {
     var _a;
     const hideNoFix = (_a = opts.hideNoFix) != null ? _a : false;
     const rows = scopeRows(base, severities, opts.scope);
-    const parsed = rows.map((r) => ({
-      first: parseTs(r["first_seen"]),
-      resolvedAt: parseTs(r["resolved_at"]),
-      mttr: mttrOf(r),
-      fixAvail: parseTs(r["fix_available_at"])
-    }));
+    const parsed = rows.map((r) => {
+      var _a2;
+      return {
+        first: parseTs(r["first_seen"]),
+        resolvedAt: parseTs(r["resolved_at"]),
+        mttr: mttrOf(r),
+        fixAvail: parseTs(r["fix_available_at"]),
+        // MTTR delayed-entry package: relative to the TRACKING START, never to `d` below —
+        // TrendKmOptions's own note.
+        entry: entryDaysFrom((_a2 = opts.trackingStartByScope) == null ? void 0 : _a2[r["scope"]], r["first_seen"])
+      };
+    });
     const skip = kmSkipMask(points, opts.maxReconstructed);
     return points.map((p, i) => {
       if (skip !== null && skip[i]) return { ...p, km_median_days: null };
@@ -2950,34 +3124,36 @@ var Server = (() => {
         const risk = [];
         for (const r of parsed) {
           if (r.resolvedAt !== null && r.resolvedAt <= d) {
-            if (r.mttr !== null) {
-              events.push(r.mttr);
-              risk.push(r.mttr);
+            if (r.mttr !== null && r.mttr > r.entry) {
+              events.push({ t: r.mttr, entry: r.entry });
+              risk.push({ t: r.mttr, entry: r.entry });
             }
           } else if (r.first !== null && r.first <= d) {
             if (hideNoFix && awaitingFixAsOf(r.first, r.resolvedAt, r.fixAvail, d)) continue;
-            risk.push((d - r.first) / DAY_MS6);
+            const age = (d - r.first) / DAY_MS6;
+            if (age > r.entry) risk.push({ t: age, entry: r.entry });
           }
         }
-        med = kmMedianFromCurve(kmCurve(events, risk));
+        med = kmMedianOf(events, risk, opts);
       }
       return { ...p, km_median_days: round3(med) };
     });
   }
   function kmMedianAsOf(base, severities, d, opts = {}) {
-    var _a;
+    var _a, _b;
     if (d === null || !base.length) return null;
     const hideNoFix = (_a = opts.hideNoFix) != null ? _a : false;
     const rows = scopeRows(base, severities, opts.scope);
     const events = [];
     const risk = [];
     for (const r of rows) {
+      const entry = entryDaysFrom((_b = opts.trackingStartByScope) == null ? void 0 : _b[r["scope"]], r["first_seen"]);
       const resolvedAt = parseTs(r["resolved_at"]);
       if (resolvedAt !== null && resolvedAt <= d) {
         const mttr = mttrOf(r);
-        if (mttr !== null) {
-          events.push(mttr);
-          risk.push(mttr);
+        if (mttr !== null && mttr > entry) {
+          events.push({ t: mttr, entry });
+          risk.push({ t: mttr, entry });
         }
         continue;
       }
@@ -2986,10 +3162,11 @@ var Server = (() => {
         if (hideNoFix && awaitingFixAsOf(first, resolvedAt, parseTs(r["fix_available_at"]), d)) {
           continue;
         }
-        risk.push((d - first) / DAY_MS6);
+        const age = (d - first) / DAY_MS6;
+        if (age > entry) risk.push({ t: age, entry });
       }
     }
-    return round3(kmMedianFromCurve(kmCurve(events, risk)));
+    return round3(kmMedianOf(events, risk, opts));
   }
   function withOpenPastSla(points, base, severities = null, fromField = "first_seen", opts = {}) {
     const rows = scopeRows(base, severities, opts.scope);
@@ -5404,7 +5581,14 @@ var Server = (() => {
     return {
       rowCount: m["rowCount"],
       overall: { resolved: overall["resolved"], open: overall["open"] },
-      remediation: km ? { km: { median: km["median"], medianLowerBound: km["medianLowerBound"] } } : {}
+      remediation: km ? {
+        km: {
+          median: km["median"],
+          medianLowerBound: km["medianLowerBound"],
+          q25: km["q25"],
+          reliableUntil: km["reliableUntil"]
+        }
+      } : {}
     };
   }
   function execGroupSlice(byGroup) {
@@ -5418,6 +5602,8 @@ var Server = (() => {
         return {
           group: (_a = r["group"]) != null ? _a : r["domain"],
           kmMedian: r["kmMedian"],
+          kmQ25: r["kmQ25"],
+          kmMedianLowerBound: r["kmMedianLowerBound"],
           open: r["open"]
         };
       })
@@ -6217,7 +6403,9 @@ var Server = (() => {
     return withKmMedian(withAttainment, base, severities, {
       hideNoFix,
       maxReconstructed: KM_TREND_MAX_RECONSTRUCTED,
-      scope
+      scope,
+      trackingStartByScope: options.trackingStartByScope,
+      minRisk: options.minRisk
     });
   }
   function loadProgramTrend(rule, options = {}) {
@@ -7478,6 +7666,7 @@ var Server = (() => {
         excludedNoClock += 1;
         continue;
       }
+      const entryDays = entryDaysFrom(opts.trackingStart, row.first_seen);
       const died = parseTs(row.rotated_at);
       if (died !== null) {
         const days = (died - born) / DAY_MS10;
@@ -7490,7 +7679,8 @@ var Server = (() => {
           severity: null,
           status: STATUS_RESOLVED,
           mttr_days: days,
-          age_days: null
+          age_days: null,
+          entry_days: entryDays
         });
         continue;
       }
@@ -7503,9 +7693,15 @@ var Server = (() => {
         excludedNoClock += 1;
         continue;
       }
-      projected.push({ severity: null, status: STATUS_OPEN, mttr_days: null, age_days: age });
+      projected.push({
+        severity: null,
+        status: STATUS_OPEN,
+        mttr_days: null,
+        age_days: age,
+        entry_days: entryDays
+      });
     }
-    const km = kaplanMeier(projected);
+    const km = kaplanMeier(projected, { horizonDays: RMST_HORIZON_DAYS, minRisk: true });
     let withinSla = 0;
     for (const d of eventDays) if (d <= sla) withinSla += 1;
     return {
@@ -7872,7 +8068,7 @@ var Server = (() => {
     const version = dataVersion();
     if (!baseMemo || baseMemo.version !== version) {
       const now = Date.now();
-      const rows = loadBaseRows({ now });
+      const rows = loadBaseRows({ now, trackingStartByScope: trackingStartByScopeMap() });
       attachRepoTags(rows);
       attachProjectGrain(rows);
       baseMemo = { version, now, rows };
@@ -7913,6 +8109,21 @@ var Server = (() => {
     }
     return newest === null ? { asOf: Date.now(), asOfSource: "wallClock", observedFrom: earliestIso } : { asOf: newest, asOfSource: "scan", observedFrom: earliestIso };
   }
+  function trackingStartByScopeMap() {
+    const out = {};
+    for (const scope of SCOPES) out[scope] = ledgerClock(scope).observedFrom;
+    return out;
+  }
+  function trackingSinceFor(n2) {
+    const scopes = n2.scope ? [n2.scope] : [...SCOPES];
+    const out = {};
+    for (const scope of scopes) {
+      const iso = ledgerClock(scope).observedFrom;
+      if (iso !== null) out[scope] = iso;
+    }
+    return out;
+  }
+  var KM_OPTS = { horizonDays: RMST_HORIZON_DAYS, minRisk: true };
   var newestScanMemo;
   function newestScanByScope() {
     const version = dataVersion();
@@ -8038,6 +8249,7 @@ var Server = (() => {
     };
   }
   function shipKM(km) {
+    var _a, _b, _c, _d, _e;
     return {
       curve: km.curve.map((p) => ({ t: p.t, s: p.s })),
       median: km.median,
@@ -8048,11 +8260,16 @@ var Server = (() => {
       restrictionTime: km.restrictionTime,
       events: km.events,
       censored: km.censored,
-      total: km.total
+      total: km.total,
+      q25: (_a = km.q25) != null ? _a : null,
+      q75: (_b = km.q75) != null ? _b : null,
+      reliableUntil: (_c = km.reliableUntil) != null ? _c : null,
+      excludedPreEntry: (_d = km.excludedPreEntry) != null ? _d : 0,
+      maxObserved: (_e = km.maxObserved) != null ? _e : null
     };
   }
   function latencySummary(rows, now, scope) {
-    const km = kaplanMeier(latencyView(rows, "detection", now, { scope }));
+    const km = kaplanMeier(latencyView(rows, "detection", now, { scope }), KM_OPTS);
     return {
       median: km.median,
       medianLowerBound: km.medianLowerBound,
@@ -8089,7 +8306,7 @@ var Server = (() => {
       const seen = Object.keys(bySev);
       const ordered = SEVERITY_ORDER.filter((s2) => seen.indexOf(s2) >= 0).concat(seen.filter((s2) => SEVERITY_ORDER.indexOf(s2) < 0));
       for (const s2 of ordered) {
-        const k = kaplanMeier(bySev[s2]);
+        const k = kaplanMeier(bySev[s2], KM_OPTS);
         kmMedianPerSev[s2] = k.median;
         kmLowerBoundPerSev[s2] = k.medianLowerBound;
         kmP90PerSev[s2] = kmQuantileFromCurve(k.curve, 0.9);
@@ -8098,6 +8315,9 @@ var Server = (() => {
     }
     const scaScoped = scoped.filter((r) => r.scope === "sca");
     const scaVisible = rows.filter((r) => r.scope === "sca");
+    const scaActionable = actionableView(scaVisible, {
+      trackingStart: ledgerClock("sca").observedFrom
+    });
     return {
       asOf: snap.now,
       scope: n2.scope,
@@ -8115,7 +8335,7 @@ var Server = (() => {
       remediation: {
         pctiles: mttrPercentiles(rows),
         buckets: resolutionBuckets(rows),
-        km: shipKM(kaplanMeier(rows)),
+        km: shipKM(kaplanMeier(rows, KM_OPTS)),
         kmMedianPerSev,
         kmP90PerSev,
         kmLowerBoundPerSev,
@@ -8163,20 +8383,23 @@ var Server = (() => {
           scope: "sca",
           rowCount: scaVisible.length,
           notMeasured: rows.length - scaVisible.length,
-          openPastSla: openPastSla(actionableView(scaVisible), { slaTargets: n2.slaTargets }),
-          km: shipKM(kaplanMeier(actionableView(scaVisible))),
+          openPastSla: openPastSla(scaActionable, { slaTargets: n2.slaTargets }),
+          km: shipKM(kaplanMeier(scaActionable, KM_OPTS)),
           /** How long we waited for a fix to EXIST, over the pre-toggle sca population. Pairs
            *  additively with the clock above: exposure = latency + actionable. */
           vendorLatency: latencySummary(scaScoped, snap.now, "sca")
         }
       },
-      signalCoverage: signalCoverage(rows)
+      signalCoverage: signalCoverage(rows),
+      // MTTR delayed-entry package: ISO tracking-start per scope in view, so the page can caption
+      // "Tracking since <date>" beside a half-life that may be left-truncated. See its own note.
+      trackingSince: trackingSinceFor(n2)
     };
   }
   function mttrModel(p) {
     const n2 = norm(p);
     return cached(
-      "dsMttr2",
+      "dsMttr3",
       { ...keyOf(n2), slaTargets: n2.slaTargets, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => buildMttr(n2),
       CLOCK_TTL_SEC
@@ -8198,8 +8421,9 @@ var Server = (() => {
     }
     const execCut = liveRepoRows(rows, n2.mttrExcludeEndOfLife);
     const byScope3 = (n2.scope ? [n2.scope] : [...SCOPES]).map((scope) => {
+      var _a2;
       const sub = rows.filter((r) => r.scope === scope);
-      const km = kaplanMeier(execCut.rows.filter((r) => r.scope === scope));
+      const km = kaplanMeier(execCut.rows.filter((r) => r.scope === scope), KM_OPTS);
       return {
         group: scope,
         dimension: "scope",
@@ -8208,6 +8432,10 @@ var Server = (() => {
         resolved: sub.filter((r) => !isOpen8(r.status)).length,
         kmMedian: km.median,
         kmMedianLowerBound: km.medianLowerBound,
+        // MTTR delayed-entry package: the "25% fixed within" figure — the honest thing to show
+        // beside a null `kmMedian` under the reliability cut, same reasoning as `mttrModel`'s
+        // per-severity `kmPerSev`.
+        kmQ25: (_a2 = km.q25) != null ? _a2 : null,
         awaiting: awaitingVendorFix(sub).overall
       };
     });
@@ -8256,7 +8484,9 @@ var Server = (() => {
       })),
       coldZoneAsOfSource: clock.asOfSource,
       tiers: riskTierStats(scopedTierRows(rows), void 0),
-      signalCoverage: signalCoverage(rows)
+      signalCoverage: signalCoverage(rows),
+      // MTTR delayed-entry package — see `mttrModel`'s matching field for the caption it feeds.
+      trackingSince: trackingSinceFor(n2)
     };
   }
   function scopedTierRows(rows) {
@@ -8272,7 +8502,12 @@ var Server = (() => {
     const weekAgo = now - WEEK_MS;
     if (!Number.isFinite(earliest) || earliest > weekAgo) return null;
     const base = scoped;
-    const opts = { hideNoFix: !n2.showNoFix, ...n2.scope ? { scope: n2.scope } : {} };
+    const opts = {
+      hideNoFix: !n2.showNoFix,
+      ...n2.scope ? { scope: n2.scope } : {},
+      trackingStartByScope: trackingStartByScopeMap(),
+      minRisk: true
+    };
     const current = kmMedianAsOf(base, n2.severities, now, opts);
     const previous = kmMedianAsOf(base, n2.severities, weekAgo, opts);
     if (current === null || previous === null) return null;
@@ -8361,7 +8596,7 @@ var Server = (() => {
   function executiveModel(p) {
     const n2 = norm(p);
     return cached(
-      "dsExecutive1",
+      "dsExecutive2",
       {
         ...keyOf(n2),
         slaTargets: n2.slaTargets,
@@ -8633,10 +8868,14 @@ var Server = (() => {
       open: rows.filter((r) => isOpen8(r.status)).length,
       coverage: validationCoverage(secretRows),
       validity: postDetectionValidityRate(secretRows),
-      timeToRevoke: timeToRevoke(
-        secretsCut.rows,
-        { now: snap.now }
-      ),
+      // MTTR delayed-entry package: `trackingStart` is this register's own scan history, not
+      // `snap.now` — `secretsLifecycle.ts`'s `TimeToRevokeOptions.trackingStart` note explains
+      // why the entry offset shares the detection clock's origin (`first_seen`) here too. Measured
+      // over `secretsCut`, the same end-of-life-excluded population `endOfLife` below reports.
+      timeToRevoke: timeToRevoke(secretsCut.rows, {
+        now: snap.now,
+        trackingStart: ledgerClock("secrets").observedFrom
+      }),
       endOfLife: endOfLifeBlock(secretsCut, n2.mttrExcludeEndOfLife),
       removalVsRotation: removalVsRotation(secretRows),
       segments: {
@@ -8657,7 +8896,7 @@ var Server = (() => {
   function secretsModel(p) {
     const n2 = norm(p);
     return cached(
-      "dsSecrets1",
+      "dsSecrets2",
       // `mttrExcludeEndOfLife` is here because `timeToRevoke` reads it; `severities` is not
       // because nothing does. One rule, both directions.
       { scope: "secrets", showNoFix: n2.showNoFix, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
@@ -8867,10 +9106,11 @@ var Server = (() => {
         // reads is the next reader's trap (CLAUDE.md's "a settings key nothing reads is worse
         // than no key", applied to a payload field) — so `km` is the only median this page can
         // publish, and where the curve never reaches half `medianLowerBound` is what is true.
+        //
         // THE ONE SPEED FIGURE ON THIS PAGE, so the one thing the exclusion touches here. The
         // three counts above it are what the register HOLDS and stay whole; this is how long a
         // finding lived, and a repository nobody is meant to remediate has no business in it.
-        km: shipKM(kaplanMeier(historyCut.rows))
+        km: shipKM(kaplanMeier(historyCut.rows, KM_OPTS))
       },
       endOfLife: endOfLifeBlock(historyCut, n2.mttrExcludeEndOfLife),
       // `mttrPageTrendSlice` reads both of these keys.
@@ -8890,7 +9130,9 @@ var Server = (() => {
       severities: n2.severities,
       showNoFix: n2.showNoFix,
       base: liveRepoRows(scopedRows(all, n2), n2.mttrExcludeEndOfLife).rows,
-      ...n2.scope ? { scope: n2.scope } : {}
+      ...n2.scope ? { scope: n2.scope } : {},
+      trackingStartByScope: trackingStartByScopeMap(),
+      minRisk: true
     });
   }
   function perScopeScanStats(scans) {
@@ -8911,7 +9153,7 @@ var Server = (() => {
   function historyModel(p) {
     const n2 = norm(p);
     return durablyCached(
-      "dsHistory2",
+      "dsHistory3",
       { ...keyOf(n2), mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => buildHistory(n2)
     );
@@ -9839,6 +10081,7 @@ var Server = (() => {
         showNoFix: exec["showNoFix"],
         mttr: execMttrSlice(mttrModel(params)),
         byScope: execGroupSlice(exec["byScope"]),
+        trackingSince: exec["trackingSince"],
         // Already minimal — a per-severity tally, a delta pair, the tier table and the coverage
         // caveat — so these four ship whole.
         severityCounts: exec["severityCounts"],

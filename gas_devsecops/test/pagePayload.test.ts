@@ -24,6 +24,8 @@ const FULL_MTTR = {
       curve: Array.from({ length: 52 }, (_, i) => ({ t: i, s: 1 - i / 104 })),
       median: null,
       medianLowerBound: 118.4,
+      q25: 52.7,
+      reliableUntil: 118.4,
       mean: 63.2,
       restrictionTime: 118.4,
       meanTruncated: true,
@@ -44,13 +46,15 @@ const FULL_MTTR = {
 };
 
 describe("execMttrSlice — the hero's four numbers, and nothing else", () => {
-  it("ships exactly rowCount, overall.{resolved,open} and km.{median,medianLowerBound}", () => {
+  it("ships exactly rowCount, overall.{resolved,open} and km.{median,medianLowerBound,q25,reliableUntil}", () => {
     const out = execMttrSlice(FULL_MTTR)!;
     expect(Object.keys(out).sort()).toEqual(["overall", "remediation", "rowCount"]);
     expect(Object.keys(out.overall as object).sort()).toEqual(["open", "resolved"]);
     expect(Object.keys(out.remediation as object)).toEqual(["km"]);
+    // MTTR delayed-entry package: q25/reliableUntil joined median/medianLowerBound so the
+    // Executive hero can run the same kmHalfLifeView decision MTTR & SLA does.
     expect((out.remediation as { km: object }).km).toEqual({
-      median: null, medianLowerBound: 118.4,
+      median: null, medianLowerBound: 118.4, q25: 52.7, reliableUntil: 118.4,
     });
   });
 
@@ -65,17 +69,28 @@ describe("execMttrSlice — the hero's four numbers, and nothing else", () => {
   it("cuts the payload by well over an order of magnitude", () => {
     const before = JSON.stringify(FULL_MTTR).length;
     const after = JSON.stringify(execMttrSlice(FULL_MTTR)).length;
-    expect(after).toBeLessThan(before / 20);
+    // /15, not /20: q25/reliableUntil (MTTR delayed-entry package) added ~35 bytes to this
+    // FIXTURE's tiny `after` — real payloads carry far more curve/aging/kmPerSev weight than
+    // FULL_MTTR's 52-point curve does, so the margin against a 52k-row register is unaffected.
+    // ~19x still clears "well over an order of magnitude" by a wide margin.
+    expect(after).toBeLessThan(before / 15);
   });
 
   it("keeps the client's read paths intact", () => {
     const out = execMttrSlice(FULL_MTTR) as {
       rowCount: number; overall: { resolved: number; open: number };
-      remediation: { km: { median: number | null; medianLowerBound: number | null } };
+      remediation: {
+        km: {
+          median: number | null; medianLowerBound: number | null;
+          q25: number | null; reliableUntil: number | null;
+        };
+      };
     };
     expect(out.rowCount).toBe(99);
     expect(out.overall.open).toBe(67);
     expect(out.remediation.km.medianLowerBound).toBe(118.4);
+    expect(out.remediation.km.q25).toBe(52.7);
+    expect(out.remediation.km.reliableUntil).toBe(118.4);
   });
 
   it("leaves remediation empty rather than absent when there is no KM result", () => {
@@ -232,10 +247,10 @@ describe("execMttrSlice — the hero's four numbers, and nothing else", () => {
 const FULL_GROUP = {
   dimension: "owner_project",
   rows: [
-    { group: "CROSS", domain: "CROSS", median: 5, p90: 40, kmMedian: 12, slaPct: 70,
-      openPastSla: 3, awaiting: 1, open: 18, resolved: 9 },
-    { group: "SAP", domain: "SAP", median: 7, p90: 55, kmMedian: null, slaPct: 61,
-      openPastSla: 5, awaiting: 0, open: 13, resolved: 4 },
+    { group: "CROSS", domain: "CROSS", median: 5, p90: 40, kmMedian: 12, kmQ25: 6,
+      kmMedianLowerBound: null, slaPct: 70, openPastSla: 3, awaiting: 1, open: 18, resolved: 9 },
+    { group: "SAP", domain: "SAP", median: 7, p90: 55, kmMedian: null, kmQ25: null,
+      kmMedianLowerBound: 61.5, slaPct: 61, openPastSla: 5, awaiting: 0, open: 13, resolved: 4 },
   ],
   trend: {
     groups: ["CROSS", "SAP"],
@@ -244,12 +259,16 @@ const FULL_GROUP = {
   },
 };
 
-describe("execGroupSlice — three columns and the dimension tag", () => {
+describe("execGroupSlice — five columns and the dimension tag", () => {
   it("ships only the columns the exec table draws", () => {
     const out = execGroupSlice(FULL_GROUP)!;
     expect(Object.keys(out).sort()).toEqual(["dimension", "rows"]);
-    expect((out.rows as object[]).map((r) => Object.keys(r).sort()))
-      .toEqual([["group", "kmMedian", "open"], ["group", "kmMedian", "open"]]);
+    // MTTR delayed-entry package: kmQ25/kmMedianLowerBound joined kmMedian so the byScope
+    // table can run kmHalfLifeView per row too.
+    expect((out.rows as object[]).map((r) => Object.keys(r).sort())).toEqual([
+      ["group", "kmMedian", "kmMedianLowerBound", "kmQ25", "open"],
+      ["group", "kmMedian", "kmMedianLowerBound", "kmQ25", "open"],
+    ]);
   });
 
   it("drops the trend series, which no chart on this page reads", () => {

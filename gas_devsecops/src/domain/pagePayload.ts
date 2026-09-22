@@ -47,6 +47,13 @@ import { parseTs, type Rec } from "./util";
  * `fmtKmMedian` distinguishes a missing estimate (renders "—") from a present one, and an
  * absent `remediation` and an absent `remediation.km` have to reach it the same way.
  *
+ * `km` CARRIES FOUR FIELDS NOW, NOT TWO (MTTR delayed-entry package): `q25` and `reliableUntil`
+ * joined `median`/`medianLowerBound` so the Executive hero can run the SAME `kmHalfLifeView`
+ * decision MTTR & SLA does — "Not reached" plus a 25th-percentile or reliability-cut reading,
+ * never the retired "at least N days" — rather than a two-scalar shape that could only ever
+ * say a bare number or nothing. Still an allowlist of exactly what the hero reads, not a
+ * fifth field wider than that.
+ *
  * THIS IS AN ALLOWLIST, WHICH IS WHY `kmPerSev` COSTS EXEC NOTHING. `buildMttr` now ships one
  * `shipKM`-narrowed curve PER SEVERITY (`remediation.kmPerSev`) for the MTTR page's fan of
  * small multiples — six staircases, each as long as the register has distinct closure times.
@@ -65,19 +72,29 @@ export function execMttrSlice(mttr: unknown): Rec | null {
     rowCount: m["rowCount"],
     overall: { resolved: overall["resolved"], open: overall["open"] },
     remediation: km
-      ? { km: { median: km["median"], medianLowerBound: km["medianLowerBound"] } }
+      ? {
+        km: {
+          median: km["median"], medianLowerBound: km["medianLowerBound"],
+          q25: km["q25"], reliableUntil: km["reliableUntil"],
+        },
+      }
       : {},
   };
 }
 
 /**
- * The per-group split reduced to the three columns the table draws, plus the `dimension` tag the
+ * The per-group split reduced to the columns the table draws, plus the `dimension` tag the
  * client relabels from. `trend` is dropped whole — the exec table has no chart under it.
  *
  * ONLY `group` SURVIVES, not the `domain` alias beside it. `mttrByDomainData` writes both
  * (`api.ts`: "Keep `domain` alongside the generic `group` label"), but the by-support-group
  * split writes only `group`, which is why every reader already goes through `group ?? domain`.
  * Shipping both would send each group's name twice for one of the two dimensions.
+ *
+ * `kmQ25` AND `kmMedianLowerBound` JOINED `kmMedian` (MTTR delayed-entry package), for the same
+ * reason `execMttrSlice`'s `km` widened: the byScope table now runs `kmHalfLifeView` per row
+ * too, so a register whose curve never reaches half reads "Not reached" (with its own quartile
+ * reading) instead of a bare dash with a footnote pointing at MTTR & SLA.
  *
  * ROWS ARE NOT CAPPED HERE, though the page draws five. How many rows are worth showing is a
  * presentation decision, and it already lives in `executiveByDomainView` where it is tested;
@@ -94,6 +111,8 @@ export function execGroupSlice(byGroup: unknown): Rec | null {
     rows: rows.map((r) => ({
       group: r["group"] ?? r["domain"],
       kmMedian: r["kmMedian"],
+      kmQ25: r["kmQ25"],
+      kmMedianLowerBound: r["kmMedianLowerBound"],
       open: r["open"],
     })),
   };

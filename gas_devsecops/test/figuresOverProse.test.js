@@ -507,12 +507,17 @@ describe("fixNextView.rankedShort: the two numbers on the surface", () => {
 // page source rather than against a screenshot.
 
 describe("the honesty statements stayed on the page, not in a tip", () => {
-  it("the front door still prints \"at least\" and \"Not measured\" as the hero's value", () => {
+  it("the front door still prints \"Not reached\" and \"Not measured\" as the hero's value", () => {
     // Both come from `kmHalfLifeView`, which executive.js imports rather than restating —
-    // the value is the surface and the tip only explains it.
+    // the value is the surface and the tip only explains it. "at least N days" is RETIRED
+    // (MTTR delayed-entry package) — no branch of `kmHalfLifeView` may print it any more.
     expect(EXEC_SRC).toMatch(/kmHalfLifeView/);
-    expect(MTTR_SRC).toMatch(/value: "at least " \+ fmtDays\(bound\)/);
+    expect(MTTR_SRC).toMatch(/value: "Not reached"/);
     expect(MTTR_SRC).toMatch(/value: "Not measured"/);
+    // The retired half-life bound prefix, specifically — other "at least one X" sentences
+    // elsewhere on this page (the survival curve's empty state, the per-severity empty state)
+    // are unrelated English and stay.
+    expect(MTTR_SRC).not.toMatch(/"at least " \+ fmtDays/);
   });
 
   // THE CLAIM, AND THE DRAFT IT REPLACED. Both heroes first routed the label's tip to
@@ -549,7 +554,7 @@ describe("the honesty statements stayed on the page, not in a tip", () => {
     // the bound it is actually showing.
     // Reworded by the tip-budget round and re-pinned rather than relaxed: the claim is that
     // the SPECIFIC reading leads, not that it leads in any particular number of words.
-    expect(EXEC_SRC).toMatch(/The curve never falls to half inside the window/);
+    expect(EXEC_SRC).toMatch(/The survival curve never falls to half within the observed window/);
     expect(EXEC_SRC).toMatch(/“not measured”, not zero/);
     expect(MTTR_SRC).toMatch(/The curve never falls to half within the observed window/);
   });

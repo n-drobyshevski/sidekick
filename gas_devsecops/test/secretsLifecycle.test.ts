@@ -104,20 +104,33 @@ describe("postDetectionValidityRate", () => {
 });
 
 describe("timeToRevoke", () => {
-  it("1 event, 1 censored, 2 excluded — median 10 d, p90 null", () => {
+  // MTTR delayed-entry package: `timeToRevoke` now calls `kaplanMeier(projected, {
+  // horizonDays: RMST_HORIZON_DAYS, minRisk: true })` unconditionally (remediation.ts's
+  // `kaplanMeier` docstring, and server/readModels.ts's matching six call sites) — the SAME
+  // Gebski et al. reliability cut every other clock in this product applies. Its floor is
+  // `n(t) >= max(10, 50*S(t-))`, which near S=1 (the very first event) requires a risk set of
+  // AT LEAST 50. None of this file's hand-built fixtures reach that (they are 1-5 rows, sized
+  // for hand-arithmetic, not for register scale), so every one of them fails reliability at
+  // the first event and reliableUntil is null — the curve ships empty and median/q25/q75 all
+  // read null, with medianLowerBound falling back to the (uncapped) max observed time. This is
+  // the CORRECT behavior of a tiny population, not a defect: test/kmDelayedEntry.test.ts pins
+  // the same "first event already fails" rule on a population sized to demonstrate it directly.
+  it("1 event, 1 censored, 2 excluded — reliability-cut median null, lower bound 31 d", () => {
     const out = timeToRevoke(FOUR, { now: NOW });
 
     // Events = [10] (JAN11 - JAN01). Censored = [31] (NOW - JAN01). Risk set = [10, 31].
     // KM: the only distinct event time is t=10; atRisk = |{x >= 10}| = 2, d = 1,
-    //     S(10) = 1 - 1/2 = 0.5.
-    // median: smallest t with S(t) <= 0.5 -> S(10) = 0.5 exactly -> 10.
-    expect(out.median).toBe(10);
-    expect(out.medianLowerBound).toBeNull();
+    //     S(10) = 1 - 1/2 = 0.5. Reliability at t=10: n(10)=2 < max(10, 50*S(0-)=50*1=50) ->
+    //     FAILS at the very first (and only) event -> reliableUntil = null -> shipped curve [].
+    // median: kmMedianFromCurve([]) -> null (not 10 — the un-cut curve HAD a clean median, but
+    //     nothing here is reliable enough to publish it).
+    expect(out.median).toBeNull();
+    // medianLowerBound, minRisk path: reliableUntil ?? maxObserved = null ?? 31 = 31 (the
+    // uncapped max observed time, since nothing at all was reliable).
+    expect(out.medianLowerBound).toBe(31);
 
-    // p90 needs S(t) <= 1 - 0.9 = 0.10. The curve's ONLY point sits at S = 0.50, so survival
-    // never falls that far and the p90 is NULL — not "the single event time". One event
-    // against a risk set of two can drop survival to a half and no further; publishing 10 d
-    // as the p90 would be inventing nine-tenths of a distribution from one observation.
+    // p90 needs S(t) <= 1 - 0.9 = 0.10, off the (empty, post-cut) curve — null either way:
+    // even the un-cut curve's only point sits at S = 0.50, so survival never falls that far.
     expect(out.p90).toBeNull();
 
     expect(out.events).toBe(1);
@@ -131,16 +144,19 @@ describe("timeToRevoke", () => {
     );
 
     // Default SLA is 7 d (a chosen target, not SLA_TARGETS[severity]); the one event took
-    // 10 d, and 10 > 7, so 0 of 1 events landed inside it.
+    // 10 d, and 10 > 7, so 0 of 1 events landed inside it. withinSlaPct is read off the raw
+    // event days, not the KM curve, so the reliability cut does not touch it.
     expect(out.sla).toBe(DEFAULT_REVOKE_SLA_DAYS);
     expect(out.sla).toBe(7);
     expect(out.withinSlaPct).toBe(0);
 
-    // RMST out to tau = max observed time = 31: S=1 over [0,10] gives 1 * 10 = 10, then
-    // S=0.5 over [10,31] gives 0.5 * 21 = 10.5, total 20.5. S(tau) = 0.5 > 0, so survival
-    // never reached zero inside the observation window and the mean is a LOWER BOUND.
+    // RMST horizon (365 d) does not bind here — τ = min(365, reliableUntil ?? maxObserved) =
+    // min(365, 31) = 31, same number the uncapped restriction time used to be. But the curve
+    // it integrates is the EMPTY (cut) one, so RMST is just S=1 held flat to τ: 1 * 31 = 31,
+    // not the 20.5 a trusted 0.5-drop-at-10 curve would have given. S(τ) = 1 > 0 either way,
+    // so the mean is still reported as a lower bound.
     expect(out.km.restrictionTime).toBe(31);
-    expect(out.km.mean).toBeCloseTo(20.5, 10);
+    expect(out.km.mean).toBeCloseTo(31, 10);
     expect(out.km.meanTruncated).toBe(true);
   });
 
@@ -151,15 +167,17 @@ describe("timeToRevoke", () => {
     ];
     const out = timeToRevoke(rows, { now: NOW, sla: 7 });
 
-    // 3 <= 7 (in), 10 > 7 (out) -> 1 of 2 = 50%. The comparison is inclusive.
+    // 3 <= 7 (in), 10 > 7 (out) -> 1 of 2 = 50%. The comparison is inclusive, and it reads the
+    // raw event days rather than the KM curve, so the reliability cut below does not touch it.
     expect(out.withinSlaPct).toBe(50);
     expect(out.events).toBe(2);
     expect(out.censored).toBe(0);
 
-    // KM with no censoring: t=3 -> atRisk 2, d 1, S = 0.5; t=10 -> atRisk 1, d 1, S = 0.
-    // median = 3 (first S <= 0.5); p90 needs S <= 0.10 and S(10) = 0 -> 10.
-    expect(out.median).toBe(3);
-    expect(out.p90).toBe(10);
+    // KM with no censoring: t=3 -> atRisk 2, d 1, S = 0.5; t=10 -> atRisk 1, d 1, S = 0. Both
+    // fail reliability (n never reaches the required 50 near S=1) — the first event already
+    // does, so reliableUntil is null and the shipped curve is empty: median and p90 both null.
+    expect(out.median).toBeNull();
+    expect(out.p90).toBeNull();
   });
 
   it("the SLA is inclusive: an event exactly at the target is inside it", () => {
@@ -172,7 +190,10 @@ describe("timeToRevoke", () => {
     // One event at 10 d, plus four rows nobody checked, born the same day. Censoring the
     // four would put them in the risk set: atRisk at t=10 would be 5, S = 1 - 1/5 = 0.8,
     // and the median would vanish (0.8 > 0.5 -> null). Excluding them leaves the single
-    // event alone: atRisk 1, d 1, S = 0 -> median 10.
+    // event alone: atRisk 1, d 1, S = 0. That single-observation curve still fails the
+    // reliability floor (n=1 << 50 near S=1), so the shipped curve is empty regardless —
+    // median and p90 both read null, the same "not enough to trust" answer censoring the
+    // four would have produced for a different reason.
     const rows = [
       secret({ validation_state: "INVALID", first_seen: JAN01, rotated_at: JAN11 }),
       secret({ validation_state: "UNKNOWN", first_seen: JAN01 }),
@@ -183,8 +204,8 @@ describe("timeToRevoke", () => {
     const out = timeToRevoke(rows, { now: NOW });
     expect(out.excludedUnmeasured).toBe(4);
     expect(out.km.total).toBe(1); // risk set is the one event, not five observations
-    expect(out.median).toBe(10);
-    expect(out.p90).toBe(10); // S(10) = 0 <= 0.10
+    expect(out.median).toBeNull();
+    expect(out.p90).toBeNull();
   });
 
   it("removal does not stop the clock: a REMOVED but still-VALID secret is censored, not an event", () => {

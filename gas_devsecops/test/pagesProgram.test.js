@@ -36,11 +36,13 @@ import {
   actionableClockView, awaitingView, endOfLifeExclusionNote, fmtCount, fmtDays, kmHalfLifeView,
   mttrHeroView,
   mttrSeverityRows, rateView, resolutionBucketView, rmstView, slaSeverityRows,
+  trackingSinceView,
 } from "../src/client/js/pages/mttr.js";
 import {
   boundedRateView, capacityView, confusionView, coverageEfficiencyView, sensitivityView,
   signalBreakdownView,
 } from "../src/client/js/pages/program.js";
+import { fmtDate } from "../src/client/js/ui.js";
 import { absentText } from "../../gas_shared/ui/figures.js";
 
 const SRC = {
@@ -53,12 +55,15 @@ const SEVERITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"];
 
 // --------------------------------------------------------------------------- fixtures
 
-/** A KM result whose curve DOES fall to half. */
+/** A KM result whose curve DOES fall to half. `q25` rides along (kmHalfLifeView's "median"
+ *  state still carries it, for the per-severity table's own "25% fixed" column). */
 function kmWithMedian() {
   return {
     curve: [{ t: 3, s: 0.8 }, { t: 12, s: 0.5 }, { t: 40, s: 0.2 }],
     median: 12,
     medianLowerBound: null,
+    q25: 5,
+    reliableUntil: null,
     p90: 40,
     mean: 18.5,
     meanTruncated: false,
@@ -69,13 +74,22 @@ function kmWithMedian() {
   };
 }
 
-/** A KM result under heavy censoring: no median, a lower bound instead. This is the normal
- *  state of a young register carrying more open findings than closed ones. */
+/**
+ * A KM result under heavy censoring, past the reliability cut with no q25 either — the
+ * "quartile-bound" state (MTTR delayed-entry package): not even a quarter of what was tracked
+ * has closed within the reliable window. `reliableUntil` equals `medianLowerBound` here on
+ * purpose — the real shape every server call site ships once `opts.minRisk` runs (`readModels
+ * .ts`'s `medianLowerBound = reliableUntil ?? maxObserved`), not the pre-package "longest
+ * thing observed" bound this fixture used to represent. This is the normal state of a young
+ * register carrying more open findings than closed ones.
+ */
 function kmCensored() {
   return {
     curve: [{ t: 3, s: 0.94 }, { t: 20, s: 0.71 }],
     median: null,
     medianLowerBound: 41.4,
+    q25: null,
+    reliableUntil: 41.4,
     p90: null,
     mean: 33.2,
     meanTruncated: true,
@@ -83,6 +97,43 @@ function kmCensored() {
     events: 6,
     censored: 180,
     total: 186,
+  };
+}
+
+/** A KM result past the median but with a real 25th-percentile reading — the "quartile" state:
+ *  a quarter of what was tracked has closed, even though half has not. */
+function kmQuartile() {
+  return {
+    curve: [{ t: 3, s: 0.9 }, { t: 18, s: 0.76 }, { t: 44, s: 0.6 }],
+    median: null,
+    medianLowerBound: 44,
+    q25: 18,
+    reliableUntil: 44,
+    p90: null,
+    mean: 30,
+    meanTruncated: true,
+    restrictionTime: 44,
+    events: 9,
+    censored: 31,
+    total: 40,
+  };
+}
+
+/** No number at all — the "unmeasured" state. */
+function kmUnmeasured() {
+  return {
+    curve: [],
+    median: null,
+    medianLowerBound: null,
+    q25: null,
+    reliableUntil: null,
+    p90: null,
+    mean: null,
+    meanTruncated: false,
+    restrictionTime: null,
+    events: 0,
+    censored: 0,
+    total: 0,
   };
 }
 
@@ -113,6 +164,14 @@ function mttrPayload(km) {
       kmMedianPerSev: { CRITICAL: 6, HIGH: null },
       kmP90PerSev: { CRITICAL: 22, HIGH: null },
       kmLowerBoundPerSev: { CRITICAL: null, HIGH: 44 },
+      // `mttrSeverityRows` reads THIS now, not the three flat maps above (which stay on the
+      // fixture because the real payload still carries them too — see that function's own
+      // comment). CRITICAL is "median" state; HIGH is "quartile" (a real q25, unlike
+      // `kmCensored()`'s own "quartile-bound"), so the per-severity tests below exercise both.
+      kmPerSev: {
+        CRITICAL: { median: 6, medianLowerBound: null, q25: 3, reliableUntil: null },
+        HIGH: { median: null, medianLowerBound: 44, q25: 18, reliableUntil: 44 },
+      },
       openPastSla: {
         perSev: {
           CRITICAL: { open: 20, breached: 11, pct: 55, target: 7 },
@@ -148,22 +207,30 @@ function mttrPayload(km) {
 }
 
 /** `api_getExecutivePage`'s shape — the hero arrives through `execMttrSlice`, which ships
- *  the two scalars and nothing else. */
+ *  `{median, medianLowerBound, q25, reliableUntil}` (MTTR delayed-entry package) and nothing
+ *  else. `byScope` rows carry `kmQ25`/`kmMedianLowerBound` alongside `kmMedian` for the same
+ *  reason (`execGroupSlice`). */
 function execPayload(km) {
   return {
     asOf: 1_770_000_000_000,
     scope: null,
+    trackingSince: { sca: "2026-08-26T00:00:00.000Z", sast: "2026-09-01T00:00:00.000Z" },
     mttr: {
       rowCount: 186,
       overall: { resolved: 6, open: 180 },
-      remediation: { km: { median: km.median, medianLowerBound: km.medianLowerBound } },
+      remediation: {
+        km: {
+          median: km.median, medianLowerBound: km.medianLowerBound,
+          q25: km.q25 ?? null, reliableUntil: km.reliableUntil ?? null,
+        },
+      },
     },
     byScope: {
       dimension: "scope",
       rows: [
-        { group: "sca", kmMedian: 12, open: 90 },
-        { group: "sast", kmMedian: null, open: 60 },
-        { group: "secrets", kmMedian: 3, open: 30 },
+        { group: "sca", kmMedian: 12, kmQ25: 5, kmMedianLowerBound: null, open: 90 },
+        { group: "sast", kmMedian: null, kmQ25: null, kmMedianLowerBound: null, open: 60 },
+        { group: "secrets", kmMedian: 3, kmQ25: 1, kmMedianLowerBound: null, open: 30 },
       ],
     },
     severityCounts: { counts: { CRITICAL: 20, HIGH: 60, LOW: 100 }, open: 180, total: 186 },
@@ -239,27 +306,54 @@ function expectRateShape(rate, where) {
 // ------------------------------------------------------------- the lower-bound half-life
 
 describe("a curve that never reaches half", () => {
-  it("publishes the lower bound as \"at least N\" and flags it", () => {
-    const view = kmHalfLifeView(kmCensored());
-    expect(view.isLowerBound).toBe(true);
-    expect(view.value).toMatch(/^at least /);
-    expect(view.value).toContain("41");
-    expect(view.measured).toBe(true);
-    expect(view.days).toBe(41.4);
-  });
+  // FOUR STATES NOW (MTTR delayed-entry package) — see `kmHalfLifeView`'s own doc comment.
+  // "at least N days" / "≥ N d" is RETIRED for the half-life: no branch below may print either.
 
-  it("does not prefix a median that WAS observed", () => {
+  it("[median] a measured median prints plainly, with q25 riding along for the table column", () => {
     const view = kmHalfLifeView(kmWithMedian());
-    expect(view.isLowerBound).toBe(false);
-    expect(view.value).toBe("12 days");
+    expect(view).toEqual({
+      measured: true, value: "12 days", isLowerBound: false, days: 12,
+      q25Days: 5, state: "median", secondary: null,
+    });
   });
 
-  it("says \"Not measured\" rather than zero when there is neither", () => {
-    for (const km of [null, undefined, {}, { median: null, medianLowerBound: null }]) {
+  it("[quartile] no median but a real q25 says \"Not reached\", never \"at least\"", () => {
+    const view = kmHalfLifeView(kmQuartile());
+    expect(view).toEqual({
+      measured: true, value: "Not reached", isLowerBound: true, days: null,
+      q25Days: 18, state: "quartile", secondary: "25% fixed within 18 days",
+    });
+    expect(view.value).not.toMatch(/at least|≥/);
+  });
+
+  it("[quartile-bound] neither median nor q25, but a reliable floor > 0, still says \"Not reached\"", () => {
+    const view = kmHalfLifeView(kmCensored());
+    expect(view).toEqual({
+      measured: true, value: "Not reached", isLowerBound: true, days: null,
+      // 41.4 rounds to a whole day at or above 10 — `fmtDays`'s own rule (`ui/figures.js`).
+      q25Days: null, state: "quartile-bound", secondary: "under 25% fixed within 41 days",
+    });
+    expect(view.value).not.toMatch(/at least|≥/);
+  });
+
+  it("[quartile-bound] falls back to medianLowerBound when reliableUntil is absent (legacy shape)", () => {
+    const view = kmHalfLifeView({ median: null, q25: null, medianLowerBound: 68 });
+    expect(view.state).toBe("quartile-bound");
+    expect(view.value).toBe("Not reached");
+    expect(view.secondary).toBe("under 25% fixed within 68 days");
+  });
+
+  it("[unmeasured] says \"Not measured\" rather than zero when there is no number at all", () => {
+    for (const km of [
+      null, undefined, {}, kmUnmeasured(), { median: null, medianLowerBound: null },
+      { median: null, medianLowerBound: 0, q25: null, reliableUntil: 0 },
+    ]) {
       const view = kmHalfLifeView(km);
       expect(view.measured).toBe(false);
       expect(view.isLowerBound).toBe(false);
       expect(view.value).toBe("Not measured");
+      expect(view.state).toBe("unmeasured");
+      expect(view.secondary).toBeNull();
       expect(view.value).not.toMatch(/^0/);
     }
   });
@@ -267,27 +361,66 @@ describe("a curve that never reaches half", () => {
   it("reaches the MTTR hero, with the censored count beside it", () => {
     const view = mttrHeroView(mttrPayload(kmCensored()));
     expect(view.isLowerBound).toBe(true);
-    expect(view.value).toMatch(/^at least /);
+    expect(view.value).toBe("Not reached");
     expect(view.censored).toBe(180);
     expect(view.events).toBe(6);
     expect(view.qualifier).toContain("180");
     expect(view.qualifier).toMatch(/censored/);
   });
 
-  it("reaches the Executive hero through execMttrSlice's two scalars", () => {
+  it("reaches the Executive hero through execMttrSlice's widened four-field slice", () => {
     const view = executiveHeroView(execPayload(kmCensored()));
     expect(view.isLowerBound).toBe(true);
-    expect(view.value).toMatch(/^at least /);
+    expect(view.value).toBe("Not reached");
+    expect(view.secondary).toBe("under 25% fixed within 41 days");
     // The estimator's own censored count is NOT in that slice, and the view says so rather
     // than passing resolved/open off as it.
     expect(view.censoredKnown).toBe(false);
     expect(view.qualifier).toContain("still open");
   });
 
+  it("the Executive hero reaches the quartile state too, when the payload carries a q25", () => {
+    const view = executiveHeroView(execPayload(kmQuartile()));
+    expect(view.state).toBe("quartile");
+    expect(view.value).toBe("Not reached");
+    expect(view.secondary).toBe("25% fixed within 18 days");
+  });
+
   it("still measures when the median is genuinely observed", () => {
     const view = executiveHeroView(execPayload(kmWithMedian()));
     expect(view.isLowerBound).toBe(false);
     expect(view.value).toBe("12 days");
+  });
+});
+
+describe("trackingSinceView — \"Tracking since <date>\", printed once beside the hero", () => {
+  it("reads its own scope's date when the page is scoped to one register, via the register's own fmtDate", () => {
+    const view = trackingSinceView({
+      scope: "sca",
+      trackingSince: { sca: "2026-08-26T00:00:00.000Z", sast: "2026-09-01T00:00:00.000Z" },
+    });
+    expect(view.show).toBe(true);
+    expect(view.text).toContain("earlier fixes are not visible");
+    // fmtDate (gas_shared/ui/format.js) is sv-SE/Europe-Paris, YYYY-MM-DD — the SAME formatter
+    // history.js's own "Watching since" line already uses, so the two pages read one date.
+    expect(view.text).toContain(fmtDate("2026-08-26T00:00:00.000Z"));
+  });
+
+  it("reads the EARLIEST scope's date across an all-scopes view", () => {
+    const view = trackingSinceView({
+      scope: null,
+      trackingSince: {
+        sca: "2026-08-26T00:00:00.000Z", sast: "2026-09-01T00:00:00.000Z",
+        secrets: "2026-09-10T00:00:00.000Z",
+      },
+    });
+    expect(view.text).toContain(fmtDate("2026-08-26T00:00:00.000Z"));
+  });
+
+  it("shows nothing when the payload carries no tracking start at all", () => {
+    expect(trackingSinceView({ scope: null, trackingSince: {} }).show).toBe(false);
+    expect(trackingSinceView({ scope: "sca", trackingSince: {} }).show).toBe(false);
+    expect(trackingSinceView(null).show).toBe(false);
   });
 });
 
@@ -610,12 +743,27 @@ describe("the executive page's own blocks", () => {
     expect(view.open).toBe(180);
   });
 
-  it("orders the three registers by open backlog and dashes an unobservable half-life", () => {
+  it("orders the three registers by open backlog and marks an unobservable half-life honestly", () => {
     const view = executiveRegisterView(execPayload(kmWithMedian()).byScope);
     expect(view.rows.map((r) => r.scope)).toEqual(["sca", "sast", "secrets"]);
-    expect(view.rows[1].kmText).toBe("—");
-    expect(view.rows[1].boundNotShipped).toBe(true);
-    expect(view.anyBoundMissing).toBe(true);
+    // sast carries no kmMedian, kmQ25 or kmMedianLowerBound in the fixture — genuinely
+    // nothing measured, so kmHalfLifeView reads it as "unmeasured", not a bare dash any more.
+    expect(view.rows[1].kmText).toBe("Not measured");
+    expect(view.rows[1].half.state).toBe("unmeasured");
+  });
+
+  it("the byScope table reaches the quartile and quartile-bound states too", () => {
+    const view = executiveRegisterView({
+      dimension: "scope",
+      rows: [
+        { group: "sca", kmMedian: null, kmQ25: 18, kmMedianLowerBound: 44, open: 90 },
+        { group: "sast", kmMedian: null, kmQ25: null, kmMedianLowerBound: 41.4, open: 60 },
+      ],
+    });
+    expect(view.rows[0].half.state).toBe("quartile");
+    expect(view.rows[0].kmText).toBe("Not reached");
+    expect(view.rows[1].half.state).toBe("quartile-bound");
+    expect(view.rows[1].kmText).toBe("Not reached");
   });
 
   it("says what the movement badge is movement OF, and refuses one it cannot compute", () => {
@@ -634,16 +782,21 @@ describe("the executive page's own blocks", () => {
 describe("the per-severity clock", () => {
   const rows = mttrSeverityRows(mttrPayload(kmCensored()), SEVERITIES);
 
-  it("gives a severity whose curve never reached half its own lower bound", () => {
+  it("gives a severity whose curve never reached half its own quartile reading, never \"at least\"", () => {
     const high = rows.filter((r) => r.sev === "HIGH")[0];
     expect(high.half.isLowerBound).toBe(true);
-    expect(high.half.value).toMatch(/^at least /);
+    expect(high.half.value).toBe("Not reached");
+    expect(high.half.state).toBe("quartile");
+    // The "25% fixed" column reads this — see `renderSeverity`'s dataTable.
+    expect(high.q25).toBe(18);
   });
 
   it("prints a measured median plainly", () => {
     const crit = rows.filter((r) => r.sev === "CRITICAL")[0];
     expect(crit.half.isLowerBound).toBe(false);
     expect(crit.half.value).toBe("6 days");
+    expect(crit.half.state).toBe("median");
+    expect(crit.q25).toBe(3);
   });
 });
 

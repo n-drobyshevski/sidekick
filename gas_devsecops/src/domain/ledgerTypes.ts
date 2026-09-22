@@ -248,6 +248,18 @@ export interface LedgerState {
 export type BaseRow = LedgerRow & {
   mttr_days: number | null;
   age_days: number | null;
+  /**
+   * MTTR delayed-entry package: the DETECTION clock's entry age — how old this row already was
+   * (in days, on the first_seen-relative clock) the day this row's SCOPE started being tracked.
+   * `util.entryDaysFrom(trackingStart, first_seen)`, always a finite number >= 0 when set —
+   * "no tracking-start known" and "row already tracked from birth" are both 0, matching
+   * `remediation.ts`'s RemediationRow.entry_days normalization (absent/null/<=0 all mean "no
+   * delayed entry"). `ledgerCore.ts`'s `withDerived` is the only writer that sets it for real;
+   * OPTIONAL (not required) so the many pre-existing tests that build a `BaseRow` by hand for
+   * something unrelated to this clock keep compiling — an absent field means exactly the same
+   * "no delayed entry" thing a present `0` would.
+   */
+  entry_days?: number;
   // Actionable clock — the SLA/MTTR clock starts when a vendor fix is available, not at
   // detection, for SCA. For sast/secrets a later package sets fix_available_at = first_seen
   // (rule 3 of the D1 brief: there is no vendor to wait on, so the actionable clock and the

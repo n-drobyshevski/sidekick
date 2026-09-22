@@ -43,7 +43,7 @@ import type {
   ScanRow,
 } from "./ledgerTypes";
 import { normalizeSeverity } from "./severity";
-import { cmp, nowIso, parseTs, toIso, type Rec } from "./util";
+import { cmp, entryDaysFrom, nowIso, parseTs, toIso, type Rec } from "./util";
 
 const DAY_MS = 86_400_000;
 
@@ -345,6 +345,17 @@ export interface BaseRowsOptions {
   now?: number;
   /** Optional: restrict to one register. Omitted, the union spans all three. */
   scope?: Scope;
+  /**
+   * MTTR delayed-entry package: ISO tracking-start (earliest saved scan) PER SCOPE — what
+   * `server/readModels.ts`'s `ledgerClock(scope).observedFrom` reads. Handed in rather than
+   * looked up here on purpose: the scan log lives behind the server's Sheets access, and this
+   * module's whole point is staying pure over the `LedgerState` it is given (this file's own
+   * header: "runs every persist against a plain in-memory LedgerState, fully unit-testable").
+   * Drives every row's `entry_days` (`withDerived`, below) via `util.entryDaysFrom`. A scope
+   * missing from the map, or a state with no scans of it yet, both mean the same thing a
+   * missing `first_seen` does — `entryDaysFrom` returns 0 either way.
+   */
+  trackingStartByScope?: Partial<Record<Scope, string | null>>;
 }
 
 /**
@@ -384,7 +395,11 @@ export interface BaseRowsOptions {
  * has no rows predating itself. Carrying the constant over would silently declare every early
  * sca row fixable at detection on the strength of another product's migration.
  */
-function withDerived(row: LedgerRow, nowMs: number): BaseRow {
+function withDerived(
+  row: LedgerRow,
+  nowMs: number,
+  trackingStart: string | null | undefined,
+): BaseRow {
   const first = parseTs(row.first_seen);
   const resolved = parseTs(row.resolved_at);
   const open = row.status === "OPEN";
@@ -402,6 +417,10 @@ function withDerived(row: LedgerRow, nowMs: number): BaseRow {
     ...row,
     mttr_days: first !== null && resolved !== null ? (resolved - first) / DAY_MS : null,
     age_days: resolved === null && first !== null ? (nowMs - first) / DAY_MS : null,
+    // MTTR delayed-entry package (BaseRowsOptions.trackingStartByScope's own comment): the
+    // DETECTION clock's entry age, relative to `first_seen` — the same origin `mttr_days` /
+    // `age_days` above measure from, so `entryDaysFrom`'s one formula applies unchanged.
+    entry_days: entryDaysFrom(trackingStart, row.first_seen),
     fix_available_at: fixAvailableAt,
     actionable_from: actionableFrom,
     mttr_actionable_days:
@@ -483,16 +502,17 @@ function rowFromEpisode(e: EpisodeRow): LedgerRow {
 export function baseRows(state: LedgerState, options: BaseRowsOptions = {}): BaseRow[] {
   const nowMs = options.now ?? Date.now();
   const scope = options.scope;
+  const trackingStartByScope = options.trackingStartByScope;
   const out: BaseRow[] = [];
   for (const row of Object.values(state.ledger)) {
     if (scope !== undefined && row.scope !== scope) continue;
-    out.push(withDerived(row, nowMs));
+    out.push(withDerived(row, nowMs, trackingStartByScope?.[row.scope]));
   }
   for (const e of state.episodes) {
     if (e.superseded_by_scan !== null) continue;
     if (e.finding_key in state.ledger) continue; // live row is authoritative
     if (scope !== undefined && e.scope !== scope) continue;
-    out.push(withDerived(rowFromEpisode(e), nowMs));
+    out.push(withDerived(rowFromEpisode(e), nowMs, trackingStartByScope?.[e.scope]));
   }
   return out;
 }

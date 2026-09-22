@@ -1,13 +1,14 @@
 // Executive — the front door, and the one page a leader is allowed to read alone.
 //
 // ONE NUMBER, AND IT IS ALLOWED TO REFUSE TO BE A NUMBER. The hero is the register's
-// remediation half-life read off a Kaplan-Meier curve. Where that curve never falls to
-// half — which is the normal state of a young register carrying more open findings than
-// closed ones — there IS no median, and the page publishes `medianLowerBound` as "at least
-// N days" instead. PRODUCT.md's sixth principle is the whole reason this file exists in
-// this shape: a clock has to say where it started, and a bare number in the hero slot would
-// be claiming a measurement nobody made. `executiveHeroView` is where that decision lives,
-// pure and exported, so the claim is testable without a DOM.
+// remediation half-life read off a Kaplan-Meier curve, cut at the point its own risk set stops
+// being reliable (the Gebski et al. reliability cut, `domain/remediation.ts`). Where that CUT
+// curve never falls to half — which is the normal state of a young register carrying more open
+// findings than closed ones — there IS no median, and the page publishes "Not reached" instead,
+// with the 25th-percentile reading beside it where one exists. PRODUCT.md's sixth principle is
+// the whole reason this file exists in this shape: a clock has to say where it started, and a
+// bare number in the hero slot would be claiming a measurement nobody made. `executiveHeroView`
+// is where that decision lives, pure and exported, so the claim is testable without a DOM.
 //
 // NO CHART ON THE FRONT DOOR, and that is a decision rather than an omission. Chart.js is
 // ~170 KB fetched over `google.script.run` on the first route that draws one
@@ -17,12 +18,13 @@
 //
 // WHAT THIS PAGE IS SENT, and what it therefore cannot say. `api_getExecutivePage` composes
 // two read-models and slices one of them hard (domain/pagePayload.ts::execMttrSlice): the
-// hero arrives as `{median, medianLowerBound}` and NOTHING else — no `curve`, no `censored`,
-// no `events`. So the hero's qualifier line names resolved and still-open lifecycles, which
-// are in the payload, and does not claim they are the estimator's event and censored counts,
-// which are not. `execGroupSlice` narrows the per-register split to `{group, kmMedian, open}`,
-// dropping each register's own `kmMedianLowerBound` — so a register whose curve never
-// reaches half shows a dash there rather than a bound, and says so.
+// hero arrives as `{median, medianLowerBound, q25, reliableUntil}` — enough to run the SAME
+// `kmHalfLifeView` decision MTTR & SLA does — and NOTHING else: no `curve`, no `censored`, no
+// `events`. So the hero's qualifier line names resolved and still-open lifecycles, which are
+// in the payload, and does not claim they are the estimator's event and censored counts, which
+// are not. `execGroupSlice` narrows the per-register split to `{group, kmMedian, kmQ25,
+// kmMedianLowerBound, open}` — enough for the byScope table to run the same decision too,
+// rather than falling back to a bare dash with a footnote pointing at MTTR & SLA.
 
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 // `scopeParam` used to be DEFINED here — see `./_rates.js`'s header for why one copy now
@@ -41,27 +43,31 @@ import {
 // could describe the same estimate differently. It lives on the page that owns the clock.
 // `fmtCount`/`fmtDays` themselves come from `../ui.js` now, not from `./mttr.js` — see
 // `ui/figures.js`'s module header.
-import { endOfLifeExclusionNote, kmHalfLifeView, rateView } from "./mttr.js";
+import { endOfLifeExclusionNote, kmHalfLifeView, rateView, trackingSinceView } from "./mttr.js";
 
 // ------------------------------------------------------------------------- view models
 
 /**
- * The hero, decided rather than formatted.
+ * The hero, decided rather than formatted — the SAME `kmHalfLifeView` decision the MTTR page's
+ * hero makes, imported rather than restated (see the module header).
  *
- * THE THREE OUTCOMES ARE THREE DIFFERENT CLAIMS and the view keeps them apart:
+ * FOUR OUTCOMES now (MTTR delayed-entry package) — `kmHalfLifeView`'s own doc comment has the
+ * full account:
  *
- *   median present        "41 days"          — half the register closed within that
- *   median null, bound    "at least 41 days" — the curve never reached half; 41 d is the
- *                                              longest thing observed, so the median is at
- *                                              LEAST that. `isLowerBound` is true.
- *   neither               "Not measured"     — no observations at all. Not a zero.
+ *   median present               "41 days"      — half the register closed within that.
+ *   median null, q25 real        "Not reached"  — a quarter closed even though half did not;
+ *                                                  `secondary` carries "25% fixed within N d".
+ *   neither, but a reliable cut  "Not reached"  — not even a quarter, but the reliability cut
+ *                                                  still names a point measured past.
+ *   neither                      "Not measured" — no observations at all. Not a zero.
  *
- * The second case is the one this register was built to get right. Rendering the bound as a
- * bare "41 days" would state a median that was never observed; collapsing it to "—" would
- * throw away a true statement. So it is published, prefixed, and flagged.
+ * Rendering the middle two as a bare number would state a median that was never observed;
+ * collapsing them to "—" would throw away a true statement. So the value is published, and the
+ * `secondary` line beside it is what a reader is entitled to next.
  *
  * @param {object|null|undefined} payload  `api_getExecutivePage`'s reply
  * @returns {{measured: boolean, value: string, isLowerBound: boolean, days: number|null,
+ *            q25Days: number|null, state: string, secondary: string|null,
  *            tracked: number, resolved: number, open: number, qualifier: string,
  *            censoredKnown: boolean}}
  */
@@ -85,10 +91,7 @@ export function executiveHeroView(payload) {
     : "No lifecycles tracked yet.";
 
   return {
-    measured: half.measured,
-    value: half.value,
-    isLowerBound: half.isLowerBound,
-    days: half.days,
+    ...half,
     tracked,
     resolved,
     open,
@@ -134,10 +137,12 @@ export function executiveSeverityView(payload, order) {
 /**
  * The three registers side by side: how much is open in each, and how fast each closes.
  *
- * THE HALF-LIFE COLUMN CAN ONLY BE A NUMBER OR A DASH HERE. `execGroupSlice` ships
- * `kmMedian` and drops `kmMedianLowerBound`, so a register whose curve never reaches half
- * arrives as `kmMedian: null` with no bound behind it. That renders as "—" plus a footnote
- * pointing at MTTR & SLA, never as a 0 and never as an invented figure.
+ * THE HALF-LIFE COLUMN RUNS THE SAME `kmHalfLifeView` DECISION AS EVERY OTHER HALF-LIFE ON
+ * THIS PRODUCT, now that `execGroupSlice` ships `kmQ25` and `kmMedianLowerBound` alongside
+ * `kmMedian` (MTTR delayed-entry package). A register whose curve never reaches half no longer
+ * arrives as a bare "—" with a footnote pointing at MTTR & SLA — it arrives with enough to say
+ * "Not reached" and, where one exists, the 25th-percentile reading. Only a register with NO
+ * observations at all still reads "Not measured".
  */
 export function executiveRegisterView(byScope) {
   const raw = byScope && Array.isArray(byScope.rows) ? byScope.rows : [];
@@ -148,8 +153,10 @@ export function executiveRegisterView(byScope) {
   const rows = raw
     .map((r) => {
       const scope = r.group;
-      const kmMedian = r.kmMedian === null || r.kmMedian === undefined ? null : Number(r.kmMedian);
       const open = Number(r.open || 0);
+      const half = kmHalfLifeView({
+        median: r.kmMedian, q25: r.kmQ25, medianLowerBound: r.kmMedianLowerBound,
+      });
       return {
         scope,
         label: SCOPE_LABELS[scope] || String(scope),
@@ -159,11 +166,8 @@ export function executiveRegisterView(byScope) {
           totalOpen,
           fmtCount(totalOpen) + " open across the registers",
         ),
-        kmMedian,
-        kmText: kmMedian !== null && Number.isFinite(kmMedian) ? fmtDays(kmMedian) : absentText,
-        // True where the register HAS lifecycles but no observable median. The bound that
-        // would replace the dash is not in this payload.
-        boundNotShipped: kmMedian === null,
+        half,
+        kmText: half.value,
       };
     })
     .sort((a, b) => b.open - a.open);
@@ -171,7 +175,6 @@ export function executiveRegisterView(byScope) {
     show: rows.length > 0,
     rows,
     totalOpen,
-    anyBoundMissing: rows.some((r) => r.boundNotShipped),
   };
 }
 
@@ -807,6 +810,13 @@ export async function renderExecutive(host, params, _ctx) {
       // the panel above names what the counts wait on.
       stats: first && first.show ? [] : stats,
     }));
+    // PRODUCT.md's seventh principle, beside the figure it qualifies. `trackingSinceView` is
+    // mttr.js's own — reached across a page module the way this file already reaches for
+    // `kmHalfLifeView` — because it reads the same `{trackingSince, scope}` shape off whatever
+    // payload carries it, and `payload` here carries both at its own top level (api.ts's
+    // `getExecutivePage`) exactly as `mttr` does on MTTR & SLA.
+    const tracking = trackingSinceView(payload);
+    if (tracking.show) heroHost.append(el("p", { class: "small muted" }, tracking.text));
     heroHost.append(curveNote());
     // THE ONE PAGE WHERE THE SENTENCE HAS TO NAME ITS FAMILY. The switch narrows the half-life
     // above and leaves every severity tile below whole — a retired repository's open findings
@@ -821,10 +831,10 @@ export async function renderExecutive(host, params, _ctx) {
    *
    * Two paragraphs used to sit under the hero — 43 words explaining the bound, 23 explaining
    * "not measured" — and each was the second statement of something the VALUE already says:
-   * `kmHalfLifeView` renders the bound as "at least 41 days" and the absence as "Not
-   * measured", in the 2rem slot, before either paragraph was reached. Those words stay on the
-   * surface (R2: an honesty statement never leaves the page for a tip); the EXPLANATION moves
-   * one level down, onto the label, behind the dotted trigger.
+   * `kmHalfLifeView` renders the unreached-median states as "Not reached" and the absence as
+   * "Not measured", in the 2rem slot, before either paragraph was reached. Those words stay on
+   * the surface (R2: an honesty statement never leaves the page for a tip); the EXPLANATION
+   * moves one level down, onto the label, behind the dotted trigger.
    *
    * THE TERM DOES NOT MOVE WITH THE STATE, and a first draft had it doing so — routing to
    * `lower-bound` whenever the value was a bound. Reviewed and reversed: the trigger sits on
@@ -840,8 +850,14 @@ export async function renderExecutive(host, params, _ctx) {
       return {
         term: "half-life",
         lines: [
-          "The curve never falls to half inside the window, so there is no median.",
-          "The half-life is at least the longest thing observed — the figure above.",
+          "The survival curve never falls to half within the observed window, so there is no"
+          + " median to publish.",
+          view.state === "quartile"
+            // "quartile": a quarter of what is tracked has closed, even though half has not.
+            ? "A quarter of what is tracked has already closed — " + view.secondary + "."
+            // "quartile-bound": not even a quarter has closed within the reliable window.
+            : "Too few findings have closed within the reliable window to say even that much —"
+              + " " + view.secondary + ".",
         ],
       };
     }
@@ -1247,21 +1263,18 @@ export async function renderExecutive(host, params, _ctx) {
           label: "Half-life",
           className: "num",
           // THE COLUMN HEADING IS WHERE A COLUMN'S CAVEATS BELONG — asked once, not once per
-          // row, which is `ui/tip.js`'s own rule for a definition. Two paragraphs used to
-          // follow this table: "three registers, three clocks" (which is a fact about THIS
-          // column — why the three figures are never summed) and the dash footnote (which is
-          // a fact about what a cell in THIS column holds when the curve never falls to half).
-          // Both are here now. `{term, lines}` keeps the trigger's route to the `half-life`
-          // entry while the lines say what the entry cannot: what this particular table did.
+          // row, which is `ui/tip.js`'s own rule for a definition. `{term, lines}` keeps the
+          // trigger's route to the `half-life` entry while the line says what the entry
+          // cannot: why these three figures are never summed. The old second line explaining a
+          // bare dash is gone with the dash itself — `kmHalfLifeView` now runs on this table
+          // too, so a curve that never reaches half reads "Not reached" (with its own quartile
+          // reading, per row) rather than a dash pointing at another page.
           help: {
             term: "half-life",
             lines: [
-              "Three registers, three clocks, never summed into one number.",
-              "The same CVE through a dependency and through code is two findings.",
-              ...(view.anyBoundMissing
-                ? ["A dash means that register's curve never falls to half. Its lower bound is"
-                  + " not in this payload; MTTR & SLA publishes it."]
-                : []),
+              "Three registers, three clocks. The same CVE arriving through a dependency and"
+              + " through first-party code is two findings with two clocks, so these are never"
+              + " summed into one number.",
             ],
           },
           cell: (r) => r.kmText,

@@ -433,6 +433,22 @@ export const MIN_UNSEALED_FLAT_SCANS = 2;
 export const DEFAULT_RETENTION_DAYS = 180;
 
 /**
+ * The RMST horizon, in days, every `kaplanMeier` call in `server/readModels.ts` and
+ * `domain/secretsLifecycle.ts` passes as `opts.horizonDays` (MTTR delayed-entry package).
+ *
+ * A restricted mean with no restriction at all — τ = whatever the register's own oldest row
+ * happens to be — grows with the register's age rather than measuring anything about
+ * remediation speed, and on a heavily-censored curve (this product's own motivating case: 49k
+ * open against ~1k resolved) it can run to hundreds of days past where the estimate is still
+ * trustworthy. 365 (one year) is a chosen reporting window, not a measured statistic — the same
+ * kind of reasoned-default this file already carries one of (see `AGE_HISTOGRAM_CAP_DAYS`'s own
+ * note): long enough that a CRITICAL-through-LOW spread of SLA targets (7..180 d) fits inside it
+ * with room to spare, short enough that one register's outlier decade-old finding cannot dominate
+ * the "average days open" figure every page states beside it.
+ */
+export const RMST_HORIZON_DAYS = 365;
+
+/**
  * `settingsImpact.ts`'s `ageHistogram` measurement horizon, in whole days: an open row older
  * than this is reported as `overCap` rather than binned or, worse, silently extrapolated past
  * the population actually measured.
