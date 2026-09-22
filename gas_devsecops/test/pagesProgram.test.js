@@ -36,7 +36,7 @@ import {
   actionableClockView, awaitingView, endOfLifeExclusionNote, fmtCount, fmtDays, kmHalfLifeView,
   mttrHeroView,
   mttrSeverityRows, rateView, resolutionBucketView, rmstView, slaSeverityRows,
-  trackingSinceView,
+  survivalAxisNote, trackingSinceView, windowLineView,
 } from "../src/client/js/pages/mttr.js";
 import {
   boundedRateView, capacityView, confusionView, coverageEfficiencyView, sensitivityView,
@@ -140,6 +140,11 @@ function kmUnmeasured() {
 function mttrPayload(km) {
   return {
     rowCount: 186,
+    // The window-line fixture: 27 days, 26 Aug 2026 -> 22 Sep 2026 — see `windowLineView`'s
+    // own worked example in mttr.js's doc comment, which uses this exact pair.
+    asOf: Date.parse("2026-09-22T00:00:00.000Z"),
+    scope: null,
+    trackingSince: { sca: "2026-08-26T00:00:00.000Z", sast: "2026-09-01T00:00:00.000Z" },
     overall: { resolved: 6, open: 180, mttr_median: 9 },
     slaPct: 50,
     oldestDays: 120,
@@ -207,12 +212,15 @@ function mttrPayload(km) {
 }
 
 /** `api_getExecutivePage`'s shape — the hero arrives through `execMttrSlice`, which ships
- *  `{median, medianLowerBound, q25, reliableUntil}` (MTTR delayed-entry package) and nothing
- *  else. `byScope` rows carry `kmQ25`/`kmMedianLowerBound` alongside `kmMedian` for the same
- *  reason (`execGroupSlice`). */
+ *  `{median, medianLowerBound, q25, reliableUntil, events, total, excludedPreEntry}` (MTTR
+ *  delayed-entry package, then the measurement-window package) and nothing else. `byScope` rows
+ *  carry `kmQ25`/`kmMedianLowerBound` alongside `kmMedian` for the same reason
+ *  (`execGroupSlice`). `asOf` is AFTER both `trackingSince` dates below it — 22 Sep 2026, the
+ *  same "now" `mttrPayload`'s own fixture uses, 27 days past its sca tracking start — so the
+ *  window-line tests exercise a real, positive span rather than a clock running backwards. */
 function execPayload(km) {
   return {
-    asOf: 1_770_000_000_000,
+    asOf: Date.parse("2026-09-22T00:00:00.000Z"),
     scope: null,
     trackingSince: { sca: "2026-08-26T00:00:00.000Z", sast: "2026-09-01T00:00:00.000Z" },
     mttr: {
@@ -222,6 +230,8 @@ function execPayload(km) {
         km: {
           median: km.median, medianLowerBound: km.medianLowerBound,
           q25: km.q25 ?? null, reliableUntil: km.reliableUntil ?? null,
+          events: km.events ?? 0, total: km.total ?? 0,
+          excludedPreEntry: km.excludedPreEntry ?? 0,
         },
       },
     },
@@ -421,6 +431,114 @@ describe("trackingSinceView — \"Tracking since <date>\", printed once beside t
     expect(trackingSinceView({ scope: null, trackingSince: {} }).show).toBe(false);
     expect(trackingSinceView({ scope: "sca", trackingSince: {} }).show).toBe(false);
     expect(trackingSinceView(null).show).toBe(false);
+  });
+});
+
+// ------------------------------------------------------------------- the measurement window
+
+describe("windowLineView — the observation window itself, printed under \"Tracking since\"", () => {
+  it("states start, end, span and the estimator's own sample size", () => {
+    const view = windowLineView(mttrPayload(kmWithMedian()), kmWithMedian());
+    expect(view.show).toBe(true);
+    // 2026-08-26 (sca's own tracking start — the register is scoped to nothing, so the
+    // EARLIEST of the two scopes in the fixture) to 2026-09-22 (asOf) is 27 days.
+    expect(view.text).toBe(
+      "Window " + fmtDate("2026-08-26T00:00:00.000Z") + " → " + fmtDate("2026-09-22T00:00:00.000Z")
+      + " (27 days) · 30 fixes seen · 42 findings watched",
+    );
+  });
+
+  it("reads its own scope's tracking start when the page is scoped to one register", () => {
+    const scoped = { ...mttrPayload(kmWithMedian()), scope: "sast" };
+    const view = windowLineView(scoped, kmWithMedian());
+    // sast's own start (2026-09-01), not the earlier sca one — 21 days to 2026-09-22.
+    expect(view.text).toContain(fmtDate("2026-09-01T00:00:00.000Z"));
+    expect(view.text).toContain("(21 days)");
+  });
+
+  it("singular \"1 day\" when the span floors to exactly one whole day", () => {
+    const payload = {
+      ...mttrPayload(kmWithMedian()),
+      trackingSince: { sca: "2026-09-21T00:00:00.000Z" },
+      asOf: Date.parse("2026-09-22T00:00:00.000Z"),
+    };
+    const view = windowLineView(payload, kmWithMedian());
+    expect(view.text).toContain("(1 day)");
+    expect(view.text).not.toContain("(1 days)");
+  });
+
+  it("\"(under a day)\" replaces \"(0 days)\" for a register scanned twice in one day", () => {
+    const payload = {
+      ...mttrPayload(kmWithMedian()),
+      trackingSince: { sca: "2026-09-22T00:00:00.000Z" },
+      asOf: Date.parse("2026-09-22T06:00:00.000Z"),
+    };
+    const view = windowLineView(payload, kmWithMedian());
+    expect(view.text).toContain("(under a day)");
+    expect(view.text).not.toMatch(/\(0 days?\)/);
+  });
+
+  it("appends the pre-entry exclusion clause only when something was actually excluded", () => {
+    const withExclusion = windowLineView(
+      mttrPayload(kmWithMedian()),
+      { ...kmWithMedian(), excludedPreEntry: 7 },
+    );
+    expect(withExclusion.text).toContain("· 7 closed before watching began");
+
+    // Zero is not a qualifier — a "· 0 closed before watching began" clause would dress a
+    // measured zero up as an exclusion that never happened.
+    const withoutExclusion = windowLineView(
+      mttrPayload(kmWithMedian()),
+      { ...kmWithMedian(), excludedPreEntry: 0 },
+    );
+    expect(withoutExclusion.text).not.toContain("closed before watching began");
+  });
+
+  it("is hidden exactly when trackingSinceView is — no tracking start, no window line either", () => {
+    expect(windowLineView({ scope: null, trackingSince: {}, asOf: 123 }, kmWithMedian()).show)
+      .toBe(false);
+    expect(windowLineView(null, kmWithMedian()).show).toBe(false);
+  });
+
+  it("is hidden when asOf cannot be read, even with a real tracking start", () => {
+    const payload = { ...mttrPayload(kmWithMedian()), asOf: null };
+    expect(windowLineView(payload, kmWithMedian()).show).toBe(false);
+  });
+
+  it("reaches the MTTR hero and the Executive hero off the SAME km the half-life reads", () => {
+    // Not a DOM assertion — this file has no jsdom — but the two callers (renderHero on both
+    // pages) hand this exact (`payload`-shaped object, km) pair to `windowLineView`, and this
+    // pins that the pure function itself agrees across both payload shapes: MTTR's own `mttr`
+    // object and Executive's whole `payload` both carry `{trackingSince, scope, asOf}` at their
+    // own level, per `trackingSinceView`'s own doc comment.
+    const mttrView = windowLineView(mttrPayload(kmWithMedian()), kmWithMedian());
+    const exec = execPayload(kmWithMedian());
+    const execView = windowLineView(exec, exec.mttr.remediation.km);
+    expect(mttrView.show).toBe(true);
+    expect(execView.show).toBe(true);
+    expect(execView.text).toContain("30 fixes seen");
+    expect(execView.text).toContain("42 findings watched");
+  });
+});
+
+describe("survivalAxisNote — the curve's own axis is age, not the calendar", () => {
+  it("cites the real window and the real reliability cut when both are known", () => {
+    const note = survivalAxisNote(mttrPayload(kmCensored()), kmCensored());
+    expect(note).toContain("27-day window");
+    // kmCensored()'s reliableUntil is 41.4, rounded.
+    expect(note).toContain("41 days");
+    expect(note).toMatch(/age, not the calendar/);
+  });
+
+  it("falls back to the shorter, numberless sentence when reliableUntil is null", () => {
+    const note = survivalAxisNote(mttrPayload(kmUnmeasured()), kmUnmeasured());
+    expect(note).toMatch(/age, not the calendar/);
+    expect(note).not.toMatch(/\d/);
+  });
+
+  it("falls back when there is no tracking window to cite either", () => {
+    const note = survivalAxisNote({ scope: null, trackingSince: {} }, kmCensored());
+    expect(note).not.toMatch(/\d/);
   });
 });
 
@@ -797,6 +915,33 @@ describe("the per-severity clock", () => {
     expect(crit.half.value).toBe("6 days");
     expect(crit.half.state).toBe("median");
     expect(crit.q25).toBe(3);
+  });
+
+  it("\"Fixes in window\" reads kmPerSev[sev].events, and em-dashes a severity with no curve at all", () => {
+    const withGap = mttrSeverityRows({
+      perSev: {
+        CRITICAL: { resolved: 4, open: 20 },
+        // MEDIUM has resolved/open stats but no curve at all — never priced by the estimator,
+        // as opposed to priced-and-zero. `mttrSeverityRows`'s own comment names this branch.
+        MEDIUM: { resolved: 1, open: 5 },
+      },
+      remediation: {
+        kmPerSev: {
+          CRITICAL: { median: 6, medianLowerBound: null, q25: 3, reliableUntil: null, events: 4 },
+          // HIGH got a curve, but nothing closed inside the window — a MEASURED zero, not a gap.
+          HIGH: { median: null, medianLowerBound: null, q25: null, reliableUntil: null, events: 0 },
+        },
+      },
+    }, SEVERITIES);
+    const crit = withGap.find((r) => r.sev === "CRITICAL");
+    const high = withGap.find((r) => r.sev === "HIGH");
+    const med = withGap.find((r) => r.sev === "MEDIUM");
+    expect(crit.fixesInWindow).toBe(4);
+    expect(fmtCount(crit.fixesInWindow)).toBe("4");
+    expect(high.fixesInWindow).toBe(0);
+    expect(fmtCount(high.fixesInWindow)).toBe("0");
+    expect(med.fixesInWindow).toBeNull();
+    expect(fmtCount(med.fixesInWindow)).toBe(absentText);
   });
 });
 

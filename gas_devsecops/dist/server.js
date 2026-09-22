@@ -483,7 +483,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "3e2c83c1c64f" : "dev";
+  var BUILD_ID = true ? "836a12441517" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -5586,7 +5586,10 @@ var Server = (() => {
           median: km["median"],
           medianLowerBound: km["medianLowerBound"],
           q25: km["q25"],
-          reliableUntil: km["reliableUntil"]
+          reliableUntil: km["reliableUntil"],
+          events: km["events"],
+          total: km["total"],
+          excludedPreEntry: km["excludedPreEntry"]
         }
       } : {}
     };

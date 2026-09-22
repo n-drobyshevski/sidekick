@@ -18,11 +18,15 @@
 //
 // WHAT THIS PAGE IS SENT, and what it therefore cannot say. `api_getExecutivePage` composes
 // two read-models and slices one of them hard (domain/pagePayload.ts::execMttrSlice): the
-// hero arrives as `{median, medianLowerBound, q25, reliableUntil}` — enough to run the SAME
-// `kmHalfLifeView` decision MTTR & SLA does — and NOTHING else: no `curve`, no `censored`, no
-// `events`. So the hero's qualifier line names resolved and still-open lifecycles, which are
-// in the payload, and does not claim they are the estimator's event and censored counts, which
-// are not. `execGroupSlice` narrows the per-register split to `{group, kmMedian, kmQ25,
+// hero arrives as `{median, medianLowerBound, q25, reliableUntil, events, total,
+// excludedPreEntry}` — enough to run the SAME `kmHalfLifeView` decision MTTR & SLA does, AND
+// (measurement-window package) enough for `windowLineView` to state the window's own sample
+// size — and NOTHING else: still no `curve`, still no `censored`. So the hero's qualifier line
+// names resolved and still-open lifecycles, which are in the payload, and does not claim they
+// are the estimator's event and censored counts — `events`/`total` feed the WINDOW line only,
+// never the qualifier, which is why `executiveHeroView` below still reads `tracked`/`resolved`/
+// `open` for its own qualifier rather than switching to the estimator's pair now that both are
+// on the wire. `execGroupSlice` narrows the per-register split to `{group, kmMedian, kmQ25,
 // kmMedianLowerBound, open}` — enough for the byScope table to run the same decision too,
 // rather than falling back to a bare dash with a footnote pointing at MTTR & SLA.
 
@@ -43,7 +47,10 @@ import {
 // could describe the same estimate differently. It lives on the page that owns the clock.
 // `fmtCount`/`fmtDays` themselves come from `../ui.js` now, not from `./mttr.js` — see
 // `ui/figures.js`'s module header.
-import { endOfLifeExclusionNote, kmHalfLifeView, rateView, trackingSinceView } from "./mttr.js";
+import {
+  endOfLifeExclusionNote, kmHalfLifeView, rateView, trackingSinceView, WINDOW_LINE_HELP,
+  windowLineView,
+} from "./mttr.js";
 
 // ------------------------------------------------------------------------- view models
 
@@ -817,6 +824,18 @@ export async function renderExecutive(host, params, _ctx) {
     // `getExecutivePage`) exactly as `mttr` does on MTTR & SLA.
     const tracking = trackingSinceView(payload);
     if (tracking.show) heroHost.append(el("p", { class: "small muted" }, tracking.text));
+    // THE WINDOW ITSELF, directly under the date it opens — same reasoning and the same shared
+    // helper MTTR & SLA's own hero uses (`mttr.js`'s `windowLineView`), so the front door and
+    // the detail page cannot state the window in two different sentences. `km` is read straight
+    // off `payload.mttr.remediation.km` — the widened `execMttrSlice` block `executiveHeroView`
+    // above already reads from, not a second RPC — because `events`/`total`/`excludedPreEntry`
+    // are the window's own sample size, not the hero's qualifier (see this file's own header).
+    const km = (payload && payload.mttr && payload.mttr.remediation
+      && payload.mttr.remediation.km) || null;
+    const windowLine = windowLineView(payload, km);
+    if (windowLine.show) {
+      heroHost.append(el("p", { class: "small muted" }, tipLabel(windowLine.text, WINDOW_LINE_HELP)));
+    }
     heroHost.append(curveNote());
     // THE ONE PAGE WHERE THE SENTENCE HAS TO NAME ITS FAMILY. The switch narrows the half-life
     // above and leaves every severity tile below whole — a retired repository's open findings
