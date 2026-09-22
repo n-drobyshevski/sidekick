@@ -153,6 +153,11 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // by slug — owner_project/owner_path are the two strings it was collapsed to; this is what
     // src/domain/projectScope.ts builds its catalogue and membership predicate from.
     "owner_project", "owner_path", "tags_json", "projects_json",
+    // sca only in practice — Q_SCA is the one query that selects `portalUrl` — but a column
+    // of the ONE ledger all three scopes share, so it exists structurally and reads null for
+    // sast and secrets. Last, which is where a newly-added column is appended on an existing
+    // deployment.
+    "portal_url",
   ],
   [TABS.episodes]: [
     "finding_key", "scope", "identifier", "component", "severity",

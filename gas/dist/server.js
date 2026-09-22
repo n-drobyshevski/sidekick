@@ -512,7 +512,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "80360aacd697" : "dev";
+  var BUILD_ID = true ? "723eb7e2c6b7" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -1119,7 +1119,14 @@ var Server = (() => {
       "has_kev",
       "has_exploit",
       "epss",
-      "risk_observed_at"
+      "risk_observed_at",
+      // Wiz's own console link. LAST, which is where `ensureHeaders` appends a newly-added
+      // column on an existing deployment — so a sheet created by this version and a sheet
+      // healed into it end up with the same column order rather than two orders that only
+      // agree by luck. (Writes map by the headers READ OFF THE SHEET, not by this list, so
+      // the orders never have to match each other — but a reader comparing two deployments
+      // should not have to discover that.)
+      "portal_url"
     ],
     [TABS.episodes]: [
       "vuln_key",
@@ -2257,7 +2264,7 @@ var Server = (() => {
   }
 
   // src/server/wizQuery.ts
-  var QUERY = "\n    query VulnerabilityFindingsTable($filterBy: VulnerabilityFindingFilters, $first: Int, $after: String, $orderBy: VulnerabilityFindingOrder = {direction: DESC, field: CREATED_AT}, $includeRelatedIssueAnalytics: Boolean = false, $includeRelatedSourceMappedIssueAnalytics: Boolean = false, $includeTotalCount: Boolean = false, $includePostureIssues: Boolean = false, $fetchPrivilegedActionRequests: Boolean = false) {\n      vulnerabilityFindings(\n        filterBy: $filterBy\n        first: $first\n        after: $after\n        orderBy: $orderBy\n      ) {\n        nodes {\n          ...VulnerabilityFindingFragment\n          ...DuplicateFindingBadge\n          transitivity\n          rootComponent {\n            name\n          }\n          isHighProfileThreat\n          vendorSeverity\n          nvdSeverity\n          weightedSeverity\n          hasExploit\n          usedInCodeResult\n          hasCisaKevExploit\n          cisaKevReleaseDate\n          cisaKevDueDate\n          score\n          epssSeverity\n          epssPercentile\n          epssProbability\n          categories\n          hasInitialAccessPotential\n          isClientSide\n          affectedBySettings\n          codeLibraryLanguage\n          exploitabilityValidationStatus\n          cvssv2 {\n            attackVector\n            attackComplexity\n            confidentialityImpact\n            integrityImpact\n            privilegesRequired\n            userInteractionRequired\n            vectorString\n            scope\n          }\n          cvssv3 {\n            attackVector\n            attackComplexity\n            confidentialityImpact\n            integrityImpact\n            privilegesRequired\n            userInteractionRequired\n            vectorString\n            scope\n          }\n          effectiveAvailabilityImpact\n          cnaScore\n          vendorScore\n          relatedIssueAnalytics @include(if: $includeRelatedIssueAnalytics) {\n            ...VulnerabilityFindingRelatedIssueAnalyticsFragment\n          }\n          relatedSourceMappedIssueAnalytics @include(if: $includeRelatedSourceMappedIssueAnalytics) {\n            ...VulnerabilityFindingRelatedIssueAnalyticsFragment\n          }\n          postureIssues @include(if: $includePostureIssues) {\n            ...PostureIssuePopoverListRecord\n          }\n          privilegedActionRequests @include(if: $fetchPrivilegedActionRequests) {\n            ...PendingUpdateVulnerabilityFindingStatusRequest\n          }\n        }\n        pageInfo {\n          hasNextPage\n          endCursor\n        }\n        totalCount @include(if: $includeTotalCount)\n      }\n    }\n   \n        fragment VulnerabilityFindingFragment on VulnerabilityFinding {\n      id\n      name\n      detailedName\n      description\n      severity\n      status\n      fixedVersion\n      detectionMethod\n      firstDetectedAt\n      firstDetectedAtSource\n      lastDetectedAt\n      resolvedAt\n      validatedInRuntime\n      runtimeValidationResult\n      reachability\n      hasTriggerableRemediation\n      remediationPullRequestAvailable\n      dataSourceName\n      fixDate\n      fixDateBefore\n      publishedDate\n      version\n      versionResolutionPrimarySource {\n        type\n        version\n      }\n      isOperatingSystemEndOfLife\n      recommendedVersion\n      locationPath\n      artifactType {\n        ...SBOMArtifactTypeFragment\n      }\n      projects {\n        id\n        name\n        slug\n        isFolder\n      }\n      ignoreRules {\n        id\n      }\n      note {\n        id\n        text\n      }\n      layerMetadata {\n        id\n        details\n        isBaseLayer\n        layerHash\n      }\n      vulnerableAsset {\n        ... on VulnerableAssetBase {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          externalId\n          providerUniqueId\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetVirtualMachine {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystem\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          imageName\n          imageId\n          imageNativeType\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          computeInstanceGroup {\n            id\n            externalId\n            name\n            replicaCount\n            tags\n          }\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetServerless {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetContainerImage {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          repository {\n            vertexId\n            name\n          }\n          registry {\n            vertexId\n            name\n          }\n          scanSource\n          executionControllers {\n            ...VulnerableAssetExecutionControllerDetails\n          }\n          graphEntity {\n            ...VulnerabilityContainerImageGraphEntityExecutionContext\n          }\n          nativeType\n          tagReferences\n          imageTags\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetContainer {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          executionControllers {\n            ...VulnerableAssetExecutionControllerDetails\n          }\n          nativeType\n          isUsedOnPrem\n        }\n        ... on VulnerableAssetRepositoryBranch {\n          id\n          type\n          name\n          cloudPlatform\n          repositoryId\n          repositoryName\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetIde {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetEndpoint {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetPaaSResource {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetVirtualMachineImage {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetNetworkAddress {\n          subscriptionId\n          subscriptionName\n          subscriptionExternalId\n          tags\n          address\n          addressType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetCommon {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetDevice {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n          operatingSystem\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n        }\n      }\n      sourceMappedCodeFindings {\n        id\n        remediationPullRequestAvailable\n      }\n    }\n   \n\n\n        fragment SBOMArtifactTypeFragment on SBOMArtifactType {\n      group\n      codeLibraryLanguage\n      osPackageManager\n      hostedTechnology {\n        id\n        name\n        icon\n      }\n      plugin\n      custom\n      ciComponent\n    }\n   \n\n\n        fragment VulnerabilityFindingOperatingSystemDistribution on Technology {\n      id\n      name\n      icon\n    }\n   \n\n\n        fragment VulnerableAssetExecutionControllerDetails on VulnerableAssetExecutionController {\n      id\n      entityType\n      externalId\n      providerUniqueId\n      name\n      subscriptionExternalId\n      subscriptionId\n      subscriptionName\n      ancestors {\n        id\n        name\n        entityType\n        externalId\n        providerUniqueId\n      }\n    }\n   \n\n\n        fragment VulnerabilityContainerImageGraphEntityExecutionContext on GraphEntity {\n      id\n      providerUniqueId\n      type\n      containerImageExecutionContextAnalyticsV3 {\n        totalResourceCount\n        nativeType {\n          nativeType\n          count\n        }\n      }\n    }\n   \n\n\n        fragment DuplicateFindingBadge on VulnerabilityFinding {\n      id\n      origin\n      duplicateOf {\n        id\n        name\n        origin\n        vulnerableAsset {\n          ... on VulnerableAssetBase {\n            id\n            name\n          }\n        }\n      }\n    }\n   \n\n\n        fragment VulnerabilityFindingRelatedIssueAnalyticsFragment on VulnerabilityFindingRelatedIssueAnalytics {\n      issueCount\n      informationalSeverityCount\n      lowSeverityCount\n      mediumSeverityCount\n      highSeverityCount\n      criticalSeverityCount\n    }\n   \n\n\n        fragment PostureIssuePopoverListRecord on PostureIssue {\n      id\n      name\n      type\n      entity {\n        providerUniqueId\n        id\n        type\n      }\n    }\n   \n\n\n        fragment PendingUpdateVulnerabilityFindingStatusRequest on PrivilegedActionRequest {\n      ...PendingStatusRequestBanner\n      ...PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams\n    }\n   \n\n\n        fragment PendingStatusRequestBanner on PrivilegedActionRequest {\n      id\n      type\n      status\n      createdAt\n      createdBy {\n        id\n        name\n        email\n      }\n      params {\n        ... on PrivilegedActionRequestUpdateIssueStatusParams {\n          issueStatus: status\n        }\n        ... on PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams {\n          findingStatus: status\n        }\n        ... on PrivilegedActionRequestCreateIgnoreRuleParams {\n          ignoreRuleName: name\n        }\n      }\n    }\n   \n\n\n        fragment PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams on PrivilegedActionRequest {\n      id\n      params {\n        ... on PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams {\n          status\n        }\n      }\n      subject {\n        ... on VulnerabilityFinding {\n          id\n          status\n        }\n      }\n    }\n";
+  var QUERY = "\n    query VulnerabilityFindingsTable($filterBy: VulnerabilityFindingFilters, $first: Int, $after: String, $orderBy: VulnerabilityFindingOrder = {direction: DESC, field: CREATED_AT}, $includeRelatedIssueAnalytics: Boolean = false, $includeRelatedSourceMappedIssueAnalytics: Boolean = false, $includeTotalCount: Boolean = false, $includePostureIssues: Boolean = false, $fetchPrivilegedActionRequests: Boolean = false) {\n      vulnerabilityFindings(\n        filterBy: $filterBy\n        first: $first\n        after: $after\n        orderBy: $orderBy\n      ) {\n        nodes {\n          ...VulnerabilityFindingFragment\n          ...DuplicateFindingBadge\n          transitivity\n          rootComponent {\n            name\n          }\n          isHighProfileThreat\n          vendorSeverity\n          nvdSeverity\n          weightedSeverity\n          hasExploit\n          usedInCodeResult\n          hasCisaKevExploit\n          cisaKevReleaseDate\n          cisaKevDueDate\n          score\n          epssSeverity\n          epssPercentile\n          epssProbability\n          categories\n          hasInitialAccessPotential\n          isClientSide\n          affectedBySettings\n          codeLibraryLanguage\n          exploitabilityValidationStatus\n          cvssv2 {\n            attackVector\n            attackComplexity\n            confidentialityImpact\n            integrityImpact\n            privilegesRequired\n            userInteractionRequired\n            vectorString\n            scope\n          }\n          cvssv3 {\n            attackVector\n            attackComplexity\n            confidentialityImpact\n            integrityImpact\n            privilegesRequired\n            userInteractionRequired\n            vectorString\n            scope\n          }\n          effectiveAvailabilityImpact\n          cnaScore\n          vendorScore\n          relatedIssueAnalytics @include(if: $includeRelatedIssueAnalytics) {\n            ...VulnerabilityFindingRelatedIssueAnalyticsFragment\n          }\n          relatedSourceMappedIssueAnalytics @include(if: $includeRelatedSourceMappedIssueAnalytics) {\n            ...VulnerabilityFindingRelatedIssueAnalyticsFragment\n          }\n          postureIssues @include(if: $includePostureIssues) {\n            ...PostureIssuePopoverListRecord\n          }\n          privilegedActionRequests @include(if: $fetchPrivilegedActionRequests) {\n            ...PendingUpdateVulnerabilityFindingStatusRequest\n          }\n        }\n        pageInfo {\n          hasNextPage\n          endCursor\n        }\n        totalCount @include(if: $includeTotalCount)\n      }\n    }\n   \n        fragment VulnerabilityFindingFragment on VulnerabilityFinding {\n      id\n      portalUrl\n      name\n      detailedName\n      description\n      severity\n      status\n      fixedVersion\n      detectionMethod\n      firstDetectedAt\n      firstDetectedAtSource\n      lastDetectedAt\n      resolvedAt\n      validatedInRuntime\n      runtimeValidationResult\n      reachability\n      hasTriggerableRemediation\n      remediationPullRequestAvailable\n      dataSourceName\n      fixDate\n      fixDateBefore\n      publishedDate\n      version\n      versionResolutionPrimarySource {\n        type\n        version\n      }\n      isOperatingSystemEndOfLife\n      recommendedVersion\n      locationPath\n      artifactType {\n        ...SBOMArtifactTypeFragment\n      }\n      projects {\n        id\n        name\n        slug\n        isFolder\n      }\n      ignoreRules {\n        id\n      }\n      note {\n        id\n        text\n      }\n      layerMetadata {\n        id\n        details\n        isBaseLayer\n        layerHash\n      }\n      vulnerableAsset {\n        ... on VulnerableAssetBase {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          externalId\n          providerUniqueId\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetVirtualMachine {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystem\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          imageName\n          imageId\n          imageNativeType\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          computeInstanceGroup {\n            id\n            externalId\n            name\n            replicaCount\n            tags\n          }\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetServerless {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetContainerImage {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          repository {\n            vertexId\n            name\n          }\n          registry {\n            vertexId\n            name\n          }\n          scanSource\n          executionControllers {\n            ...VulnerableAssetExecutionControllerDetails\n          }\n          graphEntity {\n            ...VulnerabilityContainerImageGraphEntityExecutionContext\n          }\n          nativeType\n          tagReferences\n          imageTags\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetContainer {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          executionControllers {\n            ...VulnerableAssetExecutionControllerDetails\n          }\n          nativeType\n          isUsedOnPrem\n        }\n        ... on VulnerableAssetRepositoryBranch {\n          id\n          type\n          name\n          cloudPlatform\n          repositoryId\n          repositoryName\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetIde {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetEndpoint {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetPaaSResource {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetVirtualMachineImage {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetNetworkAddress {\n          subscriptionId\n          subscriptionName\n          subscriptionExternalId\n          tags\n          address\n          addressType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetCommon {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetDevice {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n          operatingSystem\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n        }\n      }\n      sourceMappedCodeFindings {\n        id\n        remediationPullRequestAvailable\n      }\n    }\n   \n\n\n        fragment SBOMArtifactTypeFragment on SBOMArtifactType {\n      group\n      codeLibraryLanguage\n      osPackageManager\n      hostedTechnology {\n        id\n        name\n        icon\n      }\n      plugin\n      custom\n      ciComponent\n    }\n   \n\n\n        fragment VulnerabilityFindingOperatingSystemDistribution on Technology {\n      id\n      name\n      icon\n    }\n   \n\n\n        fragment VulnerableAssetExecutionControllerDetails on VulnerableAssetExecutionController {\n      id\n      entityType\n      externalId\n      providerUniqueId\n      name\n      subscriptionExternalId\n      subscriptionId\n      subscriptionName\n      ancestors {\n        id\n        name\n        entityType\n        externalId\n        providerUniqueId\n      }\n    }\n   \n\n\n        fragment VulnerabilityContainerImageGraphEntityExecutionContext on GraphEntity {\n      id\n      providerUniqueId\n      type\n      containerImageExecutionContextAnalyticsV3 {\n        totalResourceCount\n        nativeType {\n          nativeType\n          count\n        }\n      }\n    }\n   \n\n\n        fragment DuplicateFindingBadge on VulnerabilityFinding {\n      id\n      origin\n      duplicateOf {\n        id\n        name\n        origin\n        vulnerableAsset {\n          ... on VulnerableAssetBase {\n            id\n            name\n          }\n        }\n      }\n    }\n   \n\n\n        fragment VulnerabilityFindingRelatedIssueAnalyticsFragment on VulnerabilityFindingRelatedIssueAnalytics {\n      issueCount\n      informationalSeverityCount\n      lowSeverityCount\n      mediumSeverityCount\n      highSeverityCount\n      criticalSeverityCount\n    }\n   \n\n\n        fragment PostureIssuePopoverListRecord on PostureIssue {\n      id\n      name\n      type\n      entity {\n        providerUniqueId\n        id\n        type\n      }\n    }\n   \n\n\n        fragment PendingUpdateVulnerabilityFindingStatusRequest on PrivilegedActionRequest {\n      ...PendingStatusRequestBanner\n      ...PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams\n    }\n   \n\n\n        fragment PendingStatusRequestBanner on PrivilegedActionRequest {\n      id\n      type\n      status\n      createdAt\n      createdBy {\n        id\n        name\n        email\n      }\n      params {\n        ... on PrivilegedActionRequestUpdateIssueStatusParams {\n          issueStatus: status\n        }\n        ... on PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams {\n          findingStatus: status\n        }\n        ... on PrivilegedActionRequestCreateIgnoreRuleParams {\n          ignoreRuleName: name\n        }\n      }\n    }\n   \n\n\n        fragment PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams on PrivilegedActionRequest {\n      id\n      params {\n        ... on PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams {\n          status\n        }\n      }\n      subject {\n        ... on VulnerabilityFinding {\n          id\n          status\n        }\n      }\n    }\n";
   var BASE_VARIABLES = {
     "orderBy": {
       "field": "RELATED_ISSUE_SEVERITY",
@@ -2498,6 +2505,21 @@ var Server = (() => {
     }
   }
 
+  // ../gas_shared/domain/wizUrl.ts
+  var PORTAL_PREFIXES = [
+    ["https:", "", "app.wiz.io", ""].join("/"),
+    ["https:", "", "app.wiz.us", ""].join("/")
+  ];
+  function isLegal(url) {
+    return PORTAL_PREFIXES.some((prefix) => url.indexOf(prefix) === 0);
+  }
+  function normalizeWizUrl(raw) {
+    if (typeof raw !== "string") return null;
+    const url = raw.trim();
+    if (!url) return null;
+    return isLegal(url) ? url : null;
+  }
+
   // src/server/diagnostics.ts
   function preview(value) {
     if (!value || !value.trim()) return "(unset)";
@@ -2509,7 +2531,7 @@ var Server = (() => {
     return value && value.trim() ? `(set, ${value.trim().length} chars)` : "(unset)";
   }
   function wizDiagnostic() {
-    var _a;
+    var _a, _b;
     const lines = [];
     const log = (m) => {
       lines.push(m);
@@ -2553,10 +2575,11 @@ var Server = (() => {
       );
       return lines.join("\n");
     }
+    let firstNode = null;
     try {
       const page = queryPage(buildVariables({ first: 1 }));
+      firstNode = (_b = page.nodes[0]) != null ? _b : null;
       log(`Step 2 OK: query succeeded \u2014 ${page.nodes.length} finding(s) on page 1.`);
-      log("=== All checks passed. Live scans should work. ===");
     } catch (e) {
       const msg = e.message;
       log(`Step 2 FAIL: the query was rejected \u2014 ${msg}`);
@@ -2575,6 +2598,30 @@ var Server = (() => {
       }
       return lines.join("\n");
     }
+    if (firstNode === null) {
+      log(
+        "Step 3 SKIPPED: the query returned no findings, so there was no row to read a Wiz console link off. Not a failure \u2014 widen the severity filter or the project and re-run if you want this checked."
+      );
+    } else {
+      const raw = firstNode["portalUrl"];
+      const usable = normalizeWizUrl(raw);
+      if (usable) {
+        log(`Step 3 OK: findings carry a Wiz console link (${usable}).`);
+      } else if (typeof raw === "string" && raw.trim()) {
+        log(
+          `Step 3 WARN: this tenant returned a portalUrl the register will not link to \u2014 ${raw.trim()}`
+        );
+        log(
+          "\u2192 The finding sheet shows no Wiz row for it. Links are allowed only on the Wiz consoles (app.wiz.io / app.wiz.us); see gas_shared/domain/wizUrl.ts for why the list is a security boundary rather than a typo-catcher, and widen it there if your tenant is genuinely served from another host."
+        );
+      } else {
+        log("Step 3 WARN: the query worked but this finding carried no portalUrl.");
+        log(
+          "\u2192 The finding sheet will show no Wiz row for findings like it. If EVERY finding is like this, the tenant is not populating the field and there is nothing to link to; the register states that rather than guessing a URL."
+        );
+      }
+    }
+    log("=== All checks passed. Live scans should work. ===");
     return lines.join("\n");
   }
 
@@ -3498,7 +3545,8 @@ var Server = (() => {
     "has_kev",
     "has_exploit",
     "epss",
-    "risk_observed_at"
+    "risk_observed_at",
+    "portal_url"
   ];
   var TAGS_PREFIX = "vulnerableAsset.tags.";
   function tagsJson(record) {
@@ -3553,6 +3601,9 @@ var Server = (() => {
       last_scan_id: scanId,
       fix_date: fixDate,
       fix_observed_at: fixObservedAt,
+      // Refreshed on every later scan too (see reconcile()), because this is an address rather
+      // than a measurement — the header on the field says why it does not stick.
+      portal_url: normalizeWizUrl(record["portalUrl"]),
       // Left null here and filled by seedPublished() after the branch, which — like the risk
       // merge below it — runs identically for new, reopened and persisting rows.
       published_date: null,
@@ -3680,6 +3731,7 @@ var Server = (() => {
       row.asset_name = field(rec, "vulnerableAsset.name") || row.asset_name;
       row.asset_type = field(rec, "vulnerableAsset.type") || row.asset_type;
       row.cloud = field(rec, "vulnerableAsset.cloudPlatform") || row.cloud;
+      row.portal_url = normalizeWizUrl(rec["portalUrl"]) || row.portal_url || null;
       row.subscription_name = field(rec, "vulnerableAsset.subscriptionName") || row.subscription_name;
       row.subscription_ext_id = field(rec, "vulnerableAsset.subscriptionExternalId", "vulnerableAsset.subscriptionId") || row.subscription_ext_id;
       row.tags_json = (_l = tagsJson(rec)) != null ? _l : row.tags_json;
@@ -3945,7 +3997,11 @@ var Server = (() => {
           has_kev: e.has_kev,
           has_exploit: e.has_exploit,
           epss: e.epss,
-          risk_observed_at: e.risk_observed_at
+          risk_observed_at: e.risk_observed_at,
+          // No link, for the same reason `asset_id` above is null: a compacted episode has
+          // dropped the per-finding detail it was summarizing, and an EpisodeRow never carried
+          // a URL. The sheet draws no Wiz row, which is the honest rendering of a sealed row.
+          portal_url: null
         })
       );
     }
@@ -6044,7 +6100,12 @@ var Server = (() => {
       // Not str(): these are tri-state (boolean | null) and numeric. A bundle exported before
       // the risk columns existed simply lacks the keys, and they must stay null — "not
       // captured", never a fabricated false/0. See reconcile.coerceRiskSignals.
-      ...coerceRiskSignals(r)
+      ...coerceRiskSignals(r),
+      // Not str() either, and for a sharper reason than the line above: this value becomes an
+      // href. An imported bundle is a file somebody handed us — the least trusted input this
+      // module has — so it goes through the same rule a live scan does rather than being
+      // copied across. A refused or absent URL imports as "no link".
+      portal_url: normalizeWizUrl(r["portal_url"])
     };
   }
   function coerceEpisode(r) {
@@ -7046,7 +7107,14 @@ var Server = (() => {
     "internet_exposed",
     "mttr_days",
     "age_days",
-    "actionable_age_days"
+    "actionable_age_days",
+    // Wiz's own console link for this finding. NOT A DRAWN COLUMN — no table cell reads it —
+    // but the finding sheet does, and the sheet may only touch keys on this list
+    // (test/findingSheet.test.js hands the model a Proxy row and asserts exactly that). So it
+    // ships here rather than as a second payload, for the same reason `vuln_key` does: one
+    // `api_getRegisterRows` already carries everything the drill-down needs, and a sheet that
+    // had to fetch would cost one call per finding opened.
+    "portal_url"
   ];
   var REGISTER_ROW_SOURCE = {
     support_group: "_supportGroup",
@@ -7663,7 +7731,13 @@ var Server = (() => {
       fix_date: (_s = r["fix_date"]) != null ? _s : null,
       fix_observed_at: (_t = r["fix_observed_at"]) != null ? _t : null,
       published_date: (_u = r["published_date"]) != null ? _u : null,
-      ...coerceRiskSignals(r)
+      ...coerceRiskSignals(r),
+      // NOT a plain cast like its neighbours, and this is the call site that most needs the
+      // difference: this function turns a ROW OF THE LEDGER TAB back into a LedgerRow, and
+      // that tab is a Google Sheet an operator can open and type into. Nothing runs when they
+      // do, so this read is the only place a hand-edited `portal_url` can be caught before it
+      // reaches the wire. gas_shared/domain/wizUrl.ts carries the full argument.
+      portal_url: normalizeWizUrl(r["portal_url"])
     };
   }
   var scanRowsMemo;
@@ -9468,7 +9542,13 @@ var Server = (() => {
     // Additive: frames persisted before this simply lack the keys (read as null).
     "fixDate",
     "fixDateBefore",
-    "isOperatingSystemEndOfLife"
+    "isOperatingSystemEndOfLife",
+    // Wiz's own deep link to this finding in the console — the finding sheet's "Open in Wiz"
+    // row. Additive in the same way: frames persisted before this lack the key, and a finding
+    // with no link reads as absent rather than broken. Kept RAW here and normalized at the
+    // ledger boundary (domain/reconcile.ts), so the archived frame stays a faithful record of
+    // what Wiz actually sent even where this register refuses to link to it.
+    "portalUrl"
   ];
   var SLIM_ASSET = [
     "id",

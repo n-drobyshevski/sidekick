@@ -126,6 +126,20 @@ describe("the SCA documents carry the second clock's inputs", () => {
     }
   });
 
+  // THE ASYMMETRY IS THE ASSERTION. `portalUrl` is selected on SCA and on neither of the
+  // other two, and that is evidence rather than an omission: SCA reads `vulnerabilityFindings`,
+  // the same Wiz root the OS register reads, where the field is known to exist. `sastFindings`
+  // and `secretInstances` are different types and nothing confirms it on either — and an
+  // unknown field does not degrade to null, it fails the WHOLE document with "Cannot query
+  // field", taking the scope's entire scan with it. So this pins the asymmetry in place until
+  // wizDiagnostic says otherwise, rather than leaving the next reader to assume it was an
+  // oversight and "fix" it.
+  it("selects portalUrl on SCA only, where the field is known to exist", () => {
+    expect(Q_SCA).toContain("portalUrl");
+    expect(Q_SAST).not.toContain("portalUrl");
+    expect(Q_SECRETS).not.toContain("portalUrl");
+  });
+
   it("narrows the vulnerableAsset union to the two members this tenant has", () => {
     // A fragment naming a member the tenant lacks fails the WHOLE document, so the
     // narrowing is load-bearing rather than tidy.

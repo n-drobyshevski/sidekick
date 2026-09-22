@@ -9,6 +9,7 @@
 // Field-level smart-merge semantics (first_seen backdating, reopens, resolution by
 // disappearance) all fall out of reconcile during the replay.
 
+import { normalizeWizUrl } from "../../../gas_shared/domain/wizUrl";
 import { CHECKPOINT_VERSION, type Checkpoint } from "./compaction";
 import {
   scansAsc,
@@ -202,6 +203,11 @@ export function coerceLedger(r: Rec): LedgerRow {
     // the risk columns existed simply lacks the keys, and they must stay null — "not
     // captured", never a fabricated false/0. See reconcile.coerceRiskSignals.
     ...coerceRiskSignals(r),
+    // Not str() either, and for a sharper reason than the line above: this value becomes an
+    // href. An imported bundle is a file somebody handed us — the least trusted input this
+    // module has — so it goes through the same rule a live scan does rather than being
+    // copied across. A refused or absent URL imports as "no link".
+    portal_url: normalizeWizUrl(r["portal_url"]),
   };
 }
 

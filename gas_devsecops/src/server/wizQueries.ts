@@ -106,6 +106,16 @@ export const Q_SAST = `query DevSecOpsSastFindings(
  * tenant does not have fails the WHOLE document, so the narrowing is load-bearing rather
  * than tidy; VulnerableAssetRepositoryBranch omits the two subscription fields because a
  * repository branch has neither.
+ *
+ * `portalUrl` IS SELECTED HERE AND IN NEITHER SIBLING, which is evidence rather than an
+ * oversight and belongs in this header rather than beside the field: the documents carry no
+ * comments at all (test/wizQueries.test.js's "ships no prose over the wire" — every byte of
+ * a document is sent to Wiz on every page of every scan). This is the same
+ * `vulnerabilityFindings` root the OS register reads, so the field is known to exist on it.
+ * `sastFindings` and `secretInstances` are different types and nothing confirms a portalUrl
+ * on either — and an unknown field does not degrade to null, it fails the whole document
+ * with "Cannot query field", taking that scope's entire scan with it. Run wizDiagnostic
+ * against the tenant before adding it there.
  */
 export const Q_SCA = `query DevSecOpsVulnerabilityFindings(
   $filterBy: VulnerabilityFindingFilters
@@ -115,6 +125,7 @@ export const Q_SCA = `query DevSecOpsVulnerabilityFindings(
   vulnerabilityFindings(filterBy: $filterBy, first: $first, after: $after) {
     nodes {
       id
+      portalUrl
       name
       detailedName
       severity

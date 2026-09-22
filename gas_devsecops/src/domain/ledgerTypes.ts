@@ -121,6 +121,19 @@ export interface LedgerRow {
   // into an app-header selector. `isFolder` on each entry is tri-state — see projectScope.ts's
   // ProjectRef for the same rule LedgerRow's has_kev/has_exploit already follow.
   projects_json: string | null;
+
+  // Wiz's own console link for this finding (`portalUrl`), normalized through
+  // gas_shared/domain/wizUrl before it lands here. See gas/'s LedgerRow for why an
+  // API-supplied URL is still checked, and why this is latest-wins rather than sticky like
+  // the risk columns above.
+  //
+  // SCA ONLY, FOR NOW, and null is the honest answer for the other two rather than a gap:
+  // `sastFindings` and `secretInstances` are different Wiz types and nothing confirms a
+  // portalUrl on either, so Q_SAST and Q_SECRETS do not ask for one. A secrets finding in
+  // particular is the case that would most want a link — the register deliberately carries
+  // no credential value and says triage opens Wiz for it — so this is a gap worth closing
+  // once wizDiagnostic has been run against the tenant, not one to close by guessing a URL.
+  portal_url: string | null;
 }
 
 /** The ledger's columns, as data, in tab order — see the header comment for what it guards. */
@@ -135,6 +148,7 @@ export const LEDGER_COLUMNS: readonly string[] = [
   "secret_kind", "rotated_at", "removed_at", "validation_state", "validated_at",
   "confidence",
   "owner_project", "owner_path", "tags_json", "projects_json",
+  "portal_url",
 ];
 
 export interface Observation {

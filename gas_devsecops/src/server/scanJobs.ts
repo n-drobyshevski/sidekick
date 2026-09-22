@@ -261,6 +261,9 @@ export const SLIM_FIELDS: Record<Scope, readonly string[]> = {
     "firstDetectedAt", "lastDetectedAt", "resolvedAt",
     "fixDate", "fixedVersion",
     "hasExploit", "hasCisaKevExploit", "epssProbability",
+    // Wiz's own console link. sca only — Q_SCA is the one document that selects it, and a
+    // field listed here that the query never returns is simply never present to copy.
+    "portalUrl",
   ],
   sast: [
     "id", "name", "status", "severity", "originalSeverity",

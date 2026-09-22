@@ -802,6 +802,7 @@ describe("compaction preserves coverage & efficiency", () => {
       published_date: null,
       has_kev: true, has_exploit: false, epss: 0.44,
       risk_observed_at: "2026-01-01T00:00:00Z",
+      portal_url: null,
     };
     const ep = toEpisodeRow(live, "cmp-1");
     expect(ep.has_kev).toBe(true);
@@ -842,6 +843,7 @@ describe("risk-signal backfill (pure core)", () => {
     fix_date: null, fix_observed_at: null,
     published_date: null,
     has_kev: null, has_exploit: null, epss: null, risk_observed_at: null,
+    portal_url: null,
     ...over,
   });
   const rec = (id: string, over: Record<string, unknown> = {}) =>

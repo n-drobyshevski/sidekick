@@ -196,6 +196,12 @@ const SLIM_TOP = [
   // Vendor-fix signals for the actionable clock / awaiting-vendor-fix segment.
   // Additive: frames persisted before this simply lack the keys (read as null).
   "fixDate", "fixDateBefore", "isOperatingSystemEndOfLife",
+  // Wiz's own deep link to this finding in the console — the finding sheet's "Open in Wiz"
+  // row. Additive in the same way: frames persisted before this lack the key, and a finding
+  // with no link reads as absent rather than broken. Kept RAW here and normalized at the
+  // ledger boundary (domain/reconcile.ts), so the archived frame stays a faithful record of
+  // what Wiz actually sent even where this register refuses to link to it.
+  "portalUrl",
 ];
 const SLIM_ASSET = [
   "id", "name", "type", "cloudPlatform", "region", "subscriptionName",
