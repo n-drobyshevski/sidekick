@@ -458,7 +458,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "c36b03e328b3" : "dev";
+  var BUILD_ID = true ? "1e645e1b2db4" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -4899,7 +4899,14 @@ var Server = (() => {
     return {
       rowCount: m["rowCount"],
       overall: { resolved: overall["resolved"], open: overall["open"] },
-      remediation: km ? { km: { median: km["median"], medianLowerBound: km["medianLowerBound"] } } : {}
+      remediation: km ? {
+        km: {
+          median: km["median"],
+          medianLowerBound: km["medianLowerBound"],
+          q25: km["q25"],
+          reliableUntil: km["reliableUntil"]
+        }
+      } : {}
     };
   }
   function execGroupSlice(byGroup) {
@@ -4913,6 +4920,8 @@ var Server = (() => {
         return {
           group: (_a = r["group"]) != null ? _a : r["domain"],
           kmMedian: r["kmMedian"],
+          kmQ25: r["kmQ25"],
+          kmMedianLowerBound: r["kmMedianLowerBound"],
           open: r["open"]
         };
       })
@@ -8536,6 +8545,7 @@ var Server = (() => {
         showNoFix: exec["showNoFix"],
         mttr: execMttrSlice(mttrModel(params)),
         byScope: execGroupSlice(exec["byScope"]),
+        trackingSince: exec["trackingSince"],
         // Already minimal — a per-severity tally, a delta pair, the tier table and the coverage
         // caveat — so these four ship whole.
         severityCounts: exec["severityCounts"],

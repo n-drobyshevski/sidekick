@@ -7,9 +7,15 @@
 //
 //   * the survival estimate keeps still-open findings as RIGHT-CENSORED observations rather
 //     than dropping them, and the censored count is printed beside the estimate;
-//   * where the curve never falls to half there is no median, so `medianLowerBound` is
-//     published as "at least N days" and flagged as a bound — `kmHalfLifeView` below is the
-//     one place that decision is made, for this page AND for Executive, which imports it;
+//   * a finding only enters the risk set once this register could have observed it (delayed
+//     entry: `entry_days`, domain/remediation.ts), and the curve is cut where too few findings
+//     remain to trust it (the Gebski et al. reliability cut, `reliableUntil`) — so a young
+//     register does not publish a figure past the point its own risk set can support;
+//   * where the CUT curve never falls to half there is no median, so the value reads "Not
+//     reached" — never "at least N days" any more, because that phrase claimed a bound the
+//     reliability cut had already ruled out. The 25th-percentile reading takes its place where
+//     one exists; `kmHalfLifeView` below is the one place this decision is made, for this page
+//     AND for Executive and History, which import it;
 //   * every rate carries a visible denominator node, because a percentage whose base is
 //     invisible is the failure this register exists to avoid.
 //
@@ -48,8 +54,8 @@ import { agingTableModel, sevPalette } from "./sca.js";
 import { denominatorNode, fmtPct, rateCell, scopeParam } from "./_rates.js";
 import {
   absentText, axisBar, axisSegments, chartTable, chartTableModel, clear, dataTable, el,
-  emptyState, errorState, firstRunNotice, fmtCount, fmtDays, heroStat, kpiCard, meter, num,
-  onPageTeardown, pageHeader, pluralize, sectionLabel, sevBadge, sevEntries, sevSegmentBar,
+  emptyState, errorState, firstRunNotice, fmtCount, fmtDate, fmtDays, heroStat, kpiCard, meter,
+  num, onPageTeardown, pageHeader, pluralize, sectionLabel, sevBadge, sevEntries, sevSegmentBar,
   skeleton, sparkLabel, sparkPath, sparkline, statRow, survivalTableModel, tipLabel,
 } from "../ui.js";
 
@@ -69,38 +75,74 @@ export { fmtCount, fmtDays };
 /**
  * The half-life decision, in ONE place, for every surface that draws it.
  *
- * Three outcomes, three different claims:
+ * FOUR outcomes now (MTTR delayed-entry package), and `state` names which one so a caller
+ * never has to re-derive it from `isLowerBound`/`measured` alone:
  *
- *   median present         "41 days"           a measured median
- *   median null + bound    "at least 41 days"  the curve never reached half. The bound is the
- *                                              longest observation, so the median is at LEAST
- *                                              that far out. `isLowerBound` is true.
- *   neither                "Not measured"      nothing to rest on. NOT zero.
+ *   "median"          median present        "41 days"       a measured median.
+ *   "quartile"        median null, q25 real "Not reached"    the CUT curve never falls to
+ *                                                             half, but a quarter of what was
+ *                                                             tracked has closed — `secondary`
+ *                                                             carries "25% fixed within N d".
+ *   "quartile-bound"  median AND q25 null,  "Not reached"    not even a quarter has closed
+ *                     but a reliable floor  (secondary line) within the reliable window;
+ *                     (`reliableUntil` or                    `secondary` says "under 25%
+ *                     `medianLowerBound`) > 0                fixed within N d" instead.
+ *   "unmeasured"      no number at all      "Not measured"   nothing to rest on. NOT zero.
  *
- * Rendering the middle case as a bare number would publish a median nobody observed;
- * collapsing it to a dash would throw away a true statement. So it is published, prefixed,
- * and flagged — and the flag is what a caller styles or captions off, never the string.
+ * "AT LEAST N DAYS" IS RETIRED. The reliability cut (Gebski et al. 2018,
+ * `domain/remediation.ts`) means `medianLowerBound` is no longer simply "the longest thing
+ * observed" — publishing it as a bound on the median overstated what the curve's own risk set
+ * can support. A curve that never reaches half now says so in words ("Not reached") and offers
+ * the furthest quantile it CAN still support (25%, or — failing that — the point past which the
+ * curve itself is no longer trustworthy), never a number dressed as "at least".
  *
- * @param {object|null|undefined} km  a shipped KMResult (`{median, medianLowerBound, …}`)
- * @returns {{measured: boolean, value: string, isLowerBound: boolean, days: number|null}}
+ * `isLowerBound` stays on the shape for callers that only need to know "is this a plain
+ * median or not" (styling, routing a tip) without switching on all four states.
+ *
+ * @param {object|null|undefined} km  a shipped KMResult
+ *   (`{median, q25, medianLowerBound, reliableUntil, …}`)
+ * @returns {{measured: boolean, value: string, isLowerBound: boolean, days: number|null,
+ *            q25Days: number|null, state: "median"|"quartile"|"quartile-bound"|"unmeasured",
+ *            secondary: string|null}}
  */
 export function kmHalfLifeView(km) {
-  const median = km && km.median !== null && km.median !== undefined ? Number(km.median) : null;
-  const bound = km && km.medianLowerBound !== null && km.medianLowerBound !== undefined
-    ? Number(km.medianLowerBound)
-    : null;
-  if (median !== null && Number.isFinite(median)) {
-    return { measured: true, value: fmtDays(median), isLowerBound: false, days: median };
-  }
-  if (bound !== null && Number.isFinite(bound)) {
+  const median = num(km && km.median);
+  const q25 = num(km && km.q25);
+  const reliableUntil = num(km && km.reliableUntil);
+  const legacyBound = num(km && km.medianLowerBound);
+
+  if (median !== null) {
     return {
-      measured: true,
-      value: "at least " + fmtDays(bound),
-      isLowerBound: true,
-      days: bound,
+      measured: true, value: fmtDays(median), isLowerBound: false, days: median,
+      q25Days: q25, state: "median", secondary: null,
     };
   }
-  return { measured: false, value: "Not measured", isLowerBound: false, days: null };
+  if (q25 !== null) {
+    return {
+      measured: true, value: "Not reached", isLowerBound: true, days: null,
+      q25Days: q25, state: "quartile",
+      secondary: "25% fixed within " + fmtDays(q25),
+    };
+  }
+  // Neither a median nor a 25th-percentile reading — but the reliability cut (or, in legacy
+  // mode with no cut at all, the plain max-observed bound) still names a point the register
+  // measured PAST. `reliableUntil` is preferred: it is the honest "the curve stops being
+  // trustworthy here" floor. `medianLowerBound` is the fallback for a payload that never ran
+  // the cut (`opts.minRisk` unset) — still a real observation, never invented.
+  const floor = reliableUntil !== null && reliableUntil > 0 ? reliableUntil
+    : legacyBound !== null && legacyBound > 0 ? legacyBound
+    : null;
+  if (floor !== null) {
+    return {
+      measured: true, value: "Not reached", isLowerBound: true, days: null,
+      q25Days: null, state: "quartile-bound",
+      secondary: "under 25% fixed within " + fmtDays(floor),
+    };
+  }
+  return {
+    measured: false, value: "Not measured", isLowerBound: false, days: null,
+    q25Days: null, state: "unmeasured", secondary: null,
+  };
 }
 
 /**
@@ -207,6 +249,40 @@ export function mttrHeroView(mttr) {
 }
 
 /**
+ * "Tracking since <date> — earlier fixes are not visible" — PRODUCT.md's seventh principle
+ * (a clock has to say where it started), printed once beside the hero it qualifies rather than
+ * repeated under every half-life on the page (the per-severity table and fan below read the
+ * SAME tracking window, so restating it there would be the sentence CLAUDE.md warns a page
+ * against saying twice).
+ *
+ * `mttrModel`'s `trackingSince` (server/readModels.ts's `trackingSinceFor`) is a per-scope ISO
+ * map, keyed by whichever scope(s) are IN VIEW — one key when `mttr.scope` narrows the page to
+ * a single register, all three otherwise. A single-scope view reads its own scope's date; an
+ * all-scopes view reads the EARLIEST of the scopes present, because that is the date past
+ * which every finding on screen could have been observed from birth — a later scope's own
+ * tracking start would understate how far back left truncation can reach for the OTHER two.
+ */
+export function trackingSinceView(mttr) {
+  const map = (mttr && mttr.trackingSince) || {};
+  const scope = mttr && mttr.scope;
+  const iso = scope ? (map[scope] ?? null) : earliestTrackingIso(map);
+  if (!iso) return { show: false, text: null };
+  return { show: true, text: "Tracking since " + fmtDate(iso) + " — earlier fixes are not visible." };
+}
+
+/** ISO 8601 UTC timestamps sort lexically, so the earliest of a scope map's values is the
+ *  string minimum — no `Date.parse` needed, and nothing here can disagree with `fmtDate`'s own
+ *  reading of the same string. */
+function earliestTrackingIso(map) {
+  let best = null;
+  for (const iso of Object.values(map || {})) {
+    if (typeof iso !== "string" || !iso) continue;
+    if (best === null || iso < best) best = iso;
+  }
+  return best;
+}
+
+/**
  * The half-life trend, as ONE array read by two things.
  *
  * `renderTrend` plots it as a line at the bottom of the page; `renderHero` draws the same
@@ -243,27 +319,29 @@ export function rmstView(km) {
 
 /**
  * The remediation clock per severity: the Kaplan-Meier statistics, not the naive closed-only
- * ones. `kmLowerBoundPerSev` is shipped alongside `kmMedianPerSev`, so a severity whose curve
- * never falls to half gets "at least N days" here too rather than a dash.
+ * ones. Reads `kmPerSev` — the full `shipKM`-narrowed curve per severity, the SAME object the
+ * fan (`severityCurvesView`) draws from — rather than the flat `kmMedianPerSev`/
+ * `kmLowerBoundPerSev` maps: those two carry only a median and a legacy bound, and this table
+ * now needs `q25`/`reliableUntil` too (the 25% column, and the "quartile-bound" state), both of
+ * which only `kmPerSev[sev]` carries. `kmPerSev[s].median` IS `kmMedianPerSev[s]` by
+ * construction (readModels.ts), so nothing here reads a different number than before.
  */
 export function mttrSeverityRows(mttr, order) {
   const rem = (mttr && mttr.remediation) || {};
   const perSev = (mttr && mttr.perSev) || {};
-  const medians = rem.kmMedianPerSev || {};
-  const bounds = rem.kmLowerBoundPerSev || {};
+  const kmPerSev = rem.kmPerSev || {};
   const p90s = rem.kmP90PerSev || {};
   const levels = (order || []).concat(["UNKNOWN"]).filter((s, i, a) => a.indexOf(s) === i);
   return levels
-    .filter((sev) => perSev[sev] || medians[sev] !== undefined)
+    .filter((sev) => perSev[sev] || kmPerSev[sev])
     .map((sev) => {
       const s = perSev[sev] || {};
-      const half = kmHalfLifeView({
-        median: medians[sev] === undefined ? null : medians[sev],
-        medianLowerBound: bounds[sev] === undefined ? null : bounds[sev],
-      });
+      const half = kmHalfLifeView(kmPerSev[sev] || null);
       return {
         sev,
         half,
+        // The "25% fixed" column reads this directly — see `renderSeverity`'s dataTable.
+        q25: half.q25Days,
         p90: p90s[sev] === undefined ? null : p90s[sev],
         resolved: Number(s.resolved || 0),
         open: Number(s.open || 0),
@@ -281,8 +359,8 @@ export function mttrSeverityRows(mttr, order) {
  * a caption that states the half-life in words. A reader who sees no colour at all reads the
  * same six facts.
  *
- * `caption` says "at least N days" wherever the median is absent and a bound is not — the
- * middle case `kmHalfLifeView` exists for, restated per card because a card is read on its
+ * `caption` says "Not reached" plus the quartile secondary line wherever there is no median —
+ * `kmHalfLifeView`'s own middle two states, restated per card because a card is read on its
  * own and "—" beside a drawn curve reads as a broken chart rather than as a censored one.
  *
  * A SEVERITY WITH NO CURVE IS SKIPPED RATHER THAN DRAWN EMPTY. `kmPerSev` only holds the
@@ -316,7 +394,8 @@ export function severityCurvesView(remediation, order) {
         censored,
         total: Number(km.total || 0),
         caption: (half.measured ? "Half-life " + half.value : "Half-life not measured")
-          + ". " + fmtCount(events) + " " + pluralize(events, "event") + ", "
+          + (half.secondary ? " — " + half.secondary : "") + "."
+          + " " + fmtCount(events) + " " + pluralize(events, "event") + ", "
           + fmtCount(censored) + " censored.",
       };
     });
@@ -917,8 +996,8 @@ export async function renderMttr(host, params, _ctx) {
    * that row's own name.
    *
    * WHAT DID NOT MOVE (R2). "not measured" stays the visible VALUE wherever a base is empty;
-   * "at least N days" stays the visible hero value on a bound; and the refused-flag count —
-   * open findings outside SCA that carried `awaiting_vendor_fix` anyway and were declined —
+   * "Not reached" stays the visible hero value where the curve never falls to half; and the
+   * refused-flag count — open findings outside SCA that carried `awaiting_vendor_fix` anyway —
    * stays on the surface as "· N refused" in the row's sub-line. A refused count is a
    * measurement decision a reader is entitled to see without hovering anything.
    */
@@ -955,14 +1034,22 @@ export async function renderMttr(host, params, _ctx) {
         statRow(
           "Restricted mean",
           rmst.text,
+          // Neither branch claims a survival percentage the payload does not carry — `ShippedKM`
+          // has no `sAtRestriction` field, only the boolean `meanTruncated` — so the truncated
+          // branch keeps stating what IS true (survival had not reached zero at τ) rather than
+          // inventing an "S% still open" figure this page cannot measure.
           rmst.truncated
             ? "a lower bound — survival had not reached zero at " + fmtDays(rmst.restrictionTime)
-            : "area under the curve to " + fmtDays(rmst.restrictionTime),
+            : "average days open, counted up to " + fmtDays(rmst.restrictionTime),
         ),
         slaStatRow(overallSla),
         ...(awaiting.show ? [awaitingStatRow(awaiting)] : []),
       ],
     }));
+    // PRODUCT.md's seventh principle, printed once beside the figure it qualifies — see
+    // `trackingSinceView`'s own comment for why it is not repeated under the fan/table below.
+    const tracking = trackingSinceView(mttr);
+    if (tracking.show) heroHost.append(el("p", { class: "small muted" }, tracking.text));
   }
 
   /**
@@ -1036,8 +1123,8 @@ export async function renderMttr(host, params, _ctx) {
    * The hero label's tip: the STATE picks the lines, and the LABEL picks the term.
    *
    * Same decision Executive's own hero makes, and for the same reason: `kmHalfLifeView` puts
-   * "at least 297 days" in the 2rem slot, so the words are already on the surface and only
-   * the explanation moves. The term stays `half-life` in every state — the trigger is on the
+   * "Not reached" in the 2rem slot, so the words are already on the surface and only the
+   * explanation moves. The term stays `half-life` in every state — the trigger is on the
    * words "Remediation half-life", so that is the entry Enter goes to, and a control whose
    * destination changes with the data is one a reader cannot learn. The bound's own sentence
    * LEADS the lines instead; `lower-bound` stays reachable from the Key sheet.
@@ -1049,8 +1136,12 @@ export async function renderMttr(host, params, _ctx) {
       lines: [
         "The curve never falls to half within the observed window, so there is no median to"
         + " publish.",
-        "More than half of what is tracked is still open; the bound above is what is actually"
-        + " true.",
+        view.state === "quartile"
+          // "quartile": a quarter of what is tracked has closed, even though half has not.
+          ? "A quarter of what is tracked has already closed — " + view.secondary + "."
+          // "quartile-bound": not even a quarter has closed within the reliable window.
+          : "Too few findings have closed within the reliable window to say even that much —"
+            + " " + view.secondary + ".",
       ],
     };
   }
@@ -1185,19 +1276,19 @@ export async function renderMttr(host, params, _ctx) {
     const rows = mttrSeverityRows(mttr, SEVERITY_ORDER);
     clear(sevHost);
     // The 68-word note under the table said three things, all of them about METHOD: that the
-    // fan and the table are one estimate read twice, what "at least N days" means here, and
-    // that a staircase which stops stepping is a severity that stopped closing. None of them
-    // is a figure or a constraint, so all three sit on the heading. Every card still states
-    // its own half-life in words in its caption, which is the non-colour route to the same
-    // fact and the one thing that could not move.
+    // fan and the table are one estimate read twice, what "Not reached" means here, and that a
+    // staircase which stops stepping is a severity that stopped closing. None of them is a
+    // figure or a constraint, so all three sit on the heading. Every card still states its own
+    // half-life in words in its caption, which is the non-colour route to the same fact and
+    // the one thing that could not move.
     sevHost.append(sectionLabel("The clock, by severity", {
       term: "half-life",
       lines: [
         "Each severity's curve and its row in the table below are one estimate read two ways —"
-        + " the table is that curve's median, its lower bound and its P90.",
-        "“at least N days” means that curve never fell to half. Open findings are in"
-        + " every curve as right-censored observations, so a staircase that stops stepping is"
-        + " a severity that stopped closing.",
+        + " the table is that curve's median, its 25% reading and its P90.",
+        "“Not reached” means that curve never fell to half within the reliable window. Open"
+        + " findings are in every curve as right-censored observations, so a staircase that"
+        + " stops stepping is a severity that stopped closing.",
       ],
     }));
     if (!rows.length) {
@@ -1269,6 +1360,17 @@ export async function renderMttr(host, params, _ctx) {
           className: "num",
           help: { term: "half-life" },
           cell: (r) => r.half.value,
+        },
+        {
+          key: "q25",
+          label: "25% fixed",
+          className: "num",
+          // Reads off the SAME cut curve the Half-life column does — `mttrSeverityRows` takes
+          // both from one `kmHalfLifeView(kmPerSev[sev])` call, so the two columns can never
+          // disagree about which curve they measured. Em dash when nothing was reliable enough
+          // to place even a quarter (`fmtDays(null)`).
+          help: { term: "half-life", lines: ["The day by which 25% of this severity's findings had closed, read off the same curve as Half-life."] },
+          cell: (r) => fmtDays(r.q25),
         },
         { key: "p90", label: "P90", className: "num", cell: (r) => fmtDays(r.p90) },
         { key: "resolved", label: "Resolved", className: "num", cell: (r) => fmtCount(r.resolved) },

@@ -327,7 +327,7 @@ describe("history: KPIs, KM points and the SLA-trend gap", () => {
    * with the `half-life` glossary term, which defines a Kaplan-Meier figure that keeps
    * still-open findings in as censored evidence, so the field and the caption were two
    * different claims about two different populations. On the dev seed the card read 93 days
-   * while the MTTR page read "at least 297 days" over the same 554 rows. `medianMttr` is gone
+   * while the MTTR page read "Not reached" over the same 554 rows. `medianMttr` is gone
    * from the payload (readModels.ts's `buildHistory`) and the band reads `kpis.km` through
    * `kmHalfLifeView` — the same chooser the MTTR page's hero draws with.
    *
@@ -338,25 +338,42 @@ describe("history: KPIs, KM points and the SLA-trend gap", () => {
   describe("the half-life card publishes the KM figure, in the tile's own notation", () => {
     it("a measured median is the number itself", () => {
       const v = kpiView({
-        tracked: 8, open: 3, resolvedAllTime: 5, km: { median: 41, medianLowerBound: 41 },
+        tracked: 8, open: 3, resolvedAllTime: 5,
+        km: { median: 41, medianLowerBound: 41, q25: 18, reliableUntil: null },
       });
-      expect(v.halfLife)
-        .toEqual({ measured: true, value: "41 days", isLowerBound: false, days: 41 });
+      expect(v.halfLife).toEqual({
+        measured: true, value: "41 days", isLowerBound: false, days: 41,
+        q25Days: 18, state: "median", secondary: null,
+      });
     });
 
-    it("no median but a bound is PROSE — \"at least N days\", never a table cell's \"\u2265 N\"", () => {
+    it("no median but a q25 is \"Not reached\" — never \"at least N days\" or a table cell's \"≥ N\"", () => {
       const v = kpiView({
-        tracked: 554, open: 416, resolvedAllTime: 138, km: { median: null, medianLowerBound: 297 },
+        tracked: 554, open: 416, resolvedAllTime: 138,
+        km: { median: null, medianLowerBound: 297, q25: 41, reliableUntil: 297 },
       });
-      expect(v.halfLife.value).toBe("at least 297 days");
+      expect(v.halfLife.value).toBe("Not reached");
       expect(v.halfLife.isLowerBound).toBe(true);
-      // THE PERTURBATION THIS PAIR EXISTS FOR. `boundedDays(null, 297).text` is "\u2265 297.0 d"
-      // — correct in a numeric cell and wrong in a KPI tile. README.md fixes one notation per
-      // context, and history.js's `renderKpis` had the two crossed once already, in the other
-      // direction (`days1` where `fmtDays` belonged). A tile that took the cell's form would
-      // still satisfy `isLowerBound` and every count on the card.
-      expect(v.halfLife.value).not.toMatch(/[\u2265>]/);
-      expect(v.halfLife.value).not.toMatch(/\bd\b/);
+      expect(v.halfLife.state).toBe("quartile");
+      expect(v.halfLife.secondary).toBe("25% fixed within 41 days");
+      // THE PERTURBATION THIS PAIR EXISTS FOR. `boundedDays(null, 297).text` is "≥ 297.0 d"
+      // — the numeric-cell notation, and it may not leak into this tile's own value.
+      expect(v.halfLife.value).not.toMatch(/[≥>]/);
+      expect(v.halfLife.value).not.toMatch(/at least/);
+    });
+
+    it("no median AND no q25, but a reliable floor, is STILL \"Not reached\"", () => {
+      // MTTR delayed-entry package: the state a young register spends most of its life in —
+      // not even a quarter has closed within the window the curve can still be trusted over.
+      const v = kpiView({
+        tracked: 554, open: 416, resolvedAllTime: 138,
+        km: { median: null, medianLowerBound: 297, q25: null, reliableUntil: 297 },
+      });
+      expect(v.halfLife.value).toBe("Not reached");
+      expect(v.halfLife.state).toBe("quartile-bound");
+      expect(v.halfLife.secondary).toBe("under 25% fixed within 297 days");
+      expect(v.halfLife.value).not.toMatch(/at least/);
+      expect(v.halfLife.value).not.toMatch(/[≥>]/);
     });
 
     it("neither is \"Not measured\" — NOT a zero, and NOT a fallback to the retired naive median", () => {
@@ -367,8 +384,10 @@ describe("history: KPIs, KM points and the SLA-trend gap", () => {
         tracked: 554, open: 554, resolvedAllTime: 0, medianMttr: 93,
         km: { median: null, medianLowerBound: null },
       });
-      expect(v.halfLife)
-        .toEqual({ measured: false, value: "Not measured", isLowerBound: false, days: null });
+      expect(v.halfLife).toEqual({
+        measured: false, value: "Not measured", isLowerBound: false, days: null,
+        q25Days: null, state: "unmeasured", secondary: null,
+      });
       expect(v.medianMttr).toBeUndefined();
     });
 

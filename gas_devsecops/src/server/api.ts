@@ -599,14 +599,19 @@ function requestedScope(p?: unknown): Scope | null {
 /**
  * The landing page in one round trip.
  *
- * TWO MODELS, ONE OF THEM SLICED TO FOUR SCALARS. `mttrModel` is the whole MTTR page's payload
- * — two Kaplan-Meier curves and an SLA block — and the hero here draws four numbers out of it,
- * so it travels through `execMttrSlice`. `getMttrPage` below resolves the SAME cached entry
- * and ships it whole; the slice is what stops the landing page paying for that.
+ * TWO MODELS, ONE OF THEM SLICED. `mttrModel` is the whole MTTR page's payload — two
+ * Kaplan-Meier curves and an SLA block — and the hero here draws its half-life reading out of
+ * it, so it travels through `execMttrSlice`. `getMttrPage` below resolves the SAME cached
+ * entry and ships it whole; the slice is what stops the landing page paying for that.
  *
  * `byScope` is this register's by-domain split (three registers, three clocks) and goes
  * through `execGroupSlice` verbatim — `executiveModel` was shaped for it (readModels.ts's
  * header says so, and this is the call that makes the claim testable).
+ *
+ * `trackingSince` FORWARDS `executiveModel`'s OWN FIELD VERBATIM — MTTR delayed-entry package.
+ * `buildExecutive` already computes it (the same `trackingSinceFor(n)` `mttrModel` uses, off
+ * the same `n`), so this is a pass-through rather than a second computation; the hero needs it
+ * to caption "Tracking since <date>" beside a half-life that may be left-truncated.
  */
 export function getExecutivePage(p?: unknown): ApiResult {
   return run(() => {
@@ -619,6 +624,7 @@ export function getExecutivePage(p?: unknown): ApiResult {
       showNoFix: exec["showNoFix"],
       mttr: execMttrSlice(readModels.mttrModel(params)),
       byScope: execGroupSlice(exec["byScope"]),
+      trackingSince: exec["trackingSince"],
       // Already minimal — a per-severity tally, a delta pair, the tier table and the coverage
       // caveat — so these four ship whole.
       severityCounts: exec["severityCounts"],

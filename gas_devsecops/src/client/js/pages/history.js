@@ -62,8 +62,9 @@ import {
 import { SCOPE_LABELS_LONG as SCOPE_LABELS } from "./_scopeLabels.js";
 import { movementBarsModel, movementBlocks } from "./historyModel.js";
 // THE HALF-LIFE DECISION, NOT A SECOND COPY OF IT. `kmHalfLifeView` is the one function that
-// turns a shipped KM result into the three honest outcomes — a measured median, a lower bound
-// ("at least N days"), or "Not measured" — and the MTTR page's hero already draws through it.
+// turns a shipped KM result into one of four honest outcomes — a measured median, "Not
+// reached" with a 25th-percentile or reliability-cut reading beside it, or "Not measured" —
+// and the MTTR page's hero already draws through it.
 // This page's fourth KPI card publishes the same statistic over the same population, so it
 // takes the same chooser: two implementations of one decision is how the two surfaces would
 // come to disagree again. Reaching across a page module is the established shape here
@@ -268,8 +269,8 @@ export function sparkCaption(model, format) {
  * REQUEST TIME over every visible row. The line under it is `km_median_days`, one reading per
  * saved scan plus one per reconstructed pre-scan day, each replaying the register — and its
  * own `awaitingFixAsOf` — as it stood on THAT date, with any date whose curve never reached
- * half dropped. On the dev seed the card says "at least 297 days" and the line is flat at
- * 199: a difference in what was measured, not an arithmetic error. Naming the anchor is what
+ * half dropped. On the dev seed the card says "Not reached" and the line is flat at 199: a
+ * difference in what was measured, not an arithmetic error. Naming the anchor is what
  * makes it read as the first.
  *
  * NOTHING TO ANCHOR WHEN NOTHING WAS READ. `sparkCaption` answers "Not measured" for a series
@@ -696,7 +697,7 @@ export async function renderHistory(host, _params, _ctx) {
       // `kmSparkCaption` above is where that sentence lives and why.
       //
       // KPI TILE, NOT A TABLE CELL — `kmHalfLifeView` publishes the prose form ("41 days",
-      // "at least 297 days"), which is what a tile takes; `boundedDays`'s "≥ 297.0 d" is the
+      // "Not reached"), which is what a tile takes; `boundedDays`'s "≥ 297.0 d" is the
       // numeric-cell notation and belongs in a table (README.md, above the Pages table). This
       // card had the two crossed once already, in the other direction.
       //

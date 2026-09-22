@@ -835,8 +835,10 @@ describe("each read model reaches its slice", () => {
     const byScope = d["byScope"] as Rec;
     expect(byScope["dimension"]).toBe("scope");
     const row = (byScope["rows"] as Rec[])[0]!;
-    // execGroupSlice keeps three keys and drops `total` / `resolved` / `awaiting`.
-    expect(Object.keys(row).sort()).toEqual(["group", "kmMedian", "open"]);
+    // execGroupSlice keeps five keys (MTTR delayed-entry package added kmQ25/kmMedianLowerBound
+    // so the byScope table can run kmHalfLifeView) and drops `total` / `resolved` / `awaiting`.
+    expect(Object.keys(row).sort())
+      .toEqual(["group", "kmMedian", "kmMedianLowerBound", "kmQ25", "open"]);
   });
 
   it("getMttrPage: historyModel -> mttrPageTrendSlice, keeping `history`", async () => {

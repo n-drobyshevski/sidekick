@@ -69,6 +69,8 @@ function km(over) {
     curve: [{ t: 1, s: 0.9 }, { t: 7, s: 0.6 }, { t: 30, s: 0.4 }],
     median: 12,
     medianLowerBound: null,
+    q25: null,
+    reliableUntil: null,
     p90: 44,
     mean: 15,
     meanTruncated: false,
@@ -80,13 +82,17 @@ function km(over) {
   };
 }
 
-// CRITICAL crosses half; HIGH never does (bound only); LOW is measured but slow. MEDIUM, INFO
-// and UNKNOWN are absent from the payload entirely — the server only emits a severity that had
-// rows, and this is the case that proves the view does not invent a card for the other three.
+// CRITICAL crosses half; HIGH never does — no q25 either, so it is "quartile-bound" (bound
+// only); LOW is measured but slow. MEDIUM, INFO and UNKNOWN are absent from the payload
+// entirely — the server only emits a severity that had rows, and this is the case that proves
+// the view does not invent a card for the other three.
 const REMEDIATION = {
   kmPerSev: {
     CRITICAL: km({ median: 5, medianLowerBound: null, events: 3, censored: 1, total: 4 }),
-    HIGH: km({ median: null, medianLowerBound: 68, events: 1, censored: 3, total: 4 }),
+    HIGH: km({
+      median: null, medianLowerBound: 68, q25: null, reliableUntil: 68,
+      events: 1, censored: 3, total: 4,
+    }),
     LOW: km({ median: 41, medianLowerBound: null, events: 2, censored: 0, total: 2 }),
   },
   kmMedianPerSev: { CRITICAL: 5, HIGH: null, LOW: 41 },
@@ -114,13 +120,16 @@ describe("severityCurvesView — one card per severity that has a curve", () => 
       .toEqual(["CRITICAL", "HIGH", "LOW"]);
   });
 
-  it("the caption says 'at least N' where the median is null and only a bound is real", () => {
+  it("the caption says 'Not reached' — never 'at least N' — where the median is null", () => {
     const cards = severityCurvesView(REMEDIATION, SEVERITIES);
     const high = cards.find((c) => c.sev === "HIGH");
-    expect(high.caption).toContain("at least 68 days");
+    expect(high.caption).toContain("Half-life Not reached");
+    expect(high.caption).toContain("under 25% fixed within 68 days");
+    expect(high.caption).not.toContain("at least");
     expect(high.half.isLowerBound).toBe(true);
-    // And the measured cases do NOT get the prefix — "at least 5 days" would be a weaker
-    // claim than the one the estimator actually made.
+    expect(high.half.state).toBe("quartile-bound");
+    // And the measured cases do NOT get any bound prefix — "at least 5 days" would be a
+    // weaker claim than the one the estimator actually made.
     const crit = cards.find((c) => c.sev === "CRITICAL");
     expect(crit.caption).toContain("5 days");
     expect(crit.caption).not.toContain("at least");
