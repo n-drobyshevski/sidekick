@@ -428,12 +428,32 @@ export function agingSurfaceNote(open, bucketed) {
 /** insights.AGE_BUCKET_LABELS, mirrored — the client cannot import the TypeScript domain. */
 export const AGE_BUCKET_LABELS = ["0-7d", "8-30d", "31-90d", "90+d"];
 
-/** Top groups per dimension, with the "N more" tail the domain layer already counted. */
+/**
+ * Top groups per dimension, with the "N more" tail the domain layer already counted.
+ *
+ * THE PAGE OWNS THE ORDER, THE PAYLOAD OWNS THE MEMBERSHIP, and the skip below is what makes
+ * that division safe. `dims` is the page's card order; a dim the payload does not carry is
+ * left out rather than drawn as a card with no rows.
+ *
+ * This used to be the other way round, and it was a documented footgun: every call site
+ * carries a comment warning that "a name here that the payload does not carry yields a card
+ * with zero rows rather than no card", because dropping `language` server-side alone once
+ * replaced a breakdown with an empty one. Both copies had to be edited together, and nothing
+ * enforced it. Now the server can drop a dimension — because the register never fills it, or
+ * because the reader is scoped INTO it (`readModels.scopedConcentrationDims`) — and the page
+ * follows without being told.
+ *
+ * `perDim[dim] === []` IS NOT THE SAME AS ABSENT, and only absent skips. A dimension the
+ * server computed and found empty is an answer ("nothing open here"); one it did not compute
+ * is not a question this payload was asked. Falling back to `Object.keys(perDim)` when no
+ * `dims` list is given is unchanged — then membership and order are both the payload's.
+ */
 export function concentrationModel(concentration, dims) {
   const c = concentration || {};
   const perDim = c.perDim || {};
   const moreDim = c.moreDim || {};
-  return (dims || Object.keys(perDim)).map((dim) => {
+  const asked = dims || Object.keys(perDim);
+  return asked.filter((dim) => Object.prototype.hasOwnProperty.call(perDim, dim)).map((dim) => {
     const rows = (perDim[dim] || []).map((r) => ({
       key: String(r.key ?? "(none)"),
       open: num(r.open),
@@ -1135,12 +1155,12 @@ export function scaModel(payload, opts) {
     tiers: tierModel(p.tiers, RISK_TIER_ORDER, RISK_TIER_LABELS),
     funnel: funnelModel(p.funnel),
     // THE LIST IS STATED TWICE — here and in readModels.ts's CONCENTRATION_DIMS — and THIS
-    // copy is the one that renders: `concentrationModel` maps over the dims it is GIVEN, so a
-    // name here that the payload does not carry yields a card with zero rows rather than no
-    // card. Dropping `language` from the server alone therefore replaced the breakdown with an
-    // empty one; both copies have to agree. (Passing no list at all falls back to
-    // `Object.keys(perDim)` — the server's order — which would remove the duplication, but it
-    // also hands the page's card order to the payload, so the explicit list stays.)
+    // copy is now only the ORDER. `concentrationModel` skips a dim the payload does not carry,
+    // so the server owns membership and this list cannot conjure an empty card — which is what
+    // dropping `language` from the server alone once did. A dimension the server drops because
+    // the view scope already answers it (a `CS-…` scope answers "By support group") therefore
+    // leaves this list untouched. (Passing no list at all falls back to `Object.keys(perDim)`,
+    // which would hand the page's card ORDER to the payload too, so the explicit list stays.)
     concentration: concentrationModel(p.concentration, ["repo", "product", "support_group", "domain"]),
     oldest: oldestFindingsModel(p.oldest),
     oldestRepos: oldestReposModel(p.oldest),

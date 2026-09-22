@@ -85,6 +85,26 @@ heading with its products under it. Where a product's repositories name two diff
 groups, nothing names one — a summary that hides a disagreement is worse than one that reports
 it.
 
+**A breakdown card is dropped when the scope has already answered it.** Picking a `CS-…`
+support group used to leave "By support group" on the page as a single bar restating the
+register's own open count, with a denominator reading "across the 1 group(s) listed"; the same
+went for "By product" under a `product-…` scope and "By business domain" under a domain scope.
+Each is now withheld by `readModels.ts`'s `scopedConcentrationDims`, silently, the way a
+dimension this register never fills already was. Three things that rule deliberately does
+*not* do: it never drops a card merely for having one bucket (a lone `(none)` under "By
+business domain" is how an untagged register says so, and that signal is worth a card); it
+never drops "By support group" under a *product* scope, because a product's repositories may
+name two groups and that disagreement is the thing to show; and it reads the grain off the
+project's **name**, not the slug the scope is stored as — the slug is the machine identity
+precisely because a display name can be re-typed, so the naming convention has to be asked
+about the name.
+
+The page and the payload now divide the work: the register pages still spell their own
+dimension list, but that list is only the card **order**. Membership is the payload's, and
+`concentrationModel` skips a dimension it does not carry instead of drawing an empty card —
+which is what dropping one server-side alone used to produce, back when both copies had to be
+edited together.
+
 **One project is excluded from both, because it reaches everything.** Wiz files a repository
 under every project that touches it, and the tenant's GitHub connector puts `GITHUB-DKTUNITED`
 on all of them. As a switcher row that is "everything synced" under another name; as an

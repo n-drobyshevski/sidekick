@@ -18,6 +18,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { BaseRow, ScanRow } from "../src/domain/ledgerTypes";
+import type { Rec } from "../src/domain/util";
 import type { Scope } from "../src/domain/config";
 
 // --------------------------------------------------------------------------------------- //
@@ -46,6 +47,10 @@ const H = vi.hoisted(() => ({
    *  never from a model's own params. `""` (the default) is "no scope", same as an unset
    *  Settings field. */
   projectView: "",
+  /** `settingsStore.loadSettings().domainView` — the OTHER view scope. `norm()` reads it the
+   *  same way and `settingsLogic` clears whichever of the two was not just set, so at most one
+   *  is ever non-empty. `""` is "no scope". */
+  domainView: "",
   /** `settingsStore.loadSettings().slaTargets` — `norm()` reads this through
    *  `settingsLogic.effectiveSlaTargets`. `undefined` (the default) is "nothing saved", which
    *  `effectiveSlaTargets` degrades to the shared `SLA_TARGETS` constant — the same figure
@@ -164,7 +169,8 @@ vi.mock("../src/server/jobsStore", () => ({
 // `test/projectView.test.ts` for the same knob exercised over a real booted server.
 vi.mock("../src/server/settingsStore", () => ({
   loadSettings: () => ({
-    projectView: H.projectView, slaTargets: H.slaTargets, coldAfterDays: H.coldAfterDays,
+    projectView: H.projectView, domainView: H.domainView,
+    slaTargets: H.slaTargets, coldAfterDays: H.coldAfterDays,
     coldZoneMode: H.coldZoneMode, coldTargetSharePct: H.coldTargetSharePct,
     coldFloorDays: H.coldFloorDays, excludeEndOfLifeFromMttr: H.excludeEndOfLifeFromMttr,
   }),
@@ -191,6 +197,7 @@ import {
   programModel,
   registerModel,
   reposModel,
+  scopedConcentrationDims,
   secretsModel,
   signalCoverage,
   storageModel,
@@ -363,6 +370,7 @@ beforeEach(() => {
   H.cellCountThrows = false;
   H.computeDepths.length = 0;
   H.projectView = "";
+  H.domainView = "";
   H.slaTargets = undefined;
   H.coldAfterDays = undefined;
   H.coldZoneMode = undefined;
@@ -1824,5 +1832,138 @@ describe("the remediation-speed end-of-life exclusion", () => {
     expect("mttrExcludeEndOfLife" in reposKey).toBe(false);
     // And the cold-zone flag, which belonged in that key from the day it shipped.
     expect(reposKey.coldExcludeEndOfLife).toBe(false);
+  });
+});
+
+// --------------------------------------------------------------------------------------- //
+//  The breakdown dimensions a view scope has already answered
+// --------------------------------------------------------------------------------------- //
+//
+// A card breaking down by the thing the reader is standing inside is one bar restating the
+// hero, and the register pages drew three of them: a `CS-…` scope still got "By support
+// group", a `product-…` scope still got "By product", a domain scope still got "By business
+// domain" — each with a denominator sentence reading "across the 1 group(s) listed".
+//
+// The failure this replaced has NO ERROR AND NO WRONG NUMBER. Every figure on the degenerate
+// card was correct; it just answered a question the reader had already answered themselves.
+// That is why it survived, and why the specs below are about what is ABSENT.
+
+describe("scopedConcentrationDims", () => {
+  const SCA = ["repo", "product", "support_group", "domain"];
+  const SAST = ["repo", "cwe", "product", "support_group", "domain"];
+  // NAMES, not slugs. The view scope is stored as a slug and the grain is a convention on the
+  // display name; `scopedProjectName` bridges the two, and passing a slug here would be asking
+  // the wrong question. The last spec in this block is that bridge's reason.
+  const none = { projectName: null, domain: null };
+
+  it("drops nothing when nothing is scoped", () => {
+    expect(scopedConcentrationDims(SCA, none)).toEqual(SCA);
+    expect(scopedConcentrationDims(SAST, none)).toEqual(SAST);
+  });
+
+  it("drops the domain card under a domain scope", () => {
+    expect(scopedConcentrationDims(SCA, { projectName: null, domain: "Retail" }))
+      .toEqual(["repo", "product", "support_group"]);
+  });
+
+  // The three prefixes are the tenant's, and they come from projectGrain rather than from a
+  // test written against a literal — a fourth prefix should reach this rule for free.
+  for (const group of ["CS-CORE-PLATFORM", "CE-TRANSPORT", "LU-RETAIL"]) {
+    it(`drops the support-group card under the ${group.slice(0, 2)} scope`, () => {
+      expect(scopedConcentrationDims(SCA, { projectName: group, domain: null }))
+        .toEqual(["repo", "product", "domain"]);
+    });
+  }
+
+  it("drops the product card under a product scope", () => {
+    expect(scopedConcentrationDims(SCA, { projectName: "product-TATTOO-idp", domain: null }))
+      .toEqual(["repo", "support_group", "domain"]);
+  });
+
+  // THE ONE THAT IS NOT SYMMETRIC, and it is the README's rule rather than an oversight: a
+  // product's repositories may name two different support groups, so that card is only
+  // USUALLY one row. Where it is two, it is the disagreement a reader most needs to see.
+  it("keeps the support-group card under a product scope", () => {
+    expect(scopedConcentrationDims(SCA, { projectName: "product-TATTOO-idp", domain: null }))
+      .toContain("support_group");
+  });
+
+  // A project that is neither grain collapses neither, and guessing that it does would hide a
+  // card that still partitions its population.
+  for (const projectName of ["VALUE-CHAIN", "GITHUB-DKTUNITED", "CENTRAL-OPS", "owner-CE-INDUS-cloud"]) {
+    it(`drops nothing under the non-grain project ${projectName}`, () => {
+      expect(scopedConcentrationDims(SCA, { projectName, domain: null })).toEqual(SCA);
+    });
+  }
+
+  it("preserves the page's order and touches no other dimension", () => {
+    expect(scopedConcentrationDims(SAST, { projectName: "CS-CORE-PLATFORM", domain: null }))
+      .toEqual(["repo", "cwe", "product", "domain"]);
+  });
+
+  // At most one scope is ever set (`settingsLogic` clears the other), but a rule that answered
+  // incoherently if both arrived would be a rule nobody could reason about.
+  it("drops both when a caller somehow sets both scopes", () => {
+    expect(scopedConcentrationDims(SCA, { projectName: "CS-CORE-PLATFORM", domain: "Retail" }))
+      .toEqual(["repo", "product"]);
+  });
+
+  // A project this register no longer holds resolves to no name, and an unknown grain drops
+  // nothing — the population is empty anyway, so there is no redundant card to remove and
+  // nothing to be gained by guessing.
+  it("drops nothing when the scoped project resolves to no name", () => {
+    expect(scopedConcentrationDims(SCA, { projectName: null, domain: null })).toEqual(SCA);
+  });
+});
+
+// The rule above, wired — and the one case a unit test of a pure list filter cannot reach.
+describe("the register payload's breakdown follows the view scope", () => {
+  /** A slug that is NOT its project's name, which is the normal case and the trap. */
+  const PROJECTS = JSON.stringify([
+    { slug: "p-cs-core", name: "CS-CORE-PLATFORM", isFolder: true },
+    { slug: "p-tattoo", name: "product-TATTOO-idp", isFolder: false },
+  ]);
+
+  beforeEach(() => {
+    H.rows = [
+      coincident(row({ finding_key: "sca:1", scope: "sca", repo_id: "r1", repo_name: "repo-one", projects_json: PROJECTS })),
+      coincident(row({ finding_key: "sca:2", scope: "sca", repo_id: "r2", repo_name: "repo-two", projects_json: PROJECTS })),
+    ];
+    __resetModelMemosForTest();
+  });
+
+  const dims = (p?: typeof ALL) =>
+    Object.keys(((registerModel("sca", p ?? ALL)["concentration"] as Rec)["perDim"]) as Rec);
+
+  it("offers every dimension unscoped", () => {
+    expect(dims()).toEqual(["repo", "product", "support_group", "domain"]);
+  });
+
+  // THE SPEC THIS BLOCK EXISTS FOR. `projectView` holds a SLUG (`projectCatalogue` keys on it
+  // because a display name can be re-typed); the support-group convention is a rule about the
+  // NAME. Reading the grain off the slug would leave `p-cs-core` classified as neither grain
+  // and drop nothing — no error, no wrong figure, just the redundant card still drawn. The
+  // slug here deliberately shares no first segment with its name, so a regression to the
+  // straight-through version fails this and not merely a hand-written name case.
+  it("drops the support-group card under a support-group scope, resolving slug to name", () => {
+    H.projectView = "p-cs-core";
+    __resetModelMemosForTest();
+    expect(dims()).toEqual(["repo", "product", "domain"]);
+  });
+
+  it("drops the product card, and only it, under a product scope", () => {
+    H.projectView = "p-tattoo";
+    __resetModelMemosForTest();
+    const d = dims();
+    expect(d).not.toContain("product");
+    // A product may span two support groups — that card stays, per README's rule that a
+    // summary hiding a disagreement is worse than one reporting it.
+    expect(d).toContain("support_group");
+  });
+
+  it("drops nothing for a slug this register no longer holds", () => {
+    H.projectView = "p-gone";
+    __resetModelMemosForTest();
+    expect(dims()).toEqual(["repo", "product", "support_group", "domain"]);
   });
 });

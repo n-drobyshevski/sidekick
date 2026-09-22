@@ -91,12 +91,13 @@ export function sastModel(payload, opts) {
   const order = (opts && opts.severityOrder) || SEVERITY_FALLBACK;
   const coverage = p.signalCoverage || {};
   const awaiting = p.awaiting || {};
-  // THE LIST IS STATED TWICE — here and in readModels.ts's CONCENTRATION_DIMS — and THIS copy
-  // is the one that renders: `concentrationModel` maps over the dims it is GIVEN, so a name
-  // here that the payload does not carry yields a card with zero rows rather than no card.
-  // Dropping a dimension from the server alone replaces the breakdown with an empty one; both
-  // copies have to agree. (`pages/sca.js` carries the same warning above its own copy, which
-  // is how that failure is already known here.)
+  // THE LIST IS STATED TWICE — here and in readModels.ts's CONCENTRATION_DIMS — and this copy
+  // is now only the ORDER. `concentrationModel` skips a dim the payload does not carry, so the
+  // server owns membership: a name here it did not compute draws no card rather than an empty
+  // one, and a dimension it drops (unfilled by the register, or already answered by the view
+  // scope) disappears from the page without an edit here. That was the other way round until
+  // recently, and dropping a dimension server-side alone replaced the breakdown with an empty
+  // card; the two copies no longer have to be edited together.
   //
   // No `language`, matching sca. The card that went from sca went as a restatement of "By
   // repository" one level coarser; this one is not that — a SAST language is a fact about the

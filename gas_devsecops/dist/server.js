@@ -483,7 +483,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "4a96082d714a" : "dev";
+  var BUILD_ID = true ? "988ab3e305f7" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -6491,6 +6491,7 @@ var Server = (() => {
     registerModel: () => registerModel,
     registerRowsModel: () => registerRowsModel,
     reposModel: () => reposModel,
+    scopedConcentrationDims: () => scopedConcentrationDims,
     secretsModel: () => secretsModel,
     signalCoverage: () => signalCoverage,
     storageModel: () => storageModel,
@@ -8423,6 +8424,21 @@ var Server = (() => {
     sast: ["repo", "cwe", "product", "support_group", "domain"],
     secrets: ["repo", "secret_kind", "product", "support_group", "domain"]
   };
+  function scopedConcentrationDims(dims, scope) {
+    const answered = /* @__PURE__ */ new Set();
+    if (scope.domain) answered.add("domain");
+    if (scope.projectName && isSupportGroup(scope.projectName)) answered.add("support_group");
+    if (scope.projectName && isProduct(scope.projectName)) answered.add("product");
+    return dims.filter((d) => !answered.has(d));
+  }
+  function scopedProjectName(rows, slug) {
+    for (const r of rows) {
+      for (const p of parseProjects(r.projects_json)) {
+        if (p.slug === slug) return p.name;
+      }
+    }
+    return null;
+  }
   function buildRegister(scope, n2) {
     const snap = baseSnapshot();
     const scoped = { ...n2, scope };
@@ -8451,11 +8467,25 @@ var Server = (() => {
       aging: ageBuckets(rows, scope),
       oldest: oldestOpen(rows, OLDEST_TOP_N, scope),
       movement: movement(rows, latest, scanCount, scope),
-      // The dimensions are per scope, because `insights.GROUP_COLUMNS` maps to real ledger
+      // The dimensions are per REGISTER, because `insights.GROUP_COLUMNS` maps to real ledger
       // columns and a dimension the scope never fills would rank one "(none)" bucket. Asking for
       // a name outside that table is silently DROPPED by `concentration`, so the list is spelled
       // from the table rather than from what a page might like to see.
-      concentration: concentration(rows, CONCENTRATION_DIMS[scope], 5, scope),
+      //
+      // …and then per VIEW SCOPE, which is what `scopedConcentrationDims` takes off: the card
+      // for the grain the reader is standing inside is one bar restating the hero. The server
+      // owns MEMBERSHIP for both reasons; the page owns ORDER (its own dim list). That division
+      // is why `concentrationModel` skips a dim this payload does not carry instead of drawing
+      // an empty card for it — the two copies no longer have to be edited together.
+      concentration: concentration(
+        rows,
+        scopedConcentrationDims(CONCENTRATION_DIMS[scope], {
+          projectName: scoped.project ? scopedProjectName(snap.rows, scoped.project) : null,
+          domain: scoped.domain
+        }),
+        5,
+        scope
+      ),
       tiers: riskTierStats(scopedTierRows(rows), void 0, scope),
       funnel: triageFunnel(rows, void 0, /* @__PURE__ */ new Set(), false, scope, n2.slaTargets),
       awaiting: awaitingVendorFix(rows, { scope }),

@@ -555,9 +555,11 @@ describe("sast — the disappearance-dating caveat is on the page", () => {
   // `product-…` product and under a CS/CE/LU support group that holds several products
   // (src/domain/projectGrain.ts); the single "By owning project" card these replaced showed
   // whichever of the two Wiz returned first. Both must be asked for by name, because
-  // `concentrationModel` maps over the dims the PAGE hands it — the list is stated here and in
-  // readModels.ts's CONCENTRATION_DIMS, and a name in one copy only yields a zero-row card
-  // rather than no card.
+  // `concentrationModel` maps over the dims the PAGE hands it, so the list is stated here and
+  // in readModels.ts's CONCENTRATION_DIMS. The page's copy is the ORDER; the payload's is the
+  // MEMBERSHIP, and a name the payload does not carry now draws no card rather than an empty
+  // one — so this spec is about what the two registers ASK for, and the one below it about
+  // what the payload is entitled to withhold.
   it("every register breaks down by BOTH project grains, never by the conflated column", () => {
     for (const [name, vm] of [["sca", SCA], ["sast", SAST], ["secrets", SECRETS]]) {
       const dims = vm.concentration.map((c) => c.dim);
@@ -852,6 +854,39 @@ describe("the shared register blocks", () => {
     expect(dims.map((d) => d.dim)).toEqual(["repo", "language"]);
     expect(dims[0].more).toBe(3);
     expect(dims[0].denominator).toMatch(/3 further group\(s\) are not shown/);
+  });
+
+  // THE PAYLOAD OWNS MEMBERSHIP. A dim the server did not compute — because this register
+  // never fills it, or because the view scope already answers it — is skipped, not drawn as a
+  // card with no rows. That was the other way round, and it is a documented past failure:
+  // dropping `language` server-side alone once replaced the breakdown with an empty card,
+  // which is why every call site carried a warning to edit both copies together.
+  it("skips a dimension the payload does not carry, rather than drawing an empty card", () => {
+    // Spelled out rather than taken from the fixture: the claim is about a dim the payload
+    // OMITS, and a fixture that grows one later would make a fixture-derived version pass
+    // while measuring nothing. `support_group` is the real case — what a `CS-…` view scope
+    // makes `readModels.scopedConcentrationDims` withhold.
+    const payload = { perDim: { repo: [{ key: "repo-one", open: 4, repos: 1, kev: 0 }] }, moreDim: { repo: 0 } };
+    const dims = concentrationModel(payload, ["repo", "support_group", "domain"]);
+    expect(dims.map((d) => d.dim)).toEqual(["repo"]);
+    expect(dims[0].rows).toHaveLength(1);
+  });
+
+  // …but an EMPTY dimension is an answer, not an absence: the server looked and found nothing
+  // open. Only a dim it never computed is skipped, or "nothing here" would be indistinguishable
+  // from "not asked".
+  it("still draws a dimension the payload computed and found empty", () => {
+    const model = concentrationModel({ perDim: { repo: [] }, moreDim: {} }, ["repo"]);
+    expect(model.map((d) => d.dim)).toEqual(["repo"]);
+    expect(model[0].rows).toEqual([]);
+    expect(model[0].denominator).toMatch(/0 open findings across the 0 group\(s\) listed/);
+  });
+
+  // With no list at all the payload owns both order and membership — unchanged, and the one
+  // place a caller can hand that decision over entirely.
+  it("falls back to the payload's own dimensions when given no list", () => {
+    const model = concentrationModel({ perDim: { repo: [], language: [] }, moreDim: {} }, null);
+    expect(model.map((d) => d.dim)).toEqual(["repo", "language"]);
   });
 
   it("keeps the unclassified count outside the tier ranking", () => {

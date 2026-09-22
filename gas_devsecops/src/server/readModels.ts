@@ -154,6 +154,7 @@ import type { BaseRow, ScanRow } from "../domain/ledgerTypes";
 import { normalizeSeverity } from "../domain/severity";
 import { parseSeverities } from "../domain/compaction";
 import { attachProjectGrain, inProject, parseProjects } from "../domain/projectScope";
+import { isProduct, isSupportGroup } from "../domain/projectGrain";
 import { inDomain } from "../domain/domainScope";
 import { isEndOfLife } from "../domain/lifecycleTag";
 import { attachRepoTags } from "./repoTags";
@@ -1388,6 +1389,79 @@ const CONCENTRATION_DIMS: Record<Scope, string[]> = {
   secrets: ["repo", "secret_kind", "product", "support_group", "domain"],
 };
 
+/**
+ * The dimensions above, minus the one the ACTIVE SCOPE has already answered.
+ *
+ * A breakdown by the thing you are standing inside is a single row restating the hero.
+ * `scopedRows` filters to one project or one domain, so under a `CS-…` scope "By support
+ * group" is one bar reading the register's own open count back; under a `product-…` scope
+ * "By product" is; under a domain scope "By business domain" is. All three were drawn, and
+ * the card carried a denominator sentence saying "across the 1 group(s) listed" — a section
+ * spending a card to tell a reader something they chose.
+ *
+ * WHICH GRAIN A PROJECT SCOPE ANSWERS IS THE TENANT'S NAMING RULE, not a fact Wiz reports, so
+ * the two predicates come from `projectGrain.ts` rather than from a prefix test written here.
+ * A project scope that is NEITHER (a business unit, a plain leaf, `GITHUB-…`) drops nothing:
+ * it collapses no grain, and guessing that it does would hide a card that still partitions.
+ *
+ * IT TAKES THE PROJECT'S NAME, NOT ITS SLUG, and that is the whole reason this is a separate
+ * parameter rather than `n.project`. The view scope is stored as a SLUG — `projectCatalogue`
+ * keys on it because "a display name can be re-typed without the project changing", and
+ * `scopeOptions` ships `value: p.slug` while classifying with `projectKind(p)`, which reads
+ * `p.name`. Handing `n.project` straight to `isSupportGroup` would therefore ask a naming
+ * convention about a machine identity: right whenever a tenant's slug happens to echo its
+ * name, and silently a no-op the moment it does not. `scopedProjectName` does the lookup.
+ *
+ * ONLY THE SCOPED DIMENSION GOES. A one-bucket card is not by itself a reason to drop one —
+ * "By business domain" showing a single `(none)` on an untagged register is the one place this
+ * register lets unattributed rows be seen as a bucket (see `insights.GROUP_COLUMNS`), and
+ * dropping it for thinness would delete that signal rather than a redundancy.
+ *
+ * A PRODUCT SCOPE KEEPS "By support group", deliberately. A product's repositories may name
+ * two different support groups — README's rule is that a summary hiding a disagreement is
+ * worse than one reporting it — so that card is only usually one row, and where it is two the
+ * reader needs to see it. Where it is genuinely one, it costs a bar; where it is not, it is
+ * the disagreement.
+ *
+ * EXPORTED so the rule can be read back without booting a read model. It is a pure list
+ * filter over two name predicates, and every interesting case is a project name — testing it
+ * through `registerModel` would mean building a ledger per case to assert a list. One spec
+ * below does go the whole way through, so the wiring is pinned too; the rest come here.
+ */
+export function scopedConcentrationDims(
+  dims: string[],
+  scope: { projectName: string | null; domain: string | null },
+): string[] {
+  const answered = new Set<string>();
+  if (scope.domain) answered.add("domain");
+  if (scope.projectName && isSupportGroup(scope.projectName)) answered.add("support_group");
+  if (scope.projectName && isProduct(scope.projectName)) answered.add("product");
+  return dims.filter((d) => !answered.has(d));
+}
+
+/**
+ * The display name of the project a slug scopes to, read back off the rows that carry it.
+ *
+ * There is no project table to look this up in — `projectCatalogue` derives the switcher's
+ * list from `projects_json` on the rows themselves, and this is the same derivation asked for
+ * one slug. The first match wins because `parseProjects` already keys on slug, so every
+ * occurrence of one slug carries the same name.
+ *
+ * DELIBERATELY OVER THE WHOLE BASE, not the scoped-and-filtered rows: what grain a scope
+ * answers is a fact about the tenant's naming, and it must not change because a reader
+ * deselected a severity. Null when nothing carries the slug — a scope on a project this
+ * register no longer holds — and null drops nothing, which is the right answer for a scope
+ * whose population is empty anyway.
+ */
+function scopedProjectName(rows: BaseRow[], slug: string): string | null {
+  for (const r of rows) {
+    for (const p of parseProjects(r.projects_json)) {
+      if (p.slug === slug) return p.name;
+    }
+  }
+  return null;
+}
+
 function buildRegister(scope: Scope, n: NormParams): Rec {
   const snap = baseSnapshot();
   const scoped = { ...n, scope };
@@ -1422,11 +1496,25 @@ function buildRegister(scope: Scope, n: NormParams): Rec {
     aging: ageBuckets(rows, scope),
     oldest: oldestOpen(rows, OLDEST_TOP_N, scope),
     movement: movement(rows, latest, scanCount, scope),
-    // The dimensions are per scope, because `insights.GROUP_COLUMNS` maps to real ledger
+    // The dimensions are per REGISTER, because `insights.GROUP_COLUMNS` maps to real ledger
     // columns and a dimension the scope never fills would rank one "(none)" bucket. Asking for
     // a name outside that table is silently DROPPED by `concentration`, so the list is spelled
     // from the table rather than from what a page might like to see.
-    concentration: concentration(rows as unknown as Rec[], CONCENTRATION_DIMS[scope], 5, scope),
+    //
+    // …and then per VIEW SCOPE, which is what `scopedConcentrationDims` takes off: the card
+    // for the grain the reader is standing inside is one bar restating the hero. The server
+    // owns MEMBERSHIP for both reasons; the page owns ORDER (its own dim list). That division
+    // is why `concentrationModel` skips a dim this payload does not carry instead of drawing
+    // an empty card for it — the two copies no longer have to be edited together.
+    concentration: concentration(
+      rows as unknown as Rec[],
+      scopedConcentrationDims(CONCENTRATION_DIMS[scope], {
+        projectName: scoped.project ? scopedProjectName(snap.rows, scoped.project) : null,
+        domain: scoped.domain,
+      }),
+      5,
+      scope,
+    ),
     tiers: riskTierStats(scopedTierRows(rows), undefined, scope),
     funnel: triageFunnel(rows as never, undefined, new Set<string>(), false, scope, n.slaTargets),
     awaiting: awaitingVendorFix(rows, { scope }),
