@@ -319,3 +319,111 @@ describe("the idle distribution rides in the row it describes", () => {
     expect(declared).toBeLessThan(CODE.indexOf("paint = (model) =>"));
   });
 });
+
+// THE SCATTER JOINED THE CROSS-FILTER. It used to be the one section a band or group press
+// left untouched: `renderChart` computed its points once from the unfiltered view and
+// `syncSelection` never called it, so a reader who pressed a support group got a narrowed
+// list beside a chart still drawing the whole estate with nothing saying which dots they had
+// just asked about.
+describe("the scatter answers the cross-filter", () => {
+  const section = () => CODE.slice(CODE.indexOf("function renderChart(view)"));
+
+  it("is repainted by the same fan-out the table and the bars are", () => {
+    const sync = CODE.slice(
+      CODE.indexOf("function syncSelection()"), CODE.indexOf("function renderAssets"),
+    );
+    expect(sync).toContain("if (repaintScatter) repaintScatter();");
+    expect(section()).toContain("repaintScatter = paintScatter;");
+  });
+
+  it("clears both repaint hooks on every paint, so neither outlives its payload", () => {
+    // `renderChart` returns early when there is nothing to plot, so a hook left from the
+    // previous paint would be a closure over the PREVIOUS view — a press repainting a chart
+    // that is no longer on the page, from a payload that is no longer current.
+    const paint = CODE.slice(CODE.indexOf("paint = (model) =>"), CODE.indexOf("renderKpis(view)"));
+    expect(paint).toContain("repaintAssets = null;");
+    expect(paint).toContain("repaintScatter = null;");
+    expect(paint.indexOf("clear(host);")).toBeLessThan(paint.indexOf("repaintScatter = null;"));
+  });
+
+  it("marks the points rather than filtering them, so the axes stay the estate's", () => {
+    expect(section()).toContain("markScatterPoints(group ? byGroup : byAsset, sel)");
+    // The ONE path that narrows what is drawn is the reader's explicit collapse.
+    expect(section()).toContain("const points = only ? lit : marked;");
+  });
+
+  it("reads the selection fresh on every repaint, never off a captured copy", () => {
+    const paintScatter = section().slice(section().indexOf("function paintScatter()"));
+    expect(paintScatter).toContain("coldSelection(assetCut, coldGroup)");
+  });
+
+  it("keeps the collapse outside paint(), and lets go of it with the selection", () => {
+    const declared = CODE.indexOf("let onlyScatterSelection = false;");
+    expect(declared, "the collapse is never declared").toBeGreaterThan(-1);
+    expect(declared).toBeLessThan(CODE.indexOf("paint = (model) =>"));
+    // Cleared the moment there is nothing to collapse to: a reader who dropped the filter
+    // from a chip four sections up must not be left with a chart quietly holding back its
+    // population behind a control that has just gone dead.
+    const sync = CODE.slice(
+      CODE.indexOf("function syncSelection()"), CODE.indexOf("function renderAssets"),
+    );
+    expect(sync).toContain("onlyScatterSelection = false;");
+    expect(sync).toContain("scatterSelectionActive(");
+  });
+
+  it("marks the collapse control in place, like every other control a press can reach", () => {
+    const paintScatter = section().slice(section().indexOf("function paintScatter()"));
+    expect(paintScatter).toContain("onlyBtn.disabled = !active;");
+    expect(paintScatter).toContain('onlyBtn.setAttribute("aria-pressed"');
+    // Built once, outside the repaint, so it is never torn out from under a mid-press reader.
+    // Both anchors checked: a -1 from either would make the comparison pass on nothing.
+    const built = section().indexOf('"Only the selection"');
+    const repaint = section().indexOf("function paintScatter()");
+    expect(built).toBeGreaterThan(-1);
+    expect(repaint).toBeGreaterThan(-1);
+    expect(built).toBeLessThan(repaint);
+  });
+
+  it("anchors the disabled reason where a disabled control can actually carry it", () => {
+    // A disabled button dispatches no pointer events, so `tip` on it is inert in silence —
+    // and "why can't I press this" is the question it has precisely while disabled.
+    expect(section()).toContain("tipAnchor(onlyBtn");
+    expect(section()).toContain("onlyAnchor");
+  });
+
+  it("carries the highlight into the twin table and the canvas's own description", () => {
+    expect(section()).toContain("coldScatterSelectionNote(view, sel,");
+    expect(section()).toContain("selectionNote: note");
+    expect(section()).toContain('label: "In selection"');
+  });
+
+  it("says on the surface which press this chart cannot answer", () => {
+    // Every asset the out-of-sight cut lists is one this chart excludes by construction, so a
+    // reader who pressed it and saw nothing move is owed the reason rather than left to
+    // conclude the wiring is broken.
+    expect(section()).toContain('sel.cut === "lost"');
+    expect(section()).toContain("doesn’t narrow this chart");
+    expect(section()).toContain("Nothing in this selection has a dot here.");
+  });
+
+  it("still repaints one canvas and registers the teardown once", () => {
+    expect(section().match(/el\("canvas"\)/g)).toHaveLength(1);
+    expect(section()).toContain("if (bound) return;");
+  });
+
+  // PERTURBATION: the defect this describe exists to catch is the state it replaced — a
+  // scatter built from the unfiltered arrays with no repaint path at all.
+  it("the check catches a scatter that ignores the selection", () => {
+    const REGRESSED = code(`
+      function renderChart(view) {
+        const byAsset = coldScatterPoints(view);
+        function paintScatter() {
+          const points = scatterGrain === "group" ? byGroup : byAsset;
+          api.coldZoneScatter(canvas, points, { unit: scatterGrain });
+        }
+      }
+    `);
+    expect(REGRESSED).not.toContain("markScatterPoints");
+    expect(REGRESSED).not.toContain("repaintScatter");
+  });
+});

@@ -541,6 +541,10 @@ selection reaches assets the cold list never holds on its own: bands 0–2 are w
 `coldBandRows` widens the population to match rather than lighting a picture that lists
 nothing.
 
+The same selection reaches the **"Idle time against backlog" scatter** at the foot of the page,
+where it *highlights* rather than narrows — see [The scatter answers the same
+selection](#the-scatter-answers-the-same-selection) below.
+
 The same table keeps its cut control: **All**, **Cold**, and **Out of sight, backlog open**,
 each labelled with its count so an empty cut can be read without opening it. The band rides
 inside that same value rather than beside it, so the two can never disagree — and the corner
@@ -620,6 +624,36 @@ median: the true figure can only be further right.
 The other two candidates are worse on purpose. A group's last movement is its *least* idle
 asset, so one busy asset would read a frozen group as active; its idlest asset is the other
 extreme, and every group of any size would sit past the line. Only the middle separates them.
+
+### The scatter answers the same selection
+
+Pressing a support group's name, or an idle band in the key row, also reaches this chart — but
+it **highlights** rather than narrows. Matching dots keep their full ink; the rest fade and
+shrink to a small faint mark of the same shape. The axes and the dashed cold line **do not
+move**, which is the point: the question a press asks here is *where does this sit against
+everyone else*, and a chart that rescaled around the answer would have thrown away the
+comparison. Cold assets stay filled diamonds and the rest stay hollow circles whether lit or
+dimmed, so the verdict and the selection never borrow each other's cue.
+
+- **On the asset grain**, a dot lights when the asset is in the picked group, in the picked
+  band, or both — the two axes cross with *and*, never *or*.
+- **On the support-group grain**, a band lights the groups whose **median member** sits in that
+  band. The dot already sits at that member's reading, so the lit dots are exactly the ones
+  inside the band's stretch of the x axis and you can check the highlight against the axis by
+  eye. A group is *not* lit merely for owning one asset in the band — that is what the band bars
+  in the table above say, and it would put a lit dot in the wrong part of this axis.
+- **"Only the selection"**, beside the grain switch, collapses the plot to the lit dots alone.
+  The axes rescale there — it is an explicit opt-in — and the control is disabled while nothing
+  is selected, refuses itself when the selection has no dot here at all, and lets go on its own
+  as soon as you drop the filter.
+- **The cut control does not reach this chart.** **Cold** is already the filled diamond.
+  **Out of sight, backlog open** lists exactly the assets this chart excludes by construction,
+  so a line above the canvas says so rather than leaving a press looking broken; a support group
+  picked above still applies underneath it.
+
+The highlight is not only pixels. The canvas's own description opens with what is lit and marks
+each lit point inline, and the table twin beside it grows an **In selection** column for as long
+as anything is dimmed.
 
 ### Two things this page counts rather than hides
 

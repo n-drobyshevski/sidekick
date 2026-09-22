@@ -560,3 +560,72 @@ data and never the chart type, and `coldZoneScatter` destroys whatever chart is 
 before it draws, so there is no hidden second canvas to come back at the wrong size. Only one
 word moves with the grain, and it is in the alt text — a description naming assets over a canvas
 of support groups would mislead exactly the reader who cannot check it.
+
+**The scatter joined the cross-filter, and it HIGHLIGHTS where the table FILTERS.** Until now a
+band or group press was the one thing this section ignored: `renderChart` read its points once
+off the unfiltered view and `syncSelection` never called it, so a reader who pressed a support
+group got a narrowed list beside a picture of the whole estate with nothing saying which dots
+they had just asked about. The two surfaces answer different questions and so take different
+instruments. The table's job is to ENUMERATE — a reader who asks for one group wants that
+group's rows and no others, and a row that is not in the cut is noise. The chart's job is to
+POSITION, and position is meaningless without the population it is measured against: *is this
+group past the line, and how far past it compared with everyone else* is a question a chart of
+one group cannot answer. So the selection moves ink and never scale. Every point stays in the
+dataset, Chart.js computes the axes over the estate as it always did, and the dashed rule does
+not flinch when a reader presses a band key — a reference that moved with the selection would
+stop being usable as a reference.
+
+**The dim is two channels, and only one of them is the one that matters.** The fade is
+`0.22`, the same value `.bandbar__seg[data-on="false"]` uses, so one press dims the band bars
+and the canvas by the same amount and the page has one vocabulary for "not what you asked
+for". But that CSS rule is CANCELLED under `forced-colors: active` — an alpha is a hue claim,
+and §11's own paragraph above records why the bars fall back to full opacity there — and a
+canvas gets no such rescue, because forced colors do not repaint canvas pixels at all. So the
+dim also SHRINKS the dot, 5-7px down to 3px, and the size is what survives greyscale, every
+CVD simulation and any colour transform. The fade is what makes the picture comfortable; the
+radius is what makes it true. `pointStyle` is untouched by all of it: cold-versus-warm already
+owns the shape, and spending it on the selection too would collapse two claims into a mark a
+reader cannot take apart — a dimmed cold asset is a small faint DIAMOND.
+
+**On the group grain a band lights the group's MEDIAN member's band, not its spread.** The dot
+already sits at the median's reading (see the paragraph above), so the lit dots are exactly the
+ones inside that band's stretch of the x axis and a reader can check the highlight against the
+axis by eye — the same bargain the grain switch itself makes. The alternative is the rule the
+band BARS in the support-group table use, "any member is in this band", and it is wrong here
+for a reason the bars do not have: a group with one asset past 90 days and a median at 10 would
+light a dot sitting in band 0's stretch, and a reader would be right to call that a
+contradiction. `groupKeyOf` exists for the same family of reason — the key a selection matches
+on had three spellings across four producers and one of them was `a.support_group || NO_GROUP`,
+which files a support group whose name is the empty string under "(no support group)" and would
+have listed an asset under one key while lighting it under another.
+
+**Two of the three cut values are refused, out loud.** The band rides inside `assetCut`, so
+`coldSelection` leaves `band` null for `"cold"` and `"lost"` and the scatter gets its refusal
+for free by reading `sel.band` rather than `sel.cut` — the same fusion argument made above, paid
+out a second time. Refusing is not the same as ignoring, though. `"cold"` needs nothing said:
+cold is already the filled diamond, and a reader pressing it sees the distinction the press
+asked for already drawn. `"lost"` does: every asset that cut lists is one this chart excludes by
+construction, so a reader who pressed it and watched nothing move would be right to suspect the
+wiring, and one sentence above the canvas says it is by construction and that a support group
+picked above still applies. That sentence is an honesty statement rather than an explanation of
+something on screen, which is why it is a paragraph and not a tip.
+
+**The collapse is a third piece of section-local state, and it is the one thing here that may
+rescale.** "Only the selection" plots the lit dots alone, axes and all — the explicit opt-in for
+a reader who has finished comparing and now wants the selection by itself. It is `.bandkey`,
+the pill this page already filters with three sections up, because its pressed state is a ring
+and a weight rather than a wash alone; and it is `tipAnchor` rather than `tip`, because a
+disabled button dispatches no pointer events and "why can't I press this" is the question it has
+precisely while disabled. It refuses itself when the selection has no dot here at all — a
+support group whose assets are all out of sight is a real selection with an empty picture, and
+an empty plot reads as a broken chart rather than as the answer — and `syncSelection` lets go of
+it the moment the selection it collapses to is dropped, so a filter cleared from a chip four
+sections away can never leave the chart holding back its population behind a dead control.
+
+**There is no second live region, and that is deliberate.** `renderAssets` already owns one
+polite `role="status"`, and a second would talk over it on every press. The highlight reaches a
+reader who cannot see the canvas three other ways: the canvas's own `aria-label` opens with the
+selection and marks each lit point inline, the `chartTable` twin grows an "In selection" column
+while anything is dimmed, and its caption carries the same sentence the alt text does. A
+highlight that existed only as pixels would be this page making a distinction and then
+withholding it.

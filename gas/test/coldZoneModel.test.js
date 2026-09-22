@@ -33,8 +33,8 @@ import {
   COLD_VERDICT_LABEL, GROUP_VERDICT_LABEL, NO_GROUP, applyColdSelection, boundOnlySentence,
   coldAssetRows, coldBandDefs, coldBandKeyModel, coldBandRows, coldBandScale, coldCensusModel,
   coldGroupRows, coldGroupScatterPoints, coldKpiCards, coldModeCaption, coldScatterPoints,
-  coldSelection, coldSelectionNote, coldZoneView, coldestShareNote, groupCountNote,
-  severitiesNote, unmeasurableNote,
+  coldScatterSelectionNote, coldSelection, coldSelectionNote, coldZoneView, coldestShareNote,
+  groupCountNote, markScatterPoints, scatterSelectionActive, severitiesNote, unmeasurableNote,
 } from "../src/client/js/pages/coldZoneModel.js";
 
 // --------------------------------------------------------------------------- fixtures
@@ -886,7 +886,13 @@ describe("coldScatterPoints: both filters earn their place", () => {
 
   it("carries cold and bounded so the canvas can draw one dot either way", () => {
     const [p] = coldScatterPoints(view);
-    expect(p).toEqual({ label: "plot", idleDays: 120, open: 4, cold: true, bounded: false });
+    expect(p).toEqual({
+      label: "plot", idleDays: 120, open: 4, cold: true, bounded: false,
+      // The cross-filter's two axes ride along so `markScatterPoints` can light a dot without
+      // re-deriving either. `band` is the domain's own `bucket`, not a re-reading of `idleDays`
+      // against the threshold.
+      group: "Payments", band: 0,
+    });
   });
 
   it("is an empty list, never a throw, on an unmeasurable view", () => {
@@ -964,6 +970,9 @@ describe("coldGroupScatterPoints: the same scatter, one grain up", () => {
     }));
     expect(coldGroupScatterPoints(v)[0]).toEqual({
       label: "Payments", idleDays: 120, open: 3, cold: true, bounded: true,
+      // `band` comes off the SAME median asset `cold` and `bounded` do — see the band test
+      // below for why that and not the group's whole distribution.
+      group: "Payments", band: 0,
     });
   });
 
@@ -979,7 +988,10 @@ describe("coldGroupScatterPoints: the same scatter, one grain up", () => {
       totals: totals({ assets: 4, assets_with_open: 1 }),
     }));
     expect(coldGroupScatterPoints(v)).toEqual([
-      { label: "Payments", idleDays: 60, open: 2, cold: false, bounded: false },
+      {
+        label: "Payments", idleDays: 60, open: 2, cold: false, bounded: false,
+        group: "Payments", band: 0,
+      },
     ]);
   });
 
@@ -1200,5 +1212,215 @@ describe("coldSelectionNote: one sentence, three consumers", () => {
   it("says only the count where nothing is selected", () => {
     expect(coldSelectionNote(view, coldSelection("all", null), 12)).toBe("Listing 12 assets.");
     expect(coldSelectionNote(view, coldSelection("all", null), 1)).toBe("Listing 1 asset.");
+  });
+});
+
+// =========================================================================================
+//  9. The scatter's half of the cross-filter
+// =========================================================================================
+
+describe("groupKeyOf: one spelling of a support-group key across four producers", () => {
+  /**
+   * THE DRIFT THIS PINS IS NOT HYPOTHETICAL. `coldGroupScatterPoints` spelled the key
+   * `a.support_group || NO_GROUP` while the assets table and the group table both used a null
+   * test. The two agree on null and disagree on the EMPTY STRING — and the empty string is a
+   * support group whose name is empty, not an asset with no support group at all. A falsy test
+   * cannot tell those apart; a selection that has to match across all four producers can.
+   */
+  const withGroup = (value) => coldZoneView(payload({
+    assets: [asset({
+      asset_id: "a", asset_name: "a", support_group: value, open_findings: 2,
+      idle_reading_days: 40,
+    })],
+    groups: [group({ support_group: value, label: value || NO_GROUP })],
+    totals: totals({ assets: 1, assets_with_open: 1 }),
+  }));
+
+  it("files a null support group under the same label everywhere", () => {
+    const v = withGroup(null);
+    expect(coldAssetRows(v).length + coldScatterPoints(v).length).toBeGreaterThan(0);
+    expect(coldScatterPoints(v)[0].group).toBe(NO_GROUP);
+    expect(coldGroupScatterPoints(v)[0].group).toBe(NO_GROUP);
+    expect(coldGroupRows(v)[0].key).toBe(NO_GROUP);
+  });
+
+  it("keeps an EMPTY support group empty, which is where the old falsy test drifted", () => {
+    const v = withGroup("");
+    expect(coldScatterPoints(v)[0].group).toBe("");
+    expect(coldGroupScatterPoints(v)[0].group).toBe("");
+    expect(coldGroupRows(v)[0].key).toBe("");
+    // The perturbation: the rewrite this replaced, on the same input. It answers
+    // "(no support group)" where the other three producers answer "" — so an asset the group
+    // table lists under one key would be lit under another, and the selection would match
+    // nothing while the list showed a row.
+    const falsyTest = (value) => value || NO_GROUP;
+    expect(falsyTest("")).toBe(NO_GROUP);
+    expect(falsyTest("")).not.toBe(coldGroupRows(v)[0].key);
+  });
+});
+
+describe("scatterSelectionActive: two axes of the three, and the cut is not one", () => {
+  it("is inactive with nothing picked", () => {
+    expect(scatterSelectionActive(coldSelection("all", null))).toBe(false);
+    expect(scatterSelectionActive(null)).toBe(false);
+  });
+
+  it("is active on a group, on a band, and on both", () => {
+    expect(scatterSelectionActive(coldSelection("all", "Payments"))).toBe(true);
+    expect(scatterSelectionActive(coldSelection("band:2", null))).toBe(true);
+    expect(scatterSelectionActive(coldSelection("band:2", "Payments"))).toBe(true);
+  });
+
+  it("refuses the cold and out-of-sight cuts, which this chart cannot answer", () => {
+    // `cold` is already the filled diamond, and every asset the `lost` cut lists is one
+    // `coldScatterPoints` excludes by construction. Reading `sel.band` rather than `sel.cut`
+    // is what makes that refusal free: `coldSelection` leaves `band` null outside "band:N".
+    expect(coldSelection("cold", null).band).toBe(null);
+    expect(coldSelection("lost", null).band).toBe(null);
+    expect(scatterSelectionActive(coldSelection("cold", null))).toBe(false);
+    expect(scatterSelectionActive(coldSelection("lost", null))).toBe(false);
+    // The perturbation: a predicate that read the cut instead would light the chart for two
+    // values it has nothing to say about.
+    const readsTheCut = (s) => s.cut !== "all" || s.group !== null;
+    expect(readsTheCut(coldSelection("lost", null))).toBe(true);
+    expect(readsTheCut(coldSelection("lost", null)))
+      .not.toBe(scatterSelectionActive(coldSelection("lost", null)));
+  });
+
+  it("stays active on a group even under a cut the chart ignores", () => {
+    expect(scatterSelectionActive(coldSelection("lost", "Payments"))).toBe(true);
+  });
+});
+
+describe("markScatterPoints: marked, never dropped", () => {
+  const points = [
+    { label: "a", group: "Payments", band: 0 },
+    { label: "b", group: "Payments", band: 3 },
+    { label: "c", group: "Retail", band: 3 },
+  ];
+  const lit = (sel) => markScatterPoints(points, sel).filter((p) => p.on).map((p) => p.label);
+
+  it("returns every point whatever is selected, because the axes are the estate's", () => {
+    // THE WHOLE POINT OF MARKING. A filter would rescale the chart around the answer and
+    // throw away the comparison the press was making.
+    expect(markScatterPoints(points, coldSelection("band:3", "Retail"))).toHaveLength(3);
+  });
+
+  it("lights everything when nothing is selected", () => {
+    expect(lit(coldSelection("all", null))).toEqual(["a", "b", "c"]);
+    expect(lit(null)).toEqual(["a", "b", "c"]);
+  });
+
+  it("crosses the two axes with AND, never OR", () => {
+    expect(lit(coldSelection("all", "Payments"))).toEqual(["a", "b"]);
+    expect(lit(coldSelection("band:3", null))).toEqual(["b", "c"]);
+    expect(lit(coldSelection("band:3", "Payments"))).toEqual(["b"]);
+    // The perturbation: OR on the same input lights a Retail asset for a Payments press.
+    const eitherAxis = (p, s) =>
+      (s.group !== null && p.group === s.group) || (s.band !== null && p.band === s.band);
+    const sel = coldSelection("band:3", "Payments");
+    expect(points.filter((p) => eitherAxis(p, sel)).map((p) => p.label))
+      .toEqual(["a", "b", "c"]);
+  });
+
+  it("matches no band at all for a point the domain gave no bucket", () => {
+    // `num` keeps a missing bucket null rather than casting it to 0, which is what stops an
+    // asset with no reading falling into the first band.
+    const noBand = [{ label: "x", group: "Payments", band: null }];
+    expect(markScatterPoints(noBand, coldSelection("band:0", null))[0].on).toBe(false);
+    expect(markScatterPoints(noBand, coldSelection("all", "Payments"))[0].on).toBe(true);
+  });
+
+  it("can light nothing, and says so by marking rather than by returning nothing", () => {
+    const marked = markScatterPoints(points, coldSelection("all", "Absent"));
+    expect(marked).toHaveLength(3);
+    expect(marked.every((p) => p.on === false)).toBe(true);
+  });
+
+  it("is an empty list, never a throw, on no points", () => {
+    expect(markScatterPoints(null, coldSelection("all", null))).toEqual([]);
+  });
+});
+
+describe("markScatterPoints on the group grain: the median's band, not the group's spread", () => {
+  const plot = (id, g, idle, bucket) => asset({
+    asset_id: id, asset_name: id, support_group: g, idle_reading_days: idle, open_findings: 1,
+    bucket,
+  });
+
+  // Payments reads 10 / 50 / 300 days, in bands 0 / 1 / 3. Its median member is the 50-day
+  // asset, so its dot sits in band 1 — even though it owns an asset in band 3.
+  const view = coldZoneView(payload({
+    assets: [plot("a", "Payments", 10, 0), plot("b", "Payments", 50, 1),
+      plot("c", "Payments", 300, 3)],
+    groups: [group()],
+    totals: totals({ assets: 3, assets_with_open: 3 }),
+  }));
+
+  it("takes the band off the same asset idleDays, cold and bounded come from", () => {
+    const [p] = coldGroupScatterPoints(view);
+    expect(p.idleDays).toBe(50);
+    expect(p.band).toBe(1);
+  });
+
+  it("lights the group for its median's band and not for a member's", () => {
+    const on = (band) =>
+      markScatterPoints(coldGroupScatterPoints(view), coldSelection(band, null))[0].on;
+    expect(on("band:1")).toBe(true);
+    // THE READING THIS PROTECTS. The dot sits at 50 days, inside band 1's stretch of the x
+    // axis. Lighting it for band 3 would put a lit dot in band 1's stretch, and a reader
+    // checking the picture against the axis would be right to call it a contradiction.
+    expect(on("band:3")).toBe(false);
+    // The perturbation: "any member is in the band" is the rule the band BARS in the support
+    // group table use, and it answers differently here on the same group.
+    const anyMember = [0, 1, 3].includes(3);
+    expect(anyMember).toBe(true);
+    expect(anyMember).not.toBe(on("band:3"));
+  });
+});
+
+describe("coldScatterSelectionNote: what is lit, in words", () => {
+  const view = coldZoneView(payload({ totals: totals({ assets: 3 }) }));
+
+  const note = (sel, over = {}) => coldScatterSelectionNote(view, sel, {
+    lit: 2, total: 41, unit: "asset", collapsed: false, ...over,
+  });
+
+  it("says nothing when there is nothing to say", () => {
+    expect(note(coldSelection("all", null))).toBe(null);
+    // Including under the two cuts this chart refuses — a note for a press that changed
+    // nothing here would be noise on a page that counts its words.
+    expect(note(coldSelection("cold", null))).toBe(null);
+    expect(note(coldSelection("lost", null))).toBe(null);
+  });
+
+  it("names the group, the band and the count", () => {
+    expect(note(coldSelection("band:3", "Payments")))
+      .toBe("2 of 41 assets highlighted: Payments, idle ≥ 90 d.");
+  });
+
+  it("counts support groups as support groups on the other grain", () => {
+    expect(note(coldSelection("all", "Payments"), { lit: 1, total: 6, unit: "group" }))
+      .toBe("1 of 6 support groups highlighted: Payments.");
+  });
+
+  it("names no denominator it is not drawing once the reader has collapsed the chart", () => {
+    // "Highlighting 2 of 41" over a canvas holding two dots counts a population the reader
+    // cannot see — the exact defect this page's denominator rules exist to stop.
+    const collapsed = note(coldSelection("all", "Payments"), { collapsed: true });
+    expect(collapsed).toBe("Showing 2 assets only: Payments.");
+    expect(collapsed).not.toContain("41");
+    expect(collapsed).not.toContain("highlighted");
+  });
+
+  it("says nothing is here rather than printing a zero", () => {
+    // "0 of 41 highlighted" invites the reader to conclude the selection is empty. It is not:
+    // it is full of assets this chart cannot plot, and the reason belongs with the number.
+    const empty = note(coldSelection("all", "Payments"), { lit: 0 });
+    expect(empty).toBe("Nothing in this selection has a dot here: Payments.");
+    expect(empty).not.toContain("0 of");
+    // And the collapse cannot change that sentence — it refuses itself in that case, so a
+    // "Showing 0 assets only" is a claim this page never makes.
+    expect(note(coldSelection("all", "Payments"), { lit: 0, collapsed: true })).toBe(empty);
   });
 });
