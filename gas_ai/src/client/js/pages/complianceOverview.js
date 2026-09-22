@@ -15,10 +15,22 @@
 // rows a real tenant would produce before adding another.
 //
 // THE HEADLINE NUMBER IS OURS, NOT WIZ'S, AND SAYS SO. Wiz scores a framework; it does not
-// score a landscape. kpis.averagePosture is a mean this app takes across the frameworks that
-// happen to be scored, and the sub-line under the hero states that plainly and names the
-// denominator — the one place on this page a number could be mistaken for a vendor figure,
-// so it is the one place that gets a disclaimer.
+// score a landscape. The hero is `data.landscapePosture` — the share of checks passing across
+// every control that APPLIES to this landscape (domain/landscapePosture.ts) — and the
+// sub-line under it states that plainly and names the denominator, because it is the one
+// place on this page a number could be mistaken for a vendor figure.
+//
+// IT USED TO BE THE MEAN OF WIZ'S FRAMEWORK SCORES, and the swap is the one thing to
+// understand before editing this band. That mean weighted a four-control framework like a
+// four-hundred-control one, and each of its inputs was computed by Wiz over everything the
+// framework maps — including the rules this register drops as never-evaluated or as outside
+// the 5Rs AI scope. So the hero described a larger population than the rows beneath it, which
+// is the implied confidence PRODUCT.md forbids. The mean did not go away: it is what
+// `sync_history` records and therefore the only reading with a history, so the trend card
+// beside the hero still draws it, `kpis.averagePosture` still feeds the Wiz Scans page, and
+// the rail's own mean marker is still the mean OF THE LANES it marks. Three places, three
+// sentences saying which figure is which — because two percentages on one page that nothing
+// tells apart is worse than either of them alone.
 //
 // THE RAIL (band B) is where the null-posture invariant most needs to hold and least gets
 // tested: every seeded framework in the dev landscape happens to be scored, so an accidental
@@ -135,32 +147,55 @@ export function renderOverview(host, data, view, actions, boot) {
 function renderHeadline(host, data) {
   const kpis = data.kpis || {};
   const coverage = data.coverage || {};
-  const scored = kpis.averagePosture !== null && kpis.averagePosture !== undefined;
+  // THE HERO IS DERIVED OVER THE APPLICABLE CONTROLS, not the mean of Wiz's per-framework
+  // scores it used to be — `domain/landscapePosture.ts` states at length why those are two
+  // different claims and why the mean still ships beside it. `landscapePosture` carries the
+  // mean itself (`wizAveragePosture`), so everything this hero needs to name both figures
+  // arrives in one self-describing object.
+  //
+  // NULL-GUARDED AS A WHOLE, not field by field: a stale SWR cache written before this field
+  // existed degrades to the ENTIRE previous hero — the mean, with the sentence that
+  // described it — rather than to the new sentence over an old number. Half a swap is the
+  // one outcome worse than either side of it, because the sub-line would name a denominator
+  // the figure above it was never computed over.
+  const landscape = data.landscapePosture || null;
+  const pct = landscape && landscape.posturePct !== null && landscape.posturePct !== undefined
+    ? landscape.posturePct
+    : null;
+  // The fallback path's own figure, kept exactly as it was.
+  const meanPct = kpis.averagePosture === null || kpis.averagePosture === undefined
+    ? null
+    : kpis.averagePosture;
+  const derived = landscape && pct !== null ? landscape : null;
+  const heroPct = derived ? pct : meanPct;
+  const heroBand = derived ? derived.postureBand : kpis.averagePostureBand;
+  const scored = heroPct !== null && heroPct !== undefined;
   // Landscape-wide worst — see worstFailingSeverityAcross(). Only meaningful (and only ever
-  // drawn) alongside a scored mean; an unscored landscape has no bar to tint either.
+  // drawn) alongside a scored hero; an unscored landscape has no bar to tint either.
   const worstSeverity = scored ? worstFailingSeverityAcross(data.rail || []) : null;
-  // Whether the rail below draws a DERIVED percentage for some row that this mean still
-  // averages at Wiz's own score — computed once so the sub-line only names a framework by
-  // name on a tenant where doing so is actually true, rather than a hard-coded "5Rs". This
-  // hero deliberately keeps averaging Wiz's own per-framework figures (see the file header,
-  // "THE HEADLINE NUMBER IS OURS, NOT WIZ'S") — only the rail row's own number changed.
-  const derivedRow = scored
+  // FALLBACK PATH ONLY. Whether the rail below draws a DERIVED percentage for some row that
+  // the MEAN still averages at Wiz's own score — computed once so the sub-line only names a
+  // framework by name on a tenant where doing so is actually true, rather than a hard-coded
+  // "5Rs". The derived hero has no such contradiction to disclose: it never averages a
+  // framework figure at all, which is what its own sub-line says instead.
+  const derivedRow = scored && !derived
     ? (data.rail || []).find((r) => fiveRsDerived(data, r.frameworkId))
     : null;
 
   // Banded by its own number, like every other bar on this page — see postureCell() in
-  // complianceShared.js for why fill colour stopped meaning severity. The landscape mean is
-  // derived here rather than sent by Wiz, so it is banded here too rather than carrying a
-  // `postureBand` down the wire: there is no server-side node for "the landscape".
+  // complianceShared.js for why fill colour stopped meaning severity. Both figures are
+  // banded SERVER-SIDE (landscapePosture.postureBand / kpis.averagePostureBand) rather than
+  // by applying the breaks here, so the biggest bar on the page reads the same 90/70/50 the
+  // small ones do.
   const heroMeter = scored
-    ? meter(kpis.averagePosture, {
+    ? meter(heroPct, {
         max: 100,
-        label: `Landscape compliance posture, ${kpis.averagePosture} percent` +
+        label: `Landscape compliance posture, ${heroPct} percent` +
           (worstSeverity ? `, worst failing severity ${worstSeverity}` : ""),
       })
     : null;
-  if (heroMeter && kpis.averagePostureBand) {
-    heroMeter.fill.dataset.band = kpis.averagePostureBand;
+  if (heroMeter && heroBand) {
+    heroMeter.fill.dataset.band = heroBand;
   }
 
   // The sub-line is the hero's one prose slot, so the severity mark folds into it rather
@@ -171,17 +206,57 @@ function renderHeadline(host, data) {
   // cross-framework figure — seven wrapped lines under a two-character number. Every one of
   // those sentences keeps the figure honest and none is deleted; they move onto the label,
   // which is what DESIGN.md means by the Tip being the app's answer to "what is this".
-  const heroLead = scored
-    ? `Mean of ${plural(kpis.scoredFrameworks || 0, "scored framework")}, each at Wiz's own score.`
-    : "No framework has a compliance posture to average yet.";
-  const heroWhy = [
-    scored
-      ? "Derived here, not published by Wiz: this is the mean of the frameworks collected "
-        + "for this landscape, each taken at Wiz's own score."
-      : "Derived here, not published by Wiz. No framework has a compliance posture to "
-        + "average yet.",
-    "Wiz publishes no cross-framework figure.",
-  ];
+  //
+  // THE DERIVED LEAD NAMES ITS DENOMINATOR IN THE CAPTION ITSELF, because the denominator is
+  // the entire change: a percentage over the applicable controls and a mean of framework
+  // scores are different claims, and a reader who only ever sees the caption has to be able
+  // to tell which one is on screen. The same shape as the 5Rs hero's own lead in
+  // compliance.js — active population, checks passing, then what is excluded and why.
+  const heroLead = !scored
+    ? (landscape
+      ? "No control in this landscape has been evaluated against anything yet."
+      : "No framework has a compliance posture to average yet.")
+    : derived
+      ? `Derived here from ${plural(derived.applicablePolicyCount, "applicable control")}`
+        + (derived.frameworkCount
+          ? ` across ${plural(derived.frameworkCount, "framework")}`
+          : "")
+        + `: ${derived.passCount.toLocaleString()} of `
+        + `${(derived.passCount + derived.failCount).toLocaleString()} checks passing.`
+        + (derived.disabledPolicyCount
+          ? ` ${plural(derived.disabledPolicyCount, "control")} excluded as disabled in Wiz.`
+          : "")
+      : `Mean of ${plural(kpis.scoredFrameworks || 0, "scored framework")}, each at Wiz's own score.`;
+  const heroWhy = derived
+    ? [
+      "Derived here, not published by Wiz: the share of checks passing across every control "
+        + "that applies to this landscape — the same controls the register below lists. "
+        + "Applicable means Wiz evaluated it against something, it survived the 5Rs AI-scope "
+        + "review in Settings, and Wiz does not have it switched off.",
+      // THE ONE READING THIS HERO COULD BE GIVEN AND MUST NOT BE. It sits directly above a
+      // rail of per-framework percentages, and a figure above a list of figures reads as
+      // their average unless it says otherwise. It is not one: a control failing on two
+      // hundred resources weighs two hundred times one failing on one, and a control mapped
+      // by three frameworks is counted once rather than three times.
+      "Not the average of the framework percentages below it. This is weighted by checks, "
+        + "not by framework, and a control several frameworks map is counted once.",
+      // Both claims travel together — landscapePosture.ts's rule, restated where a reader
+      // can act on it, and dropped rather than printed as "null%" where Wiz scored nothing.
+      derived.wizAveragePosture !== null && derived.wizAveragePosture !== undefined
+        ? `Wiz's own framework scores average ${derived.wizAveragePosture}% across `
+          + `${plural(derived.scoredFrameworks || 0, "scored framework")}. That is the `
+          + "figure the trend line beside this hero draws."
+        : "Wiz reports no framework score to average for this landscape.",
+      "Wiz publishes no cross-framework figure.",
+    ]
+    : [
+      scored
+        ? "Derived here, not published by Wiz: this is the mean of the frameworks collected "
+          + "for this landscape, each taken at Wiz's own score."
+        : "Derived here, not published by Wiz. No framework has a compliance posture to "
+          + "average yet.",
+      "Wiz publishes no cross-framework figure.",
+    ];
   if (scored && derivedRow) {
     // The one place this mean could read as contradicting the rail row beside it: that row
     // states an AI-scoped DERIVED figure for this framework, not the Wiz score this mean is
@@ -196,15 +271,23 @@ function renderHeadline(host, data) {
   // shared `.page-hero-sub .sev-badge` — see the matching note in compliance.js.
   if (worstSeverity) subKids.push(el("span", { class: "comp-posture-badge" }, sevBadge(worstSeverity)));
 
-  // THE HEADER'S SECOND COLUMN. It was the four-segment state bar; it is the mean's own
+  // THE HEADER'S SECOND COLUMN. It was the four-segment state bar; it is the Wiz mean's own
   // history now, because "is the landscape improving" is what this hero is read for and a
   // distribution of subcategory states never answered it.
   //
-  // THE LINE IS THE SAME NUMBER AS THE HERO, at every sync rather than at this one — the
-  // mean of the scored frameworks, computed by the same arithmetic
-  // (`complianceKpis.averagePosture` and `censusCompliancePosture.avg` share a predicate, and
-  // a test holds them equal). Not one line per framework: eight lines in a header column is a
-  // thicket, and the rail below lists every framework's current figure with its own bar.
+  // THE LINE IS NO LONGER THE SAME NUMBER AS THE HERO, and that is the note below. The line
+  // is the mean of the scored frameworks at each sync, recorded in `sync_history`
+  // (`censusCompliancePosture.avg`, which shares a predicate with
+  // `complianceKpis.averagePosture` — a test holds the two equal). The hero is the derived
+  // figure over today's applicable controls, and there is no way to ask a past sync that
+  // question: the census stores Wiz's per-framework percentages, not the pass/fail counts a
+  // derivation needs, and the 5Rs AI scope it filters by is a pin an operator moves. So the
+  // series records the figure that CAN have a history, and the card says which one it is.
+  // Unstated, a hero at 97% over a line at 92% reads as a bug — the same disclosure
+  // compliance.js already makes under the 5Rs hero.
+  //
+  // Not one line per framework: eight lines in a header column is a thicket, and the rail
+  // below lists every framework's current figure with its own bar.
   //
   // The state counts the bar carried are still drawn, under the chart: `complianceTrendCard`
   // takes the landscape-wide roll-up — not a FrameworkTree, but `stateKeys` only ever reads
@@ -216,6 +299,11 @@ function renderHeadline(host, data) {
     points: data.complianceTrend || [],
     series: landscapeSeries(),
     postureScope: data.postureScope,
+    note: derived
+      ? "The line is the mean of Wiz's own framework scores at each sync. The "
+        + `${heroPct}% above is derived from the controls that apply to this landscape `
+        + "now, which is a different question and not one a past sync can be asked."
+      : null,
   });
 
   const sharedRows = data.sharedControls || [];
@@ -231,7 +319,7 @@ function renderHeadline(host, data) {
         label: "Compliance posture",
         help: heroWhy,
         scored,
-        pct: kpis.averagePosture,
+        pct: heroPct,
         meterNode: scored ? heroMeter : null,
         sub: subKids,
       }),
@@ -245,6 +333,22 @@ function renderHeadline(host, data) {
           "distinct policies with a failing check"),
         statRow("Shared across frameworks", String(sharedCount),
           `of ${plural(sharedRows.length, "failing control")}`),
+        // THE CONTROL-WEIGHTED READING OF THE HERO'S OWN POPULATION — the "ship both
+        // formulas" slot, exactly as the 5Rs register header carries it (compliance.js).
+        // The hero states the check-weighted number; this states how many of the same
+        // applicable controls are clean, which is the figure a reader planning work wants
+        // and the one the hero's weighting deliberately does not give them. A labelled fact
+        // beside it, never a second number competing for the same word.
+        //
+        // Only alongside a derived hero: on the fallback path there is no applicable-control
+        // population on screen for it to be a share of.
+        derived
+          ? statRow(
+            "Controls clean",
+            `${derived.cleanPolicyCount} of ${derived.applicablePolicyCount}`,
+            "applicable controls with no failing check",
+          )
+          : null,
       ],
     })));
 }
@@ -301,7 +405,10 @@ function railAriaLabel(row, meanPct, scopeNote, derived) {
       `${row.name}, ${pct} percent compliant.`,
       failingClause,
     ];
-    if (meanPct !== null) sentence.push(`Landscape mean ${meanPct} percent.`);
+    // Named as the mean of the LANES, matching the visible key — see its own note in
+    // renderRail. A pointer user and a screen reader user must be told the same thing
+    // about a mark that is no longer the hero's figure.
+    if (meanPct !== null) sentence.push(`Mean of these lanes, ${meanPct} percent.`);
     if (derived) {
       sentence.push(
         `Derived from ${derived.activePolicyCount} active ` +
@@ -449,11 +556,18 @@ function renderRail(host, data, actions) {
     railAxis(),
     ...rows.map((row) => railRow(row, meanPct, actions, fiveRsScope, data)));
 
+  // THE MARK IS THE MEAN OF THESE LANES, and since the hero above stopped being that mean
+  // (domain/landscapePosture.ts) the key has to say so outright. The mark's job is to place
+  // each framework against the others, which only a mean of the same lanes can do — the
+  // hero's derived figure is weighted by checks and would land somewhere none of these bars
+  // is measured against. Two honest marks answering two questions; the one thing this page
+  // cannot do is let a reader think the smaller number is the bigger one, restated.
   const key = meanPct !== null
     ? el("p", { class: "comp-rail-key" },
         el("span", { class: "comp-rail-key-swatch", "aria-hidden": "true" }),
-        `The vertical mark on every lane is the landscape mean, ${meanPct}% — where each ` +
-        "framework sits against it, read left to right.")
+        `The vertical mark on every lane is the mean of these lanes, ${meanPct}% — where ` +
+        "each framework sits against it, read left to right. Not the compliance posture " +
+        "above, which is weighted by checks rather than by framework.")
     : el("p", { class: "comp-rail-key" },
         "No landscape mean yet — no framework has a compliance posture to average.");
 

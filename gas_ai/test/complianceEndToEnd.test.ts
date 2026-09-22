@@ -317,6 +317,52 @@ describe("the Overview bands getCompliance ships beside the trees", () => {
     expect(counts).toEqual([...counts].sort((a: number, b: number) => b - a));
   });
 
+  it("derives the landscape posture over the applicable controls, not as the mean", () => {
+    const data = compliance();
+    const landscape = data.landscapePosture;
+
+    // SIX DISTINCT CONTROLS ACROSS FOUR FRAMEWORKS. Not the sum of the four trees'
+    // policyCounts — the seed files SUB-082 under both the Agentic and the 5Rs framework on
+    // purpose, and a control two frameworks cite is one thing to fix. If this ever climbs to
+    // the summed total, the cross-framework dedupe has gone.
+    expect(landscape.applicablePolicyCount).toBe(6);
+    expect(landscape.frameworkCount).toBe(4);
+    expect(landscape.applicablePolicyCount)
+      .toBeLessThan(data.trees.reduce((sum: number, t: any) => sum + t.policyCount, 0));
+
+    // 1,892 checks passing to 29 failing — weighted by CHECKS, which is what makes it a
+    // different claim from the mean rather than a refinement of it.
+    expect(landscape.passCount).toBe(1892);
+    expect(landscape.failCount).toBe(29);
+    expect(landscape.posturePct).toBe(98);
+    expect(landscape.postureBand).toBe("strong");
+
+    // THE TWO CLAIMS TRAVEL TOGETHER. Wiz's mean is 94 — four framework scores averaged,
+    // each over Wiz's own larger denominator — and it survives this derivation untouched
+    // because the trend line beside the hero still draws it and the hero's own disclosure
+    // names it. The gap between 98 and 94 is the feature, not a discrepancy.
+    expect(landscape.wizAveragePosture).toBe(data.kpis.averagePosture);
+    expect(landscape.wizAveragePosture).toBe(94);
+    expect(landscape.scoredFrameworks).toBe(4);
+
+    // The control-weighted reading of the SAME population, shipped beside the headline
+    // rather than instead of it: one of six applicable controls is clean. A hero at 98% over
+    // five failing controls is exactly why both formulas are on the page.
+    expect(landscape.controlPassPct).toBe(17);
+    expect(landscape.cleanPolicyCount).toBe(1);
+    expect(landscape.failingPolicyCount).toBe(5);
+
+    // AND IT RECONCILES WITH THE KPI BESIDE IT. `complianceKpis.failingPolicies` counts
+    // distinct failing policies over the same scoped rows by its own walk; this counts them
+    // over the built trees. Two arithmetics, one answer — if they drift, the header's
+    // "Failing controls" stat and the hero's own denominator describe different landscapes.
+    expect(landscape.failingPolicyCount).toBe(data.kpis.failingPolicies);
+
+    // Nothing in the seed is disabled in Wiz, so the applicable population is attributable
+    // to the assessed-and-AI-scoped filters alone rather than confounded with a third.
+    expect(landscape.disabledPolicyCount).toBe(0);
+  });
+
   it("counts what is collected against what the tenant catalogues", () => {
     const cov = compliance().coverage;
     // Five frameworks exist in the seed tenant and four are collected — the CIS one is

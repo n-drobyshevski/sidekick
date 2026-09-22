@@ -4061,7 +4061,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "8ad5885c4933" : "dev";
+  var BUILD_ID = true ? "522cf92dee13" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -14037,6 +14037,81 @@ var Server = (() => {
     };
   }
 
+  // src/domain/landscapePosture.ts
+  function isApplicableControl(enabled) {
+    return enabled !== false;
+  }
+  function landscapeDerivedPosture(trees, wiz) {
+    const byPolicy = /* @__PURE__ */ new Map();
+    for (const tree of trees) {
+      for (const category of tree.categories) {
+        for (const sub of category.subcategories) {
+          for (const p of sub.policies) {
+            let acc = byPolicy.get(p.policyId);
+            if (!acc) {
+              acc = {
+                passCount: 0,
+                failCount: 0,
+                // Sticky-false's initial reading, overridden below by any later row saying
+                // false — `scopeFiveRs` accumulates `enabled` the identical way.
+                enabled: p.enabled,
+                frameworkIds: /* @__PURE__ */ new Set()
+              };
+              byPolicy.set(p.policyId, acc);
+            }
+            if (p.passCount > acc.passCount) acc.passCount = p.passCount;
+            if (p.failCount > acc.failCount) acc.failCount = p.failCount;
+            if (p.enabled === false) acc.enabled = false;
+            acc.frameworkIds.add(tree.frameworkId);
+          }
+        }
+      }
+    }
+    let passCount = 0;
+    let failCount = 0;
+    let cleanPolicyCount = 0;
+    let failingPolicyCount2 = 0;
+    let applicablePolicyCount = 0;
+    let disabledPolicyCount = 0;
+    const frameworks = /* @__PURE__ */ new Set();
+    for (const acc of byPolicy.values()) {
+      if (!isApplicableControl(acc.enabled)) {
+        disabledPolicyCount += 1;
+        continue;
+      }
+      applicablePolicyCount += 1;
+      passCount += acc.passCount;
+      failCount += acc.failCount;
+      if (acc.failCount === 0) cleanPolicyCount += 1;
+      else failingPolicyCount2 += 1;
+      for (const id of acc.frameworkIds) frameworks.add(id);
+    }
+    const posturePct2 = applicablePolicyCount === 0 || passCount + failCount === 0 ? null : clampAwayFromFalseExtreme(
+      Math.round(100 * passCount / (passCount + failCount)),
+      failCount > 0,
+      passCount > 0
+    );
+    const controlPassPct = applicablePolicyCount === 0 ? null : clampAwayFromFalseExtreme(
+      Math.round(100 * cleanPolicyCount / applicablePolicyCount),
+      failingPolicyCount2 > 0,
+      cleanPolicyCount > 0
+    );
+    return {
+      posturePct: posturePct2,
+      postureBand: postureBandOf(posturePct2),
+      controlPassPct,
+      cleanPolicyCount,
+      failingPolicyCount: failingPolicyCount2,
+      applicablePolicyCount,
+      disabledPolicyCount,
+      frameworkCount: frameworks.size,
+      passCount,
+      failCount,
+      wizAveragePosture: wiz.averagePosture,
+      scoredFrameworks: wiz.scoredFrameworks
+    };
+  }
+
   // src/domain/settingsImpact.ts
   function categoryMaskOf(categories, candidateIds) {
     let mask = 0;
@@ -18453,9 +18528,10 @@ var Server = (() => {
         (_b = (_a5 = trees.find((t) => t.frameworkId === fiveRsScope.frameworkId)) == null ? void 0 : _a5.posturePct) != null ? _b : null
       );
       const merged = catalogue.map((f) => ({ ...f, selected: selected.indexOf(f.id) >= 0 }));
+      const kpis = complianceKpis(posture, policies);
       return {
         trees,
-        kpis: complianceKpis(posture, policies),
+        kpis,
         selected,
         // The Overview's four bands. Computed here rather than in the browser because the
         // client bundle cannot import the domain layer at all — every client-side copy of
@@ -18483,6 +18559,18 @@ var Server = (() => {
         // payload is already shipped whole and cached, so there is no second scope for a
         // mirror to reconcile against — computing it here instead buys nothing but risk.
         fiveRsPosture,
+        // THE ASSURANCE HERO'S OWN PERCENTAGE — derived over the controls that apply to
+        // this landscape, rather than the mean of Wiz's per-framework scores `kpis`
+        // carries. landscapePosture.ts says at length why those are two different claims
+        // and why both ship: the mean is what has a history (the trend line beside the hero
+        // draws it) and what the Wiz Scans page reports, so it is carried INSIDE this object
+        // rather than replaced anywhere.
+        //
+        // Built from `trees`, which are the 5Rs-scoped ones this payload renders — the same
+        // population as the register below the hero, which is the entire point. Under a
+        // project view they are the project's trees, so this figure narrows with the rest of
+        // the page rather than being the one number left describing the register.
+        landscapePosture: landscapeDerivedPosture(trees, kpis),
         coverage: coverageSummary(trees, merged),
         // POSTURE OVER TIME — one point per sync, every framework plus the cross-framework
         // mean, read off `sync_history`'s own column (domain/complianceTrend.ts). It replaces

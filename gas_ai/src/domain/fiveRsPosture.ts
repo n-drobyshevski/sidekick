@@ -71,8 +71,12 @@ export function isActiveFiveRsPolicy(p: PolicyScope): boolean {
  * moment the "other side" is non-empty: a hero reading "100%" beside 21 failing checks, or
  * "0%" beside 1,769 passing ones, is exactly the implied confidence PRODUCT.md forbids. One
  * helper, shared by posturePct and controlPassPct, so the two clamps cannot drift apart.
+ *
+ * EXPORTED for landscapePosture.ts, which derives the same two figures over the same
+ * arithmetic one scope up. A second copy of this clamp would be a second answer to "when is
+ * 100 a lie", and the landscape hero and the 5Rs hero would eventually give it differently.
  */
-function clampAwayFromFalseExtreme(
+export function clampAwayFromFalseExtreme(
   rounded: number,
   hasFailing: boolean,
   hasPassing: boolean,

@@ -217,7 +217,21 @@ export const MEASURE_ENTRIES = [
       + "frameworks are excluded rather than read as zero.",
     formula: "Mean posture_pct across framework rows whose state resolves to 'scored'.",
     dataSource: "ai_framework_posture.posture_pct",
-    reportingFormat: "Compliance Posture page's headline strip.",
+    reportingFormat: "Compliance Posture page's 'Posture over time' line; Wiz Scans page KPI.",
+    revisionDue: "2027-08-13",
+  },
+  {
+    id: "landscape-applicable-posture", measure: "Landscape compliance posture",
+    type: "effectiveness", measurementMethod: "Objective",
+    goal: "One number for landscape-wide compliance over the SAME controls the register "
+      + "lists — those Wiz evaluated, that survived the 5Rs AI-scope review, and that Wiz "
+      + "has not switched off. The framework mean weights a four-control framework like a "
+      + "four-hundred-control one and describes a larger population than the page shows.",
+    formula: "Checks passing over checks evaluated, across the distinct applicable controls "
+      + "(one control mapped by several frameworks counts once, at the MAX of its repeated "
+      + "counts); null when nothing applicable has evaluated anything.",
+    dataSource: "ai_framework_policies.pass_count, ai_framework_policies.fail_count",
+    reportingFormat: "Compliance Posture page's hero, with 'Controls clean' beside it.",
     revisionDue: "2027-08-13",
   },
   {
