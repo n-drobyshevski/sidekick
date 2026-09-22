@@ -10,6 +10,7 @@ import {
   resolveWizAuthMode,
 } from "./props";
 import { buildVariables, getToken, queryPage } from "./wizClient";
+import { normalizeWizUrl } from "../../../gas_shared/domain/wizUrl";
 
 /** Length + first4…last4 preview of a non-secret id/token — never the whole value. */
 function preview(value: string | null): string {
@@ -88,10 +89,11 @@ export function wizDiagnostic(): string {
   }
 
   // Step 2 — a minimal 1-row query, exercising the real request path.
+  let firstNode: Record<string, unknown> | null = null;
   try {
     const page = queryPage(buildVariables({ first: 1 }));
+    firstNode = (page.nodes[0] as Record<string, unknown> | undefined) ?? null;
     log(`Step 2 OK: query succeeded — ${page.nodes.length} finding(s) on page 1.`);
-    log("=== All checks passed. Live scans should work. ===");
   } catch (e) {
     const msg = (e as Error).message;
     log(`Step 2 FAIL: the query was rejected — ${msg}`);
@@ -114,5 +116,52 @@ export function wizDiagnostic(): string {
     return lines.join("\n");
   }
 
+  // Step 3 — does this tenant actually hand back a console link for a finding?
+  //
+  // COSTS NOTHING EXTRA, and that is the design rather than a saving: the real query already
+  // selects `portalUrl` (os_vulns.py's VulnerabilityFindingFragment), so the row step 2 just
+  // fetched either carries one or does not. A second, probe-only query would be asking a
+  // different question than the scan asks, which is the failure mode this whole module
+  // exists to avoid.
+  //
+  // THE THREE ANSWERS ARE DIFFERENT PROBLEMS and are named apart, because "no link in the
+  // register" is reached by all three and a reader who cannot tell them apart will go looking
+  // in the wrong place:
+  //   - the field is not in the schema     → step 2 already failed, with "Cannot query field"
+  //   - the field is there but null        → Wiz has no link for this finding; nothing to fix
+  //   - the field is there but we refuse it → our prefix rule and the tenant disagree
+  if (firstNode === null) {
+    log(
+      "Step 3 SKIPPED: the query returned no findings, so there was no row to read a Wiz " +
+        "console link off. Not a failure — widen the severity filter or the project and " +
+        "re-run if you want this checked.",
+    );
+  } else {
+    const raw = firstNode["portalUrl"];
+    const usable = normalizeWizUrl(raw);
+    if (usable) {
+      log(`Step 3 OK: findings carry a Wiz console link (${usable}).`);
+    } else if (typeof raw === "string" && raw.trim()) {
+      log(
+        `Step 3 WARN: this tenant returned a portalUrl the register will not link to — ` +
+          `${raw.trim()}`,
+      );
+      log(
+        "→ The finding sheet shows no Wiz row for it. Links are allowed only on the Wiz " +
+          "consoles (app.wiz.io / app.wiz.us); see gas_shared/domain/wizUrl.ts for why the " +
+          "list is a security boundary rather than a typo-catcher, and widen it there if " +
+          "your tenant is genuinely served from another host.",
+      );
+    } else {
+      log("Step 3 WARN: the query worked but this finding carried no portalUrl.");
+      log(
+        "→ The finding sheet will show no Wiz row for findings like it. If EVERY finding " +
+          "is like this, the tenant is not populating the field and there is nothing to " +
+          "link to; the register states that rather than guessing a URL.",
+      );
+    }
+  }
+
+  log("=== All checks passed. Live scans should work. ===");
   return lines.join("\n");
 }

@@ -31,6 +31,16 @@
 //      from there — a literal URL in a runtime string carries a bare `//`, which the
 //      middlebox guard in `esbuild.config.mjs` fails the build on.
 //
+//      THE WIZ ROW DOES NOT BREAK THIS RULE, IT IS THE RULE APPLIED TWICE. The register
+//      builds no Wiz URL: `portal_url` is the link WIZ ITSELF reports for the finding
+//      (`portalUrl` in the query), carried through the ledger. The alternative was to
+//      construct one from the finding id — which is right there, inside `vuln_key` — using
+//      the fragment grammar Wiz's console happens to use today. That grammar is
+//      undocumented and is UI routing state, so a register built on it would hand readers
+//      links that rot silently. Asking is the only way to be able to say the link works.
+//      What the sheet still refuses is to link to whatever the ledger happens to hold:
+//      `safeWizUrl` gates it, because the ledger tab is hand-editable.
+//
 // THE MODEL IS PURE AND THE DOM HALF IS THIN, the same split `registerModel.js` and
 // `overviewModel.js` already make: this project's vitest run sets no `environment`, so
 // anything touching `document` cannot be unit-tested. `findingSheetModel` returns strings,
@@ -49,6 +59,10 @@ import {
   absent, absentText, codeBlock, copyButton, days1, el, fmtDate, nvdUrl, openSheet, pct1,
   sheetSection, statusPill, tipLabel, triCell,
 } from "../ui.js";
+// NOT through ../ui.js, which is the DESIGN SYSTEM's barrel — a URL rule is not a component,
+// and putting it there would make every page that wants a button import the Wiz vocabulary.
+// gas_shared/shell/appbar.js reaches for its hubUrl twin the same way, one directory up.
+import { safeWizUrl } from "../../../../../gas_shared/wizUrl.js";
 
 /* ------------------------------------------------------------------ value formatting */
 
@@ -116,6 +130,10 @@ function tierChip(r) {
 /** What the finding IS and where it lives. */
 function identitySection(r) {
   const cve = textOf(r.cve);
+  // Wiz's own deep link, re-checked here rather than trusted off the wire. The ledger is a
+  // Google Sheet tab an operator can type into, so this is the last gate before the value
+  // becomes an href — see gas_shared/domain/wizUrl.ts for the full argument.
+  const wiz = safeWizUrl(r.portal_url);
   return {
     label: "Identity",
     rows: [
@@ -135,7 +153,18 @@ function identitySection(r) {
       row("Key", textOf(r.vuln_key),
         "The ledger's own primary key for this finding. One clock per key.",
         { kind: "code" }),
-    ],
+      // NO ROW AT ALL WHEN THERE IS NO LINK — not a dashed one, which is the opposite of
+      // what every other absent value in this sheet does, and deliberate. `absent()` says
+      // "we were told nothing about this property of the finding". There is no such property
+      // here: a missing link is a fact about THIS REGISTER's record (a row written before
+      // the column existed, or a URL it refuses), not about the finding, and dashing it
+      // would file our own gap under the finding's attributes. The footnote below is where
+      // the register speaks about its own record, so that is where the absence is stated.
+      wiz ? row("Wiz", "Open in Wiz",
+        "Opens this finding in the Wiz console, in a new tab. The link is the one Wiz "
+        + "reports for the finding; the register does not build it.",
+        { kind: "link", href: wiz }) : null,
+    ].filter(Boolean),
   };
 }
 
@@ -242,10 +271,21 @@ export function findingSheetModel(row_) {
     chips: [provenanceChip(r), tierChip(r)],
     copies,
     sections: [identitySection(r), exploitationSection(r), clockSection(r)],
-    // The one sentence that says where the record ends. No finding URL is on the wire — the
-    // ledger stores none — so this states that rather than drawing a dead link.
-    footnote: "Search Wiz for this CVE and asset; the register carries no link to the "
-      + "finding itself.",
+    // The one sentence that says where the record ends, and it now has two things to say
+    // because the record has two shapes.
+    //
+    // WHY IT IS CONDITIONAL RATHER THAN DELETED. The old sentence ("the register carries no
+    // link to the finding itself") was true of every row when it was written and is still
+    // true of some: a row last scanned before `portal_url` existed has no link, and neither
+    // does a sealed episode or a URL this register refuses. Leaving that sentence under a
+    // working link would be a stale claim; deleting it outright would leave the reader of a
+    // linkless finding to guess whether the register lost the link or never had one. So the
+    // absence keeps its sentence and the presence gets its own.
+    footnote: safeWizUrl(r.portal_url)
+      ? "The Wiz row opens this finding in the console. Everything else here is the "
+        + "register's own record of it."
+      : "Search Wiz for this CVE and asset. This finding has no stored Wiz link — it was "
+        + "last scanned before the register began recording one, or Wiz reported none.",
   };
 }
 

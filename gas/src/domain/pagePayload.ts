@@ -405,6 +405,13 @@ export const REGISTER_ROW_COLUMNS: readonly string[] = [
   "last_seen", "resolved_at",
   "has_kev", "has_exploit", "epss", "internet_exposed",
   "mttr_days", "age_days", "actionable_age_days",
+  // Wiz's own console link for this finding. NOT A DRAWN COLUMN — no table cell reads it —
+  // but the finding sheet does, and the sheet may only touch keys on this list
+  // (test/findingSheet.test.js hands the model a Proxy row and asserts exactly that). So it
+  // ships here rather than as a second payload, for the same reason `vuln_key` does: one
+  // `api_getRegisterRows` already carries everything the drill-down needs, and a sheet that
+  // had to fetch would cost one call per finding opened.
+  "portal_url",
 ];
 
 /**

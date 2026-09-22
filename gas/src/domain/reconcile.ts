@@ -13,6 +13,7 @@ import { RESOLVED_STATUSES } from "./config";
 import { field, vulnKey } from "./lifecycle";
 import { normalizeSeverity } from "./severity";
 import { clean, midpointIso, minIso, parseTs, present, toIso, type Rec } from "./util";
+import { normalizeWizUrl } from "../../../gas_shared/domain/wizUrl";
 
 export type LedgerRow = {
   vuln_key: string;
@@ -57,6 +58,20 @@ export type LedgerRow = {
   has_exploit: boolean | null; // ever observed with a known exploit (hasExploit)
   epss: number | null; // PEAK observed epssProbability
   risk_observed_at: string | null; // scan ts at which any risk signal first arrived
+  // Wiz's own console link for this finding (`portalUrl`), normalized through
+  // gas_shared/domain/wizUrl before it lands here.
+  //
+  // LATEST-WINS, NOT STICKY, which is the opposite of the three capture columns above and is
+  // the point rather than an inconsistency. Those exist because a signal is LOST when a
+  // finding leaves the frame, so the durable copy is the only record. A link is not a
+  // measurement: it is an address, and an address that changed should follow. Keeping the
+  // first one ever seen would pin readers to a URL Wiz has since moved.
+  //
+  // null means NO LINK, and there are three ordinary ways to get there: a row written before
+  // this column existed, a finding Wiz returned no `portalUrl` for, and a value this
+  // register refuses to link to. The finding sheet draws no row for any of them — see
+  // gas_shared/domain/wizUrl.ts for why an API-supplied URL is still checked.
+  portal_url: string | null;
 };
 
 export const LEDGER_COLUMNS: (keyof LedgerRow)[] = [
@@ -65,7 +80,7 @@ export const LEDGER_COLUMNS: (keyof LedgerRow)[] = [
   "reopened_count", "first_scan_id", "last_scan_id",
   "subscription_name", "subscription_ext_id", "tags_json",
   "fix_date", "fix_observed_at", "published_date",
-  "has_kev", "has_exploit", "epss", "risk_observed_at",
+  "has_kev", "has_exploit", "epss", "risk_observed_at", "portal_url",
 ];
 
 export interface Observation {
@@ -154,6 +169,9 @@ function makeRow(
     last_scan_id: scanId,
     fix_date: fixDate,
     fix_observed_at: fixObservedAt,
+    // Refreshed on every later scan too (see reconcile()), because this is an address rather
+    // than a measurement — the header on the field says why it does not stick.
+    portal_url: normalizeWizUrl(record["portalUrl"]),
     // Left null here and filled by seedPublished() after the branch, which — like the risk
     // merge below it — runs identically for new, reopened and persisting rows.
     published_date: null,
@@ -401,6 +419,20 @@ export function reconcile(
     row.asset_name = field(rec, "vulnerableAsset.name") || row.asset_name;
     row.asset_type = field(rec, "vulnerableAsset.type") || row.asset_type;
     row.cloud = field(rec, "vulnerableAsset.cloudPlatform") || row.cloud;
+    // The console link is a display attribute too, so it follows the same latest-wins rule —
+    // and the `||` matters as much as the assignment: a scan that returned no `portalUrl`
+    // (or one this register refuses) must not BLANK a link that already works. That is what
+    // makes the backfill work at all — every open row picks up a link on its next scan, and
+    // a row that has one never loses it to a frame that happened to omit the field.
+    // The trailing `?? null` is not belt-and-braces: `row` here is a shallow copy of a row
+    // that may predate this column entirely (a ledger loaded from a checkpoint or an
+    // imported bundle simply has no such key), so `row.portal_url` is `undefined` rather
+    // than null on exactly those rows. Without it, a scan that reports no URL for a finding
+    // the register has never had one for writes `undefined` into a field typed
+    // `string | null` — which snapshots as `undefined`, reaches a Sheet cell as the string
+    // "undefined" through `setValues`, and is the same "absent is not a value" trap the
+    // risk columns above are so careful about.
+    row.portal_url = normalizeWizUrl(rec["portalUrl"]) || row.portal_url || null;
     row.subscription_name =
       field(rec, "vulnerableAsset.subscriptionName") || row.subscription_name;
     row.subscription_ext_id =
