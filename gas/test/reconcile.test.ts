@@ -136,7 +136,7 @@ describe("reconcile fix-field capture", () => {
         subscription_name: null, subscription_ext_id: null, tags_json: null,
         fix_date: "2026-02-20T00:00:00Z", fix_observed_at: "2026-03-05T00:00:00Z",
         published_date: null,
-        ...emptyRiskSignals(),
+        ...emptyRiskSignals(), portal_url: null,
       },
     };
     // Reopens with NO fix signal → both cleared for the new episode.
@@ -228,7 +228,7 @@ describe("reconcile published-date capture", () => {
         subscription_name: null, subscription_ext_id: null, tags_json: null,
         fix_date: "2026-02-20T00:00:00Z", fix_observed_at: "2026-03-05T00:00:00Z",
         published_date: "2026-01-15T00:00:00Z",
-        ...emptyRiskSignals(),
+        ...emptyRiskSignals(), portal_url: null,
       },
     };
     const reopened = run(
@@ -335,6 +335,7 @@ describe("reconcile risk-signal capture", () => {
         published_date: null,
         has_kev: true, has_exploit: true, epss: 0.7,
         risk_observed_at: "2026-03-01T00:00:00Z",
+        portal_url: null,
       },
     };
     // Exploit availability is a property of the vulnerability, not of the episode, so the
@@ -360,5 +361,82 @@ describe("reconcile risk-signal capture", () => {
     expect(row.has_kev).toBe(true);
     expect(row.has_exploit).toBe(false);
     expect(row.epss).toBe(0.31);
+  });
+});
+
+// ===========================================================================================
+//  portal_url — Wiz's own console link, and the one column here that is NOT sticky
+// ===========================================================================================
+//
+// The risk columns above are sticky because a signal is LOST once a finding leaves the frame,
+// so the durable copy is the only record of it. A link is not a measurement, it is an
+// address, and these cases pin the difference: it follows the latest scan, it survives a scan
+// that simply did not mention it, and it is never `undefined` on a row that predates the
+// column. That last one is not hypothetical — it is how the first version of this was wrong.
+describe("reconcile: the Wiz console link", () => {
+  const WIZ_A = "https://app.wiz.io/explorer/vulnerability-findings#~(entity~(~'a))";
+  const WIZ_B = "https://app.wiz.io/explorer/vulnerability-findings#~(entity~(~'b))";
+  const rec = (over: Record<string, unknown>) => ({
+    id: "vf-1",
+    name: "CVE-2026-1",
+    severity: "HIGH",
+    status: "OPEN",
+    firstDetectedAt: "2026-03-01T00:00:00Z",
+    ...over,
+  });
+  const run = (
+    records: Record<string, unknown>[],
+    ledger: Record<string, LedgerRow>,
+    scanId: string,
+  ) => reconcile(records, ledger, scanId, scanId, null);
+
+  it("captures the link Wiz reports on a first sighting", () => {
+    const { ledger } = run([rec({ portalUrl: WIZ_A })], {}, "2026-03-05T00:00:00Z");
+    expect(ledger["id:vf-1"].portal_url).toBe(WIZ_A);
+  });
+
+  it("LATEST-WINS: a moved link follows rather than sticking to the first seen", () => {
+    const s1 = run([rec({ portalUrl: WIZ_A })], {}, "2026-03-05T00:00:00Z");
+    const s2 = run([rec({ portalUrl: WIZ_B })], s1.ledger, "2026-03-10T00:00:00Z");
+    expect(s2.ledger["id:vf-1"].portal_url).toBe(WIZ_B);
+  });
+
+  // THE BACKFILL, AS A TEST. Every open row picks up a link on its next scan — which is the
+  // whole migration story for rows written before the column existed.
+  it("fills a row that had no link when the next scan reports one", () => {
+    const s1 = run([rec({})], {}, "2026-03-05T00:00:00Z");
+    expect(s1.ledger["id:vf-1"].portal_url).toBeNull();
+    const s2 = run([rec({ portalUrl: WIZ_A })], s1.ledger, "2026-03-10T00:00:00Z");
+    expect(s2.ledger["id:vf-1"].portal_url).toBe(WIZ_A);
+  });
+
+  it("a scan that reports no link does NOT blank one the row already has", () => {
+    const s1 = run([rec({ portalUrl: WIZ_A })], {}, "2026-03-05T00:00:00Z");
+    const s2 = run([rec({ portalUrl: null })], s1.ledger, "2026-03-10T00:00:00Z");
+    expect(s2.ledger["id:vf-1"].portal_url).toBe(WIZ_A);
+  });
+
+  it("refuses a URL the rule rejects rather than storing it for the sheet to gate", () => {
+    // Defence in depth is the intent, not redundancy: the sheet gates too, but a ledger that
+    // never holds the value cannot leak it through some other reader (an export, a future
+    // column, the Drive snapshot).
+    const { ledger } = run(
+      [rec({ portalUrl: "javascript:alert(1)" })], {}, "2026-03-05T00:00:00Z",
+    );
+    expect(ledger["id:vf-1"].portal_url).toBeNull();
+  });
+
+  // NULL, NEVER undefined. A prior row loaded from a checkpoint or an imported bundle has no
+  // `portal_url` key at all, and `undefined` in a field typed `string | null` reaches a Sheet
+  // cell as the literal string "undefined" through setValues.
+  it("writes null, not undefined, on a row that predates the column", () => {
+    const priorWithoutTheColumn = {
+      "id:vf-1": { ...run([rec({})], {}, "2026-03-05T00:00:00Z").ledger["id:vf-1"] },
+    } as Record<string, LedgerRow>;
+    delete (priorWithoutTheColumn["id:vf-1"] as Partial<LedgerRow>).portal_url;
+
+    const { ledger } = run([rec({})], priorWithoutTheColumn, "2026-03-10T00:00:00Z");
+    expect(ledger["id:vf-1"].portal_url).toBeNull();
+    expect(Object.prototype.hasOwnProperty.call(ledger["id:vf-1"], "portal_url")).toBe(true);
   });
 });

@@ -32,6 +32,13 @@ export const TAB_HEADERS: Record<string, string[]> = {
     "subscription_name", "subscription_ext_id", "tags_json",
     "fix_date", "fix_observed_at",
     "has_kev", "has_exploit", "epss", "risk_observed_at",
+    // Wiz's own console link. LAST, which is where `ensureHeaders` appends a newly-added
+    // column on an existing deployment — so a sheet created by this version and a sheet
+    // healed into it end up with the same column order rather than two orders that only
+    // agree by luck. (Writes map by the headers READ OFF THE SHEET, not by this list, so
+    // the orders never have to match each other — but a reader comparing two deployments
+    // should not have to discover that.)
+    "portal_url",
   ],
   [TABS.episodes]: [
     "vuln_key", "cve", "severity", "first_seen", "resolved_at", "resolution_src",

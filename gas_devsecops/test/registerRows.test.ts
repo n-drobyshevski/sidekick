@@ -260,6 +260,7 @@ function scaRow(i: number): BaseRow {
     owner_path: "org/proj-a",
     tags_json: null,
     projects_json: null,
+    portal_url: null,
     mttr_days: resolved ? 1 : null,
     age_days: resolved ? null : (NOW - firstMs) / DAY,
     fix_available_at: first,

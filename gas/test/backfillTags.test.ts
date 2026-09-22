@@ -45,7 +45,7 @@ function ledgerRow(vuln_key: string, tags_json: string | null): LedgerRow {
     first_scan_id: null, last_scan_id: null, subscription_name: null,
     subscription_ext_id: null, tags_json, fix_date: null, fix_observed_at: null,
     published_date: null,
-    ...emptyRiskSignals(),
+    ...emptyRiskSignals(), portal_url: null,
   };
 }
 

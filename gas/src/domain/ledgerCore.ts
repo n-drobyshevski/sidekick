@@ -427,6 +427,10 @@ export function baseRows(state: LedgerState, now?: number): BaseRow[] {
         has_exploit: e.has_exploit,
         epss: e.epss,
         risk_observed_at: e.risk_observed_at,
+        // No link, for the same reason `asset_id` above is null: a compacted episode has
+        // dropped the per-finding detail it was summarizing, and an EpisodeRow never carried
+        // a URL. The sheet draws no Wiz row, which is the honest rendering of a sealed row.
+        portal_url: null,
       }),
     );
   }

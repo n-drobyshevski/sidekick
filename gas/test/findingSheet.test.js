@@ -294,8 +294,54 @@ describe("the header says what the record is and how much to trust its date", ()
     expect(findingRowLabel(null)).toBe("Finding, open details");
   });
 
-  it("says where the record ends rather than drawing a link the ledger does not hold", () => {
-    expect(findingSheetModel(wireRow()).footnote).toMatch(/the register carries no link/);
+  // THE WIZ LINK: what the sheet does with `portal_url`, and what it refuses to do.
+  //
+  // The rule itself (which URLs are legal) is gas_shared/test/contracts/wizUrl.js's, run
+  // against both copies from shared.test.js. What is asserted HERE is the sheet's own
+  // decisions on top of it: whether a row is drawn at all, and which sentence the footnote
+  // carries — because those are the two places a link can be wrong without being illegal.
+  const WIZ_URL = "https://app.wiz.io/explorer/vulnerability-findings#~(entity~(~'vf-1))";
+  const wizRowOf = (model) =>
+    model.sections.find((s) => s.label === "Identity").rows.find((x) => x.label === "Wiz");
+
+  it("draws a Wiz row from the link Wiz itself reported", () => {
+    const wizRow = wizRowOf(findingSheetModel(wireRow({ portal_url: WIZ_URL })));
+    expect(wizRow).toBeTruthy();
+    expect(wizRow.kind).toBe("link");
+    expect(wizRow.href).toBe(WIZ_URL);
+  });
+
+  // NO ROW, NOT A DASHED ONE, and this is the assertion that pins the argument in
+  // identitySection(): every other absent value in this sheet becomes a muted em dash,
+  // because it is a property of the finding nobody reported. A missing link is a fact about
+  // the REGISTER'S RECORD instead, so it is stated in the footnote and drawn nowhere.
+  it.each([
+    ["a row written before the column existed", undefined],
+    ["a finding Wiz reported no link for", null],
+    ["a blank the ledger holds", ""],
+  ])("draws no Wiz row at all for %s", (_what, portal_url) => {
+    expect(wizRowOf(findingSheetModel(wireRow({ portal_url })))).toBeUndefined();
+  });
+
+  // The render gate is re-asserted at THIS level, not just in the shared contract, because
+  // the defect it catches is a wiring one: a sheet that read `r.portal_url` straight into
+  // `href` would pass every test in the contract and still hand a reader a javascript: URL
+  // typed into the ledger tab.
+  it("draws no Wiz row for a URL the rule refuses, however the ledger got it", () => {
+    for (const bad of ["javascript:alert(1)", "https://app.wiz.io.evil.example/x", "//app.wiz.io/x"]) {
+      expect(wizRowOf(findingSheetModel(wireRow({ portal_url: bad })))).toBeUndefined();
+    }
+  });
+
+  it("says where the record ends, in the shape the record actually has", () => {
+    // Linkless: the original sentence, still true of every row that has no link.
+    expect(findingSheetModel(wireRow({ portal_url: null })).footnote)
+      .toMatch(/no stored Wiz link/);
+    // Linked: a different sentence, because the old one would be a stale claim under a
+    // working link — the failure this pair exists to catch.
+    const linked = findingSheetModel(wireRow({ portal_url: WIZ_URL })).footnote;
+    expect(linked).toMatch(/opens this finding in the console/i);
+    expect(linked).not.toMatch(/no stored Wiz link/);
   });
 });
 

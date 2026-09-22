@@ -110,6 +110,7 @@ QUERY = """
    
         fragment VulnerabilityFindingFragment on VulnerabilityFinding {
       id
+      portalUrl
       name
       detailedName
       description

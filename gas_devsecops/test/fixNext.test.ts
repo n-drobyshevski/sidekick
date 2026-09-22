@@ -78,7 +78,7 @@ function row(spec: RowSpec, i: number): BaseRow {
     owner_project: null,
     owner_path: null,
     tags_json: null,
-    projects_json: null,
+    projects_json: null, portal_url: null,
     // The two grains the ranking reads. Attached on read from the tenant's naming convention
     // rather than stored, which is why the fixture sets them directly — `owner_project` above
     // is the conflated column they replaced and no longer reaches this path.
