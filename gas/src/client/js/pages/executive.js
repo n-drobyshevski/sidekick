@@ -687,6 +687,9 @@ export function fixNextView(payload, boot) {
     unclassified: num(u.unclassified, 0),
     insideSla: num(u.insideSla, 0),
     other: num(u.other, 0),
+    // O1c: unobserved, and not yet past target at its last sighting — see domain/fixNext.ts.
+    // Never folded into `insideSla`, which is a claim only an OBSERVED row can back.
+    unknown: num(u.unknown, 0),
   };
   const ranked = num(block.ranked, 0);
   const openTotal = num(block.openTotal, 0);
@@ -701,6 +704,11 @@ export function fixNextView(payload, boot) {
     unranked.noFix ? fmtCount(unranked.noFix) + " are waiting on a vendor fix" : null,
     unranked.insideSla
       ? fmtCount(unranked.insideSla) + " are inside their SLA window"
+      : null,
+    // "unobserved, not yet late" — never "in SLA", never anything implying compliance: the
+    // scanner has not confirmed it either way, so the sentence does not claim it did.
+    unranked.unknown
+      ? fmtCount(unranked.unknown) + " are unobserved, not yet late"
       : null,
     unranked.unclassified
       ? fmtCount(unranked.unclassified)
@@ -1351,7 +1359,7 @@ export async function renderExecutive(main, _params, ctx) {
     // to sit under the table as a surface paragraph; it is the one line that tells a reader
     // what is behind the toggle and how much of the backlog it speaks for, so it rides on the
     // heading instead and is legible whether the section is open or closed. It is NOT moved
-    // behind a signifier — the disclosure under it still holds the four reasons, exactly as
+    // behind a signifier — the disclosure under it still holds the five reasons, exactly as
     // before — it moved UP, onto the thing it measures.
     const section = collapsibleSection("Fix next", {
       help: {
@@ -1448,7 +1456,7 @@ export async function renderExecutive(main, _params, ctx) {
       }));
     }
 
-    // The four reasons behind the unranked rest, in a closed `disclosure`. NOT a tip: the
+    // The five reasons behind the unranked rest, in a closed `disclosure`. NOT a tip: the
     // sentence is an ACCOUNTING, and a hover card is the wrong shape for something a reader
     // may want to read twice and compare against the register pages. The two numbers it
     // accounts for are on the section's own heading now — see `hint` above.

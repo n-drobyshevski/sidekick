@@ -608,8 +608,8 @@ describe("withOpenPastSla", () => {
       { date: "2026-01-15T00:00:00Z", open: 88, foo: "b" },
     ];
     expect(withOpenPastSla(points, base)).toEqual([
-      { date: "2026-01-05T00:00:00Z", open: 99, foo: "a", open_past_sla: 0 },
-      { date: "2026-01-15T00:00:00Z", open: 88, foo: "b", open_past_sla: 1 },
+      { date: "2026-01-05T00:00:00Z", open: 99, foo: "a", open_past_sla: 0, open_past_sla_unknown: 0 },
+      { date: "2026-01-15T00:00:00Z", open: 88, foo: "b", open_past_sla: 1, open_past_sla_unknown: 0 },
     ]);
   });
 
@@ -661,6 +661,84 @@ describe("withOpenPastSla", () => {
     const points = [{ date: "2026-01-15T00:00:00Z" }];
     expect(withOpenPastSla(points, b)[0].open_past_sla).toBe(3);
     expect(withOpenPastSla(points, b, null, "actionable_from")[0].open_past_sla).toBe(1);
+  });
+
+  // ------------------------------------------------------- the three-way rule, replayed (O1c)
+  //
+  // Consumed time at a point date `d` is `censoredAsOf(d, last_seen) − origin`, not `d − origin`
+  // — a row already gone quiet by `d` is censored at its last sighting, not read as open all
+  // the way to `d`. The same three-way split `remediation.openPastSla` computes at "now" is
+  // computed here at every historical point.
+
+  it("a row that breached before going quiet stays breached at every later point — a fact about the past", () => {
+    // CRITICAL target = 7. first_seen Jan 1, last_seen Jan 12 -> consumed 11d > 7 while still
+    // visible. Replayed at Jan 25 (well after last_seen), it is STILL breached: censoredAsOf
+    // caps consumed time at Jan 12, not Jan 25, but 11d was already > 7 by then.
+    const b = [{
+      severity: "CRITICAL", first_seen: "2026-01-01T00:00:00Z", last_seen: "2026-01-12T00:00:00Z",
+      resolved_at: null,
+    }];
+    const out = withOpenPastSla([{ date: "2026-01-25T00:00:00Z" }], b)[0];
+    expect(out.open_past_sla).toBe(1);
+    expect(out.open_past_sla_unknown).toBe(0);
+  });
+
+  it("a row that went quiet before breaching is unknown at a later point, never counted as breached", () => {
+    // CRITICAL target = 7. first_seen Jan 1, last_seen Jan 4 -> consumed only 3d <= 7 while
+    // still visible. Replayed at Jan 25: naively `d - first_seen` = 24d > 7 would wrongly
+    // breach it; censored at last_seen it is still only 3d, so it is `unknown`, not breached.
+    const b = [{
+      severity: "CRITICAL", first_seen: "2026-01-01T00:00:00Z", last_seen: "2026-01-04T00:00:00Z",
+      resolved_at: null,
+    }];
+    const out = withOpenPastSla([{ date: "2026-01-25T00:00:00Z" }], b)[0];
+    expect(out.open_past_sla).toBe(0);
+    expect(out.open_past_sla_unknown).toBe(1);
+  });
+
+  it("a row still visible through the point date is scored on the uncapped age, same as before this package", () => {
+    // CRITICAL target = 7. last_seen (Jan 20) is AT/after the point date (Jan 15), so
+    // censoredAsOf does not cap it: consumed = Jan15 - Jan1 = 14d > 7 -> breached, not unknown.
+    const b = [{
+      severity: "CRITICAL", first_seen: "2026-01-01T00:00:00Z", last_seen: "2026-01-20T00:00:00Z",
+      resolved_at: null,
+    }];
+    const out = withOpenPastSla([{ date: "2026-01-15T00:00:00Z" }], b)[0];
+    expect(out.open_past_sla).toBe(1);
+    expect(out.open_past_sla_unknown).toBe(0);
+  });
+
+  it("a null last_seen is undecidable and is NOT capped — conservatively treated as visible", () => {
+    // Same convention as BaseRow.observed's missing-scan default: never accuse a row of having
+    // gone quiet on the strength of a missing last_seen. CRITICAL target = 7, age 14d > 7.
+    const b = [{
+      severity: "CRITICAL", first_seen: "2026-01-01T00:00:00Z", last_seen: null, resolved_at: null,
+    }];
+    const out = withOpenPastSla([{ date: "2026-01-15T00:00:00Z" }], b)[0];
+    expect(out.open_past_sla).toBe(1);
+    expect(out.open_past_sla_unknown).toBe(0);
+  });
+
+  it("strict > boundary: consumed time exactly == target is not a breach", () => {
+    // CRITICAL target = 7. first_seen Jan 1, replayed at Jan 8 -> consumed exactly 7d.
+    const b = [{
+      severity: "CRITICAL", first_seen: "2026-01-01T00:00:00Z", last_seen: null, resolved_at: null,
+    }];
+    const out = withOpenPastSla([{ date: "2026-01-08T00:00:00Z" }], b)[0];
+    expect(out.open_past_sla).toBe(0);
+    expect(out.open_past_sla_unknown).toBe(0);
+  });
+
+  it("a no-target severity is never unknown, whatever its last_seen", () => {
+    // UNKNOWN never breaches, and the three-way rule does not apply to a row with no target at
+    // all — it is simply never counted, in either bucket.
+    const b = [{
+      severity: "UNKNOWN", first_seen: "2026-01-01T00:00:00Z", last_seen: "2026-01-02T00:00:00Z",
+      resolved_at: null,
+    }];
+    const out = withOpenPastSla([{ date: "2026-01-25T00:00:00Z" }], b)[0];
+    expect(out.open_past_sla).toBe(0);
+    expect(out.open_past_sla_unknown).toBe(0);
   });
 });
 

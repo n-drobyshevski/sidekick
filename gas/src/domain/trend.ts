@@ -763,19 +763,35 @@ export function kmMedianAsOf(
 
 /**
  * Augment already-emitted trend points with an `open_past_sla` count — open findings
- * whose age at the point's date already exceeds their severity's SLA target (the tail
- * the resolved-only In-SLA % never scores). Replays the durable base at each point's
- * `date` with the same as-of predicate `trendFromFrames` uses (open iff first_seen <= d
- * and not resolved by d; breached iff `(d − first_seen)/day > SLA_TARGETS[sev]`), so real
- * saved scans and synthetic backfill days are counted identically. The generic passthrough
- * preserves every existing point field — points already carry `open`, so only the new
- * `open_past_sla` is added, never clobbering it.
+ * whose CONSUMED time at the point's date already exceeds their severity's SLA target (the
+ * tail the resolved-only In-SLA % never scores).
+ *
+ * THE SAME THREE-WAY RULE `remediation.openPastSla` APPLIES, REPLAYED AT AN ARBITRARY
+ * HISTORICAL DATE `d` INSTEAD OF ONLY TODAY. A row open as of `d` (origin <= d, not resolved by
+ * d) consumed `censoredAsOf(d, last_seen) − origin` — the last sighting on or before `d`, if the
+ * row had already gone quiet by then, else `d` itself (the same cap `withKmMedian` /
+ * `kmMedianByGroupTrend` apply for the KM replays). Breached iff that consumed time exceeds the
+ * target (strict `>`, matching `openPastSla`'s boundary — a row exactly on its due date is not
+ * yet a breach). A row whose last sighting predates `d` (so its consumed time was capped) and
+ * that had NOT breached by then is `open_past_sla_unknown`, not counted as breached and not
+ * counted as within SLA either — it is reported beside the breach count, exactly the
+ * `unknown` bucket `openPastSla` publishes, replayed at each point's date rather than only at
+ * "now". A row still visible through `d` (or with no `last_seen` to cap by — undecidable,
+ * conservatively treated as visible, the same default `BaseRow.observed` uses) is scored only
+ * breached-or-not, same as before this package.
+ *
+ * Replays the durable base at each point's `date` with the same as-of predicate
+ * `trendFromFrames` uses for the OPEN test (origin <= d and not resolved by d) so real saved
+ * scans and synthetic backfill days are counted identically. The generic passthrough preserves
+ * every existing point field — points already carry `open`, so only the two new keys are
+ * added, never clobbering it.
  *
  * GAS-first (no Python fixture parity — mirrors `openBySeverityTrend`): a UI-only
  * augmentation of the same durable rows, kept out of the parity-tested `trendFromFrames`.
  *
  * points: trend points with a `date` (ISO); base: ledger+episode rows with {severity,
- * first_seen, resolved_at}. severities (optional) restricts to those + UNKNOWN, as elsewhere.
+ * first_seen, last_seen, resolved_at}. severities (optional) restricts to those + UNKNOWN, as
+ * elsewhere.
  */
 export function withOpenPastSla<T extends { date: string }>(
   points: T[],
@@ -786,7 +802,7 @@ export function withOpenPastSla<T extends { date: string }>(
   // switches to the vendor-fix-availability clock: rows with a null value for the chosen
   // field are skipped, which is exactly what drops awaiting-vendor-fix rows in that mode.
   fromField: "first_seen" | "actionable_from" = "first_seen",
-): (T & { open_past_sla: number })[] {
+): (T & { open_past_sla: number; open_past_sla_unknown: number })[] {
   let rows = base;
   if (severities !== null && base.length) {
     const keep = new Set([...severities, "UNKNOWN"]);
@@ -794,6 +810,7 @@ export function withOpenPastSla<T extends { date: string }>(
   }
   const parsed = rows.map((r) => ({
     origin: parseTs(r[fromField]),
+    last: parseTs(r["last_seen"]),
     resolvedAt: parseTs(r["resolved_at"]),
     sev: normalizeSeverity(r["severity"]),
   }));
@@ -801,16 +818,26 @@ export function withOpenPastSla<T extends { date: string }>(
   return points.map((p) => {
     const d = parseTs(p.date);
     let breached = 0;
+    let unknown = 0;
     if (d !== null) {
       for (const r of parsed) {
         const open =
           r.origin !== null && r.origin <= d && (r.resolvedAt === null || r.resolvedAt > d);
         if (!open) continue;
         const target = SLA_TARGETS[r.sev];
-        if (target !== undefined && (d - r.origin!) / DAY_MS > target) breached += 1;
+        if (target === undefined) continue;
+        const censoredMs = censoredAsOf(d, r.last);
+        const consumed = (censoredMs - r.origin!) / DAY_MS;
+        if (consumed > target) {
+          breached += 1;
+        } else if (r.last !== null && r.last < d) {
+          // Consumed time was capped at the last sighting (before d) and still did not cross
+          // the target — we cannot say what happened after we stopped looking.
+          unknown += 1;
+        }
       }
     }
-    return { ...p, open_past_sla: breached };
+    return { ...p, open_past_sla: breached, open_past_sla_unknown: unknown };
   });
 }
 
@@ -818,6 +845,19 @@ export function withOpenPastSla<T extends { date: string }>(
 // resolution time — the shared derivation behind withSlaBurn and cohortSlaAttainment. Rows
 // with a null actionable_from (awaiting a vendor fix) or a severity with no SLA target are
 // dropped, so neither the burn flow nor the attainment cohort ever counts them.
+//
+// NEITHER SIBLING NEEDS THE THREE-WAY OBSERVED/UNKNOWN SPLIT `withOpenPastSla` GOT, and not
+// because they were overlooked — `deadline` is a FIXED calendar instant (actionable_from +
+// target), not a "now/d − origin" span that keeps growing while nobody is looking. Both
+// functions only ever ask "had this row's fixed deadline passed, and was it resolved by then",
+// which is a yes/no fact the day the deadline lands and never changes afterward — there is no
+// running duration here for an unobserved row to keep "consuming" past what it actually
+// consumed, so there is nothing for observation status to correct. (A silently-fixed-while-
+// unobserved row is a different, pre-existing question this register already answers a fixed
+// way — `coldZone.ts` refuses to infer a resolution from silence, so `resolvedAt` here is never
+// wrong in the direction that would matter: a row genuinely never marked resolved reads as
+// "not resolved by its deadline" whether or not anyone was still watching, which is the correct
+// verdict either way.)
 function slaDeadlineRows(
   base: Rec[],
   severities: string[] | null,

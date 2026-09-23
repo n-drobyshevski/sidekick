@@ -82,7 +82,7 @@ function fixNextBlock(over) {
       },
     ],
     tiers: { 1: 11, 2: 3, 3: 0 },
-    unranked: { noFix: 30, unclassified: 2, insideSla: 33, other: 23 },
+    unranked: { noFix: 30, unclassified: 2, insideSla: 33, other: 19, unknown: 4 },
     ranked: 25,
     openTotal: 113,
     groupsTotal: 2,
@@ -385,10 +385,15 @@ describe("os: fixNextView", () => {
     expect(view.unrankedSentence).toMatch(/^25 of 113 open findings are ranked above\./);
     expect(view.unrankedSentence).toContain("30 are waiting on a vendor fix");
     expect(view.unrankedSentence).toContain("33 are inside their SLA window");
+    // "unobserved, not yet late" — the O1c bucket. Never "in SLA", never anything implying
+    // compliance: the scanner has not confirmed it either way.
+    expect(view.unrankedSentence).toContain("4 are unobserved, not yet late");
     expect(view.unrankedSentence)
       .toContain("2 could not be classified because no risk signal was captured");
-    expect(view.unrankedSentence).toContain("23 are past SLA without meeting any tier's bar");
-    expect(view.unranked).toEqual({ noFix: 30, unclassified: 2, insideSla: 33, other: 23 });
+    expect(view.unrankedSentence).toContain("19 are past SLA without meeting any tier's bar");
+    expect(view.unranked).toEqual(
+      { noFix: 30, unclassified: 2, insideSla: 33, other: 19, unknown: 4 },
+    );
     expect(view.rankedShort).toBe("25 of 113 open findings ranked");
   });
 
@@ -396,19 +401,22 @@ describe("os: fixNextView", () => {
   // as an explanation. The reason is dropped; the reasons with something behind them stay.
   it("never prints a reason whose count is 0", () => {
     const some = fixNextView(payload({
-      fixNext: fixNextBlock({ unranked: { noFix: 30, unclassified: 0, insideSla: 58, other: 0 } }),
+      fixNext: fixNextBlock({
+        unranked: { noFix: 30, unclassified: 0, insideSla: 58, other: 0, unknown: 0 },
+      }),
     }), null);
     expect(some.unrankedSentence).toContain("30 are waiting on a vendor fix");
     expect(some.unrankedSentence).toContain("58 are inside their SLA window");
     expect(some.unrankedSentence).not.toContain("classified");
     expect(some.unrankedSentence).not.toContain("tier's bar");
+    expect(some.unrankedSentence).not.toContain("unobserved");
     expect(some.unrankedSentence).not.toMatch(/\b0 /);
   });
 
   it("says every open finding earned a tier when nothing at all was left over", () => {
     const none = fixNextView(payload({
       fixNext: fixNextBlock({
-        unranked: { noFix: 0, unclassified: 0, insideSla: 0, other: 0 }, ranked: 113,
+        unranked: { noFix: 0, unclassified: 0, insideSla: 0, other: 0, unknown: 0 }, ranked: 113,
       }),
     }), null);
     expect(none.unrankedSentence).toMatch(/^113 of 113 open findings are ranked above\./);

@@ -314,8 +314,20 @@ export function kmMedian(rows: RemediationRow[]): number | null {
 }
 
 export interface OpenSlaSev {
+  /**
+   * The ATTAINMENT DENOMINATOR: `breached + on-the-clock`. `unknown` sits outside it on
+   * purpose — "we did not look" is not compliance, so it is never folded into the population a
+   * percentage is taken over. (The field kept its pre-O1c name — `open` — because every reader
+   * already reaches for it as the rate's base; what changed is which rows land in it.)
+   */
   open: number;
   breached: number;
+  /**
+   * Open, unobserved, and NOT past target at its last sighting — the row's SLA status cannot
+   * be confirmed either way, so it is counted apart rather than scored as in-SLA. Never folded
+   * into `open`/`pct`. See `openPastSla`'s own header for the full three-way rule.
+   */
+  unknown: number;
   pct: number | null;
   target: number | null;
 }
@@ -323,56 +335,74 @@ export interface OpenSlaSev {
 export interface OpenSlaOverall {
   open: number;
   breached: number;
+  unknown: number;
   pct: number | null;
 }
 
 export interface OpenPastSla {
   perSev: Record<string, OpenSlaSev>;
   overall: OpenSlaOverall;
-  /**
-   * Open rows excluded because the asset was not present at the newest scan of the row's own
-   * severity (`BaseRow.observed`) — the same population `insights.ageBuckets` and
-   * `agingDistribution` set aside. A breach determination needs a live reading; an unobserved
-   * row's SLA status cannot be confirmed either way, so it is counted apart rather than scored
-   * as either in-SLA or breached.
-   */
-  unobserved: number;
 }
 
 /**
- * Open findings already older than their severity's SLA target — the aged backlog the
- * resolved-only "In SLA %" never scores. Over OBSERVED open rows with a finite age_days,
- * breached iff `age_days > SLA_TARGETS[sev]` (strict `>`, the dual of the in-SLA
- * `d <= target`). A severity with no target (e.g. UNKNOWN) gets `target: null` and never
- * breaches. `pct` is null only when `open === 0` (no open sample to score).
+ * Open findings already past their severity's SLA target — the aged backlog the resolved-only
+ * "In SLA %" never scores.
  *
- * UNOBSERVED ROWS ARE EXCLUDED BEFORE `openAge` IS EVEN CALLED, not by its return value: once
- * a row is unobserved, `openAge` reads `seen_age_days` instead of `age_days` (see its own
- * header) and that is very often a FINITE number, so `age === null` can no longer be read as
- * "not open" here — it is `!row.observed` that decides exclusion, checked directly against the
- * one field every consumer of this split reads the same way.
+ * THE DECISION THIS ENCODES: an SLA window is judged on what we actually saw. Every open row
+ * is scored three ways, never two:
+ *
+ *   - BREACHED   consumed time > target. "Consumed time" is `age_days` for an observed row and
+ *                `seen_age_days` (open time WHILE WE COULD STILL SEE IT — `openAge`'s own
+ *                split) for an unobserved one. A row that breached before we lost sight of it
+ *                BREACHED — that is a fact about the past, and losing sight of it later does
+ *                not undo it. So an unobserved row is NOT excluded here the way it used to be;
+ *                it is measured on the clock it actually ran while visible.
+ *   - ON THE CLOCK   observed, consumed time <= target. Still running, still confirmable.
+ *   - UNKNOWN    unobserved AND consumed time <= target at its last sighting. We cannot say
+ *                whether it went on to breach after we stopped looking, so it is counted and
+ *                named — never folded into "within SLA", because "we did not look" is not
+ *                compliance.
+ *
+ * Strict `>` for breach (the dual of the in-SLA `d <= target`), so a row exactly ON its due
+ * date is not yet a breach — matching `withOpenPastSla`'s boundary and the resolved-only
+ * In-SLA comparison. A severity with no target (e.g. UNKNOWN) never breaches: `target: null`,
+ * and every row at that severity lands in `open` (observed) or `unknown` (unobserved) but
+ * never `breached`.
+ *
+ * `open` (per severity and overall) is the ATTAINMENT DENOMINATOR — `breached + on-the-clock`
+ * — and `pct` is `breached / open`, null only when `open === 0`. `unknown` is reported BESIDE
+ * it, never inside it; a percentage computed over `open` is therefore a percentage of the
+ * population whose SLA status is actually knowable, with the blind spot named apart rather
+ * than silently dropped or silently counted as compliant.
  */
 export function openPastSla(rows: RemediationRow[]): OpenPastSla {
   const perSev: Record<string, OpenSlaSev> = {};
   let totalOpen = 0;
   let totalBreached = 0;
-  let unobserved = 0;
+  let totalUnknown = 0;
   for (const row of rows) {
     if (!isOpen(row.status)) continue;
-    if (!row.observed) {
-      unobserved += 1;
-      continue;
-    }
+    // `openAge` already reads `seen_age_days` in place of `age_days` once `!row.observed` (see
+    // its own header) — the same "what we actually saw" substitution the three-way rule reads
+    // consumed time off, for both the from-detection and the actionable clock (the latter via
+    // `actionableView`'s documented seen_age_days passthrough).
     const age = openAge(row);
     if (age === null) continue;
     const s = normalizeSeverity(row.severity);
     const target = SLA_TARGETS[s] ?? null;
-    const stat = perSev[s] ?? (perSev[s] = { open: 0, breached: 0, pct: null, target });
-    stat.open += 1;
-    totalOpen += 1;
-    if (target !== null && age > target) {
+    const stat = perSev[s] ?? (perSev[s] = { open: 0, breached: 0, unknown: 0, pct: null, target });
+    const breached = target !== null && age > target;
+    if (breached) {
       stat.breached += 1;
+      stat.open += 1;
       totalBreached += 1;
+      totalOpen += 1;
+    } else if (row.observed) {
+      stat.open += 1;
+      totalOpen += 1;
+    } else {
+      stat.unknown += 1;
+      totalUnknown += 1;
     }
   }
   for (const stat of Object.values(perSev)) {
@@ -383,9 +413,9 @@ export function openPastSla(rows: RemediationRow[]): OpenPastSla {
     overall: {
       open: totalOpen,
       breached: totalBreached,
+      unknown: totalUnknown,
       pct: totalOpen ? (totalBreached / totalOpen) * 100 : null,
     },
-    unobserved,
   };
 }
 
@@ -427,10 +457,11 @@ export function openPastSlaFromRecords(records: Rec[], now?: number): number {
  *
  * `observed` PASSES THROUGH UNCHANGED — whether the scanner still sees the asset is a fact
  * about the ROW, not about which clock is being read off it, so `openPastSla` over this view
- * sets aside exactly the same rows the from-detection view does. `seen_age_days` also passes
- * through as-is: it is the from-detection open span, a conservative (if not clock-exact)
- * substitute for "how long this was actionable while still observed" — the actionable clock
- * has no analogous field of its own, and inventing one is outside what this package changes.
+ * classifies exactly the same rows unobserved that the from-detection view does. `seen_age_days`
+ * also passes through as-is: it is the from-detection open span, a conservative (if not
+ * clock-exact) substitute for "how long this was actionable while still observed" — the
+ * actionable clock has no analogous field of its own, and inventing one is outside what this
+ * package changes.
  */
 export function actionableView(
   rows: Pick<

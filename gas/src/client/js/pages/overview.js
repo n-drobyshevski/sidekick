@@ -661,9 +661,16 @@ export async function renderOverview(main, params, ctx) {
     // The denominator is open findings whose SLA clock has STARTED, which is smaller than the
     // open count whenever anything is awaiting a vendor fix — those have no clock to breach.
     // Naming it in the headline is cheaper than making the reader reconcile two numbers.
+    //
+    // `unknown` — unobserved findings that had not yet breached at their last sighting
+    // (`openPastSla`'s three-way split): never folded into the breach count above, or into
+    // "on the clock" either, so it earns its own clause rather than vanishing into one of them.
     const headline = past && past.breached
       ? `${past.breached.toLocaleString()} of ${past.open.toLocaleString()} open findings with a `
         + "running SLA clock are past it."
+        + (past.unknown
+          ? ` ${past.unknown.toLocaleString()} more are unknown, unobserved before breaching.`
+          : "")
       : "How long open findings have been open";
     insightsHost.append(el("div", { class: "chart-card" },
       // The clock caveat and the omitted-rows caveat are what the HEADLINE means, so they are

@@ -568,23 +568,23 @@ describe("the insights cache namespace moves when the payload's shape does", () 
    *  above them, which names every prior namespace on purpose and must keep doing so. */
   const active = [...API.matchAll(/^\s*"(insights\d+)",$/gm)].map((m) => m[1]);
 
-  it("names insights8, exactly once, as the namespace it caches under", () => {
-    expect(active).toEqual(["insights8"]);
+  it("names insights10, exactly once, as the namespace it caches under", () => {
+    expect(active).toEqual(["insights10"]);
   });
 
-  it("no longer caches under insights7", () => {
-    expect(active).not.toContain("insights7");
+  it("no longer caches under insights9", () => {
+    expect(active).not.toContain("insights9");
     // ...while the transition stays DOCUMENTED, which is the whole convention: the comment
     // block above the literal is the change log, and losing the line would lose the reason.
-    expect(API).toContain(String.raw`"insights7" → "insights8"`);
+    expect(API).toContain(String.raw`"insights9" → "insights10"`);
   });
 
   it("the bump line says what changed and why a stale entry is not merely fat", () => {
-    const idx = API.indexOf(String.raw`"insights7" → "insights8"`);
+    const idx = API.indexOf(String.raw`"insights9" → "insights10"`);
     expect(idx).toBeGreaterThan(-1);
     const note = API.slice(idx, idx + 900);
-    expect(note).toContain("unobserved");
-    expect(note).toContain("backlog");
+    expect(note).toContain("unknown");
+    expect(note).toContain("fixNext");
   });
 });
 

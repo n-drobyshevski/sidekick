@@ -7,9 +7,12 @@
 //
 // THE SPEC THAT MATTERS MOST HERE IS THE SUM. A ranked top-8 with no denominator is a list
 // that silently deletes a backlog: it looks the same whether four findings were left out or
-// four thousand. `ranked + noFix + unclassified + insideSla + other === openTotal` is the
-// invariant that makes the omission legible, and it is asserted over a fixture that reaches
-// EVERY branch rather than over a convenient one.
+// four thousand. `ranked + noFix + unclassified + insideSla + other + unknown === openTotal`
+// is the invariant that makes the omission legible, and it is asserted over fixtures that
+// reach every branch between them — `population()` below reaches four of the five unranked
+// reasons; `unknown` (O1c: an unobserved row not yet past target at its last sighting) gets
+// its own small fixture in its own describe block, so the many pinned counts `population()`
+// feeds elsewhere are not disturbed by a branch it was never built to reach.
 //
 // THE THREE PERTURBATIONS at the bottom each reproduce a defective rewrite INLINE and show it
 // giving the wrong answer, rather than asserting the rule from a comment. Two of them are
@@ -46,6 +49,13 @@ interface RowSpec {
   domain?: string | null;
   /** Whether this row's `vuln_key` is in the frame's exposed set. */
   exposed?: boolean;
+  /** Present at the newest scan of its own severity. Defaults `true` — the codebase-wide
+   *  "observed unless told otherwise" default, so every existing spec below reads exactly as
+   *  it did before O1c. */
+  observed?: boolean;
+  /** The from-detection open span while still visible — what `pastSla` reads in place of
+   *  `actionableAge` once `observed` is `false`. Defaults `null`. */
+  seenAge?: number | null;
 }
 
 let seq = 0;
@@ -69,6 +79,8 @@ function row(spec: RowSpec): FixNextRow {
     awaiting_vendor_fix: spec.awaiting === true,
     actionable_age_days: spec.actionableAge === undefined ? age : spec.actionableAge,
     age_days: age,
+    observed: spec.observed ?? true,
+    seen_age_days: spec.seenAge === undefined ? null : spec.seenAge,
     asset_name: spec.asset === undefined ? "web-prod-01" : spec.asset,
     subscription_name: spec.sub === undefined ? "prod-account" : spec.sub,
     _supportGroup: spec.sg === undefined ? "CS-CORE" : spec.sg,
@@ -259,7 +271,8 @@ describe("exposure is a join the caller may not have been able to make", () => {
     expect(unknown.exposureKnown).toBe(false);
     // And the row is still accounted for, in the bucket its own clocks earn it.
     expect(unknown.ranked + unknown.unranked.noFix + unknown.unranked.unclassified
-      + unknown.unranked.insideSla + unknown.unranked.other).toBe(unknown.openTotal);
+      + unknown.unranked.insideSla + unknown.unranked.other + unknown.unranked.unknown)
+      .toBe(unknown.openTotal);
   });
 
   it("never ranks a KEV null as a KEV true — a tri-state is not a truthiness test", () => {
@@ -291,12 +304,16 @@ describe("the unranked accounting", () => {
   const out = run(population());
 
   it("names a reason for every open row it did not rank", () => {
-    expect(out.unranked).toEqual({ noFix: 1, unclassified: 1, insideSla: 1, other: 3 });
+    // `unknown` is 0 here — `population()` has no unobserved row — and it is proven non-zero
+    // and load-bearing in its own describe block below, over a fixture built for it.
+    expect(out.unranked).toEqual(
+      { noFix: 1, unclassified: 1, insideSla: 1, other: 3, unknown: 0 },
+    );
   });
 
   it("the ranked and the unranked sum to the open total, with nothing dropped", () => {
     const u = out.unranked;
-    const sum = out.ranked + u.noFix + u.unclassified + u.insideSla + u.other;
+    const sum = out.ranked + u.noFix + u.unclassified + u.insideSla + u.other + u.unknown;
     expect(sum, `${out.ranked} ranked + ${sum - out.ranked} unranked !== ${out.openTotal} open`)
       .toBe(out.openTotal);
     // And the open total is the OPEN rows only — the one resolved row in the fixture is
@@ -307,7 +324,9 @@ describe("the unranked accounting", () => {
 
   it("counts a vendor-blocked finding under noFix rather than dropping it", () => {
     const one = run(rows({ fix: false, awaiting: true, actionableAge: null, age: 300 }));
-    expect(one.unranked).toEqual({ noFix: 1, unclassified: 0, insideSla: 0, other: 0 });
+    expect(one.unranked).toEqual(
+      { noFix: 1, unclassified: 0, insideSla: 0, other: 0, unknown: 0 },
+    );
     expect(one.groups).toEqual([]);
     expect(one.openTotal).toBe(1);
   });
@@ -340,12 +359,67 @@ describe("the unranked accounting", () => {
     const late = { severity: "HIGH" as const, age: 120 };
     const nobodyLooked = run(rows({ ...late, kev: null, exploit: null, epss: null }));
     expect(nobodyLooked.unranked).toEqual(
-      { noFix: 0, unclassified: 1, insideSla: 0, other: 0 },
+      { noFix: 0, unclassified: 1, insideSla: 0, other: 0, unknown: 0 },
     );
     const lookedAndNothingFired = run(rows({ ...late, kev: false, exploit: false, epss: 0.01 }));
     expect(lookedAndNothingFired.unranked).toEqual(
-      { noFix: 0, unclassified: 0, insideSla: 0, other: 1 },
+      { noFix: 0, unclassified: 0, insideSla: 0, other: 1, unknown: 0 },
     );
+  });
+});
+
+// ------------------------------------------------------------------- the unknown bucket (O1c)
+//
+// AN SLA WINDOW IS JUDGED ON WHAT WE ACTUALLY SAW. An unobserved row's `actionable_age_days`
+// keeps growing with wall-clock time even after the scanner stops returning it, so reading it
+// unconditionally would eventually call a row late on nothing but the calendar. These specs
+// build their own small fixtures rather than extending `population()`, so the many pinned
+// counts above (tier shapes, group ordering, asset/CVE tallies) stay untouched by a population
+// that was never meant to reach this branch.
+describe("the unknown bucket", () => {
+  it("an unobserved row not yet past target at its last sighting is `unknown`, never `insideSla`", () => {
+    // CRITICAL target 7d. seenAge 3 <= 7: not late while still visible, and nothing is known
+    // since. `actionableAge` (900) is irrelevant — an unobserved row reads seen_age_days, not
+    // the wall-clock-relative actionable age.
+    const one = run(rows({ kev: false, exploit: false, epss: 0.01, actionableAge: 900,
+      observed: false, seenAge: 3 }));
+    expect(one.tiers).toEqual({ 1: 0, 2: 0, 3: 0 });
+    expect(one.unranked).toEqual(
+      { noFix: 0, unclassified: 0, insideSla: 0, other: 0, unknown: 1 },
+    );
+  });
+
+  it("an unobserved row that already breached at its last sighting is still late — a fact about the past", () => {
+    // CRITICAL target 7d. seenAge 10 > 7: it blew the window WHILE STILL VISIBLE, so it ranks
+    // exactly as an observed late CRITICAL with a fix would — losing sight of it afterward
+    // does not undo the breach.
+    const one = run(rows({ kev: false, exploit: false, epss: 0.01, severity: "CRITICAL",
+      observed: false, seenAge: 10 }));
+    expect(one.tiers["3"]).toBe(1);
+    expect(one.unranked.unknown).toBe(0);
+  });
+
+  it("noFix still outranks unknown — a vendor-blocked row has no clock to be late OR unknown on", () => {
+    const one = run(rows({ fix: false, awaiting: true, actionableAge: null,
+      observed: false, seenAge: 2 }));
+    expect(one.unranked).toEqual(
+      { noFix: 1, unclassified: 0, insideSla: 0, other: 0, unknown: 0 },
+    );
+  });
+
+  it("keeps the five-way sum exact when unknown is non-zero", () => {
+    const rs = rows(
+      { kev: false, exploit: false, epss: 0.01, observed: false, seenAge: 3 }, // unknown
+      { actionableAge: 3 }, // insideSla (observed, default)
+      { kev: true, exposed: true, sg: "CS-A" }, // tier 1
+    );
+    const out = run(rs);
+    const u = out.unranked;
+    expect(out.ranked + u.noFix + u.unclassified + u.insideSla + u.other + u.unknown)
+      .toBe(out.openTotal);
+    expect(u.unknown).toBe(1);
+    expect(u.insideSla).toBe(1);
+    expect(out.tiers["1"]).toBe(1);
   });
 });
 
@@ -382,7 +456,8 @@ describe("the limit", () => {
     expect(cut.tiers["1"]).toBeGreaterThan(drawn);
     expect(cut.tiers["1"]).toBe(cut.ranked);
     const u = cut.unranked;
-    expect(cut.ranked + u.noFix + u.unclassified + u.insideSla + u.other).toBe(cut.openTotal);
+    expect(cut.ranked + u.noFix + u.unclassified + u.insideSla + u.other + u.unknown)
+      .toBe(cut.openTotal);
   });
 
   it("defaults to eight groups", () => {
@@ -397,7 +472,9 @@ describe("an empty register", () => {
     expect(out.groups).toEqual([]);
     expect(out.openTotal).toBe(0);
     expect(out.ranked).toBe(0);
-    expect(out.unranked).toEqual({ noFix: 0, unclassified: 0, insideSla: 0, other: 0 });
+    expect(out.unranked).toEqual(
+      { noFix: 0, unclassified: 0, insideSla: 0, other: 0, unknown: 0 },
+    );
     expect(out.asOf).toBe(NOW);
   });
 });
@@ -524,7 +601,7 @@ describe("perturbation (b): dropping the continue after an unranked reason", () 
     const pop = population();
     const real = run(pop);
     const r = real.unranked;
-    expect(real.ranked + r.noFix + r.unclassified + r.insideSla + r.other)
+    expect(real.ranked + r.noFix + r.unclassified + r.insideSla + r.other + r.unknown)
       .toBe(real.openTotal);
 
     const bad = perturbed(pop, "noContinue", exposedKeys);

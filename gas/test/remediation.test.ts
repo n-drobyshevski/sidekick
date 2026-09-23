@@ -406,63 +406,80 @@ describe("kmQuantileFromCurve", () => {
 
 describe("openPastSla", () => {
   it("strict > boundary: age exactly == target is NOT breached", () => {
-    // CRITICAL target = 7. age 7 -> in SLA; age 7.01 -> breached.
+    // CRITICAL target = 7. age 7 -> on the clock; age 7.01 -> breached.
     const out = openPastSla([open(7, "CRITICAL"), open(7.01, "CRITICAL")]);
-    expect(out.perSev.CRITICAL).toEqual({ open: 2, breached: 1, pct: 50, target: 7 });
+    expect(out.perSev.CRITICAL).toEqual({ open: 2, breached: 1, unknown: 0, pct: 50, target: 7 });
   });
 
   it("no-target severity (UNKNOWN) never breaches; target is null", () => {
     // "WEIRD" normalizes to UNKNOWN, which has no SLA target.
     const out = openPastSla([open(999, "UNKNOWN"), open(999, "WEIRD")]);
-    expect(out.perSev.UNKNOWN).toEqual({ open: 2, breached: 0, pct: 0, target: null });
-    expect(out.overall).toEqual({ open: 2, breached: 0, pct: 0 });
+    expect(out.perSev.UNKNOWN).toEqual({ open: 2, breached: 0, unknown: 0, pct: 0, target: null });
+    expect(out.overall).toEqual({ open: 2, breached: 0, unknown: 0, pct: 0 });
   });
 
   it("resolved and null-age rows are ignored; overall pct null when open === 0", () => {
     const out = openPastSla([res(999, "CRITICAL"), open(null, "CRITICAL"), res(5, "HIGH")]);
-    expect(out.overall).toEqual({ open: 0, breached: 0, pct: null });
+    expect(out.overall).toEqual({ open: 0, breached: 0, unknown: 0, pct: null });
     expect(out.perSev).toEqual({});
   });
 
   it("overall sums breached / open across severities", () => {
     const out = openPastSla([
       open(10, "CRITICAL"), // 10 > 7 -> breached
-      open(3, "CRITICAL"), // 3 <= 7 -> in SLA
+      open(3, "CRITICAL"), // 3 <= 7 -> on the clock
       open(40, "MEDIUM"), // 40 > 30 -> breached
-      open(999, "UNKNOWN"), // no target -> never
+      open(999, "UNKNOWN"), // no target -> never breaches, on the clock (observed)
     ]);
-    expect(out.overall).toEqual({ open: 4, breached: 2, pct: 50 });
-    expect(out.perSev.CRITICAL).toEqual({ open: 2, breached: 1, pct: 50, target: 7 });
-    expect(out.perSev.MEDIUM).toEqual({ open: 1, breached: 1, pct: 100, target: 30 });
-    expect(out.unobserved).toBe(0);
+    expect(out.overall).toEqual({ open: 4, breached: 2, unknown: 0, pct: 50 });
+    expect(out.perSev.CRITICAL).toEqual({ open: 2, breached: 1, unknown: 0, pct: 50, target: 7 });
+    expect(out.perSev.MEDIUM).toEqual({ open: 1, breached: 1, unknown: 0, pct: 100, target: 30 });
   });
 
-  it("sets an unobserved open row aside — never scored breached OR in-SLA, counted once", () => {
-    // CRITICAL target = 7. The unobserved row's age (900) would be a breach if it counted;
-    // it must move neither `open` nor `breached`, only `unobserved`.
+  // ------------------------------------------------------- the three-way rule (O1c)
+  //
+  // AN SLA WINDOW IS JUDGED ON WHAT WE ACTUALLY SAW. A row that already breached before going
+  // quiet BREACHED — that is a fact about the past, and losing sight of it later does not undo
+  // it. A row that had NOT yet breached at its last sighting is UNKNOWN: we cannot say what
+  // happened after we stopped looking, so it is counted apart, never folded into "in SLA".
+
+  it("an unobserved row that already breached at its last sighting counts as breached, not unknown", () => {
+    // CRITICAL target = 7. seen_age_days = 10 > 7: it blew the window WHILE STILL VISIBLE.
+    const out = openPastSla([open(999, "CRITICAL", "OPEN", false, 10)]);
+    expect(out.perSev.CRITICAL).toEqual({ open: 1, breached: 1, unknown: 0, pct: 100, target: 7 });
+    expect(out.overall).toEqual({ open: 1, breached: 1, unknown: 0, pct: 100 });
+  });
+
+  it("an unobserved row NOT yet past target at its last sighting is unknown, never in-SLA", () => {
+    // CRITICAL target = 7. seen_age_days = 2 <= 7: not breached while visible, and nothing
+    // is known about it since. `age_days` (999) is irrelevant — unobserved reads seen_age_days.
     const out = openPastSla([
       open(10, "CRITICAL"), // 10 > 7 -> breached, observed
-      open(3, "CRITICAL"), // 3 <= 7 -> in SLA, observed
-      open(900, "CRITICAL", "OPEN", false), // unobserved -> set aside
+      open(3, "CRITICAL"), // 3 <= 7 -> on the clock, observed
+      open(999, "CRITICAL", "OPEN", false, 2), // unobserved, seen 2d -> unknown
     ]);
-    expect(out.perSev.CRITICAL).toEqual({ open: 2, breached: 1, pct: 50, target: 7 });
-    expect(out.overall).toEqual({ open: 2, breached: 1, pct: 50 });
-    expect(out.unobserved).toBe(1);
+    expect(out.perSev.CRITICAL).toEqual({ open: 2, breached: 1, unknown: 1, pct: 50, target: 7 });
+    expect(out.overall).toEqual({ open: 2, breached: 1, unknown: 1, pct: 50 });
   });
 
-  it("an unobserved row is excluded by `observed` directly, not by openAge returning null — it usually has a finite seen_age_days", () => {
-    // seen_age_days = 2 is a perfectly finite, in-SLA-looking number; the row must still be
-    // set aside rather than scored in-SLA on the strength of it.
+  it("unknown is never folded into `open` — the attainment denominator excludes it", () => {
     const out = openPastSla([open(50, "CRITICAL", "OPEN", false, 2)]);
-    expect(out.perSev).toEqual({});
-    expect(out.overall).toEqual({ open: 0, breached: 0, pct: null });
-    expect(out.unobserved).toBe(1);
+    expect(out.perSev.CRITICAL).toEqual({ open: 0, breached: 0, unknown: 1, pct: null, target: 7 });
+    expect(out.overall).toEqual({ open: 0, breached: 0, unknown: 1, pct: null });
   });
 
-  it("resolved rows never count toward unobserved, whatever their observed flag says", () => {
-    const out = openPastSla([res(999, "CRITICAL")]); // observed: true by the res() default
-    expect(out.unobserved).toBe(0);
-    expect(openPastSla([{ ...res(999, "CRITICAL"), observed: false }]).unobserved).toBe(0);
+  it("an unobserved row at a no-target severity is unknown, not on-the-clock", () => {
+    // UNKNOWN severity has no SLA target, so it can never breach — but "unobserved and not
+    // past target" still holds trivially, so the row is `unknown`, not folded into `open`.
+    const out = openPastSla([open(999, "UNKNOWN", "OPEN", false, 5)]);
+    expect(out.perSev.UNKNOWN).toEqual({ open: 0, breached: 0, unknown: 1, pct: null, target: null });
+  });
+
+  it("resolved rows are excluded regardless of `observed`", () => {
+    expect(openPastSla([res(999, "CRITICAL")]).overall)
+      .toEqual({ open: 0, breached: 0, unknown: 0, pct: null });
+    expect(openPastSla([{ ...res(999, "CRITICAL"), observed: false }]).overall)
+      .toEqual({ open: 0, breached: 0, unknown: 0, pct: null });
   });
 });
 
@@ -518,11 +535,23 @@ describe("openPastSla over actionableView", () => {
       bOpen(99, null, true, "CRITICAL"), // awaiting: excluded entirely
     ];
     // Naive view breaches all three (every from-detection age > 7).
-    expect(openPastSla(rows).overall).toEqual({ open: 3, breached: 3, pct: 100 });
-    // Actionable view: awaiting row drops out (null age), and the late-fixed row is in SLA.
+    expect(openPastSla(rows).overall).toEqual({ open: 3, breached: 3, unknown: 0, pct: 100 });
+    // Actionable view: awaiting row drops out (null age), and the late-fixed row is on the clock.
     const actionable = openPastSla(actionableView(rows));
-    expect(actionable.overall).toEqual({ open: 2, breached: 1, pct: 50 });
-    expect(actionable.perSev.CRITICAL).toEqual({ open: 2, breached: 1, pct: 50, target: 7 });
+    expect(actionable.overall).toEqual({ open: 2, breached: 1, unknown: 0, pct: 50 });
+    expect(actionable.perSev.CRITICAL)
+      .toEqual({ open: 2, breached: 1, unknown: 0, pct: 50, target: 7 });
+  });
+
+  it("an unobserved row's actionable clock reads the from-detection seen_age_days (the documented conservative substitute)", () => {
+    // `actionableView`'s own header: the actionable clock has no seen-age field of its own, so
+    // `openPastSla` over `actionableView` classifies an unobserved row the same way the
+    // from-detection view does. CRITICAL target = 7; seen_age_days = 3 <= 7 -> unknown, not
+    // breached, though the actionable age (60) would clear the target many times over if that
+    // were read instead.
+    const rows = [bOpen(999, 60, false, "CRITICAL", false, 3)];
+    const actionable = openPastSla(actionableView(rows));
+    expect(actionable.overall).toEqual({ open: 0, breached: 0, unknown: 1, pct: null });
   });
 });
 
