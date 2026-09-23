@@ -12,6 +12,7 @@
 
 import type { Checkpoint } from "../domain/compaction";
 import type { LedgerState } from "../domain/ledgerCore";
+import { decodeSnapshot, encodeSnapshot, SNAPSHOT_V2 } from "../domain/snapshotCodec";
 import type { Observation } from "../domain/reconcile";
 import { recordError } from "./errorLog";
 import { PROP_KEYS, requireProp } from "./props";
@@ -106,10 +107,11 @@ export function readGzJsonIn(
     }
     const blob = files.next().getBlob();
     const t1 = Date.now();
-    const meta = { bytes: 0 };
+    const meta: ParseMeta = { bytes: 0, ungzipMs: 0, textMs: 0, jsonMs: 0 };
     const parsed = parseGzBlob(blob, meta);
     console.log(JSON.stringify({
       stage: "drive", label, name, bytes: meta.bytes, fileMs: t1 - t0, parseMs: Date.now() - t1,
+      ungzipMs: meta.ungzipMs, textMs: meta.textMs, jsonMs: meta.jsonMs,
     }));
     return parsed;
   } catch (e) {
@@ -153,15 +155,31 @@ export function readGzJsonFile(fileId: string): unknown | null {
   }
 }
 
-function parseGzBlob(blob: GoogleAppsScript.Base.Blob, meta?: { bytes: number }): unknown | null {
+/** Where a parse spent its time: the gzip inflate, the bytes-to-string decode, JSON.parse. */
+interface ParseMeta {
+  bytes: number;
+  ungzipMs: number;
+  textMs: number;
+  jsonMs: number;
+}
+
+function parseGzBlob(blob: GoogleAppsScript.Base.Blob, meta?: ParseMeta): unknown | null {
   try {
     const bytes = blob.getBytes();
     if (meta) meta.bytes = bytes.length;
     const isGzip = bytes.length > 2 && (bytes[0] & 0xff) === 0x1f && (bytes[1] & 0xff) === 0x8b;
-    const text = isGzip
-      ? Utilities.ungzip(blob).getDataAsString("UTF-8")
-      : blob.getDataAsString("UTF-8");
-    return JSON.parse(text);
+    const t0 = Date.now();
+    const plain = isGzip ? Utilities.ungzip(blob) : blob;
+    const t1 = Date.now();
+    const text = plain.getDataAsString("UTF-8");
+    const t2 = Date.now();
+    const parsed = JSON.parse(text) as unknown;
+    if (meta) {
+      meta.ungzipMs = t1 - t0;
+      meta.textMs = t2 - t1;
+      meta.jsonMs = Date.now() - t2;
+    }
+    return parsed;
   } catch (e) {
     console.warn(`Failed to parse archive blob: ${e}`);
     return null;
@@ -442,9 +460,20 @@ export interface LedgerSnapshot {
   episodes: LedgerState["episodes"];
 }
 
-/** Rewrite the fast-read copy of the ledger (called after every state write). */
+/**
+ * Rewrite the fast-read copy of the ledger (called after every state write).
+ *
+ * WRITTEN AS V2 (domain/snapshotCodec.ts): columns and a string dictionary rather than one JSON
+ * object per row. The v1 file was 4.06 MB gzipped and 2–4.5 s to read back on every cold
+ * execution; on a ledger of the same shape v2 is ~6.5× less text to inflate, decode and parse.
+ * The reader below accepts both, so the first read after this deploy finds a v1 file and the
+ * next state write replaces it.
+ */
 export function writeLedgerSnapshot(state: LedgerState): void {
-  const snap: LedgerSnapshot = { version: 1, ledger: state.ledger, episodes: state.episodes };
+  const snap = encodeSnapshot(
+    state.ledger as unknown as Record<string, Record<string, unknown>>,
+    state.episodes as unknown as Record<string, unknown>[],
+  );
   writeGzJson(subfolder("snapshots"), SNAPSHOT_NAME, snap);
 }
 
@@ -454,6 +483,17 @@ export function readLedgerSnapshot(): LedgerSnapshot | null {
   const parsed = readGzJsonIn(findSubfolder("snapshots"), SNAPSHOT_NAME, "archiveRead:snapshot");
   console.log(JSON.stringify({ stage: "driveTotal", label: "snapshot", ms: Date.now() - t0 }));
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const t1 = Date.now();
+  const v2 = decodeSnapshot(parsed);
+  if (v2) {
+    console.log(JSON.stringify({ stage: "snapshotDecode", version: SNAPSHOT_V2, ms: Date.now() - t1 }));
+    return {
+      version: SNAPSHOT_V2,
+      ledger: v2.ledger as unknown as LedgerState["ledger"],
+      episodes: v2.episodes as unknown as LedgerState["episodes"],
+    };
+  }
+  // v1: the objects as written. Still read, for the file an older deployment left behind.
   const snap = parsed as LedgerSnapshot;
   return snap.ledger && snap.episodes ? snap : null;
 }
