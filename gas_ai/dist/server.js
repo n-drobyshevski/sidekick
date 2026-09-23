@@ -11590,16 +11590,11 @@ var Server = (() => {
     return [h0, h1, h2, h3, h4].map((x) => x.toString(16).padStart(8, "0")).join("");
   }
 
-  // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "446400f7a635" : "dev";
-  function buildInfo() {
-    return { id: BUILD_ID };
-  }
-
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var WIZ_VERSION_PROP = "WIZ_DATA_VERSION";
-  var KEY_PREFIX = `wsk.${BUILD_ID}`;
+  var CACHE_EPOCH = "1";
+  var KEY_PREFIX = `wsk.e${CACHE_EPOCH}`;
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   var dataVersionMemo;
@@ -13030,6 +13025,12 @@ var Server = (() => {
         error: "Recovered: execution died mid-sync; the last committed snapshot is unchanged."
       });
     }
+  }
+
+  // ../gas_shared/server/buildInfo.ts
+  var BUILD_ID = true ? "f631e4838286" : "dev";
+  function buildInfo() {
+    return { id: BUILD_ID };
   }
 
   // src/server/access.ts
@@ -18489,7 +18490,7 @@ var Server = (() => {
   function bootstrap(_p) {
     return run(() => withLiveBootFields(durablyCached(BOOT_CORE, null, bootstrapCore)));
   }
-  var BOOT_CORE = "bootstrapCore";
+  var BOOT_CORE = "bootstrapCore1";
   var bootstrapIfWarm = () => {
     const t0 = Date.now();
     const core = durablyPeek(BOOT_CORE, null);
@@ -18727,7 +18728,7 @@ var Server = (() => {
   function getGraph(p) {
     return run(() => {
       const params = p != null ? p : {};
-      return durablyCached("getGraph", graphCacheParams(params), () => {
+      return durablyCached("getGraph1", graphCacheParams(params), () => {
         var _a5;
         const doc = viewGraphDoc();
         if (!doc) return { empty: true };
@@ -18768,7 +18769,7 @@ var Server = (() => {
     const raw = params["kind"];
     const kind = typeof raw === "string" && (raw === "ANY" || NODE_KINDS.includes(raw)) ? raw : null;
     return run(
-      () => durablyCached("queryVocabulary", { kind }, () => {
+      () => durablyCached("queryVocabulary1", { kind }, () => {
         const doc = viewGraphDoc();
         if (!doc) {
           return { empty: true, kinds: [], stepsFrom: {}, valuesFor: {}, fieldsFor: {}, shortcuts: [] };
@@ -18810,7 +18811,7 @@ var Server = (() => {
         MAX_NODES_FLOOR,
         MAX_NODES_CEILING
       );
-      const answer = cached("graphQuery", { query, columns, view, maxNodes }, () => {
+      const answer = cached("graphQuery1", { query, columns, view, maxNodes }, () => {
         const doc = viewGraphDoc();
         if (!doc) return { empty: true };
         const result = runQuery(doc, query, { columns });
@@ -19288,7 +19289,7 @@ var Server = (() => {
   }
   function getAssetOptions(_p) {
     return run(
-      () => durablyCached("assetOptions", null, () => ({
+      () => durablyCached("assetOptions1", null, () => ({
         rows: [...viewAssets()].sort((a, b) => {
           var _a5, _b, _c, _d;
           return Number((_a5 = b.openIssues) != null ? _a5 : 0) - Number((_b = a.openIssues) != null ? _b : 0) || Number((_c = b.openFindings) != null ? _c : 0) - Number((_d = a.openFindings) != null ? _d : 0) || String(a.name).localeCompare(String(b.name));
@@ -19300,7 +19301,7 @@ var Server = (() => {
     return run(() => {
       var _a5;
       const id = String((_a5 = (p != null ? p : {})["id"]) != null ? _a5 : "");
-      return cached("getAssetDetail", { id }, () => {
+      return cached("getAssetDetail1", { id }, () => {
         const doc = loadGraphDoc();
         if (!doc) return null;
         const nodeById = new Map(doc.nodes.map((n) => [n.id, n]));
@@ -19419,7 +19420,7 @@ var Server = (() => {
         Math.max(1, Number(params["pageSize"]) || DEFAULT_CONFIG_PAGE_SIZE)
       );
       const page = Math.max(0, Number(params["page"]) || 0);
-      const model = durablyCached("configModel", null, configModel);
+      const model = durablyCached("configModel1", null, configModel);
       const head = {
         total: model.rows.length,
         totals: model.totals,
@@ -19454,7 +19455,7 @@ var Server = (() => {
     return run(() => {
       var _a5;
       const id = String((_a5 = (p != null ? p : {})["id"]) != null ? _a5 : "");
-      return cached("getConfigFindingDetail", { id }, () => {
+      return cached("getConfigFindingDetail1", { id }, () => {
         const finding = loadFindings().filter((f) => f.id === id)[0];
         if (!finding) return null;
         const asset = loadAssets().filter((a) => a.id === finding.resourceId)[0];
@@ -19471,7 +19472,7 @@ var Server = (() => {
   }
   var SCOPED_POSTURE_MAX_FRAMEWORKS = 12;
   function fetchScopedPosture(frameworkId, projectId) {
-    return cached("compliancePostureScoped", { frameworkId, projectId }, () => {
+    return cached("compliancePostureScoped1", { frameworkId, projectId }, () => {
       const page = fetchSingleObject("securityFramework", {
         query: Q_COMPLIANCE_POSTURE,
         extraVariables: {
@@ -19516,7 +19517,7 @@ var Server = (() => {
   function cachedComplianceModel() {
     const projectView = getProjectView2();
     const domainView = getDomainView2();
-    return cached("getCompliance", { projectView, domainView }, () => {
+    return cached("getCompliance1", { projectView, domainView }, () => {
       var _a5, _b;
       const storedPosture = loadPosture();
       const catalogue = loadFrameworks();
@@ -19642,7 +19643,7 @@ var Server = (() => {
       if (node2 && node2.kind !== "AI_AGENT") return { source: "unsupported", ...empty };
       if (!hasWizCredentials()) return { source: "stored", ...empty };
       const projectId = (_c = (_b = projectScope()) == null ? void 0 : _b[0]) != null ? _c : null;
-      return cached("expandAsset", { id, projectId }, () => {
+      return cached("expandAsset1", { id, projectId }, () => {
         const slots = flattenSlots(AGENT_EXPANSION);
         const page = fetchGraphSearchPage({
           query: Q_AGENT_EXPANSION,
@@ -19750,7 +19751,7 @@ var Server = (() => {
     });
   }
   function cachedCombos() {
-    return cached("getToxicCombos", null, () => {
+    return cached("getToxicCombos1", null, () => {
       const issues2 = openIssues();
       const assetRows = viewAssets();
       const assets = new Map(assetRows.map((a) => [a.id, a]));
@@ -19921,7 +19922,7 @@ var Server = (() => {
         Math.max(1, Number(params["pageSize"]) || DEFAULT_PAGE_SIZE)
       );
       const page = Math.max(0, Number(params["page"]) || 0);
-      const model = durablyCached("problemsModel", null, problemsModel);
+      const model = durablyCached("problemsModel1", null, problemsModel);
       const head = {
         // The union invariant's left-hand side — every unresolved issue and every open
         // finding, regardless of the outcome filter or the mode below.
@@ -19976,10 +19977,11 @@ var Server = (() => {
       const params = p != null ? p : {};
       const limitParam = Number(params["limit"]);
       const limit = Number.isFinite(limitParam) && limitParam >= 0 ? Math.floor(limitParam) : void 0;
-      const model = durablyCached("problemsModel", null, problemsModel);
-      const fullyRanked = withAutoRemediation(
-        rankActionsByCover(model.rows),
-        loadFrameworkPolicies()
+      const model = durablyCached("problemsModel1", null, problemsModel);
+      const fullyRanked = cached(
+        "actionsRanked1",
+        null,
+        () => withAutoRemediation(rankActionsByCover(model.rows), loadFrameworkPolicies())
       );
       return {
         rows: limit !== void 0 ? fullyRanked.slice(0, limit) : fullyRanked,
@@ -20011,7 +20013,7 @@ var Server = (() => {
     });
   }
   function getSyncHistory(_p) {
-    return run(() => durablyCached("getSyncHistory", null, () => ({
+    return run(() => durablyCached("getSyncHistory1", null, () => ({
       rows: syncHistory().reverse()
     })));
   }
@@ -20202,7 +20204,7 @@ var Server = (() => {
     const candidateIds = CANDIDATE_CATEGORIES.map((c) => c.id);
     const configuredIds = getIssueCategories2();
     const categoryCube = buildCategoryCube(openIssues2, candidateIds, configuredIds);
-    const problems = durablyCached("problemsModel", null, problemsModel);
+    const problems = durablyCached("problemsModel1", null, problemsModel);
     const termCoverage = termCoverageOf(problems.rows);
     const rankRule = effectiveRankRule();
     const rankCube = buildRankCube(
@@ -20765,7 +20767,7 @@ var Server = (() => {
   }
   function getStorageStats(_p) {
     return run(
-      () => durablyCached("getStorageStats", null, () => ({
+      () => durablyCached("getStorageStats1", null, () => ({
         cellCount: cellCount3(),
         archiveBytes: archiveBytes(),
         rows: {

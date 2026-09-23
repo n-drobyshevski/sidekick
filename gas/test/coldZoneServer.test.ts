@@ -630,7 +630,7 @@ describe("getExecutivePage timing line", () => {
     expect(res.ok).toBe(true);
     const lines = log.mock.calls
       .map((c) => String(c[0]))
-      .filter((l) => l.includes('"stage":"executive"'))
+      .filter((l: string) => l.includes('"stage":"executive"'))
       .map((l) => JSON.parse(l) as Record<string, unknown>);
     expect(lines).toHaveLength(1);
     expect(Object.keys(lines[0]!).sort()).toEqual(
@@ -638,5 +638,40 @@ describe("getExecutivePage timing line", () => {
     );
     for (const [k, v] of Object.entries(lines[0]!)) if (k !== "stage") expect(typeof v).toBe("number");
     log.mockRestore();
+  });
+});
+
+// --------------------------------------------------------------------------------------- //
+//  Scoping runs once per execution, not once per read-model
+// --------------------------------------------------------------------------------------- //
+//
+// A scoped Executive composes five read-models, and each used to redo the whole scoping pass
+// over the full base (the support-group join, a tags_json parse per row, the domain rules).
+// `scopedBaseRows` now scopes once per (cache stamp, scope) and hands out copies.
+describe("scopedBaseRows", () => {
+  const scopedLines = (log: ReturnType<typeof vi.spyOn>) =>
+    log.mock.calls.map((c: unknown[]) => String(c[0])).filter((l: string) => l.includes('"stage":"scopedBase"'));
+
+  it("scopes once per scope for a whole scoped Executive load", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(getExecutivePage({ domain: "", supportGroup: "Platform SRE", severities: null }).ok).toBe(true);
+    expect(scopedLines(log)).toHaveLength(1);
+    expect(getExecutivePage({ domain: "", supportGroup: "Data Platform", severities: null }).ok).toBe(true);
+    expect(scopedLines(log)).toHaveLength(2);
+    log.mockRestore();
+  });
+
+  it("does not scope at all for the whole register", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(getExecutivePage({ domain: "", supportGroup: "", severities: null }).ok).toBe(true);
+    expect(scopedLines(log)).toHaveLength(0);
+    log.mockRestore();
+  });
+
+  it("answers a repeat of the same scope the same way (copies, not shared rows)", () => {
+    const p = { domain: "", supportGroup: "Platform SRE", severities: null };
+    const first = getExecutivePage(p);
+    const second = getExecutivePage(p);
+    expect(second.data).toEqual(first.data);
   });
 });

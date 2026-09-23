@@ -21235,7 +21235,7 @@ exports[`read endpoints > getSettingsImpact answers the same shape 1`] = `
 exports[`read endpoints > getStorageStats answers the same shape 1`] = `
 {
   "data": {
-    "archiveBytes": 306078,
+    "archiveBytes": 306076,
     "cellCount": 46800,
     "rows": {
       "assets": 87,

@@ -65,6 +65,8 @@ web UI. The top-level `pytest` suite should remain focused on non-UI logic.
   id, so a changed read-model bumps its own namespace (`dsMttr4` → `dsMttr5`) and
   `test/cacheNamespaces.test.ts` there requires a version on every one. Bump `CACHE_EPOCH` only
   for a change that alters many payloads at once.
+- `gas_ai/` follows it too (`bootstrapCore1`, `problemsModel1` → `problemsModel2`), pinned by its
+  own `test/cacheNamespaces.test.ts`.
 
 ## Design context
 

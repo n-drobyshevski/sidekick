@@ -12,7 +12,6 @@
 // chunk reads as a miss. Everything degrades to compute() on any cache failure.
 
 import { sha1Hex } from "../../../gas_shared/domain/sha1";
-import { BUILD_ID } from "../../../gas_shared/server/buildInfo";
 import { domainTagKey, getProp, PROP_KEYS, setProp } from "./props";
 
 const VERSION_PROP = "DATA_VERSION";
@@ -22,11 +21,26 @@ const VERSION_PROP = "DATA_VERSION";
 // bootstrap payload — and wrong for a cached Wiz response, which does not go stale because
 // someone saved an AARS rule. See `wizDataVersion` and syncStore.commit().
 const WIZ_VERSION_PROP = "WIZ_DATA_VERSION";
-// The build stamp is part of every key. DATA_VERSION only bumps on data MUTATIONS, so
-// without this a code deploy would keep serving payloads computed by the old code until
-// the TTL expires (6h) or someone syncs — the "I deployed the fix but still see the bug"
-// trap. Changing code changes the stamp, making prior entries unreachable at once.
-const KEY_PREFIX = `wsk.${BUILD_ID}`;
+/**
+ * What a CODE change contributes to every cache key, L1 and L2: bump this to make every cached
+ * read-model unreachable on the next deploy.
+ *
+ * IT USED TO BE BUILD_ID (a hash of the source tree), so every deploy — a copy fix in the client
+ * included — made every entry cold at once: the bootstrap core, every read-model and the durable
+ * Drive copies. gas/ measured that as the most expensive line in its app and moved to an epoch
+ * in #322, and gas_devsecops followed (#329); this is the same move. The guard BUILD_ID bought is
+ * carried, more precisely, by the namespaces: every cached read-model is named with a version
+ * (`bootstrapCore1`, `problemsModel1`, `assetsModel2`…), and a change to one payload's shape or
+ * meaning bumps that one name — pinned by test/cacheNamespaces.test.ts. Bump THIS only for a
+ * change that alters many payloads at once and cannot sensibly be expressed as a list of
+ * namespace bumps.
+ *
+ * A stale payload that slips past both is bounded anyway: DATA_VERSION moves on every sync and
+ * settings save, no L1 entry outlives CacheService's six hours, and no L2 file is served past
+ * readModelStore's `MAX_AGE_MS`.
+ */
+export const CACHE_EPOCH = "1";
+const KEY_PREFIX = `wsk.e${CACHE_EPOCH}`;
 const CHUNK_CHARS = 90_000; // base64 chars per entry, safely under the 100 KB cap
 const DEFAULT_TTL_SEC = 21_600; // the CacheService maximum (6 h)
 
@@ -162,11 +176,10 @@ function configStamp(): string {
  * into. Exported for the durable L2, which has to stamp a stored payload with EXACTLY what
  * `cached()` would key it under.
  *
- * `BUILD_ID` is folded back in here, and that is easy to miss: this project puts it in
+ * The code epoch is folded back in here, and that is easy to miss: this project puts it in
  * `KEY_PREFIX` rather than in the version prefix, so a `currentStamp` that returned only
- * `version.configStamp` would leave the L2 with no deploy invalidation at all — it would go
- * on serving payloads computed by the old code after every push, which is the exact trap
- * KEY_PREFIX exists to close for L1.
+ * `version.configStamp` would leave the L2 with no epoch invalidation at all — it would go on
+ * serving payloads an epoch bump was meant to retire.
  */
 export function currentStamp(version?: string): string {
   return `${KEY_PREFIX}:${version ?? dataVersion()}.${configStamp()}`;

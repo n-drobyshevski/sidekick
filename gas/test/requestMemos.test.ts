@@ -6,16 +6,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const readAllCalls: string[] = [];
 let settingsRows: Array<Record<string, unknown>> = [];
+let sgMapRows: Array<Record<string, unknown>> = [];
 
 vi.mock("../src/server/sheetsDb", () => ({
   TABS: {
     scans: { name: "scans", headers: [] },
     settings: { name: "settings", headers: [] },
+    supportGroupMap: { name: "support_group_map", headers: [] },
   },
   readAll: (tab: { name: string }) => {
     readAllCalls.push(tab.name);
+    if (tab.name === "support_group_map") return sgMapRows;
     return tab.name === "settings" ? settingsRows : [];
   },
+  ensureTab: () => {},
   // `getJob` reads the tail rather than the whole tab; the fake mirrors that so the
   // module under test can be loaded at all.
   readTail: (tab: { name: string }) => (tab.name === "settings" ? settingsRows : []),
@@ -194,5 +198,76 @@ describe("settingsStore cross-execution cache", () => {
     cacheThrows = true;
     expect((await nextExecution()).getRetentionDays()).toBe(30);
     expect(settingsReads()).toBe(1);
+  });
+});
+
+// The support-group map tab (~5k rows) was read in every execution that attached support
+// groups — 0.7–1.4 s measured, often the execution's first Sheets touch. It is cached across
+// executions now, keyed on the data version its only writer (`setSupportGroupMap`) bumps, and
+// gzip-chunked through serverCache because it is over CacheService's 100 KB per value.
+describe("settingsStore support-group map cache", () => {
+  const props = new Map<string, string>();
+  const cache = new Map<string, string>();
+  let cacheThrows = false;
+
+  beforeEach(async () => {
+    props.clear();
+    cache.clear();
+    cacheThrows = false;
+    sgMapRows = [{ token: "sub-1", group: "Platform" }, { token: "sub-2", group: "Data" }];
+    const { gzipSync, gunzipSync } = await import("node:zlib");
+    vi.stubGlobal("Utilities", {
+      newBlob: (data: string | number[]) => ({ data }),
+      gzip: (blob: { data: string }) => ({ getBytes: () => Array.from(gzipSync(Buffer.from(blob.data, "utf8"))) }),
+      ungzip: (blob: { data: number[] }) => ({
+        getDataAsString: () => gunzipSync(Buffer.from(blob.data)).toString("utf8"),
+      }),
+      base64Encode: (bytes: number[]) => Buffer.from(bytes).toString("base64"),
+      base64Decode: (s: string) => Array.from(Buffer.from(s, "base64")),
+    });
+    const guard = () => { if (cacheThrows) throw new Error("cache down"); };
+    vi.stubGlobal("CacheService", {
+      getScriptCache: () => ({
+        get: (k: string) => { guard(); return cache.get(k) ?? null; },
+        getAll: (ks: string[]) => { guard(); return Object.fromEntries(ks.filter((k) => cache.has(k)).map((k) => [k, cache.get(k)!])); },
+        put: (k: string, v: string) => { guard(); cache.set(k, v); },
+        putAll: (e: Record<string, string>) => { guard(); for (const [k, v] of Object.entries(e)) cache.set(k, v); },
+      }),
+    });
+    vi.stubGlobal("PropertiesService", {
+      getScriptProperties: () => ({
+        getProperty: (k: string) => props.get(k) ?? null,
+        setProperty: (k: string, v: string) => { props.set(k, v); },
+        deleteProperty: (k: string) => { props.delete(k); },
+      }),
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  const tabReads = () => readAllCalls.filter((t) => t === "support_group_map").length;
+  // A fresh module graph is a fresh GAS execution: the per-execution memo starts cold.
+  const nextExecution = async () => {
+    vi.resetModules();
+    return import("../src/server/settingsStore");
+  };
+
+  it("serves a second execution from the cache without reading the tab", async () => {
+    expect((await nextExecution()).getSupportGroupMap().map).toEqual({ "sub-1": "Platform", "sub-2": "Data" });
+    expect((await nextExecution()).getSupportGroupMap().map).toEqual({ "sub-1": "Platform", "sub-2": "Data" });
+    expect(tabReads()).toBe(1);
+  });
+
+  it("hands the next execution the map setSupportGroupMap just wrote", async () => {
+    const first = await nextExecution();
+    first.getSupportGroupMap();
+    first.setSupportGroupMap({ "sub-9": "Security" });
+    expect((await nextExecution()).getSupportGroupMap().map).toEqual({ "sub-9": "Security" });
+    expect(tabReads()).toBe(1);
+  });
+
+  it("falls back to the tab when the cache throws", async () => {
+    cacheThrows = true;
+    expect((await nextExecution()).getSupportGroupMap().map).toEqual({ "sub-1": "Platform", "sub-2": "Data" });
+    expect(tabReads()).toBe(1);
   });
 });

@@ -51,6 +51,7 @@ vi.mock("../src/server/serverCache", () => ({
     return compute();
   },
   dataVersion: () => String(H.version),
+  currentStamp: () => "stamp-" + H.version,
 }));
 vi.mock("../src/server/readModelStore", () => ({
   durablyCached: (_ns: string, _params: unknown, compute: () => unknown) => compute(),

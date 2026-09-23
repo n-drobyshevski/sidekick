@@ -75,14 +75,15 @@ describe("key parity with the L1 cache", () => {
     expect(env.stamp).not.toBe(cache.currentStamp());
   });
 
-  // A DEPLOY MUST INVALIDATE THE DURABLE LEVEL TOO. This project folds BUILD_ID into
-  // KEY_PREFIX rather than into the version prefix, so a `currentStamp` that returned only
-  // `version.configStamp` would leave Drive serving payloads computed by the old code after
-  // every push — the exact trap KEY_PREFIX closes for L1.
-  it("carries the build stamp, so a deploy is treated like a data change", async () => {
+  // AN EPOCH BUMP MUST INVALIDATE THE DURABLE LEVEL TOO. The code's contribution to every key is
+  // serverCache.CACHE_EPOCH (it was BUILD_ID, which made every deploy a cold start), and it
+  // lives in KEY_PREFIX rather than in the version prefix — so a `currentStamp` that returned
+  // only `version.configStamp` would leave Drive serving payloads an epoch bump meant to retire.
+  it("carries the code epoch and not the build id", async () => {
     const { cache } = await mods();
     const { BUILD_ID } = await import("../../gas_shared/server/buildInfo");
-    expect(cache.currentStamp()).toContain(BUILD_ID);
+    expect(cache.currentStamp().startsWith(`wsk.e${cache.CACHE_EPOCH}:`)).toBe(true);
+    expect(cache.currentStamp()).not.toContain(BUILD_ID);
   });
 });
 
@@ -194,9 +195,9 @@ describe("failure semantics", () => {
     warm.warmReadModels();
 
     // Rewrite one file under a stamp from another build.
-    const name = store.readModelFileName("getStorageStats", null);
+    const name = store.readModelFileName("getStorageStats1", null);
     archive.writeGzJson(archive.subfolder("readmodels"), name, {
-      v: 1, stamp: "wsk.someotherbuild:0.0", name: "getStorageStats",
+      v: 1, stamp: "wsk.someotherbuild:0.0", name: "getStorageStats1",
       hash: "x", writtenAtMs: Date.now(), value: { archiveBytes: -1 },
     });
 
