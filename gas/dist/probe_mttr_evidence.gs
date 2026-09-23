@@ -611,3 +611,133 @@ function probeTrueLifetime() {
   Logger.log(out.join('\n'));
   return out.join('\n');
 }
+
+/**
+ * PROBE 5 — is the open backlog present, or is it residue?
+ *
+ * The register fetches CRITICAL only, by choice, and the API holds 2,466 open CRITICAL OS
+ * findings. This ledger holds 5,174 open rows. Deduplication does not create rows and churn
+ * explains only part of it, so roughly half the backlog may be rows Wiz stopped returning and
+ * this ledger never closed.
+ *
+ * That matters more than it sounds. Probe 4 showed the estate patches in a day, so the only
+ * thing on the MTTR page worth leading with is what ISN'T closing — and the open rows sit at a
+ * median age of 42 days in a narrow band. If those are rows nobody can see any more, that band
+ * is bookkeeping residue, and leading a page with it would be worse than leading with a
+ * one-day half-life.
+ *
+ * Three shapes, and they call for three different answers:
+ *
+ *   present    last_seen is the newest scan. The finding is really there. Real backlog.
+ *   asset dark nothing of that asset has been seen since either. The cold zone already owns
+ *              this case and names it "unobserved" rather than resolved.
+ *   row stale  the ASSET is still being scanned and this ROW is not. Nothing legitimate looks
+ *              like this: the finding is gone from the scanner's answer and the ledger kept it
+ *              open. The likely mechanism is a severity re-score out of the fetched set —
+ *              resolution-by-disappearance is gated per severity, so a finding that leaves
+ *              CRITICAL leaves the register's sight without ever being closed.
+ *
+ *   churn leftover  a later record of the same (cve, asset) has already been resolved, so this
+ *                   open row is a superseded record still counted as live exposure.
+ *
+ * Run `probeStaleOpen`. Read-only.
+ */
+function probeStaleOpen() {
+  var started = Date.now();
+  var out = [];
+  var say = function (l) { out.push(l); };
+
+  var id = PropertiesService.getScriptProperties().getProperty('LEDGER_SPREADSHEET_ID');
+  if (!id) { Logger.log('LEDGER_SPREADSHEET_ID is not set on this project.'); return; }
+  var ss = SpreadsheetApp.openById(id);
+  var sh = ss.getSheetByName('vuln_ledger');
+  if (!sh) { Logger.log('No vuln_ledger tab.'); return; }
+
+  // The newest scan IS "now" here — never the wall clock. A figure dated by the clock on the
+  // wall stops being a function of the ledger, which is the rule the rest of this app keeps.
+  var newest = null;
+  var scanRows = probeReadAll(ss, 'scans', ['ts']);
+  for (var i = 0; i < scanRows.length; i++) {
+    var t = probeMs(scanRows[i].ts);
+    if (t !== null && (newest === null || t > newest)) newest = t;
+  }
+  if (newest === null) { Logger.log('No scans on record.'); return; }
+
+  say('STALE OPEN PROBE  ' + new Date().toISOString());
+  say('newest scan: ' + new Date(newest).toISOString());
+  say('');
+
+  // Pass 1 — per asset: when was ANYTHING of it last seen. Per (cve, asset): the latest
+  // resolution, which is what makes an older open row a leftover.
+  var assetLastSeen = {}, pairResolved = {};
+  var partial1 = probeStream(sh, ['cve', 'asset_id', 'last_seen', 'resolved_at', 'status'], started, function (r) {
+    var aid = String(r.asset_id || '');
+    var ls = probeMs(r.last_seen);
+    if (aid && ls !== null && (!(aid in assetLastSeen) || ls > assetLastSeen[aid])) assetLastSeen[aid] = ls;
+    if (String(r.status || '').toUpperCase() === 'RESOLVED') {
+      var rs = probeMs(r.resolved_at);
+      var k = String(r.cve || '') + '|' + aid;
+      if (rs !== null && (!(k in pairResolved) || rs > pairResolved[k])) pairResolved[k] = rs;
+    }
+  });
+
+  var DAY = 86400000;
+  var present = 0, assetDark = 0, rowStale = 0, leftovers = 0, undated = 0, openRows = 0;
+  var staleness = probeHist();
+  var buckets = { 'same scan': 0, '1-3 d': 0, '3-7 d': 0, '7-30 d': 0, '30+ d': 0 };
+  var darkAssets = {}, staleAssets = {};
+
+  var partial2 = probeStream(sh, ['cve', 'asset_id', 'last_seen', 'status', 'severity'], started, function (r) {
+    if (String(r.status || '').toUpperCase() === 'RESOLVED') return;
+    openRows++;
+    var aid = String(r.asset_id || '');
+    var ls = probeMs(r.last_seen);
+    if (ls === null) { undated++; return; }
+
+    var ageDays = (newest - ls) / DAY;
+    probeAdd(staleness, ageDays);
+    if (ageDays <= 1) buckets['same scan']++;
+    else if (ageDays <= 3) buckets['1-3 d']++;
+    else if (ageDays <= 7) buckets['3-7 d']++;
+    else if (ageDays <= 30) buckets['7-30 d']++;
+    else buckets['30+ d']++;
+
+    var k = String(r.cve || '') + '|' + aid;
+    if (pairResolved[k] !== undefined && pairResolved[k] > ls + 60000) leftovers++;
+
+    if (ageDays <= 1) { present++; return; }
+    // Stale. Is the asset still being scanned, or did the whole asset go quiet?
+    var assetSeen = assetLastSeen[aid];
+    if (assetSeen !== undefined && (newest - assetSeen) / DAY <= 1) { rowStale++; staleAssets[aid] = true; }
+    else { assetDark++; darkAssets[aid] = true; }
+  });
+
+  say('OPEN ROWS  (' + openRows + ' total' + (partial1 || partial2 ? ', *** PARTIAL ***' : '') + ')');
+  say('  present at the newest scan ' + probeLine(present, openRows));
+  say('  stale, asset dark too      ' + probeLine(assetDark, openRows) + '   assets: ' + Object.keys(darkAssets).length);
+  say('  stale, ASSET STILL SCANNED ' + probeLine(rowStale, openRows) + '   assets: ' + Object.keys(staleAssets).length);
+  say('  no last_seen at all        ' + undated);
+  say('');
+  say('  superseded (a later record of the same cve+asset is already resolved)  ' + probeLine(leftovers, openRows));
+  say('');
+  say('HOW STALE  (newest scan minus last_seen)');
+  for (var b in buckets) say('  ' + b + probeGap(b) + probeLine(buckets[b], openRows));
+  say('  p50 / p90 / max            ' + probeMedianQ(staleness, 0.5) + ' / ' + probeMedianQ(staleness, 0.9) + ' / ' + probeMedianQ(staleness, 1) + ' d');
+  say('');
+  say('  "ASSET STILL SCANNED" is the line that matters. Nothing legitimate produces it: the');
+  say('  scanner answered about that asset and did not mention this finding, and the ledger');
+  say('  kept it open anyway. If it is large, the open backlog is residue, the register has a');
+  say('  reconciliation gap to fix before any metric is worth arguing about, and a severity');
+  say('  re-score out of the fetched set is the first place to look.');
+  say('');
+  say('elapsed ' + ((Date.now() - started) / 1000).toFixed(0) + ' s');
+  Logger.log(out.join('\n'));
+  return out.join('\n');
+}
+
+/** Pads a bucket label so the counts line up under each other. */
+function probeGap(label) {
+  var s = '';
+  while (label.length + s.length < 27) s += ' ';
+  return s;
+}
