@@ -6329,7 +6329,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "c690fd9d60c2" : "dev";
+  var BUILD_ID = true ? "a4bb44b1f665" : "dev";
   var CACHE_EPOCH = "1";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
@@ -7889,7 +7889,7 @@ var Server = (() => {
 
   // src/server/settingsStore.ts
   var settingsMemo;
-  var SETTINGS_CACHE_TTL_SEC = 600;
+  var SETTINGS_CACHE_TTL_SEC = 21600;
   var SETTINGS_CACHE_MAX_CHARS = 9e4;
   function settingsCacheKey() {
     return "settings1:" + dataVersion();
