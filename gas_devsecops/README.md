@@ -373,7 +373,11 @@ read-only description. The editor offers:
 - **Exclusive lists.** Saving someone as a scoped viewer removes them from
   `ALLOWED_USERS`, and granting full access un-scopes them.
 
-The summary is `readModels.scopeSummaryModel` (`dsScopeSummary2`, durable). The warm adds
+**MTTR by group.** The summary splits the headline by team (the support-group grain of
+`projects_json`), by domain and by repository. It uses `buildMttr`'s own population and
+estimators, and a split appears only when it has two or more groups.
+
+The summary is `readModels.scopeSummaryModel` (`dsScopeSummary3`, durable). The warm adds
 one target per distinct scope set, after every full-user entry. Unscoped cache keys are
 unchanged.
 

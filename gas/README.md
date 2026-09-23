@@ -1025,7 +1025,7 @@ What keeps them in their slice:
   (`access.enforcedScope()`). A console call asking for someone else's domain, or for `""`
   (the whole register), still gets their rows.
 - **They never receive the bootstrap core.** It carries every domain's name and count. A
-  scoped viewer gets the small `scopedBoot2` payload instead, with their summary inside it.
+  scoped viewer gets the small `scopedBoot3` payload instead, with their summary inside it.
 - **Fail closed.** Unparseable JSON, a non-object, or an entry with an empty scope admits
   nobody. Nothing is ever read as "scoped to everything".
 - **The narrower grant wins.** An address hand-edited onto both lists is treated as scoped.
@@ -1033,13 +1033,24 @@ What keeps them in their slice:
   `ALLOWED_USERS`, and granting full access un-scopes them.
 - **The owner and admins cannot be scoped.**
 
+**MTTR by group.** Below the MTTR chart, the summary splits the headline three ways: by
+support group, by domain and by asset. Each group goes through the same Kaplan-Meier
+estimator as the headline: median ("≥" when it is only a lower bound), p90, open, fixed and
+past SLA. A bar compares each group's median with the slowest group. Groups are ranked by
+open backlog; each split keeps the top 20 and says what it left out.
+
+A split only appears when it splits something. A viewer scoped to a domain, or to several
+support groups, sees MTTR by support group; a viewer holding one support group does not,
+because that split would restate the headline. Computed server-side in `scopeSplits`, with
+the shared `buildSplit` in `gas_shared/domain/scopeSummary.ts`.
+
 **Why it opens fast.** Scoping still starts from the whole ledger, because there is no
 per-domain shard, so a *cold* scoped summary costs about what a cold MTTR page does. The
 scheduled warm (`warmScopedViews`) therefore precomputes each **distinct** scope set in
 `SCOPED_USERS` into the durable read-model layer. Ten viewers sharing a domain cost one
 compute. A viewer's first open is then one small cache read with no ledger load. Saving the
-roster schedules a warm for any new viewer. Cache namespaces: `scopedBoot2`,
-`scopeSummary2`. Register rows key on the viewer scope only when one is present, so no
+roster schedules a warm for any new viewer. Cache namespaces: `scopedBoot3`,
+`scopeSummary3`. Register rows key on the viewer scope only when one is present, so no
 unscoped entry was orphaned.
 
 **The summary leads with MTTR.** The hero is the Kaplan-Meier median time to remediate, which

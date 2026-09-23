@@ -228,7 +228,9 @@ import { loadSettings } from "./settingsStore";
 import { cached, dataVersion } from "./serverCache";
 import { durablyCached, duringWarm, sweepReadModels } from "./readModelStore";
 import { distinctScopes } from "../../../gas_shared/domain/scopedAccess";
-import { scopeSummaryOf } from "../../../gas_shared/domain/scopeSummary";
+import {
+  buildSplit, informativeSplits, scopeSummaryOf, type ScopeSplitRow,
+} from "../../../gas_shared/domain/scopeSummary";
 import { groupRows, rowsInGroup } from "../../../gas_shared/domain/rowGroups";
 import { currentScoped, toViewerScope } from "./access";
 import { bootCoreModel } from "./bootCore";
@@ -2654,18 +2656,57 @@ export function scopeSummaryModel(viewer: ViewerScope): Rec {
   const params: ModelParams = { scope: null, severities: null, showNoFix: true, viewerScope: viewer };
   const n = norm(params);
   return durablyCached(
-    "dsScopeSummary2",
+    // "dsScopeSummary2" -> "dsScopeSummary3": the payload gained `splits` (MTTR by team /
+    // domain / repository); a warm "2" entry would draw the summary with no split at all.
+    "dsScopeSummary3",
     { ...keyOf(n), slaTargets: n.slaTargets, mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
     () => {
       const latest = latestScanRowOf(loadScanRows());
-      return scopeSummaryOf(mttrModel(params), historyModel(params), {
+      const summary = scopeSummaryOf(mttrModel(params), historyModel(params), {
         asOf: new Date().toISOString(),
         // Each register syncs on its own; the newest of them is the freshness caption, and no
         // single scan total describes a union of registers.
         scan: latest ? { ts: latest.ts, total: null } : null,
-      }, SEVERITY_ORDER) as unknown as Rec;
+      }, SEVERITY_ORDER);
+      summary.splits = scopeSplits(n);
+      return summary as unknown as Rec;
     },
   );
+}
+
+/**
+ * MTTR by team, by domain and by repository over the viewer's rows — `buildMttr`'s own
+ * population (visible rows, the end-of-life cut) through `buildMttr`'s own estimators, one
+ * group at a time. A dimension that lands everything in one group restates the hero and is
+ * dropped (`informativeSplits`).
+ */
+function scopeSplits(n: NormParams) {
+  const snap = baseSnapshot();
+  const rows = liveRepoRows(visibleRows(snap.rows, n), n.mttrExcludeEndOfLife).rows;
+  const stat = (group: string, rs: BaseRow[]): ScopeSplitRow => {
+    const km = kaplanMeier(rs, KM_OPTS);
+    const { overall } = mttrFromLedger(rs as unknown as Rec[], { now: snap.now, slaTargets: n.slaTargets });
+    return {
+      group,
+      kmMedian: km.median,
+      kmLowerBound: km.median === null ? km.medianLowerBound : null,
+      p90: kmQuantileFromCurve(km.curve, 0.9),
+      open: overall.open ?? 0,
+      resolved: overall.resolved ?? 0,
+      pastSla: openPastSla(rs, { slaTargets: n.slaTargets }).overall.breached,
+    };
+  };
+  const open = (r: BaseRow) => isOpen(r.status);
+  const text = (v: unknown) => String(v ?? "").trim();
+  const field = (r: BaseRow, k: string) => text((r as unknown as Rec)[k]);
+  return informativeSplits([
+    buildSplit(rows, (r) => field(r, "_supportGroup"), open, stat,
+      { dimension: "team", label: "Team" }),
+    buildSplit(rows, (r) => field(r, "_domain"), open, stat,
+      { dimension: "domain", label: "Domain" }),
+    buildSplit(rows, (r) => text(r.repo_name), open, stat,
+      { dimension: "repository", label: "Repository" }),
+  ]);
 }
 
 function latestScanRowOf(scans: ScanRow[]): ScanRow | null {

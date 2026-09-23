@@ -6,7 +6,7 @@
 // proves its own dimensions round-trip through the editor's payload.
 
 import {
-  groupLine, mttrHeroView, secondaryStats, sevMttrRows,
+  groupLine, mttrHeroView, secondaryStats, sevMttrRows, splitCutNote, splitRowsView,
   draftProblems, foreignDomain, rosterChanged, rosterPayload, rowChips, rowReach, scopeLabel,
   scopeSentence, summaryTiles, SCOPE_DIM_LABELS,
 } from "../../ui/scopedViewModel.js";
@@ -111,6 +111,25 @@ export function registerScopedViewContract({ describe, it, expect, dims }) {
     it("says a group's size, its open share and its oldest open finding", () => {
       expect(groupLine({ count: 1, open: 0, oldestOpenDays: null })).toBe("1 finding · 0 open");
       expect(groupLine({ count: 12, open: 9, oldestOpenDays: 210 })).toBe("12 findings · 9 open · oldest open 210 days");
+    });
+  });
+
+  describe("scoped view — MTTR by group", () => {
+    it("bars each group against the slowest, prints a bound with ≥, and gives no bar to nothing", () => {
+      const rows = splitRowsView({ rows: [
+        { group: "a", kmMedian: 50, open: 1 },
+        { group: "b", kmMedian: null, kmLowerBound: 100, open: 2 },
+        { group: "c", kmMedian: null, kmLowerBound: null, open: 0 },
+      ] });
+      expect(rows[0]).toMatchObject({ median: "50 days", barPct: 50, bounded: false });
+      expect(rows[1]).toMatchObject({ median: "≥ 100 days", barPct: 100, bounded: true });
+      expect(rows[2]).toMatchObject({ median: null, barPct: null });
+    });
+
+    it("says what a capped split left out", () => {
+      expect(splitCutNote({ label: "Asset", rows: [{}, {}], truncated: { groups: 3, open: 7 } }))
+        .toBe("Top 2 by open backlog · 3 more assets holding 7 open not shown.");
+      expect(splitCutNote({ label: "Asset", rows: [], truncated: { groups: 0, open: 0 } })).toBe("");
     });
   });
 }

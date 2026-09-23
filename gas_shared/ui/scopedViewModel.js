@@ -297,3 +297,45 @@ export function groupLine(g) {
     age !== null ? `oldest open ${fmtDays(age)}` : null,
   ].filter(Boolean).join(" · ");
 }
+
+// ------------------------------------------------------------------ MTTR by a dimension
+
+/**
+ * One split's table rows. `days` is the median, or the lower bound where the median is not
+ * observable (and `bounded` says so, so the cell prints "≥"); `barPct` places it against the
+ * SLOWEST group in this split, which is the comparison the section exists for — where in my
+ * scope do fixes take longest. A group with neither figure gets no bar, not a zero-length one.
+ */
+export function splitRowsView(split) {
+  const rows = split && Array.isArray(split.rows) ? split.rows : [];
+  const daysOf = (r) => {
+    const m = num(r.kmMedian);
+    return m !== null ? { days: m, bounded: false } : { days: num(r.kmLowerBound), bounded: true };
+  };
+  const max = rows.reduce((a, r) => Math.max(a, daysOf(r).days || 0), 0);
+  return rows.map((r) => {
+    const { days, bounded } = daysOf(r);
+    return {
+      group: r.group,
+      days,
+      median: days === null ? null : (bounded ? "≥ " : "") + fmtDays(days),
+      bounded: days !== null && bounded,
+      barPct: days !== null && max > 0 ? Math.max(2, Math.round((days / max) * 100)) : null,
+      p90: num(r.p90),
+      open: num(r.open) || 0,
+      resolved: num(r.resolved) || 0,
+      pastSla: num(r.pastSla) || 0,
+    };
+  });
+}
+
+/** The line under a capped split: how much it did not list, so the table never reads as all. */
+export function splitCutNote(split) {
+  const t = split && split.truncated ? split.truncated : null;
+  const groups = t ? num(t.groups) || 0 : 0;
+  if (!groups) return "";
+  const noun = String((split && split.label) || "group").toLowerCase();
+  const open = num(t.open) || 0;
+  return `Top ${(split.rows || []).length} by open backlog · ${groups.toLocaleString()} more ` +
+    `${groups === 1 ? noun : noun + "s"} holding ${open.toLocaleString()} open not shown.`;
+}

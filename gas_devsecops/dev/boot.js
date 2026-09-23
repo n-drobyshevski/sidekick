@@ -99,9 +99,11 @@
   // The RPC shim below applies the same `denyResult` fence dist/entry.js does in this mode.
   const SCOPED_AS = new URLSearchParams(location.search).get("scoped");
   if (SCOPED_AS !== null) {
+    // `?scoped=d:<domain>` scopes by business domain instead of project.
     const project = SCOPED_AS || "ce-transport";
+    const scope = project.indexOf("d:") === 0 ? { d: [project.slice(2)] } : { p: [project] };
     PropertiesService.getScriptProperties().setProperty("SCOPED_USERS",
-      JSON.stringify({ "viewer@example.com": { p: [project] } }));
+      JSON.stringify({ "viewer@example.com": scope }));
     window.Session = {
       getActiveUser: () => ({ getEmail: () => "viewer@example.com" }),
       getEffectiveUser: () => ({ getEmail: () => "dev@example.com" }),

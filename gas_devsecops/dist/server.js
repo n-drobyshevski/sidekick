@@ -5400,7 +5400,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "081f6f7a2487" : "dev";
+  var BUILD_ID = true ? "dcd42cf16cc0" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
@@ -8524,6 +8524,36 @@ var Server = (() => {
       trend: trendOut
     };
   }
+  var SPLIT_NONE = "(none)";
+  var SPLIT_CAP = 20;
+  function buildSplit(rows, keyOf2, isOpen9, stat, meta) {
+    var _a;
+    const buckets = /* @__PURE__ */ new Map();
+    for (const r of rows) {
+      const k = keyOf2(r) || SPLIT_NONE;
+      let b = buckets.get(k);
+      if (!b) buckets.set(k, b = { rows: [], open: 0 });
+      b.rows.push(r);
+      if (isOpen9(r)) b.open += 1;
+    }
+    const ranked = [...buckets.entries()].sort(([a, x], [b, y]) => {
+      if (a === SPLIT_NONE && b !== SPLIT_NONE) return 1;
+      if (b === SPLIT_NONE && a !== SPLIT_NONE) return -1;
+      return y.open - x.open || y.rows.length - x.rows.length || (a < b ? -1 : a > b ? 1 : 0);
+    });
+    const cap = (_a = meta.cap) != null ? _a : SPLIT_CAP;
+    const kept = ranked.slice(0, cap);
+    const cut = ranked.slice(cap);
+    return {
+      dimension: meta.dimension,
+      label: meta.label,
+      rows: kept.map(([g, b]) => stat(g, b.rows)),
+      truncated: { groups: cut.length, open: cut.reduce((a, [, b]) => a + b.open, 0) }
+    };
+  }
+  function informativeSplits(splits) {
+    return splits.filter((s2) => s2.rows.length + s2.truncated.groups >= 2);
+  }
 
   // ../gas_shared/domain/rowGroups.ts
   var NONE_GROUP = "\0none";
@@ -9829,18 +9859,66 @@ var Server = (() => {
     const params = { scope: null, severities: null, showNoFix: true, viewerScope: viewer };
     const n2 = norm(params);
     return durablyCached(
-      "dsScopeSummary2",
+      // "dsScopeSummary2" -> "dsScopeSummary3": the payload gained `splits` (MTTR by team /
+      // domain / repository); a warm "2" entry would draw the summary with no split at all.
+      "dsScopeSummary3",
       { ...keyOf(n2), slaTargets: n2.slaTargets, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => {
         const latest = latestScanRowOf(loadScanRows());
-        return scopeSummaryOf(mttrModel(params), historyModel(params), {
+        const summary = scopeSummaryOf(mttrModel(params), historyModel(params), {
           asOf: (/* @__PURE__ */ new Date()).toISOString(),
           // Each register syncs on its own; the newest of them is the freshness caption, and no
           // single scan total describes a union of registers.
           scan: latest ? { ts: latest.ts, total: null } : null
         }, SEVERITY_ORDER);
+        summary.splits = scopeSplits(n2);
+        return summary;
       }
     );
+  }
+  function scopeSplits(n2) {
+    const snap = baseSnapshot();
+    const rows = liveRepoRows(visibleRows(snap.rows, n2), n2.mttrExcludeEndOfLife).rows;
+    const stat = (group, rs) => {
+      var _a, _b;
+      const km = kaplanMeier(rs, KM_OPTS);
+      const { overall } = mttrFromLedger(rs, { now: snap.now, slaTargets: n2.slaTargets });
+      return {
+        group,
+        kmMedian: km.median,
+        kmLowerBound: km.median === null ? km.medianLowerBound : null,
+        p90: kmQuantileFromCurve(km.curve, 0.9),
+        open: (_a = overall.open) != null ? _a : 0,
+        resolved: (_b = overall.resolved) != null ? _b : 0,
+        pastSla: openPastSla(rs, { slaTargets: n2.slaTargets }).overall.breached
+      };
+    };
+    const open = (r) => isOpen8(r.status);
+    const text = (v) => String(v != null ? v : "").trim();
+    const field = (r, k) => text(r[k]);
+    return informativeSplits([
+      buildSplit(
+        rows,
+        (r) => field(r, "_supportGroup"),
+        open,
+        stat,
+        { dimension: "team", label: "Team" }
+      ),
+      buildSplit(
+        rows,
+        (r) => field(r, "_domain"),
+        open,
+        stat,
+        { dimension: "domain", label: "Domain" }
+      ),
+      buildSplit(
+        rows,
+        (r) => text(r.repo_name),
+        open,
+        stat,
+        { dimension: "repository", label: "Repository" }
+      )
+    ]);
   }
   function latestScanRowOf(scans) {
     let best = null;

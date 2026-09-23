@@ -429,3 +429,33 @@ describe("getRegisterRows — group by, over the whole set and never a page", ()
     expect(Array.isArray(d["rows"])).toBe(true);
   });
 });
+
+// --------------------------------------------------------------------------------------- //
+//  MTTR by group
+// --------------------------------------------------------------------------------------- //
+
+describe("the summary's MTTR splits", () => {
+  const dims = (summary: Rec) => ((summary["splits"] ?? []) as Rec[]).map((s) => s["dimension"]);
+
+  it("splits a DOMAIN viewer by the support groups inside it, and by asset", async () => {
+    H.props["SCOPED_USERS"] = JSON.stringify({ "viewer@example.com": { d: ["Payments"] } });
+    H.active = "viewer@example.com";
+    const { api } = await load();
+    const summary = api.getScopeSummary({}).data as Rec;
+    expect(dims(summary)).toEqual(["supportGroup", "asset"]);
+    const sg = ((summary["splits"] as Rec[])[0]!["rows"] as Rec[]).map((r) => r["group"]).sort();
+    // Payments is every even row: SG-0 and SG-2, nothing else — the split stays in scope.
+    expect(sg).toEqual(["SG-0", "SG-2"]);
+    const total = ((summary["splits"] as Rec[])[0]!["rows"] as Rec[])
+      .reduce((a, r) => a + Number(r["open"]), 0);
+    expect(total).toBe(summary["open"]);
+  });
+
+  it("drops a dimension that would restate the hero (one support group, one domain)", async () => {
+    H.active = "viewer@example.com"; // scoped to SG-1 only
+    const { api } = await load();
+    const summary = api.getScopeSummary({}).data as Rec;
+    expect(dims(summary)).not.toContain("supportGroup");
+    expect(dims(summary)).toContain("asset");
+  });
+});

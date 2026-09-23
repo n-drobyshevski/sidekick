@@ -12,7 +12,7 @@ import { call } from "../api.js";
 import { bootstrap, setParams, swrCall } from "../store.js";
 import { el, clear, downloadText } from "./dom.js";
 import { errorState, measuredEmpty, skeletonStack, syncCaption, toast } from "./feedback.js";
-import { heroLines, heroStat, pageHeader, statRow } from "./controls.js";
+import { heroLines, heroStat, pageHeader, segmented, statRow } from "./controls.js";
 import { collapsibleSection } from "./sheet.js";
 import { dataTable, tableFooter } from "./data.js";
 import { fmtDays, num } from "./figures.js";
@@ -23,6 +23,7 @@ import { tipAnchor } from "./tip.js";
 import { wizCveUrl } from "./wizLinks.js";
 import { uiIcon } from "./uiIcons.js";
 import {
+  splitCutNote, splitRowsView,
   groupLine, mttrHeroView, scopeLabel, scopeSentence, secondaryStats, sevMttrRows, summarySeries,
 } from "./scopedViewModel.js";
 
@@ -151,6 +152,10 @@ export async function renderScopeSummary(main, _params, opts = {}) {
       range ? el("p", { class: "small muted" }, range + " · median days to remediate, as of each scan") : null));
   }
 
+  // ---------------------------------------------------------- MTTR by group: where it lags
+  const splits = Array.isArray(summary.splits) ? summary.splits : [];
+  if (splits.length) host.append(mttrSplitSection(splits));
+
   // ------------------------------------------------------------- secondary: the backlog
   const order = opts.sevOrder || ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
   const entries = order
@@ -201,6 +206,84 @@ export async function renderScopeSummary(main, _params, opts = {}) {
   }
 
   host.append(el("p", {}, el("a", { href: findingsHref, class: "button" }, "See my findings →")));
+}
+
+/**
+ * "MTTR by …": the headline's estimator, one row per support group / domain / asset (or team /
+ * domain / repository). A segmented switch picks the dimension when there is more than one;
+ * the table sorts in place. The bar is each group's median against the slowest group shown.
+ */
+function mttrSplitSection(splits) {
+  let active = splits[0].dimension;
+  let sort = { key: "open", descending: true };
+  const tableHost = el("div", {});
+  const noteHost = el("p", { class: "small muted" });
+  const head = el("div", { class: "scoped-trend__head" },
+    el("h2", { class: "section-label" }, "MTTR by " + splits[0].label.toLowerCase()));
+  const section = el("section", { class: "scoped-section" }, head);
+  if (splits.length > 1) {
+    section.append(el("div", {}, segmented({
+      options: splits.map((s) => ({ value: s.dimension, label: s.label })),
+      value: active,
+      ariaLabel: "Split MTTR by",
+      onChange: (v) => {
+        active = v;
+        sort = { key: "open", descending: true };
+        head.firstChild.textContent = "MTTR by " + current().label.toLowerCase();
+        paint();
+      },
+    })));
+  }
+  section.append(tableHost, noteHost);
+  const current = () => splits.find((s) => s.dimension === active) || splits[0];
+  const cmp = (a, b) => {
+    const x = a[sort.key];
+    const y = b[sort.key];
+    // Nulls last in both directions: an unmeasured median is not the fastest nor the slowest.
+    if (x === null || x === undefined) return (y === null || y === undefined) ? 0 : 1;
+    if (y === null || y === undefined) return -1;
+    const d = typeof x === "string" ? String(x).localeCompare(String(y)) : x - y;
+    return sort.descending ? -d : d;
+  };
+  function paint() {
+    const split = current();
+    const rows = splitRowsView(split).slice().sort(cmp);
+    const num0 = (v) => (v || 0).toLocaleString();
+    tableHost.replaceChildren(dataTable({
+      panel: true,
+      className: "scoped-split",
+      sort,
+      onSort: (key) => {
+        sort = { key, descending: sort.key === key ? !sort.descending : key !== "group" };
+        paint();
+      },
+      columns: [
+        { key: "group", label: split.label, sortable: true,
+          cell: (r) => (r.group === "(none)" ? el("span", { class: "muted" }, "(none)") : r.group) },
+        {
+          key: "days", label: "MTTR median", sortable: true,
+          cell: (r) => el("span", { class: "scoped-split__mttr" },
+            el("span", { class: "num" + (r.bounded ? " muted" : "") }, r.median || "Not yet"),
+            r.barPct !== null
+              ? el("span", { class: "scoped-split__bar", "aria-hidden": "true" },
+                el("span", { style: `width:${r.barPct}%` }))
+              : null),
+        },
+        { key: "p90", label: "p90", className: "num", sortable: true,
+          cell: (r) => (r.p90 === null ? "—" : fmtDays(r.p90)) },
+        { key: "open", label: "Open", className: "num", sortable: true, cell: (r) => num0(r.open) },
+        { key: "resolved", label: "Fixed", className: "num", sortable: true, cell: (r) => num0(r.resolved) },
+        { key: "pastSla", label: "Past SLA", className: "num", sortable: true, cell: (r) => num0(r.pastSla) },
+      ],
+      rows,
+    }));
+    noteHost.textContent = [
+      "Same Kaplan-Meier median as the headline, per group; “≥” where fewer than half are fixed.",
+      splitCutNote(split),
+    ].filter(Boolean).join(" ");
+  }
+  paint();
+  return section;
 }
 
 /**

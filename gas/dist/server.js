@@ -6489,7 +6489,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "f147fa3de0e8" : "dev";
+  var BUILD_ID = true ? "71280fb867f0" : "dev";
   var CACHE_EPOCH = "1";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
@@ -9409,6 +9409,36 @@ var Server = (() => {
       perSev: sevRows,
       trend: trendOut
     };
+  }
+  var SPLIT_NONE = "(none)";
+  var SPLIT_CAP = 20;
+  function buildSplit(rows, keyOf, isOpen4, stat, meta) {
+    var _a;
+    const buckets = /* @__PURE__ */ new Map();
+    for (const r of rows) {
+      const k = keyOf(r) || SPLIT_NONE;
+      let b = buckets.get(k);
+      if (!b) buckets.set(k, b = { rows: [], open: 0 });
+      b.rows.push(r);
+      if (isOpen4(r)) b.open += 1;
+    }
+    const ranked = [...buckets.entries()].sort(([a, x], [b, y]) => {
+      if (a === SPLIT_NONE && b !== SPLIT_NONE) return 1;
+      if (b === SPLIT_NONE && a !== SPLIT_NONE) return -1;
+      return y.open - x.open || y.rows.length - x.rows.length || (a < b ? -1 : a > b ? 1 : 0);
+    });
+    const cap = (_a = meta.cap) != null ? _a : SPLIT_CAP;
+    const kept = ranked.slice(0, cap);
+    const cut = ranked.slice(cap);
+    return {
+      dimension: meta.dimension,
+      label: meta.label,
+      rows: kept.map(([g, b]) => stat(g, b.rows)),
+      truncated: { groups: cut.length, open: cut.reduce((a, [, b]) => a + b.open, 0) }
+    };
+  }
+  function informativeSplits(splits) {
+    return splits.filter((s) => s.rows.length + s.truncated.groups >= 2);
   }
 
   // ../gas_shared/domain/rowGroups.ts
@@ -13026,8 +13056,8 @@ var Server = (() => {
   function viewerParams(viewer, severities) {
     return { domain: "", supportGroup: "", severities, viewerScope: viewer };
   }
-  var SCOPED_BOOT = "scopedBoot2";
-  var SCOPE_SUMMARY = "scopeSummary2";
+  var SCOPED_BOOT = "scopedBoot3";
+  var SCOPE_SUMMARY = "scopeSummary3";
   function scopedBootParams(viewer) {
     return {
       scope: scopeKey(fromViewerScope(viewer)),
@@ -13039,10 +13069,57 @@ var Server = (() => {
     const severities = getDisplaySeverities2();
     const p = viewerParams(viewer, severities);
     const latest = latestScanRow();
-    return scopeSummaryOf(mttrData(p), mttrTrendData(p), {
+    const summary = scopeSummaryOf(mttrData(p), mttrTrendData(p), {
       asOf: nowIso(),
       scan: latest ? { ts: latest.ts, total: latest.total } : null
     }, SEVERITY_ORDER);
+    summary.splits = scopeSplits(viewer, severities);
+    return summary;
+  }
+  function scopeSplits(viewer, severities) {
+    const rows = visibleBase(filterSeverities(scopedBaseRows("", "", viewer), severities));
+    const compiled = compileDomains(getDomains2().items);
+    for (const r of rows) r["_domain"] = resolveDomainName(r, compiled);
+    const stat = (group, rs) => {
+      var _a, _b;
+      const base = rs;
+      const km = kaplanMeier(base);
+      const { overall } = mttrFromLedger(rs);
+      return {
+        group,
+        kmMedian: km.median,
+        kmLowerBound: km.median === null ? km.medianLowerBound : null,
+        p90: kmQuantileFromCurve(km.curve, 0.9),
+        open: (_a = overall.open) != null ? _a : 0,
+        resolved: (_b = overall.resolved) != null ? _b : 0,
+        pastSla: openPastSla(base).overall.breached
+      };
+    };
+    const isOpen4 = (r) => isOpenStatus(r["status"]);
+    const text2 = (v) => String(v != null ? v : "").trim();
+    return informativeSplits([
+      buildSplit(
+        rows,
+        (r) => text2(r["_supportGroup"]),
+        isOpen4,
+        stat,
+        { dimension: "supportGroup", label: "Support group" }
+      ),
+      buildSplit(
+        rows,
+        (r) => text2(r["_domain"]),
+        isOpen4,
+        stat,
+        { dimension: "domain", label: "Domain" }
+      ),
+      buildSplit(
+        rows,
+        (r) => text2(r["asset_name"]),
+        isOpen4,
+        stat,
+        { dimension: "asset", label: "Asset" }
+      )
+    ]);
   }
   var cachedScopeSummary = (viewer) => durablyCached(SCOPE_SUMMARY, scopedBootParams(viewer), () => scopeSummaryData(viewer));
   function scopedBootData(viewer) {

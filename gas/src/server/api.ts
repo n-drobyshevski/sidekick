@@ -61,7 +61,9 @@ import * as ledgerStore from "./ledgerStore";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
 import * as access from "./access";
 import { distinctScopes, rosterRows, scopeKey, serializeScoped, validateScoped } from "../../../gas_shared/domain/scopedAccess";
-import { scopeSummaryOf } from "../../../gas_shared/domain/scopeSummary";
+import {
+  buildSplit, informativeSplits, scopeSummaryOf, type ScopeSplitRow,
+} from "../../../gas_shared/domain/scopeSummary";
 import { groupRows, rowsInGroup } from "../../../gas_shared/domain/rowGroups";
 import { hasWizCredentials, PROP_KEYS, setProp } from "./props";
 import { readHubUrl, writeHubUrl } from "./hubUrl";
@@ -3778,8 +3780,8 @@ function viewerParams(viewer: access.ViewerScope, severities: string[] | null): 
 // "scopedBoot1" / "scopeSummary1" -> "…2": the summary trend became KM-only (it fell back to
 // the naive median in KM gaps, which put a second estimator under the hero). A warm "1" entry
 // would keep drawing the mixed line.
-const SCOPED_BOOT = "scopedBoot2"; // also: perSev gained kmLowerBound
-const SCOPE_SUMMARY = "scopeSummary2";
+const SCOPED_BOOT = "scopedBoot3"; // 2: perSev gained kmLowerBound · 3: summary gained `splits`
+const SCOPE_SUMMARY = "scopeSummary3"; // 3: gained `splits` (MTTR by group)
 
 function scopedBootParams(viewer: access.ViewerScope): Rec {
   return {
@@ -3794,10 +3796,51 @@ function scopeSummaryData(viewer: access.ViewerScope): Rec {
   const severities = settingsStore.getDisplaySeverities();
   const p = viewerParams(viewer, severities);
   const latest = ledgerStore.latestScanRow();
-  return scopeSummaryOf(mttrData(p), mttrTrendData(p), {
+  const summary = scopeSummaryOf(mttrData(p), mttrTrendData(p), {
     asOf: nowIso(),
     scan: latest ? { ts: latest.ts, total: latest.total } : null,
-  }, SEVERITY_ORDER) as unknown as Rec;
+  }, SEVERITY_ORDER);
+  summary.splits = scopeSplits(viewer, severities);
+  return summary as unknown as Rec;
+}
+
+/**
+ * MTTR by support group, by domain and by asset over the viewer's rows — the SAME population
+ * the hero measures (scoped → display severities → both toggles), split three ways, each group
+ * through the hero's own estimator. A split whose rows all land in one group restates the hero
+ * and is dropped (`informativeSplits`), so a viewer holding one support group sees no
+ * support-group split, and a viewer holding a domain sees the groups inside it.
+ */
+function scopeSplits(viewer: access.ViewerScope, severities: string[] | null) {
+  const rows = visibleBase(filterSeverities(scopedBaseRows("", "", viewer), severities));
+  // `_supportGroup` and `_bizDomain` were attached by the viewer scoping; `_domain` is resolved
+  // here exactly as the scope filter resolved it, so a split row names the bucket it was kept for.
+  const compiled = compileDomains(settingsStore.getDomains().items);
+  for (const r of rows) r["_domain"] = resolveDomainName(r, compiled);
+  const stat = (group: string, rs: Rec[]): ScopeSplitRow => {
+    const base = rs as unknown as BaseRow[];
+    const km = kaplanMeier(base);
+    const { overall } = mttrFromLedger(rs);
+    return {
+      group,
+      kmMedian: km.median,
+      kmLowerBound: km.median === null ? km.medianLowerBound : null,
+      p90: kmQuantileFromCurve(km.curve, 0.9),
+      open: overall.open ?? 0,
+      resolved: overall.resolved ?? 0,
+      pastSla: openPastSla(base).overall.breached,
+    };
+  };
+  const isOpen = (r: Rec) => isOpenStatus(r["status"]);
+  const text = (v: unknown) => String(v ?? "").trim();
+  return informativeSplits([
+    buildSplit(rows, (r) => text(r["_supportGroup"]), isOpen, stat,
+      { dimension: "supportGroup", label: "Support group" }),
+    buildSplit(rows, (r) => text(r["_domain"]), isOpen, stat,
+      { dimension: "domain", label: "Domain" }),
+    buildSplit(rows, (r) => text(r["asset_name"]), isOpen, stat,
+      { dimension: "asset", label: "Asset" }),
+  ]);
 }
 
 const cachedScopeSummary = (viewer: access.ViewerScope): Rec =>

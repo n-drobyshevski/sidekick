@@ -51,9 +51,11 @@
   // a call outside SCOPED_RPCS answers `forbidden` here too.
   const SCOPED_AS = new URLSearchParams(location.search).get("scoped");
   if (SCOPED_AS !== null) {
+    // `?scoped=d:SUPPLY` scopes by business domain instead of support group.
     const group = SCOPED_AS || "CS-CORE-PLATFORM";
+    const scope = group.indexOf("d:") === 0 ? { d: [group.slice(2)] } : { g: [group] };
     PropertiesService.getScriptProperties().setProperty("SCOPED_USERS",
-      JSON.stringify({ "viewer@example.com": { g: [group] } }));
+      JSON.stringify({ "viewer@example.com": scope }));
     window.Session = {
       getActiveUser: () => ({ getEmail: () => "viewer@example.com" }),
       getEffectiveUser: () => ({ getEmail: () => "dev@example.com" }),

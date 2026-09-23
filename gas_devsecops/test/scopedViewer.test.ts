@@ -200,3 +200,24 @@ describe("group by", () => {
     expect(d["groups"]).toBeUndefined();
   });
 });
+
+describe("the summary's MTTR splits", () => {
+  it("omits every dimension that lands the viewer's rows in one group", async () => {
+    await as("viewer@example.com"); // leaf-a: one repository, one team, no domain map
+    const d = ok(server.api.getScopeSummary({}));
+    expect(Array.isArray(d["splits"])).toBe(true);
+    expect((d["splits"] as Rec[]).map((s) => s["dimension"])).not.toContain("repository");
+  });
+
+  it("splits by repository once the scope spans two", async () => {
+    const { overwrite, TABS } = await import("../src/server/sheetsDb");
+    overwrite(TABS.ledger, LEDGER_ROWS.concat([
+      ledgerRow({ finding_key: "sca#a3", scope: "sca", repo_id: "r2", repo_name: "repo-two",
+        projects_json: JSON.stringify([LEAF_A]) }),
+    ]));
+    await as("viewer@example.com");
+    const d = ok(server.api.getScopeSummary({}));
+    const repo = (d["splits"] as Rec[]).find((s) => s["dimension"] === "repository")!;
+    expect((repo["rows"] as Rec[]).map((r) => r["group"]).sort()).toEqual(["repo-one", "repo-two"]);
+  });
+});

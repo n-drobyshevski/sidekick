@@ -64,6 +64,8 @@ export interface ScopeSummary {
   backlog: { observed: number; unobserved: number } | null;
   perSev: ScopeSummarySev[];
   trend: ScopeSummaryPoint[];
+  /** MTTR by support group / domain / asset (or team / domain / repository): see below. */
+  splits?: ScopeSplit[];
 }
 
 /** How many trend points travel. The page draws a sparkline, not the MTTR page's chart. */
@@ -177,4 +179,85 @@ export function scopeSummaryOf(
     perSev: sevRows,
     trend: trendOut,
   };
+}
+
+// ------------------------------------------------------------------ MTTR by a dimension
+
+/** One group's remediation figures — the hero's own estimator over that group's rows. */
+export interface ScopeSplitRow {
+  group: string;
+  /** Kaplan-Meier median days; null when fewer than half the group is fixed. */
+  kmMedian: number | null;
+  /** When `kmMedian` is null: the time it is AT LEAST (longest observation). */
+  kmLowerBound: number | null;
+  p90: number | null;
+  open: number;
+  resolved: number;
+  /** Open findings older than their SLA target. */
+  pastSla: number;
+}
+
+export interface ScopeSplit {
+  /** "supportGroup" | "domain" | "asset" (gas) · "team" | "domain" | "repository" (devsecops). */
+  dimension: string;
+  /** The heading word, singular: "Support group", "Repository". */
+  label: string;
+  rows: ScopeSplitRow[];
+  /** Groups beyond the cap, and the open findings they hold — never silently dropped. */
+  truncated: { groups: number; open: number };
+}
+
+/** The label for rows whose grouping key is missing. Sorted last, never dropped. */
+export const SPLIT_NONE = "(none)";
+
+/** How many groups a split ships. A viewer's page lists where to look, not every host. */
+export const SPLIT_CAP = 20;
+
+/**
+ * One dimension's split: bucket the viewer's rows by `keyOf`, rank the buckets by open backlog
+ * (then fixed, then name; "(none)" last), keep `cap`, and compute each kept bucket with the
+ * app's own `stat` — which is where the Kaplan-Meier estimate is, because each register owns
+ * its remediation module. Ranking happens BEFORE any estimate is computed, so the cap bounds
+ * the work as well as the payload.
+ *
+ * `isOpen` decides the ranking's open count only; the figures come from `stat`.
+ */
+export function buildSplit<R>(
+  rows: R[],
+  keyOf: (r: R) => string,
+  isOpen: (r: R) => boolean,
+  stat: (group: string, rows: R[]) => ScopeSplitRow,
+  meta: { dimension: string; label: string; cap?: number },
+): ScopeSplit {
+  const buckets = new Map<string, { rows: R[]; open: number }>();
+  for (const r of rows) {
+    const k = keyOf(r) || SPLIT_NONE;
+    let b = buckets.get(k);
+    if (!b) buckets.set(k, (b = { rows: [], open: 0 }));
+    b.rows.push(r);
+    if (isOpen(r)) b.open += 1;
+  }
+  const ranked = [...buckets.entries()].sort(([a, x], [b, y]) => {
+    if (a === SPLIT_NONE && b !== SPLIT_NONE) return 1;
+    if (b === SPLIT_NONE && a !== SPLIT_NONE) return -1;
+    return (y.open - x.open) || (y.rows.length - x.rows.length) || (a < b ? -1 : a > b ? 1 : 0);
+  });
+  const cap = meta.cap ?? SPLIT_CAP;
+  const kept = ranked.slice(0, cap);
+  const cut = ranked.slice(cap);
+  return {
+    dimension: meta.dimension,
+    label: meta.label,
+    rows: kept.map(([g, b]) => stat(g, b.rows)),
+    truncated: { groups: cut.length, open: cut.reduce((a, [, b]) => a + b.open, 0) },
+  };
+}
+
+/**
+ * The splits worth showing: a dimension whose rows all land in ONE group restates the hero,
+ * so it is omitted — which is what makes "by support group" appear exactly when the scope is
+ * a domain or several groups, and disappear for a viewer holding one group.
+ */
+export function informativeSplits(splits: ScopeSplit[]): ScopeSplit[] {
+  return splits.filter((s) => s.rows.length + s.truncated.groups >= 2);
 }

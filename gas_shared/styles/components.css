@@ -2358,3 +2358,9 @@ input[type="range"].cut-hist__range {
   background: var(--graphite); color: var(--on-graphite); border: none;
 }
 .btn.wiz-open:hover { background: var(--graphite-hover); color: var(--on-graphite); }
+
+/* MTTR by group: the median with a bar against the slowest group in the split. */
+.scoped-split__mttr { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 180px; }
+.scoped-split__mttr .num { min-width: 7ch; }
+.scoped-split__bar { flex: 1; height: 6px; background: var(--track-bg); border-radius: var(--radius-pill); overflow: hidden; }
+.scoped-split__bar > span { display: block; height: 100%; background: var(--graphite); border-radius: inherit; }
