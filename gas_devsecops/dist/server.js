@@ -3657,13 +3657,11 @@ var Server = (() => {
     ) !== null;
   }
 
-  // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "6bdcf0dd14d9" : "dev";
-
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var WIZ_VERSION_PROP = "WIZ_DATA_VERSION";
-  var KEY_PREFIX = `wsk.${BUILD_ID}`;
+  var CACHE_EPOCH = "1";
+  var KEY_PREFIX = `wsk.e${CACHE_EPOCH}`;
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   var dataVersionMemo;
@@ -3699,9 +3697,13 @@ var Server = (() => {
     return `${KEY_PREFIX}:${version}:${name}:${paramsHash(params)}`;
   }
   function configStamp() {
-    var _a;
+    var _a, _b, _c;
     if (configStampMemo === void 0) {
-      configStampMemo = sha1Hex(`${(_a = getProp(PROP_KEYS.wizProjectIdV2)) != null ? _a : ""}`).slice(0, 8);
+      configStampMemo = sha1Hex([
+        (_a = getProp(PROP_KEYS.wizProjectIdV2)) != null ? _a : "",
+        (_b = getProp(PROP_KEYS.wizDomainTagKey)) != null ? _b : "",
+        (_c = getProp(PROP_KEYS.wizLifecycleTagKey)) != null ? _c : ""
+      ].join("\0")).slice(0, 8);
     }
     return configStampMemo;
   }
@@ -5389,6 +5391,9 @@ var Server = (() => {
     }
     return (r) => orNull(r[column]);
   }
+
+  // ../gas_shared/server/buildInfo.ts
+  var BUILD_ID = true ? "98e3c71fd2c3" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
@@ -10490,7 +10495,7 @@ var Server = (() => {
       )
     };
   }
-  var cachedSettingsImpactData = () => cached("settingsImpact", { projectView: loadSettings().projectView || null }, () => settingsImpactData(), 3600);
+  var cachedSettingsImpactData = () => cached("settingsImpact1", { projectView: loadSettings().projectView || null }, () => settingsImpactData(), 3600);
   function getSettingsImpact(_p) {
     return run(() => cachedSettingsImpactData());
   }

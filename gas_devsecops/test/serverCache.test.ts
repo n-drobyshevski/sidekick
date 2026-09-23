@@ -2,12 +2,11 @@
 // (CacheService / Utilities / PropertiesService) are stubbed with node equivalents so the
 // packing format and miss semantics are exercised for real.
 //
-// Port of gas/test/serverCache.test.ts. One divergence, and it is a real one rather than a
-// rename: `configStamp()` here folds `WIZ_PROJECT_ID_V2` (props.PROP_KEYS.wizProjectIdV2) and
-// nothing else, where gas/ folds a domain-tag key this register does not have. The property is
-// an operator Script Property that no mutation bumps, so the "read it once per execution" spec
-// below names THIS key — a spec still asserting on `WIZ_DOMAIN_TAG_KEY` would have passed
-// vacuously (zero reads is also "not two").
+// Port of gas/test/serverCache.test.ts. One divergence: `configStamp()` here folds three
+// operator Script Properties that no mutation bumps — `WIZ_PROJECT_ID_V2` and the two
+// repository tag keys `WIZ_DOMAIN_TAG_KEY` / `WIZ_LIFECYCLE_TAG_KEY` — where gas/ folds its one
+// domain-tag key. The specs below name each, so none can pass vacuously (zero reads is also
+// "not two").
 
 import { gunzipSync, gzipSync } from "node:zlib";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -190,7 +189,9 @@ describe("the version stamp is read once per execution", () => {
     cached("c", { x: 3 }, () => 3);
     cached("d", { x: 4 }, () => 4);
     expect(propReads.filter((k) => k === "DATA_VERSION").length).toBe(1);
-    expect(propReads.filter((k) => k === "WIZ_PROJECT_ID_V2").length).toBe(1);
+    for (const k of ["WIZ_PROJECT_ID_V2", "WIZ_DOMAIN_TAG_KEY", "WIZ_LIFECYCLE_TAG_KEY"]) {
+      expect(propReads.filter((x) => x === k).length, k).toBe(1);
+    }
   });
 
   // THE INVALIDATION IS THE WHOLE SAFETY ARGUMENT. A mutate() endpoint that bumps and then
@@ -219,6 +220,28 @@ describe("the version stamp is read once per execution", () => {
     propStore.set("WIZ_PROJECT_ID_V2", "project-b");
     __resetMemosForTest();
     expect(currentStamp()).not.toBe(before);
+  });
+
+  // Same trap, and it was open: the tag keys decide every row's domain and lifecycle
+  // (repoTags.attachRepoTags), so a key edited in the GAS console must retire every entry
+  // computed under the old one.
+  it("moves the stamp when either repository tag key changes", () => {
+    for (const k of ["WIZ_DOMAIN_TAG_KEY", "WIZ_LIFECYCLE_TAG_KEY"]) {
+      const before = currentStamp();
+      propStore.set(k, `edited-${k}`);
+      __resetMemosForTest();
+      expect(currentStamp(), k).not.toBe(before);
+    }
+  });
+
+  it("does not confuse one property's value for another's", () => {
+    propStore.set("WIZ_PROJECT_ID_V2", "a");
+    __resetMemosForTest();
+    const one = currentStamp();
+    propStore.delete("WIZ_PROJECT_ID_V2");
+    propStore.set("WIZ_DOMAIN_TAG_KEY", "a");
+    __resetMemosForTest();
+    expect(currentStamp()).not.toBe(one);
   });
 });
 

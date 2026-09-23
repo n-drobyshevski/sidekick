@@ -61,6 +61,10 @@ web UI. The top-level `pytest` suite should remain focused on non-UI logic.
   read-model returns — its shape or its meaning — bump that model's namespace
   suffix (`mttr12` → `mttr13`); `test/cacheNamespaces.test.ts` requires every
   namespace to carry one.
+- `gas_devsecops/` follows the same rule: keys carry `serverCache.CACHE_EPOCH`, not the build
+  id, so a changed read-model bumps its own namespace (`dsMttr4` → `dsMttr5`) and
+  `test/cacheNamespaces.test.ts` there requires a version on every one. Bump `CACHE_EPOCH` only
+  for a change that alters many payloads at once.
 
 ## Design context
 
