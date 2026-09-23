@@ -18,11 +18,15 @@
 //
 // WHAT THIS PAGE IS SENT, and what it therefore cannot say. `api_getExecutivePage` composes
 // two read-models and slices one of them hard (domain/pagePayload.ts::execMttrSlice): the
-// hero arrives as `{median, medianLowerBound, q25, reliableUntil}` — enough to run the SAME
-// `kmHalfLifeView` decision MTTR & SLA does — and NOTHING else: no `curve`, no `censored`, no
-// `events`. So the hero's qualifier line names resolved and still-open lifecycles, which are
-// in the payload, and does not claim they are the estimator's event and censored counts, which
-// are not. `execGroupSlice` narrows the per-register split to `{group, kmMedian, kmQ25,
+// hero arrives as `{median, medianLowerBound, q25, reliableUntil, events, total,
+// excludedPreEntry}` — enough to run the SAME `kmHalfLifeView` decision MTTR & SLA does, AND
+// (measurement-window package) enough for `windowLineView` to state the window's own sample
+// size — and NOTHING else: still no `curve`, still no `censored`. So the hero's qualifier line
+// names resolved and still-open lifecycles, which are in the payload, and does not claim they
+// are the estimator's event and censored counts — `events`/`total` feed the WINDOW line only,
+// never the qualifier, which is why `executiveHeroView` below still reads `tracked`/`resolved`/
+// `open` for its own qualifier rather than switching to the estimator's pair now that both are
+// on the wire. `execGroupSlice` narrows the per-register split to `{group, kmMedian, kmQ25,
 // kmMedianLowerBound, open}` — enough for the byScope table to run the same decision too,
 // rather than falling back to a bare dash with a footnote pointing at MTTR & SLA.
 
@@ -43,7 +47,10 @@ import {
 // could describe the same estimate differently. It lives on the page that owns the clock.
 // `fmtCount`/`fmtDays` themselves come from `../ui.js` now, not from `./mttr.js` — see
 // `ui/figures.js`'s module header.
-import { endOfLifeExclusionNote, kmHalfLifeView, rateView, trackingSinceView } from "./mttr.js";
+import {
+  endOfLifeExclusionNote, kmHalfLifeView, rateView, trackingSinceView, WINDOW_LINE_HELP,
+  windowLineView,
+} from "./mttr.js";
 
 // ------------------------------------------------------------------------- view models
 
@@ -535,6 +542,17 @@ export function coldShareView(payload) {
     derivedDays: present ? num(cz.derived_days) : null,
     floorDays: present ? num(cz.floor_days) : null,
   };
+  // THE ONE COVERAGE COUNT THIS CARD CARRIES, of the four `coldZoneHeadline` publishes.
+  // `dropped_no_repo` and `unclassified_secrets` explain gaps in figures this card does not
+  // draw (the repo table, the high-risk figure — both live on Repositories), so they have
+  // nothing to caveat here; `row_count` is a population count with no single-number card to
+  // fold into. `scopes_without_scan` is different: it can put a scope's repositories INSIDE
+  // this card's own one number while this read cannot tell whether they are cold, which is a
+  // doubt about the figure the card shows rather than about one it does not — see
+  // `renderColdShare`'s denominator for what it says about that.
+  const scopesWithoutScan = present && Array.isArray(cz.scopes_without_scan)
+    ? cz.scopes_without_scan.map((s) => String(s))
+    : [];
   if (!measurable) {
     return {
       show: false,
@@ -542,6 +560,7 @@ export function coldShareView(payload) {
       atLedgerClock: source !== "wallClock",
       pct: null, openInCold: 0, openFindings: 0, coldRepos: 0, reposWithOpen: 0,
       coldAfterDays: present ? num(cz.cold_after_days) : null,
+      scopesWithoutScan,
       ...modeFields,
     };
   }
@@ -559,6 +578,7 @@ export function coldShareView(payload) {
     coldRepos: num(totals.cold_repos, 0),
     reposWithOpen: num(totals.repos_with_open, 0),
     coldAfterDays: num(cz.cold_after_days),
+    scopesWithoutScan,
   };
 }
 
@@ -817,6 +837,18 @@ export async function renderExecutive(host, params, _ctx) {
     // `getExecutivePage`) exactly as `mttr` does on MTTR & SLA.
     const tracking = trackingSinceView(payload);
     if (tracking.show) heroHost.append(el("p", { class: "small muted" }, tracking.text));
+    // THE WINDOW ITSELF, directly under the date it opens — same reasoning and the same shared
+    // helper MTTR & SLA's own hero uses (`mttr.js`'s `windowLineView`), so the front door and
+    // the detail page cannot state the window in two different sentences. `km` is read straight
+    // off `payload.mttr.remediation.km` — the widened `execMttrSlice` block `executiveHeroView`
+    // above already reads from, not a second RPC — because `events`/`total`/`excludedPreEntry`
+    // are the window's own sample size, not the hero's qualifier (see this file's own header).
+    const km = (payload && payload.mttr && payload.mttr.remediation
+      && payload.mttr.remediation.km) || null;
+    const windowLine = windowLineView(payload, km);
+    if (windowLine.show) {
+      heroHost.append(el("p", { class: "small muted" }, tipLabel(windowLine.text, WINDOW_LINE_HELP)));
+    }
     heroHost.append(curveNote());
     // THE ONE PAGE WHERE THE SENTENCE HAS TO NAME ITS FAMILY. The switch narrows the half-life
     // above and leaves every severity tile below whole — a retired repository's open findings
@@ -1104,6 +1136,20 @@ export async function renderExecutive(host, params, _ctx) {
       ? "Measured at the last scan, never against today."
       : "Measured against the current time rather than the last scan — the clock the ledger"
         + " was measured at could not be read, so this figure moves as the page is reopened.";
+    // THE COVERAGE CAVEAT, FOLDED IN RATHER THAN GIVEN ITS OWN NOTE. This card is one number,
+    // and the Repositories page already carries the full sentence (`scopesWithoutScanNote`)
+    // naming these scopes and saying why their repositories are kept observed rather than
+    // accused of vanishing — a second copy of that argument here would be the "fifth standalone
+    // note" the repos page itself declined for a lesser count. But saying NOTHING would let a
+    // reader take this one percentage as covering the whole estate when a scope of it was never
+    // scanned at all, which is the silent failure `clock` just above already exists to refuse
+    // for the wall-clock case — so this is the same refusal for the scan-coverage case, in the
+    // same tooltip rather than as a second visible line.
+    const coverageClause = view.scopesWithoutScan.length
+      ? ` No scan is on record for ${view.scopesWithoutScan.map((s) => SCOPE_LABELS[s] || s).join(", ")}`
+        + `, so this figure cannot say whether ${view.scopesWithoutScan.length === 1 ? "its" : "their"}`
+        + " repositories are cold."
+      : "";
     coldHost.append(el("div", { class: "kpi-row" }, figureCard({
       label: "Backlog in the cold zone",
       value: view.pct === null ? absentText : pct1(view.pct),
@@ -1113,7 +1159,7 @@ export async function renderExecutive(host, params, _ctx) {
         `${fmtCount(view.openInCold)} of ${fmtCount(view.openFindings)} open findings, on`
         + ` ${fmtCount(view.coldRepos)} of ${fmtCount(view.reposWithOpen)} repositories with`
         + " open findings where nothing has been resolved, removed or rotated for"
-        + ` ${windowText}${modeClause}. ${clock}`,
+        + ` ${windowText}${modeClause}. ${clock}${coverageClause}`,
     })));
     coldHost.append(el("p", { class: "small muted" },
       "Which repositories, and which projects → ",

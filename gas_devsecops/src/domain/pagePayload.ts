@@ -47,12 +47,19 @@ import { parseTs, type Rec } from "./util";
  * `fmtKmMedian` distinguishes a missing estimate (renders "—") from a present one, and an
  * absent `remediation` and an absent `remediation.km` have to reach it the same way.
  *
- * `km` CARRIES FOUR FIELDS NOW, NOT TWO (MTTR delayed-entry package): `q25` and `reliableUntil`
- * joined `median`/`medianLowerBound` so the Executive hero can run the SAME `kmHalfLifeView`
- * decision MTTR & SLA does — "Not reached" plus a 25th-percentile or reliability-cut reading,
- * never the retired "at least N days" — rather than a two-scalar shape that could only ever
- * say a bare number or nothing. Still an allowlist of exactly what the hero reads, not a
- * fifth field wider than that.
+ * `km` CARRIES SEVEN FIELDS NOW, NOT TWO (MTTR delayed-entry package, then the measurement-
+ * window package): `q25` and `reliableUntil` joined `median`/`medianLowerBound` so the
+ * Executive hero can run the SAME `kmHalfLifeView` decision MTTR & SLA does — "Not reached"
+ * plus a 25th-percentile or reliability-cut reading, never the retired "at least N days" —
+ * rather than a two-scalar shape that could only ever say a bare number or nothing. `events`,
+ * `total` and `excludedPreEntry` joined them after that: the Executive hero's own "Window …"
+ * line (`mttr.js`'s `windowLineView`, imported the same way `kmHalfLifeView` is) states how
+ * many fixes the estimate actually rests on and how many rows never entered observation at
+ * all, and neither number was on this slice before — `curveNote()` on that page already says
+ * the CURVE itself stays MTTR-only; these three are scalars the estimate is ABOUT, not the
+ * curve. Still an allowlist of exactly what the hero reads, not a field wider than that —
+ * `censored` stays off the wire here (Executive's own qualifier line deliberately does not
+ * claim it; see `executiveHeroView`'s header).
  *
  * THIS IS AN ALLOWLIST, WHICH IS WHY `kmPerSev` COSTS EXEC NOTHING. `buildMttr` now ships one
  * `shipKM`-narrowed curve PER SEVERITY (`remediation.kmPerSev`) for the MTTR page's fan of
@@ -76,6 +83,7 @@ export function execMttrSlice(mttr: unknown): Rec | null {
         km: {
           median: km["median"], medianLowerBound: km["medianLowerBound"],
           q25: km["q25"], reliableUntil: km["reliableUntil"],
+          events: km["events"], total: km["total"], excludedPreEntry: km["excludedPreEntry"],
         },
       }
       : {},

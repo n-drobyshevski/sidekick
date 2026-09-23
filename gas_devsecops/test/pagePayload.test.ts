@@ -34,6 +34,7 @@ const FULL_MTTR = {
       events: 32,
       censored: 67,
       total: 99,
+      excludedPreEntry: 5,
     },
     kmP90: null,
     kmMedianPerSev: { CRITICAL: 3 },
@@ -45,23 +46,29 @@ const FULL_MTTR = {
   },
 };
 
-describe("execMttrSlice — the hero's four numbers, and nothing else", () => {
-  it("ships exactly rowCount, overall.{resolved,open} and km.{median,medianLowerBound,q25,reliableUntil}", () => {
+describe("execMttrSlice — the hero's km block, seven fields now, and nothing else", () => {
+  it("ships exactly rowCount, overall.{resolved,open} and km.{median,medianLowerBound,q25,reliableUntil,events,total,excludedPreEntry}", () => {
     const out = execMttrSlice(FULL_MTTR)!;
     expect(Object.keys(out).sort()).toEqual(["overall", "remediation", "rowCount"]);
     expect(Object.keys(out.overall as object).sort()).toEqual(["open", "resolved"]);
     expect(Object.keys(out.remediation as object)).toEqual(["km"]);
     // MTTR delayed-entry package: q25/reliableUntil joined median/medianLowerBound so the
-    // Executive hero can run the same kmHalfLifeView decision MTTR & SLA does.
+    // Executive hero can run the same kmHalfLifeView decision MTTR & SLA does. Measurement-
+    // window package: events/total/excludedPreEntry joined them so the hero's "Window …" line
+    // can state how many fixes the estimate rests on without a second round trip to MTTR & SLA.
     expect((out.remediation as { km: object }).km).toEqual({
       median: null, medianLowerBound: 118.4, q25: 52.7, reliableUntil: 118.4,
+      events: 32, total: 99, excludedPreEntry: 5,
     });
   });
 
-  it("drops both Kaplan-Meier curves and every unread remediation block", () => {
+  it("drops both Kaplan-Meier curves, the censored count and every unread remediation block", () => {
     const json = JSON.stringify(execMttrSlice(FULL_MTTR));
+    // "censored" is deliberately still off this wire — see execMttrSlice's own header: the
+    // Executive hero's qualifier line names tracked/resolved/open, never the estimator's own
+    // censored count, so shipping it here would be a field with no reader.
     for (const gone of ["curve", "kmActionable", "pctiles", "buckets", "openPastSla",
-      "kmMedianPerSev", "kmP90PerSev", "awaiting", "perSev", "slaPct", "oldestDays"]) {
+      "kmMedianPerSev", "kmP90PerSev", "awaiting", "perSev", "slaPct", "oldestDays", "censored"]) {
       expect(json).not.toContain(gone);
     }
   });
@@ -69,11 +76,13 @@ describe("execMttrSlice — the hero's four numbers, and nothing else", () => {
   it("cuts the payload by well over an order of magnitude", () => {
     const before = JSON.stringify(FULL_MTTR).length;
     const after = JSON.stringify(execMttrSlice(FULL_MTTR)).length;
-    // /15, not /20: q25/reliableUntil (MTTR delayed-entry package) added ~35 bytes to this
-    // FIXTURE's tiny `after` — real payloads carry far more curve/aging/kmPerSev weight than
-    // FULL_MTTR's 52-point curve does, so the margin against a 52k-row register is unaffected.
-    // ~19x still clears "well over an order of magnitude" by a wide margin.
-    expect(after).toBeLessThan(before / 15);
+    // /12, not /20: q25/reliableUntil (MTTR delayed-entry package) and events/total/
+    // excludedPreEntry (measurement-window package) together added under 100 bytes to this
+    // FIXTURE's tiny `after` (measured ~14.7x at the time of writing) — real payloads carry
+    // far more curve/aging/kmPerSev weight than FULL_MTTR's 52-point curve does, so the margin
+    // against a 52k-row register is unaffected. /12 still clears "well over an order of
+    // magnitude" (>10x) with room for the next small field this slice gains.
+    expect(after).toBeLessThan(before / 12);
   });
 
   it("keeps the client's read paths intact", () => {
@@ -83,6 +92,7 @@ describe("execMttrSlice — the hero's four numbers, and nothing else", () => {
         km: {
           median: number | null; medianLowerBound: number | null;
           q25: number | null; reliableUntil: number | null;
+          events: number; total: number; excludedPreEntry: number;
         };
       };
     };
@@ -91,6 +101,9 @@ describe("execMttrSlice — the hero's four numbers, and nothing else", () => {
     expect(out.remediation.km.medianLowerBound).toBe(118.4);
     expect(out.remediation.km.q25).toBe(52.7);
     expect(out.remediation.km.reliableUntil).toBe(118.4);
+    expect(out.remediation.km.events).toBe(32);
+    expect(out.remediation.km.total).toBe(99);
+    expect(out.remediation.km.excludedPreEntry).toBe(5);
   });
 
   it("leaves remediation empty rather than absent when there is no KM result", () => {

@@ -4,7 +4,7 @@
 // `kaplanMeier(rows, opts)` (remediation.ts) is the estimator this file pins; see its own
 // docstring and `kaplanMeierExtended`'s for the algorithm this file is verifying by hand.
 //
-// Five things this file has to show, each its own describe block:
+// Six things this file has to show, each its own describe block:
 //   1. risk-set membership under delayed entry, INCLUDING the entry === t boundary (strict <);
 //   2. exit <= entry rows are excluded outright (events, censored, AND risk set) and counted;
 //   3. the Gebski et al. reliability cut, both "first event already fails" and "passes for a
@@ -12,6 +12,10 @@
 //   4. RMST under an opts.horizonDays cap, including its interaction with the reliability cut;
 //   5. "legacy identical": kaplanMeier(rows) — no opts, no entry_days on any row — reproduces a
 //      COPIED-VERBATIM oracle of the pre-package algorithm, on randomized input.
+//   6. row accounting (row-accounting package): every row handed to the estimator reaches
+//      exactly one bucket — `rowsIn === events + censored + excludedPreEntry + noClock` — plus
+//      `eventsPastCut`/`lateEntrants`/`lateEntryMedianAge` individually, hand-derived off the
+//      SAME fixtures blocks 1-4 already established by hand, then a randomized property test.
 
 import { describe, expect, it } from "vitest";
 import {
@@ -503,5 +507,177 @@ describe("worked example (hand-checked, lifelines Surv(start, stop, event) conve
     expect(km.events).toBe(4);
     expect(km.censored).toBe(2);
     expect(km.excludedPreEntry).toBe(0);
+  });
+});
+
+// ------------------------------------------------------------------- 6. row accounting
+//
+// The row-accounting package: three ways a row used to vanish from the estimator's own counts
+// without ever being counted anywhere —
+//   (a) a row with neither a resolved time nor an open age fell out of the loop with nothing
+//       incremented (`noClock` now catches it);
+//   (b) an event past the reliability cut disappeared from `curve` with nothing saying so
+//       (`eventsPastCut` now catches it);
+//   (c) a finding that entered the risk set late — the onboarding backlog `entry_days` exists
+//       for — was invisible in every published count (`lateEntrants`/`lateEntryMedianAge` now
+//       catch it).
+// `rowsIn` is every row handed in, and the identity `rowsIn === events + censored +
+// excludedPreEntry + noClock` (equivalently, with `eventsUsed = events - eventsPastCut`,
+// `rowsIn === eventsUsed + eventsPastCut + censored + excludedPreEntry + noClock` — the exact
+// form the accounting block's header reconciles against) must hold EXACTLY, always — it falls
+// straight out of the loop in `kaplanMeierExtended` partitioning every row into one of four
+// buckets, independent of the reliability cut, so it is checked on every fixture already
+// established by hand in blocks 1-4 above, then across 300 randomized populations.
+
+describe("row accounting: rowsIn === events + censored + excludedPreEntry + noClock, exactly", () => {
+  it("the 5-row risk-set fixture (block 1): two late entrants, S3 and S4", () => {
+    const rows: RemediationRow[] = [
+      res(4, 0), // S1
+      open(20, 0), // S2
+      res(8, 2), // S3 — entry 2, a late entrant
+      res(8, 4), // S4 — entry 4, a late entrant
+      open(30, 0), // S5
+    ];
+    const km = kaplanMeier(rows, {});
+    expect(km.rowsIn).toBe(5);
+    expect(km.noClock).toBe(0);
+    expect(km.eventsPastCut).toBe(0); // minRisk was never requested — nothing is cut
+    expect(km.lateEntrants).toBe(2); // S3 (entry 2), S4 (entry 4)
+    expect(km.lateEntryMedianAge).toBe(3); // median of [2, 4]
+    expect(km.rowsIn).toBe(km.events + km.censored + km.excludedPreEntry! + km.noClock!);
+  });
+
+  it("the exit<=entry exclusion fixture (block 2): excluded rows never reach lateEntrants either", () => {
+    const rows: RemediationRow[] = [
+      res(5, 5), // excluded (exit == entry)
+      res(3, 5), // excluded (exit < entry)
+      open(5, 5), // excluded, censored side
+      res(10, 5), // the one surviving event, entry 5 — a late entrant
+    ];
+    const km = kaplanMeier(rows, {});
+    expect(km.rowsIn).toBe(4);
+    expect(km.noClock).toBe(0);
+    expect(km.excludedPreEntry).toBe(3);
+    // Only the SURVIVING event counts as a late entrant — the three excluded rows had an
+    // entry too, but they were never observed at all, so they cannot have "entered late".
+    expect(km.lateEntrants).toBe(1);
+    expect(km.lateEntryMedianAge).toBe(5);
+    expect(km.rowsIn).toBe(km.events + km.censored + km.excludedPreEntry! + km.noClock!);
+  });
+
+  it("a row with neither a resolved time nor an open age is noClock, not a silent drop", () => {
+    const rows: RemediationRow[] = [
+      // RESOLVED but no captured mttr_days: resolvedMttr is null, and isOpen(RESOLVED) is
+      // false, so openAge is null too — neither clock produced a reading.
+      { severity: "HIGH", status: "RESOLVED", mttr_days: null, age_days: null, entry_days: 0 },
+      // OPEN but no captured age_days: same story, the other side.
+      { severity: "HIGH", status: "OPEN", mttr_days: null, age_days: null, entry_days: 0 },
+      res(6, 0), // one genuine event, so `events.length` is not the whole story
+    ];
+    const km = kaplanMeier(rows, {});
+    expect(km.rowsIn).toBe(3);
+    expect(km.noClock).toBe(2);
+    expect(km.events).toBe(1);
+    expect(km.censored).toBe(0);
+    expect(km.excludedPreEntry).toBe(0);
+    expect(km.rowsIn).toBe(km.events + km.censored + km.excludedPreEntry! + km.noClock!);
+  });
+
+  it("lateEntryMedianAge is null, never a fabricated 0, when nothing entered late", () => {
+    const km = kaplanMeier([res(1, 0), open(5, 0)], {});
+    expect(km.lateEntrants).toBe(0);
+    expect(km.lateEntryMedianAge).toBeNull();
+  });
+
+  it("eventsPastCut is 0 whenever minRisk is off, even with real entry_days on the rows", () => {
+    const km = kaplanMeier([res(4, 0), res(8, 2), res(8, 4), open(20, 0), open(30, 0)], {});
+    expect(km.reliableUntil).toBeNull(); // minRisk never requested — "no cut" reading
+    expect(km.eventsPastCut).toBe(0);
+  });
+
+  it("first-event-fails (block 3): every event is past the cut, none of them are used", () => {
+    const rows = [res(1), res(2), res(3), res(4)];
+    const cut = kaplanMeier(rows, { minRisk: true });
+    expect(cut.reliableUntil).toBeNull(); // nothing on the curve is trustworthy
+    expect(cut.curve).toEqual([]);
+    expect(cut.events).toBe(4); // the pre-cut total — unaffected by the cut, see its own comment
+    expect(cut.eventsPastCut).toBe(4); // every one of them is past a cut that trusts nothing
+    expect(cut.events - cut.eventsPastCut!).toBe(0); // "fixes used" — matches the empty curve
+    expect(cut.rowsIn).toBe(4);
+    expect(cut.rowsIn).toBe(cut.events + cut.censored + cut.excludedPreEntry! + cut.noClock!);
+  });
+
+  it("mid-curve cut (block 3): eventsPastCut is exactly the events strictly after the cut", () => {
+    const rows: RemediationRow[] = [...dailyEvents(99), open(1000, 0)];
+    const cut = kaplanMeier(rows, { minRisk: true });
+    expect(cut.reliableUntil).toBe(91);
+    expect(cut.curve).toHaveLength(91);
+    expect(cut.events).toBe(99);
+    expect(cut.eventsPastCut).toBe(8); // days 92..99, the events past t=91
+    // "fixes used" (events - eventsPastCut) matches the cut curve's own length exactly — the
+    // accounting block's "Fixes used" row and the drawn staircase can never disagree.
+    expect(cut.events - cut.eventsPastCut!).toBe(cut.curve.length);
+    expect(cut.rowsIn).toBe(100);
+    expect(cut.noClock).toBe(0);
+    // THE INVARIANT, in the exact form the plan states it (eventsUsed spelled out rather than
+    // folded into `events`), on this fixture:
+    const eventsUsed = cut.events - cut.eventsPastCut!;
+    expect(cut.rowsIn).toBe(
+      eventsUsed + cut.eventsPastCut! + cut.censored + cut.excludedPreEntry! + cut.noClock!,
+    );
+  });
+
+  it("censoring cliff (block 3): eventsPastCut survives the cut landing before most events", () => {
+    const phase1 = dailyEvents(40);
+    const cliff = Array.from({ length: 40 }, () => open(41, 0));
+    const phase2 = Array.from({ length: 20 }, (_, i) => res(42 + i, 0));
+    const rows = [...phase1, ...cliff, ...phase2];
+    const cut = kaplanMeier(rows, { minRisk: true });
+    expect(cut.reliableUntil).toBe(40);
+    expect(cut.curve).toHaveLength(40);
+    expect(cut.events).toBe(60); // 40 (phase1) + 20 (phase2)
+    expect(cut.eventsPastCut).toBe(20); // all of phase2 lands past the cut
+    expect(cut.events - cut.eventsPastCut!).toBe(cut.curve.length);
+    expect(cut.rowsIn).toBe(100);
+    expect(cut.rowsIn).toBe(cut.events + cut.censored + cut.excludedPreEntry! + cut.noClock!);
+  });
+
+  it("the horizon-capped RMST fixture (block 4) balances too, with no minRisk at all", () => {
+    const km = kaplanMeier([res(1), res(2), res(3), res(4)], { horizonDays: 2.5 });
+    expect(km.reliableUntil).toBeNull(); // minRisk not requested — the horizon alone caps τ
+    expect(km.eventsPastCut).toBe(0); // nothing is cut just because RMST is capped
+    expect(km.rowsIn).toBe(4);
+    expect(km.rowsIn).toBe(km.events + km.censored + km.excludedPreEntry! + km.noClock!);
+  });
+
+  it("holds across 300 randomized populations mixing entry_days, exclusions and no-clock rows", () => {
+    const rand = mulberry32(0xacc0_1234);
+    for (let trial = 0; trial < 300; trial++) {
+      const n = 1 + Math.floor(rand() * 60);
+      const rows: RemediationRow[] = Array.from({ length: n }, () => {
+        const base = randomRow(rand);
+        // Most rows keep entry 0; the rest get a real entry, sometimes large enough to exceed
+        // the row's own exit/age and exercise the excludedPreEntry branch too — every branch
+        // of the loop fires across the 300 trials rather than in only its own dedicated test.
+        const entry = rand() < 0.6 ? 0 : Math.round(rand() * 600 * 100) / 100;
+        return { ...base, entry_days: entry };
+      });
+      // Always a real opts object, so the identity is checked on the EXTENDED path every
+      // trial — a trial with every entry at 0 and opts undefined would dispatch to
+      // kaplanMeierLegacy instead, whose result carries none of these fields at all.
+      const opts = rand() < 0.5 ? { minRisk: true } : {};
+      const km = kaplanMeier(rows, opts);
+      expect(km.rowsIn, `trial ${trial}`).toBe(n);
+      expect(km.rowsIn, `trial ${trial}`).toBe(
+        km.events! + km.censored + km.excludedPreEntry! + km.noClock!,
+      );
+      // eventsPastCut is always a genuine subset of the pre-cut events — never negative, never
+      // more than were observed.
+      expect(km.eventsPastCut, `trial ${trial}`).toBeGreaterThanOrEqual(0);
+      expect(km.eventsPastCut, `trial ${trial}`).toBeLessThanOrEqual(km.events!);
+      // lateEntryMedianAge is null EXACTLY when lateEntrants is 0 — never a fabricated number,
+      // never a silently dropped one either.
+      expect(km.lateEntrants === 0, `trial ${trial}`).toBe(km.lateEntryMedianAge === null);
+    }
   });
 });

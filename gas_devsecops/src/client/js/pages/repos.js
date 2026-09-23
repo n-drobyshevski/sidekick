@@ -54,6 +54,7 @@
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import { chartUnavailable, loadCharts } from "../../../../../gas_shared/ui/chartsLoader.js";
 import { pagedTable } from "./sca.js";
+import { scopeLabel } from "./_scopeLabels.js";
 import {
   absent, absentText, bandBar, bandBarModel, boundedDays, chartTable, chartTableModel, clear,
   days1, denomNote, el, emptyState, errorState, figureCard, filterChipRow, firstRunNotice,
@@ -256,6 +257,18 @@ export function coldZoneView(model) {
     endOfLifeRepos: present ? num(cz.end_of_life_repos, 0) : 0,
     excludedEndOfLife: present ? num(cz.excluded_end_of_life, 0) : 0,
     excludedOpenFindings: present ? num(cz.excluded_open_findings, 0) : 0,
+    // THE FOUR COVERAGE COUNTS `coldZone.ts`'s header says exist "so an empty section can
+    // prove it looked" — read even where nothing is measurable, for the same reason the
+    // end-of-life fields above are: the fold that produces them happens before the clock is
+    // ever consulted. `scopesWithoutScan` is the one that matters most (a coverage warning,
+    // never narrowed by a display setting); the other two are population counts a note can
+    // fold in when they are non-zero.
+    rowCount: present ? num(cz.row_count, 0) : 0,
+    droppedNoRepo: present ? num(cz.dropped_no_repo, 0) : 0,
+    unclassifiedSecrets: present ? num(cz.unclassified_secrets, 0) : 0,
+    scopesWithoutScan: present && Array.isArray(cz.scopes_without_scan)
+      ? cz.scopes_without_scan.map((s) => String(s))
+      : [],
     teamsInColdestShare: totals ? num(totals.teams_in_coldest_share, 0) : 0,
     // The threshold and the clock ride along even when nothing is measurable: a reader asking
     // "cold after how long?" is asking about the setting, not about the data.
@@ -351,31 +364,40 @@ export function coldModeCaption(view) {
     + (achieved === null ? "" : ` (${pct1(achieved)})`);
   const coldVerb = cold === 1 ? "is" : "are";
 
+  let text;
   if (v.measurable !== true) {
-    return relative
+    text = relative
       ? "Relative mode: the line is derived from the estate once a scan has been saved, and it"
         + ` never falls below the ${floorPhrase}.`
       : `${fixedLead} The window is set in Settings, on the Deadlines tab.`;
-  }
-  if (eligible <= 0) {
-    return relative
+  } else if (eligible <= 0) {
+    text = relative
       ? "Relative mode: no repository has an open finding, so there is nothing to rank. The"
         + ` line rests on the ${floorPhrase} until one does.`
       : `${fixedLead} No repository has an open finding, so there is no share to report.`;
-  }
-  if (!relative) {
-    return `${fixedLead} ${fmtCount(cold)} of ${fmtCount(eligible)} repositories with open`
+  } else if (!relative) {
+    text = `${fixedLead} ${fmtCount(cold)} of ${fmtCount(eligible)} repositories with open`
       + ` findings${achieved === null ? "" : ` (${pct1(achieved)})`} ${coldVerb} cold.${suffix}`;
+  } else {
+    const lead = `Relative mode: the line is set so the idlest ${targetText} of the`
+      + ` ${fmtCount(eligible)} repositories with open findings are cold.`;
+    text = v.floorApplied === true
+      ? `${lead} The idlest ${targetText} would have been ${fmtDays(num(v.derivedDays))}, so`
+        + ` the ${floorPhrase} holds the line instead, and ${coldCount} ${coldVerb} cold — a`
+        + ` smaller zone than the ${targetText} asked for.${suffix}`
+      : `${lead} It landed at ${fmtDays(days)} idle, and ${coldCount} ${coldVerb} cold. The`
+        + ` ${floorPhrase} did not apply.${suffix}`;
   }
-  const lead = `Relative mode: the line is set so the idlest ${targetText} of the`
-    + ` ${fmtCount(eligible)} repositories with open findings are cold.`;
-  if (v.floorApplied === true) {
-    return `${lead} The idlest ${targetText} would have been ${fmtDays(num(v.derivedDays))}, so`
-      + ` the ${floorPhrase} holds the line instead, and ${coldCount} ${coldVerb} cold — a`
-      + ` smaller zone than the ${targetText} asked for.${suffix}`;
-  }
-  return `${lead} It landed at ${fmtDays(days)} idle, and ${coldCount} ${coldVerb} cold. The`
-    + ` ${floorPhrase} did not apply.${suffix}`;
+
+  // THE POPULATION THE SECTION WAS COMPUTED OVER, folded in here rather than given a fifth
+  // standalone note — `row_count` never earns its own sentence the way the other three
+  // coverage counts do (it has no "outside the figures" claim to make; it names the whole of
+  // what was read). RIDES ON EVERY BRANCH, including both "not measurable" ones: the rows are
+  // counted before `coldZoneProfile` ever reads the clock (`coldZone.ts`'s `base` object is
+  // built before the `observedFromMs === null` return), so "how many rows this read saw" is
+  // knowable even where nothing else in this caption is.
+  const rowCount = num(v.rowCount, 0);
+  return `${text} Computed over ${fmtCount(rowCount)} ${rowCount === 1 ? "row" : "rows"}.`;
 }
 
 /**
@@ -457,6 +479,73 @@ export function endOfLifeNote(view) {
   const findings = `${fmtCount(open)} open ${open === 1 ? "finding" : "findings"}`;
   return `${repos(cut)} left out of the cold zone as end of life, with ${findings}.`
     + " Still counted in every count of what is open.";
+}
+
+/**
+ * The scan-coverage warning: scopes with rows but no scan on record at all, so observation is
+ * undecidable for them — or null. The most important of the four coverage counts
+ * `coldZoneProfile` publishes so an empty section can prove it looked.
+ *
+ * KEPT OBSERVED, NEVER ACCUSED. `coldZone.ts`'s `isObserved` cannot tell "still there" from
+ * "gone" for a scope it has never scanned, so it resolves the doubt the conservative way —
+ * the repository stays observed rather than being marked unobserved on the strength of a
+ * missing scan row (the module header: "we do not accuse a team of vanishing on the strength
+ * of a missing scan row"). This note names which scopes that applies to, and says it as a gap
+ * in what THIS REGISTER has scanned — never as a claim about the team that owns the
+ * repositories the scope covers.
+ *
+ * RENDERED ABOVE THE MEASURABLE CHECK, beside `endOfLifeNote`: scan coverage is a fact about
+ * this read rather than about the derived figures, and — like that note's population question
+ * — it stays true on a register with no clock at all (`coldZone.ts` computes it before the
+ * `observedFrom === null` return, and never narrows it for a display setting either).
+ *
+ * @param {{scopesWithoutScan?: string[]}|null|undefined} view
+ * @returns {string|null}
+ */
+export function scopesWithoutScanNote(view) {
+  const scopes = view && Array.isArray(view.scopesWithoutScan) ? view.scopesWithoutScan : [];
+  if (!scopes.length) return null;
+  const names = scopes.map((s) => scopeLabel(s)).join(", ");
+  const one = scopes.length === 1;
+  return `No scan is on record for ${names}, so ${one ? "that scope is" : "those scopes are"}`
+    + ` undecidable between still there and gone — ${one ? "its" : "their"} repositories stay`
+    + " observed rather than being marked vanished. A gap in this register's scan coverage,"
+    + " not a reading on the team.";
+}
+
+/**
+ * Rows with no repository at all, outside every figure this section draws — or null.
+ *
+ * `coldZone.ts` drops a row with a blank `repo_id` before anything else is measured (it
+ * belongs to no cell of this table) AND counts it, so the drop can be said out loud instead of
+ * just vanishing from the totals underneath it.
+ *
+ * @param {{droppedNoRepo?: number}|null|undefined} view
+ * @returns {string|null}
+ */
+export function droppedNoRepoNote(view) {
+  const n = view ? num(view.droppedNoRepo, 0) : 0;
+  if (!n) return null;
+  return `${fmtCount(n)} ${n === 1 ? "row carries" : "rows carry"} no repository and`
+    + ` ${n === 1 ? "sits" : "sit"} outside every figure in this section.`;
+}
+
+/**
+ * Secrets rows carried at `risk_class = "unknown"`, outside the high-risk figure — or null.
+ *
+ * `program.resolveRule` refuses the `secrets` scope by design (there is no exploit
+ * intelligence for a hardcoded string), so `coldZone.ts` carries these rows as `unknown`
+ * rather than throwing on them — they still count as open findings and as movement, but they
+ * can never be the high-risk figure's numerator.
+ *
+ * @param {{unclassifiedSecrets?: number}|null|undefined} view
+ * @returns {string|null}
+ */
+export function unclassifiedSecretsNote(view) {
+  const n = view ? num(view.unclassifiedSecrets, 0) : 0;
+  if (!n) return null;
+  return `${fmtCount(n)} secrets ${n === 1 ? "row carries" : "rows carry"} no risk class, so`
+    + ` ${n === 1 ? "it sits" : "they sit"} outside the high-risk figure.`;
 }
 
 /**
@@ -1316,12 +1405,25 @@ export async function renderRepos(host, _params, _ctx) {
     // that says which one goes ABOVE the figures rather than under them, and it is printed on
     // the two notice branches too, where the line is the only thing there is to say.
     coldHost.append(denomNote(coldModeCaption(view)));
+    // THE COVERAGE WARNING, ahead of everything else the section might say: whether a scope
+    // was scanned at all is a more basic doubt than any figure below could resolve, and — like
+    // `endOfLifeNote` just under it — it is a fact that survives a register with no clock.
+    const coverage = scopesWithoutScanNote(view);
+    if (coverage) coldHost.append(denomNote(coverage));
     // WHO IS BEING MEASURED, directly under where the line came from, and on all three
     // branches for the same reason that caption is: both sentences are about the section
     // rather than about its figures, and the population question survives a register that
     // cannot measure anything yet.
     const eol = endOfLifeNote(view);
     if (eol) coldHost.append(denomNote(eol));
+    // THE TWO REMAINING COVERAGE COUNTS — rows this section could never file under a
+    // repository, and secrets rows this section could never risk-classify. Same placement
+    // logic as the two notes above: both are population facts read off `coldZoneProfile`
+    // before its clock is consulted, so both survive an unmeasurable section too.
+    const dropped = droppedNoRepoNote(view);
+    if (dropped) coldHost.append(denomNote(dropped));
+    const unclassified = unclassifiedSecretsNote(view);
+    if (unclassified) coldHost.append(denomNote(unclassified));
     if (!view.measurable) {
       coldHost.append(emptyState(
         "The cold zone is not measured yet.",

@@ -39,6 +39,18 @@
 // and `events` do not travel, which is why `survivalTableModel` publishes three columns here
 // and five on the secrets page. It also drops `naiveMedian` / `naiveMean`, so every survival
 // chart on this page draws the two Kaplan-Meier markers and no closed-only comparison.
+//
+// THE MEASUREMENT WINDOW IS NOW ON THE SURFACE, NOT JUST ON THE WIRE. Everything above this
+// point already computed the delayed-entry curve honestly; nothing SAID how short the window
+// backing it still is, or how few fixes a headline half-life actually rests on — a reader could
+// read "148 days" and "Tracking since 2026-08-26" as two separate facts without noticing they
+// mean "estimated from a four-week window". `windowLineView` prints that window (start, end,
+// span, events seen, findings watched) directly under `trackingSinceView`'s own caption on this
+// page and on Executive; `survivalAxisNote` states the companion fact for the CURVE itself —
+// that its x axis is a finding's age, not the calendar day this register measured it on — and
+// the per-severity table gains a "Fixes in window" column so a severity's half-life can be read
+// against its own sample size. No new estimator maths: every number these three read was
+// already shipped by Package A/B.
 
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import { chartUnavailable, loadCharts } from "../../../../../gas_shared/ui/chartsLoader.js";
@@ -266,8 +278,16 @@ export function trackingSinceView(mttr) {
   const map = (mttr && mttr.trackingSince) || {};
   const scope = mttr && mttr.scope;
   const iso = scope ? (map[scope] ?? null) : earliestTrackingIso(map);
-  if (!iso) return { show: false, text: null };
-  return { show: true, text: "Tracking since " + fmtDate(iso) + " — earlier fixes are not visible." };
+  if (!iso) return { show: false, text: null, iso: null };
+  return {
+    show: true,
+    text: "Tracking since " + fmtDate(iso) + " — earlier fixes are not visible.",
+    // Carried so `windowLineView`/`survivalAxisNote` below can read the SAME start date this
+    // caption already resolved, rather than re-running the single-scope/earliest-of-all-scopes
+    // decision a second time and risking the two captions disagreeing about which date opens
+    // the window.
+    iso,
+  };
 }
 
 /** ISO 8601 UTC timestamps sort lexically, so the earliest of a scope map's values is the
@@ -280,6 +300,233 @@ function earliestTrackingIso(map) {
     if (best === null || iso < best) best = iso;
   }
   return best;
+}
+
+/** A day, in ms — this file's own copy of the constant `railStatus.js` also keeps locally
+ *  rather than a shared import for one integer. */
+const DAY_MS = 86_400_000;
+
+/**
+ * The tracking window's start/end/length, off the SAME rule `trackingSinceView` already
+ * states — shared so `windowLineView` and `survivalAxisNote` cannot compute a different span
+ * for the same register than each other, or than the caption above them.
+ *
+ * `asOf` arrives as an EPOCH MS NUMBER (every model's own clock field — `mttrModel`'s and
+ * `executiveModel`'s `asOf`, `readModels.ts`), not an ISO string, so it is converted once here
+ * rather than at each call site: `fmtDate`/`Date.parse` given a bare number coerce it to its
+ * decimal STRING first (`Date.parse(1_700_000_000_000)` reads "1700000000000" as a date and
+ * fails), which would have printed the raw epoch integer instead of a day.
+ *
+ * Null whenever there is nothing honest to report: no tracking-since date, no readable `asOf`,
+ * or a window that computes negative (a clock skew this function refuses to paper over as "0
+ * days" — CLAUDE.md's own naming of the `Number(null)` trap, one level up from a raw cast).
+ *
+ * @param {object|null|undefined} scoped  `{trackingSince, scope, asOf}` at its own level
+ * @returns {{startIso: string, endIso: string, days: number, underADay: boolean}|null}
+ */
+function trackingWindow(scoped) {
+  const tracking = trackingSinceView(scoped);
+  if (!tracking.show) return null;
+  const asOf = num(scoped && scoped.asOf);
+  if (asOf === null) return null;
+  const startMs = Date.parse(tracking.iso);
+  if (!Number.isFinite(startMs)) return null;
+  const spanMs = asOf - startMs;
+  if (!Number.isFinite(spanMs) || spanMs < 0) return null;
+  return {
+    startIso: tracking.iso,
+    endIso: new Date(asOf).toISOString(),
+    underADay: spanMs < DAY_MS,
+    // Floored, minimum 1 — a span that clears `underADay` above is, by that same comparison,
+    // already at least one whole DAY_MS, so the floor below can never actually need the floor
+    // it is given; `Math.max` is the stated guarantee rather than a branch that ever fires.
+    days: Math.max(1, Math.floor(spanMs / DAY_MS)),
+  };
+}
+
+/**
+ * "Window 2026-08-26 → 2026-09-22 (27 days) · 9 fixes seen · 212 findings watched" (`fmtDate`'s
+ * own sv-SE/Europe-Paris YYYY-MM-DD format, not a prose date) — makes the OBSERVATION WINDOW
+ * ITSELF legible, printed directly under `trackingSinceView`'s own caption on the MTTR and
+ * Executive heroes.
+ *
+ * THE GAP THIS CLOSES. "Tracking since 2026-08-26" says where the clock started; it does not
+ * say the window is still 27 days wide, or that the half-life sitting above both captions was
+ * read off nine fixes. A reader who sees "148 days" in the hero and "Tracking since …"
+ * underneath it has no way to notice the two sentences together mean "estimated from a
+ * four-week window, off a handful of fixes" — a fact the estimate's own reliability cut already
+ * knows (`reliableUntil`, `survivalAxisNote` below) but that nothing on the page said in words
+ * until now.
+ *
+ * `<E>`/`<W>` READ OFF THE SAME `km` THE CALLER'S OWN HALF-LIFE CAME FROM, passed in rather
+ * than re-read here, so this line can never cite a different curve's counts than the value
+ * above it — `renderHero` (this file) and `renderHero` (executive.js) both already hold that
+ * `km` reference for `rmstView`/`kmP90View`/`executiveHeroView`.
+ *
+ * HIDDEN EXACTLY WHEN `trackingSinceView` IS (or when `asOf` cannot be read — see
+ * `trackingWindow`): the two lines are one fact — a start date, and the window it opens —
+ * stated two ways, so a payload with nothing to caption above has nothing this line could add
+ * either.
+ *
+ * @param {object|null|undefined} scoped  the SAME shape `trackingSinceView` reads
+ * @param {object|null|undefined} km      the shipped KMResult the hero's half-life was read off
+ * @returns {{show: boolean, text: string|null}}
+ */
+export function windowLineView(scoped, km) {
+  const win = trackingWindow(scoped);
+  if (!win) return { show: false, text: null };
+  const events = num(km && km.events, 0);
+  const total = num(km && km.total, 0);
+  const excluded = num(km && km.excludedPreEntry, 0);
+  const span = win.underADay ? "under a day" : fmtCount(win.days) + " " + pluralize(win.days, "day");
+  return {
+    show: true,
+    text: "Window " + fmtDate(win.startIso) + " → " + fmtDate(win.endIso) + " (" + span + ")"
+      + " · " + fmtCount(events) + " fixes seen · " + fmtCount(total) + " findings watched"
+      // Only when the register actually excluded something — a "· 0 closed before watching
+      // began" clause would be a zero dressed as a qualifier rather than a real exclusion.
+      + (excluded > 0 ? " · " + fmtCount(excluded) + " closed before watching began" : ""),
+  };
+}
+
+/** The window line's own tip, ONE copy — imported by executive.js the same way
+ *  `kmHalfLifeView`/`trackingSinceView`/`endOfLifeExclusionNote` already are, so the MTTR and
+ *  Executive heroes cannot drift into explaining the window in two different sentences. */
+export const WINDOW_LINE_HELP = {
+  lines: [
+    "The window is how long this register has been watching, not how old the findings are.",
+    "Fixes that happened before it started are not in the data — the scanner keeps resolved"
+    + " findings for about a week.",
+  ],
+};
+
+/**
+ * The survival curve's own axis caveat: the X axis is a finding's AGE, not the calendar day it
+ * was measured on — so a register that has only been watching for a few weeks can still draw a
+ * staircase reading past day 90, because every open finding enters the curve at the age it
+ * already had on the day tracking started (delayed entry, `domain/remediation.ts`). A reader
+ * who reads the far end of the x axis as "how long this register has been running" would read
+ * a 90-day step off a three-week-old register as a contradiction; it is not one.
+ *
+ * `reliableUntil` IS THE NUMBER THIS SENTENCE NEEDS, not `maxObserved`: it is the point the
+ * CUT curve — the one actually drawn — reads out to, so the claim matches the picture on
+ * screen rather than a longer, unplotted tail.
+ *
+ * FALLS BACK TO THE SHORTER SENTENCE, NO NUMBERS, when there is nothing reliable to cite
+ * (`reliableUntil` null) or no window to cite it against (`trackingWindow` null, or the window
+ * is under a day — "a under a day window" is not a sentence).
+ *
+ * @param {object|null|undefined} scoped  the SAME shape `windowLineView` reads
+ * @param {object|null|undefined} km      the shipped KMResult the curve was drawn from
+ * @returns {string}
+ */
+export function survivalAxisNote(scoped, km) {
+  const reliableUntil = num(km && km.reliableUntil);
+  const win = trackingWindow(scoped);
+  if (win && !win.underADay && reliableUntil !== null && reliableUntil > 0) {
+    return "The axis is a finding's age, not the calendar: a " + fmtCount(win.days) + "-day"
+      + " window can read out to " + fmtCount(Math.round(reliableUntil)) + " days, because"
+      + " findings of every age are being watched inside it.";
+  }
+  return "The axis is a finding's age, not the calendar — the curve can read out further than"
+    + " this register has been watching.";
+}
+
+/** "Fixes past the cut" row's own tip (row-accounting package) — the one new explanation this
+ *  block needs that nothing on the page had a copy of yet. "Closed before watching" reuses
+ *  `WINDOW_LINE_HELP` above rather than restating the same fact a second way. */
+export const PAST_CUT_HELP = {
+  lines: [
+    "A real fix the register saw happen — not a gap in the data.",
+    "Excluded from the median because too few findings remained at that age to trust the curve"
+    + " that far out.",
+  ],
+};
+
+/**
+ * The accounting block (row-accounting package): under the survival curve, where every row
+ * `remediation.km` started from WENT — five named buckets that always sum back to the header
+ * total, so nothing on this page can vanish without a line saying where.
+ *
+ * THE HEADER IS `rowsIn`, and the point of the block is that the rows below it reconcile
+ * against it exactly — `test/mttrAccounting.test.js` asserts the sum on every fixture rather
+ * than trusting the arithmetic by eye. `events` is `remediation.km`'s OWN field and (per
+ * `remediation.ts`'s KMResult comment) already counts every observed event REGARDLESS of the
+ * reliability cut, so "Fixes used" — the count actually inside the cut curve the chart above
+ * draws — is `events − eventsPastCut`, derived here rather than shipped as a seventh estimator
+ * field nothing else reads.
+ *
+ * "FIXES PAST THE CUT" IS HIDDEN ONLY WHEN NOTHING WAS EVER CUT — `reliableUntil === null` AND
+ * `eventsPastCut === 0` together, not `reliableUntil === null` alone. `reliableUntil` reads
+ * null two ways (`remediation.ts`'s own docstring): `opts.minRisk` was never requested (the
+ * common case this block will actually meet, since `eventsPastCut` is 0 there too), or the
+ * cut ran and its VERY FIRST event already failed reliability — in which case every event IS
+ * past the cut and hiding the row would delete that count from the visible breakdown entirely,
+ * which is exactly the silent disappearance this block exists to rule out. Checking both fields
+ * costs nothing in the common case and is the honest answer in the rare one.
+ *
+ * `lateEntrantsLine` — the onboarding-backlog sentence — is separate from the five rows because
+ * it is not a partition of `rowsIn`: a late entrant is also counted as an event or a censored
+ * row above it, so adding it to the sum would double count.
+ *
+ * @param {object|null|undefined} mttr  the MTTR page's own payload (`{remediation: {km}}`)
+ */
+export function accountingView(mttr) {
+  const km = (mttr && mttr.remediation && mttr.remediation.km) || null;
+  if (!km) return { show: false, total: 0, rows: [], lateEntrantsLine: null };
+
+  const rowsIn = num(km.rowsIn, 0);
+  const events = num(km.events, 0);
+  const censored = num(km.censored, 0);
+  const excludedPreEntry = num(km.excludedPreEntry, 0);
+  const noClock = num(km.noClock, 0);
+  const eventsPastCut = num(km.eventsPastCut, 0);
+  const reliableUntil = num(km.reliableUntil);
+  const eventsUsed = events - eventsPastCut;
+  const lateEntrants = num(km.lateEntrants, 0);
+  const lateEntryMedianAge = num(km.lateEntryMedianAge);
+
+  const rows = [
+    { key: "used", label: "Fixes used", count: eventsUsed, note: "inside the reliable window" },
+  ];
+  if (reliableUntil !== null || eventsPastCut > 0) {
+    const cutDays = Math.round(reliableUntil ?? 0);
+    rows.push({
+      key: "pastCut",
+      label: "Fixes past the cut",
+      count: eventsPastCut,
+      note: reliableUntil !== null
+        ? "seen, but beyond " + fmtCount(cutDays) + " " + pluralize(cutDays, "day")
+          + " — not in the median"
+        : "seen, but past a curve nothing on it could be trusted — not in the median",
+      tip: PAST_CUT_HELP,
+    });
+  }
+  rows.push(
+    {
+      key: "open", label: "Still open", count: censored,
+      note: "censored, still counted as evidence",
+    },
+    {
+      key: "closedBeforeWatching", label: "Closed before watching", count: excludedPreEntry,
+      note: "resolved before this register looked", tip: WINDOW_LINE_HELP,
+    },
+    {
+      key: "noClock", label: "No readable clock", count: noClock,
+      note: "no first-seen date to measure from",
+    },
+  );
+
+  return {
+    show: true,
+    total: rowsIn,
+    rows,
+    lateEntrantsLine: lateEntrants > 0
+      ? fmtCount(lateEntrants) + (lateEntrants === 1 ? " was" : " were")
+        + " already open when watching began (median age at entry "
+        + fmtDays(lateEntryMedianAge) + ")."
+      : null,
+  };
 }
 
 /**
@@ -404,6 +651,14 @@ export function rmstView(km) {
  * now needs `q25`/`reliableUntil` too (the 25% column, and the "quartile-bound" state), both of
  * which only `kmPerSev[sev]` carries. `kmPerSev[s].median` IS `kmMedianPerSev[s]` by
  * construction (readModels.ts), so nothing here reads a different number than before.
+ *
+ * `fixesInWindow` IS `kmPerSev[sev].events`, READ HERE RATHER THAN IN THE CELL. The "Fixes in
+ * window" column exists so a reader cannot mistake a severity's half-life for a measurement
+ * taken over hundreds of closures when it actually rests on three — the same sample-size worry
+ * `windowLineView` answers for the register as a whole, one severity at a time. `null` (not 0)
+ * when the severity has NO curve at all (`kmPerSev[sev]` absent): a severity with a curve and
+ * zero events is a measured zero and prints "0"; a severity never computed at all has nothing
+ * to print and the column's own `fmtCount(null)` em-dashes it.
  */
 export function mttrSeverityRows(mttr, order) {
   const rem = (mttr && mttr.remediation) || {};
@@ -421,6 +676,8 @@ export function mttrSeverityRows(mttr, order) {
         half,
         // The "25% fixed" column reads this directly — see `renderSeverity`'s dataTable.
         q25: half.q25Days,
+        // The "Fixes in window" column reads this directly — see this function's own comment.
+        fixesInWindow: kmPerSev[sev] ? num(kmPerSev[sev].events, 0) : null,
         p90: p90s[sev] === undefined ? null : p90s[sev],
         resolved: Number(s.resolved || 0),
         open: Number(s.open || 0),
@@ -959,6 +1216,7 @@ export async function renderMttr(host, params, _ctx) {
   const noticeHost = el("div", {});
   const heroHost = el("div", {});
   const curveHost = el("div", {});
+  const accountingHost = el("div", {});
   const sevHost = el("div", {});
   const slaHost = el("div", {});
   const agingHost = el("div", {});
@@ -975,8 +1233,8 @@ export async function renderMttr(host, params, _ctx) {
   // header, then the figure and its stat strip.
   host.append(
     pageHeader({ route: "mttr" }),
-    noticeHost, heroHost, curveHost, sevHost, slaHost, agingHost, slaConsumedHost,
-    bucketHost, clockHost, trendHost,
+    noticeHost, heroHost, curveHost, accountingHost, sevHost, slaHost, agingHost,
+    slaConsumedHost, bucketHost, clockHost, trendHost,
   );
 
   let live = true;
@@ -1018,11 +1276,12 @@ export async function renderMttr(host, params, _ctx) {
     // this page owes a reader. Same shape as executive.js's `paint` (labels live inside each
     // renderX, so clearing the host removes label and box together).
     if (first) {
-      [curveHost, sevHost, slaHost, agingHost, slaConsumedHost, bucketHost, clockHost, trendHost]
-        .forEach(clear);
+      [curveHost, accountingHost, sevHost, slaHost, agingHost, slaConsumedHost, bucketHost,
+        clockHost, trendHost].forEach(clear);
       return;
     }
     guard("the survival curve", curveHost, () => renderCurve(mttr));
+    guard("the measurement accounting", accountingHost, () => renderAccounting(mttr));
     guard("the per-severity clock", sevHost, () => renderSeverity(mttr));
     guard("SLA by severity", slaHost, () => renderSla(mttr));
     guard("open findings by age", agingHost, () => renderAging(mttr));
@@ -1129,6 +1388,14 @@ export async function renderMttr(host, params, _ctx) {
     // `trackingSinceView`'s own comment for why it is not repeated under the fan/table below.
     const tracking = trackingSinceView(mttr);
     if (tracking.show) heroHost.append(el("p", { class: "small muted" }, tracking.text));
+    // THE WINDOW ITSELF, directly under the date it opens — see `windowLineView`'s own comment
+    // for the gap this closes (a start date says WHERE the clock began; this says how SHORT
+    // the resulting window and its sample still are). Same `km` the hero's own half-life and
+    // the stat strip above already read, so this line can never cite a different curve.
+    const windowLine = windowLineView(mttr, km);
+    if (windowLine.show) {
+      heroHost.append(el("p", { class: "small muted" }, tipLabel(windowLine.text, WINDOW_LINE_HELP)));
+    }
     // WHO THIS PAGE MEASURED OVER, under the figure it measured. This page had no page-level
     // population sentence at all before now — it does not even say when it is scoped to one
     // register — so this is the first, and it stays one line for that reason. Every section
@@ -1308,11 +1575,19 @@ export async function renderMttr(host, params, _ctx) {
     // current age" — is what `censoring` means on this chart, and the second half is
     // provenance about the payload. Both are lines here; the two COUNTS stay under the canvas,
     // where they qualify the picture.
+    //
+    // THE THIRD LINE IS THE AXIS ITSELF (measurement-window package). A register can be a few
+    // weeks old and still draw a curve reading out past day 90 — every finding enters at the
+    // AGE it already had, not at day zero of this register's own history — and a reader who
+    // conflates the x axis with the calendar reads that as a contradiction rather than as
+    // delayed entry doing exactly what it is for. `survivalAxisNote` states the real window and
+    // the real cut point so the claim is checkable rather than asserted.
     curveHost.append(sectionLabel("Survival curve", {
       term: "censoring",
       lines: [
         "Closed findings are events; open ones enter as censored observations at their age.",
         "Both markers drawn are Kaplan-Meier: the closed-only pair is not in this payload.",
+        survivalAxisNote(mttr, km),
       ],
     }));
 
@@ -1351,6 +1626,50 @@ export async function renderMttr(host, params, _ctx) {
     });
   }
 
+  // ------------------------------------------------------- the measurement accounting block
+
+  /**
+   * "What the half-life is measured over" (row-accounting package) — directly under the
+   * survival curve, in the same heading/table/footnote shape `renderBuckets` below already
+   * uses: a `sectionLabel`, a `dataTable` of named counts, and a trailing `small muted`
+   * sentence for the one figure that is not part of the five-row partition.
+   */
+  function renderAccounting(mttr) {
+    const view = accountingView(mttr);
+    clear(accountingHost);
+    accountingHost.append(sectionLabel("What the half-life is measured over", {
+      lines: [
+        "Every row the estimate started from, accounted for — the rows below always sum to"
+        + " this total.",
+        "\"Fixes past the cut\" happened; they are excluded from the median, not from the"
+        + " register.",
+      ],
+    }));
+    if (!view.show || !view.total) {
+      accountingHost.append(emptyState(
+        "Nothing to account for yet.",
+        "The estimator has no rows to have started from — this block has nothing to reconcile.",
+      ));
+      return;
+    }
+    accountingHost.append(el("p", { class: "chart-note" },
+      fmtCount(view.total) + " " + pluralize(view.total, "finding")));
+    accountingHost.append(dataTable({
+      columns: [
+        {
+          key: "label", label: "Where it went",
+          cell: (r) => r.tip ? tipLabel(r.label, r.tip) : r.label,
+        },
+        { key: "count", label: "Findings", className: "num", cell: (r) => fmtCount(r.count) },
+        { key: "note", label: "Why", cell: (r) => r.note },
+      ],
+      rows: view.rows,
+    }));
+    if (view.lateEntrantsLine) {
+      accountingHost.append(el("p", { class: "small muted" }, view.lateEntrantsLine));
+    }
+  }
+
   // ------------------------------------------------------------ the clock, per severity
 
   function renderSeverity(mttr) {
@@ -1362,6 +1681,12 @@ export async function renderMttr(host, params, _ctx) {
     // figure or a constraint, so all three sit on the heading. Every card still states its own
     // half-life in words in its caption, which is the non-colour route to the same fact and
     // the one thing that could not move.
+    //
+    // A FOURTH LINE NOW (measurement-window package): the SAME axis caveat the overall curve's
+    // own heading states (`survivalAxisNote`, `renderCurve`), off the SAME register-wide `km` —
+    // every small multiple below shares one clock and one window, so the caveat is stated once
+    // here rather than six times, once per card, which is this section's own established rule.
+    const km = (mttr && mttr.remediation && mttr.remediation.km) || null;
     sevHost.append(sectionLabel("The clock, by severity", {
       term: "half-life",
       lines: [
@@ -1370,6 +1695,7 @@ export async function renderMttr(host, params, _ctx) {
         "“Not reached” means that curve never fell to half within the reliable window. Open"
         + " findings are in every curve as right-censored observations, so a staircase that"
         + " stops stepping is a severity that stopped closing.",
+        survivalAxisNote(mttr, km),
       ],
     }));
     if (!rows.length) {
@@ -1452,6 +1778,21 @@ export async function renderMttr(host, params, _ctx) {
           // to place even a quarter (`fmtDays(null)`).
           help: { term: "half-life", lines: ["The day by which 25% of this severity's findings had closed, read off the same curve as Half-life."] },
           cell: (r) => fmtDays(r.q25),
+        },
+        {
+          key: "fixesInWindow",
+          label: "Fixes in window",
+          className: "num",
+          // `mttrSeverityRows` reads this off `kmPerSev[sev].events` directly — see that
+          // function's own comment for the "— vs 0" rule the em dash below relies on.
+          help: {
+            lines: [
+              "How many findings of this severity closed inside the observation window.",
+              "This is the sample the severity's curve rests on: a half-life read off a"
+              + " handful of fixes is not a measurement.",
+            ],
+          },
+          cell: (r) => fmtCount(r.fixesInWindow),
         },
         { key: "p90", label: "P90", className: "num", cell: (r) => fmtDays(r.p90) },
         { key: "resolved", label: "Resolved", className: "num", cell: (r) => fmtCount(r.resolved) },

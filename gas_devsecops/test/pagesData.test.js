@@ -34,6 +34,7 @@ import {
   coldCensusModel,
   coldRepoRows, coldScatterPoints, coldTeamRows, coldZoneView, coverageMeterPct, densityView,
   coldBandDefs, coldBandKeyModel,
+  droppedNoRepoNote, scopesWithoutScanNote, unclassifiedSecretsNote,
   footholdCellKind, footholdView, groupRows, halfLifeView, overallRow,
   tableRow, unmeasurableNote, productCountNote, endOfLifeNote,
 } from "../src/client/js/pages/repos.js";
@@ -370,6 +371,12 @@ describe("repos: coldZoneView refuses a shape it cannot draw, rather than throwi
     expect(v.bucketLabels).toBeNull();
     expect(v.repos).toEqual([]);
     expect(v.totals).toBeNull();
+    // The four coverage counts survive too — `coldZone.ts` computes them before the clock is
+    // ever read, so they are real on a register that cannot measure anything else.
+    expect(v.rowCount).toBe(400);
+    expect(v.droppedNoRepo).toBe(2);
+    expect(v.unclassifiedSecrets).toBe(12);
+    expect(v.scopesWithoutScan).toEqual([]);
   });
 
   // THE PERTURBATION THIS EXISTS FOR: `measurable: true` over a null `totals`. A view that
@@ -554,6 +561,77 @@ describe("repos: unmeasurableNote — the repositories no figure can speak for",
   });
 });
 
+describe("repos: scopesWithoutScanNote — the coverage warning, the most important of the four", () => {
+  it("is null when every scope with rows also has a scan on record", () => {
+    expect(scopesWithoutScanNote(coldZoneView(coldModel()))).toBeNull();
+    expect(scopesWithoutScanNote(null)).toBeNull();
+  });
+
+  it("names the one scope in the register's long-form label, as a gap in OUR coverage", () => {
+    const note = scopesWithoutScanNote(
+      coldZoneView(coldModel({ scopes_without_scan: ["secrets"] })),
+    );
+    expect(note).toMatch(/^No scan is on record for Secrets,/);
+    expect(note).toMatch(/that scope is/);
+    expect(note).toMatch(/its repositories stay observed/);
+    expect(note).toMatch(/gap in this register's scan coverage/);
+    // The refusal is SPELLED OUT, never left implicit — `coldZone.ts`'s header: "we do not
+    // accuse a team of vanishing on the strength of a missing scan row".
+    expect(note).toMatch(/not a reading on the team\.$/);
+  });
+
+  it("lists more than one scope, and the verb and pronoun go plural", () => {
+    const note = scopesWithoutScanNote(
+      coldZoneView(coldModel({ scopes_without_scan: ["sca", "sast"] })),
+    );
+    expect(note).toMatch(/^No scan is on record for Dependencies \(SCA\), Code \(SAST\),/);
+    expect(note).toMatch(/those scopes are/);
+    expect(note).toMatch(/their repositories stay observed/);
+  });
+});
+
+describe("repos: droppedNoRepoNote — rows outside every figure in this section", () => {
+  it("is null when nothing was dropped", () => {
+    expect(droppedNoRepoNote(coldZoneView(coldModel({ dropped_no_repo: 0 })))).toBeNull();
+    expect(droppedNoRepoNote(null)).toBeNull();
+  });
+
+  it("is grammatical at one", () => {
+    const note = droppedNoRepoNote(coldZoneView(coldModel({ dropped_no_repo: 1 })));
+    expect(note).toBe(
+      "1 row carries no repository and sits outside every figure in this section.",
+    );
+  });
+
+  it("pluralises for more than one", () => {
+    const note = droppedNoRepoNote(coldZoneView(coldModel({ dropped_no_repo: 5 })));
+    expect(note).toBe(
+      "5 rows carry no repository and sit outside every figure in this section.",
+    );
+  });
+});
+
+describe("repos: unclassifiedSecretsNote — secrets rows outside the high-risk figure", () => {
+  it("is null when every secrets row was classified", () => {
+    expect(unclassifiedSecretsNote(coldZoneView(coldModel({ unclassified_secrets: 0 }))))
+      .toBeNull();
+    expect(unclassifiedSecretsNote(null)).toBeNull();
+  });
+
+  it("is grammatical at one", () => {
+    const note = unclassifiedSecretsNote(coldZoneView(coldModel({ unclassified_secrets: 1 })));
+    expect(note).toBe(
+      "1 secrets row carries no risk class, so it sits outside the high-risk figure.",
+    );
+  });
+
+  it("pluralises for more than one — coldModel()'s own default", () => {
+    const note = unclassifiedSecretsNote(coldZoneView(coldModel()));
+    expect(note).toBe(
+      "12 secrets rows carry no risk class, so they sit outside the high-risk figure.",
+    );
+  });
+});
 
 
 describe("repos: coldTeamRows — a share nobody could take draws no meter", () => {
@@ -895,16 +973,21 @@ describe("repos: coldModeCaption — one sentence per state, in the copy the sec
     + " resolved, removed or rotated.";
   const RELATIVE_LEAD = "Relative mode: the line is set so the idlest 20% of the 46"
     + " repositories with open findings are cold.";
+  // `row_count` is folded into every branch as the trailing sentence — see `coldModeCaption`'s
+  // header. `coldModel()` (and therefore `fixedModel`/`relativeModel`, which build on it) fixes
+  // `row_count` at 400; the two explicit "not measurable" fixtures below set it to 0.
+  const POP_400 = " Computed over 400 rows.";
+  const POP_0 = " Computed over 0 rows.";
 
   it("fixed and populated: the window, then the share it drew", () => {
     expect(caption(fixedModel())).toBe(
-      `${FIXED_LEAD} 3 of 46 repositories with open findings (6.5%) are cold.`,
+      `${FIXED_LEAD} 3 of 46 repositories with open findings (6.5%) are cold.${POP_400}`,
     );
   });
 
   it("fixed and populated at n = 1: the verb agrees with a single cold repository", () => {
     expect(caption(fixedModel({ achieved_share_pct: (1 / 46) * 100 }, { cold_repos: 1 }))).toBe(
-      `${FIXED_LEAD} 1 of 46 repositories with open findings (2.2%) is cold.`,
+      `${FIXED_LEAD} 1 of 46 repositories with open findings (2.2%) is cold.${POP_400}`,
     );
   });
 
@@ -912,7 +995,9 @@ describe("repos: coldModeCaption — one sentence per state, in the copy the sec
     expect(caption(fixedModel(
       { eligible_repos: 0, achieved_share_pct: null },
       { repos_with_open: 0, cold_repos: 0 },
-    ))).toBe(`${FIXED_LEAD} No repository has an open finding, so there is no share to report.`);
+    ))).toBe(
+      `${FIXED_LEAD} No repository has an open finding, so there is no share to report.${POP_400}`,
+    );
   });
 
   it("fixed and not measurable: the window is a setting, and the caption says where it lives", () => {
@@ -925,13 +1010,13 @@ describe("repos: coldModeCaption — one sentence per state, in the copy the sec
         bucket_edges: null, bucket_labels: null, repos: null, teams: null, totals: null,
         row_count: 0, dropped_no_repo: 0, unclassified_secrets: 0, scopes_without_scan: [],
       },
-    })).toBe(`${FIXED_LEAD} The window is set in Settings, on the Deadlines tab.`);
+    })).toBe(`${FIXED_LEAD} The window is set in Settings, on the Deadlines tab.${POP_0}`);
   });
 
   it("relative with the floor idle: where the line landed, and that the floor did not bind", () => {
     expect(caption(relativeModel())).toBe(
       `${RELATIVE_LEAD} It landed at 47 days idle, and 10 repositories (21.7%) are cold.`
-      + " The 14-day floor did not apply.",
+      + ` The 14-day floor did not apply.${POP_400}`,
     );
   });
 
@@ -939,7 +1024,7 @@ describe("repos: coldModeCaption — one sentence per state, in the copy the sec
     expect(caption(relativeModel({ achieved_share_pct: (1 / 46) * 100 }, { cold_repos: 1 })))
       .toBe(
         `${RELATIVE_LEAD} It landed at 47 days idle, and 1 repository (2.2%) is cold.`
-        + " The 14-day floor did not apply.",
+        + ` The 14-day floor did not apply.${POP_400}`,
       );
   });
 
@@ -951,7 +1036,7 @@ describe("repos: coldModeCaption — one sentence per state, in the copy the sec
     ))).toBe(
       `${RELATIVE_LEAD} The idlest 20% would have been 9 days, so the 14-day floor holds the`
       + " line instead, and 2 repositories (4.3%) are cold — a smaller zone than the 20% asked"
-      + " for.",
+      + ` for.${POP_400}`,
     );
   });
 
@@ -964,7 +1049,7 @@ describe("repos: coldModeCaption — one sentence per state, in the copy the sec
       ))).toBe(
         `${RELATIVE_LEAD} The idlest 20% would have been 9 days, so the 14-day floor holds the`
         + " line instead, and 1 repository (2.2%) is cold — a smaller zone than the 20% asked"
-        + " for.",
+        + ` for.${POP_400}`,
       );
     });
 
@@ -974,7 +1059,7 @@ describe("repos: coldModeCaption — one sentence per state, in the copy the sec
       { repos_with_open: 0, cold_repos: 0 },
     ))).toBe(
       "Relative mode: no repository has an open finding, so there is nothing to rank. The line"
-      + " rests on the 14-day floor until one does.",
+      + ` rests on the 14-day floor until one does.${POP_400}`,
     );
   });
 
@@ -990,7 +1075,7 @@ describe("repos: coldModeCaption — one sentence per state, in the copy the sec
       },
     })).toBe(
       "Relative mode: the line is derived from the estate once a scan has been saved, and it"
-      + " never falls below the 14-day floor.",
+      + ` never falls below the 14-day floor.${POP_0}`,
     );
   });
 
@@ -1002,7 +1087,7 @@ describe("repos: coldModeCaption — one sentence per state, in the copy the sec
     );
     expect(caption(fixedModel({ cold_bound_only: 1 }))).toBe(
       `${FIXED_LEAD} 3 of 46 repositories with open findings (6.5%) are cold. 1 of them has no`
-      + " movement on record at all, so its idle time is a lower bound.",
+      + ` movement on record at all, so its idle time is a lower bound.${POP_400}`,
     );
   });
 
@@ -1249,6 +1334,21 @@ describe("repos: the mode reaches the section, the column and the canvas", () =>
     // populated" too, which is further down the same function.
     expect(body.indexOf("coldModeCaption"))
       .toBeLessThan(body.indexOf("if (!view.measurable)"));
+  });
+
+  it("all four coverage notes render ahead of the measurable check, same as endOfLifeNote", () => {
+    expect(body).toMatch(/scopesWithoutScanNote\(view\)/);
+    expect(body).toMatch(/droppedNoRepoNote\(view\)/);
+    expect(body).toMatch(/unclassifiedSecretsNote\(view\)/);
+    const measurableAt = body.indexOf("if (!view.measurable)");
+    // The CALL sites, not any mention — the comments above them name `endOfLifeNote` first
+    // in prose, which would make a bare `indexOf("endOfLifeNote")` fragile.
+    const callAt = (name) => body.indexOf(`${name}(view)`);
+    expect(callAt("scopesWithoutScanNote")).toBeLessThan(measurableAt);
+    expect(callAt("droppedNoRepoNote")).toBeLessThan(measurableAt);
+    expect(callAt("unclassifiedSecretsNote")).toBeLessThan(measurableAt);
+    // The coverage warning — the most important of the four — leads even `endOfLifeNote`.
+    expect(callAt("scopesWithoutScanNote")).toBeLessThan(callAt("endOfLifeNote"));
   });
 
   it("the product table carries a Coldest rank column, its pill and its glossary id", () => {

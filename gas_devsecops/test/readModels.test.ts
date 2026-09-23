@@ -410,12 +410,17 @@ describe("the caching audit is per model, and the header states it", () => {
     // horizon-capped curve) — see each model's own cache-key comment in readModels.ts. The
     // CLAIM every line below encodes is the LAYER a model caches in, not the spelling of its
     // namespace, and that is unchanged by any of these bumps.
+    //
+    // "dsMttr3" -> "dsMttr4", "dsHistory3" -> "dsHistory4" (row-accounting package): every
+    // `ShippedKM` gained `rowsIn`/`noClock`/`eventsPastCut`/`lateEntrants`/`lateEntryMedianAge`
+    // — same reasoning, same unchanged layer claim.
     expect(layerOf("dsExecutive2")).toEqual(["cached"]);
     // "dsMttr1" -> "dsMttr2": the namespace was bumped when `remediation` gained its
     // `slaConsumed` block. A warm entry from THAT old namespace carries no deciles, and a
     // section missing for a cache reason reads as a register with nothing inside its SLA
-    // windows — the same shape of risk the newer dsMttr2 -> dsMttr3 bump above guards against.
-    expect(layerOf("dsMttr3")).toEqual(["cached"]);
+    // windows — the same shape of risk the newer dsMttr2 -> dsMttr3 -> dsMttr4 bumps above
+    // guard against.
+    expect(layerOf("dsMttr4")).toEqual(["cached"]);
     expect(layerOf("dsSecrets2")).toEqual(["cached"]);
     // "dsRegister1" -> "dsRegister2": the namespace was bumped when the payload gained its
     // `population` block. The CLAIM these three lines encode is the LAYER each model caches
@@ -443,7 +448,7 @@ describe("the caching audit is per model, and the header states it", () => {
     // per-register `movement` / `movementNote` blocks. A warm entry from THAT old namespace
     // carries no movement block, and the new section would draw "no movement decomposition in
     // this payload" over a window that is measurable.
-    expect(layerOf("dsHistory3")).toEqual(["durablyCached"]);
+    expect(layerOf("dsHistory4")).toEqual(["durablyCached"]);
     expect(layerOf("dsStorage1")).toEqual(["durablyCached"]);
 
     // And nothing reached both layers, which is the failure the spelling-out above exists to
@@ -724,7 +729,7 @@ describe("effective SLA windows reach the models that publish them", () => {
     H.slaTargets = { CRITICAL: 90 };
     __resetModelMemosForTest();
     mttrModel(ALL);
-    const keys = H.cacheCalls.filter((c) => c.name === "dsMttr3").map((c) => JSON.stringify(c.params));
+    const keys = H.cacheCalls.filter((c) => c.name === "dsMttr4").map((c) => JSON.stringify(c.params));
     expect(new Set(keys).size).toBe(2);
   });
 });
@@ -1640,8 +1645,8 @@ describe("warmReadModels", () => {
     expect(report.skipped).toBe(0);
     expect(H.swept).toBe(1);
     expect(new Set(H.cacheCalls.map((c) => c.name))).toEqual(new Set([
-      "dsHistory3", "dsProgram2", "dsRepos2", "dsStorage1",
-      "dsExecutive2", "dsMttr3", "dsSecrets2", "dsRegister2",
+      "dsHistory4", "dsProgram2", "dsRepos2", "dsStorage1",
+      "dsExecutive2", "dsMttr4", "dsSecrets2", "dsRegister2",
     ]));
   });
 
@@ -1878,7 +1883,7 @@ describe("the remediation-speed end-of-life exclusion", () => {
     estate();
     mttrModel(ALL);
     reposModel(ALL);
-    const mttrKey = H.cacheCalls.find((c) => c.name === "dsMttr3")!.params as Record<string, any>;
+    const mttrKey = H.cacheCalls.find((c) => c.name === "dsMttr4")!.params as Record<string, any>;
     const reposKey = H.cacheCalls.find((c) => c.name === "dsRepos2")!.params as Record<string, any>;
     expect(mttrKey.mttrExcludeEndOfLife).toBe(false);
     // The Repositories page draws no remediation-speed aggregate, so the flag is deliberately
