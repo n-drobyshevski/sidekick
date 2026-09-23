@@ -105,9 +105,13 @@ export async function renderSettings(host, params, ctx) {
   const systemHost = el("div", {});
   host.append(urlsHost, accessHost, systemHost);
 
-  await buildUrlsPanel(urlsHost, ctx);
-  await buildAccessPanel(accessHost);
+  // SIDE BY SIDE, NOT ONE AFTER THE OTHER. The two panels each make their own google.script.run
+  // call (`api_getUrls`, `api_getAccess`), and every GAS call carries ~1.5–2 s of overhead of its
+  // own — so awaiting one before starting the other put two of those on the page back to back
+  // for nothing: neither reads the other. The DOM order stays fixed by the three hosts above, and
+  // the system panel, which reads only the bootstrap already in hand, paints straight away.
   buildSystemPanel(systemHost);
+  await Promise.all([buildUrlsPanel(urlsHost, ctx), buildAccessPanel(accessHost)]);
 }
 
 // ------------------------------------------------------------------------- Sidekick URLs
