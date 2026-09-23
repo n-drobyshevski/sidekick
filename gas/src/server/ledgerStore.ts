@@ -73,7 +73,7 @@ import {
 import { nowIso, type Rec } from "../domain/util";
 import * as archive from "./archiveStore";
 import * as history from "./historyStore";
-import { activeJob, createJob, getJob, newJobId, updateJob } from "./jobsStore";
+import { activeJob, createJob, forgetActiveJob, getJob, newJobId, updateJob } from "./jobsStore";
 import { bumpDataVersion } from "./serverCache";
 import {
   appendRows,
@@ -953,6 +953,7 @@ export function resetLedger(): ResetCounts {
   overwrite(TABS.episodes, []);
   overwrite(TABS.compactions, []);
   overwrite(TABS.jobs, []);
+  forgetActiveJob();
   archive.trashLedgerSnapshot();
   invalidateLedgerMemos();
   return counts;

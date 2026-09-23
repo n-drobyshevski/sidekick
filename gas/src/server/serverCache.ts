@@ -18,14 +18,31 @@ import { getProp, PROP_KEYS, setProp } from "./props";
 const VERSION_PROP = "DATA_VERSION";
 const KEY_PREFIX = "wsk";
 
-// A per-build code stamp (a hash of the source tree, injected by esbuild — see esbuild.config.mjs)
-// folded into every cache key. DATA_VERSION only bumps on data mutations, so without this a code
-// deploy would keep serving payloads computed by the OLD code until the TTL expires or the next
-// mutation — the classic "I deployed the fix but still see the bug" trap. Changing code changes the
-// stamp, making prior entries unreachable at once. The `typeof` guard leaves vitest / the dev server
-// (no esbuild define) on a stable "dev" stamp so their caching behaviour is unchanged.
+// The per-build code stamp (a hash of the source tree, injected by esbuild — see
+// esbuild.config.mjs). Shown to operators through bootstrap's `buildId`; NOT part of any cache
+// key any more — see CACHE_EPOCH below. The `typeof` guard leaves vitest / the dev server (no
+// esbuild define) on a stable "dev" stamp.
 declare const __BUILD_ID__: string;
 export const BUILD_ID = typeof __BUILD_ID__ === "string" ? __BUILD_ID__ : "dev";
+
+/**
+ * What a CODE change contributes to every cache key: bump this to make every cached read-model
+ * unreachable on the next deploy.
+ *
+ * IT USED TO BE BUILD_ID, and that was measured to be the most expensive line in the app. Every
+ * deploy — a copy fix in the client included — made every entry cold at once, and the first
+ * opens after it paid the whole register: ~12 s for bootstrap and ~23 s for the Executive on a
+ * 58,679-row register, until the warm caught up. The guard it bought is already carried, more
+ * precisely, by the namespaces: every read-model is named with a version (`mttr12`,
+ * `bootstrapCore8`, `coldZone1`…), and a change to a payload's shape or meaning bumps that one
+ * name — the convention every rename comment in api.ts records, now also pinned by
+ * test/cacheNamespaces.test.ts. Bump THIS only for a change that alters many payloads at once
+ * and cannot sensibly be expressed as a list of namespace bumps.
+ *
+ * A stale payload that slips past both is bounded anyway: DATA_VERSION moves on every scan and
+ * settings save, and no L1 entry outlives CacheService's six hours.
+ */
+export const CACHE_EPOCH = "1";
 const CHUNK_CHARS = 90_000; // base64 chars per entry, safely under the 100 KB cap
 const DEFAULT_TTL_SEC = 21_600; // the CacheService maximum (6 h)
 
@@ -71,7 +88,7 @@ function domainTagStamp(): string {
 let versionStamp: string | undefined;
 function stamp(): string {
   if (versionStamp === undefined) {
-    versionStamp = `${BUILD_ID}.${dataVersion()}.${domainTagStamp()}`;
+    versionStamp = `${CACHE_EPOCH}.${dataVersion()}.${domainTagStamp()}`;
   }
   return versionStamp;
 }
