@@ -6489,7 +6489,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "550a8508cfba" : "dev";
+  var BUILD_ID = true ? "aacce03226d1" : "dev";
   var CACHE_EPOCH = "1";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
@@ -9342,6 +9342,7 @@ var Server = (() => {
     const km = obj(rem["km"]);
     const kmMedianPerSev = obj(rem["kmMedianPerSev"]);
     const kmP90PerSev = obj(rem["kmP90PerSev"]);
+    const kmLowerBoundPerSev = obj(rem["kmLowerBoundPerSev"]);
     const past = obj(rem["openPastSla"]);
     const pastPerSev = obj(past["perSev"]);
     const pastOverall = obj(past["overall"]);
@@ -9362,6 +9363,7 @@ var Server = (() => {
         resolved,
         kmMedian: numOrNull(kmMedianPerSev[sev2]),
         kmP90: numOrNull(kmP90PerSev[sev2]),
+        kmLowerBound: numOrNull(kmLowerBoundPerSev[sev2]),
         slaPct: numOrNull(st["sla_pct"]),
         pastSla: numOr0(obj(pastPerSev[sev2])["breached"]),
         slaTarget: numOrNull(st["sla_target"]),
@@ -9370,13 +9372,15 @@ var Server = (() => {
     }
     const points = Array.isArray(trend["trend"]) ? trend["trend"] : [];
     const trendOut = thinPoints(points, SUMMARY_TREND_POINTS).map((p) => {
-      var _a2, _b;
+      var _a2;
       return {
         date: String((_a2 = p["date"]) != null ? _a2 : ""),
         open: numOrNull(p["open"]),
-        // The KM median where the trend carries one, the naive median otherwise — the same
-        // preference the MTTR page's headline line makes.
-        medianDays: (_b = numOrNull(p["km_median_days"])) != null ? _b : numOrNull(p["median_days"])
+        // THE KAPLAN-MEIER MEDIAN ONLY — the estimator the hero reads. Falling back to the naive
+        // closed-only median where KM is unobservable put "30 days" at the end of this line under a
+        // hero reading "at least 210 days": two estimators on one page, the lower one looking like
+        // the answer. A point with no KM median is a gap in the line, not a different number.
+        medianDays: numOrNull(p["km_median_days"])
       };
     });
     return {
@@ -9405,6 +9409,53 @@ var Server = (() => {
       perSev: sevRows,
       trend: trendOut
     };
+  }
+
+  // ../gas_shared/domain/rowGroups.ts
+  var NONE_GROUP = "\0none";
+  function groupKeyOf(row, column) {
+    const v = row[column];
+    if (v === null || v === void 0 || v === "") return NONE_GROUP;
+    return String(v);
+  }
+  function rowsInGroup(rows, column, value) {
+    return rows.filter((r) => groupKeyOf(r, column) === value);
+  }
+  function groupRows(rows, column, opts) {
+    var _a;
+    const rank = (s) => {
+      const i = s === null ? -1 : opts.severityOrder.indexOf(s);
+      return i < 0 ? opts.severityOrder.length : i;
+    };
+    const byKey = /* @__PURE__ */ new Map();
+    for (const r of rows) {
+      const key = groupKeyOf(r, column);
+      let g = byKey.get(key);
+      if (!g) {
+        g = {
+          value: key,
+          raw: key === NONE_GROUP ? null : r[column],
+          count: 0,
+          open: 0,
+          worstSeverity: null,
+          oldestOpenDays: null
+        };
+        byKey.set(key, g);
+      }
+      g.count += 1;
+      const sev2 = r["severity"] === null || r["severity"] === void 0 ? null : String(r["severity"]).toUpperCase();
+      if (sev2 !== null && rank(sev2) < rank(g.worstSeverity)) g.worstSeverity = sev2;
+      if (opts.isOpen(r)) {
+        g.open += 1;
+        const age = r["age_days"];
+        if (typeof age === "number" && Number.isFinite(age) && (g.oldestOpenDays === null || age > g.oldestOpenDays)) {
+          g.oldestOpenDays = age;
+        }
+      }
+    }
+    const groups = Array.from(byKey.values()).sort((x, y) => rank(x.worstSeverity) - rank(y.worstSeverity) || y.open - x.open || y.count - x.count || (x.value < y.value ? -1 : x.value > y.value ? 1 : 0));
+    const cap = (_a = opts.cap) != null ? _a : 500;
+    return { groups: groups.slice(0, cap), truncated: Math.max(0, groups.length - cap) };
   }
 
   // src/server/hubUrl.ts
@@ -12206,6 +12257,17 @@ var Server = (() => {
       3600
     );
   };
+  var REGISTER_GROUP_COLUMNS = [
+    "severity",
+    "risk_tier",
+    "asset_name",
+    "support_group",
+    "domain",
+    "subscription_name",
+    "cve",
+    "awaiting_vendor_fix",
+    "status"
+  ];
   function registerRowsPageSize(v) {
     if (!present(v)) return REGISTER_ROWS_DEFAULT_PAGE_SIZE;
     const n = Number(v);
@@ -12219,15 +12281,33 @@ var Server = (() => {
   }
   function getRegisterRows(p0) {
     return run(() => {
-      var _a, _b;
+      var _a, _b, _c;
       const p = forViewer(p0);
       const params = p != null ? p : {};
       const filters = registerRowFilters(p);
       const model = cachedRegisterRows(p, filters);
-      const rows = Array.isArray(model["rows"]) ? model["rows"] : [];
-      const asked = String((_a = params["sort"]) != null ? _a : "");
+      let rows = Array.isArray(model["rows"]) ? model["rows"] : [];
+      const askedGroup = String((_a = params["groupBy"]) != null ? _a : "");
+      const groupBy = REGISTER_GROUP_COLUMNS.includes(askedGroup) ? askedGroup : "";
+      if (groupBy && (params["groupValue"] === void 0 || params["groupValue"] === null)) {
+        const { groups, truncated } = groupRows(rows, groupBy, {
+          severityOrder: SEVERITY_ORDER,
+          isOpen: (r) => isOpenStatus(r["status"])
+        });
+        return {
+          asOf: model["asOf"],
+          groupBy,
+          groups,
+          truncated,
+          total: rows.length,
+          status: filters.status,
+          population: model["population"]
+        };
+      }
+      if (groupBy) rows = rowsInGroup(rows, groupBy, String(params["groupValue"]));
+      const asked = String((_b = params["sort"]) != null ? _b : "");
       const sort = REGISTER_ROW_COLUMNS.includes(asked) ? asked : REGISTER_ROW_DEFAULT_SORT.sort;
-      const askedDir = String((_b = params["dir"]) != null ? _b : "").toLowerCase();
+      const askedDir = String((_c = params["dir"]) != null ? _c : "").toLowerCase();
       const dir = askedDir === "asc" || askedDir === "desc" ? askedDir : sort === REGISTER_ROW_DEFAULT_SORT.sort ? REGISTER_ROW_DEFAULT_SORT.dir : "asc";
       const pageSize = registerRowsPageSize(params["pageSize"]);
       const sorted = sortRegisterRows(rows, {
@@ -12946,8 +13026,8 @@ var Server = (() => {
   function viewerParams(viewer, severities) {
     return { domain: "", supportGroup: "", severities, viewerScope: viewer };
   }
-  var SCOPED_BOOT = "scopedBoot1";
-  var SCOPE_SUMMARY = "scopeSummary1";
+  var SCOPED_BOOT = "scopedBoot2";
+  var SCOPE_SUMMARY = "scopeSummary2";
   function scopedBootParams(viewer) {
     return {
       scope: scopeKey(fromViewerScope(viewer)),

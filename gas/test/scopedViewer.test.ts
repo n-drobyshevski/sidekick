@@ -387,3 +387,45 @@ describe("saveScoped — who may edit the roster, and what it refuses", () => {
     expect((data["catalogue"] as Rec)["dims"]).toHaveLength(2);
   });
 });
+
+// --------------------------------------------------------------------------------------- //
+//  group by
+// --------------------------------------------------------------------------------------- //
+
+describe("getRegisterRows — group by, over the whole set and never a page", () => {
+  it("groups every in-scope row, worst severity first, and opens a group as its own rows", async () => {
+    H.active = "listed@example.com";
+    const { api } = await load();
+    const g = api.getRegisterRows({ status: "all", groupBy: "support_group", pageSize: 5 }).data as Rec;
+    const groups = g["groups"] as Array<Rec>;
+    expect(groups.map((x) => x["value"]).sort()).toEqual(["SG-0", "SG-1", "SG-2", "SG-3"]);
+    // Counts cover the whole filtered set, not the five rows a page would hold.
+    expect(groups.reduce((a, x) => a + Number(x["count"]), 0)).toBe(40);
+    expect(g["total"]).toBe(40);
+    const sg1 = groups.find((x) => x["value"] === "SG-1")!;
+    const rows = api.getRegisterRows({
+      status: "all", groupBy: "support_group", groupValue: "SG-1", pageSize: 500,
+    }).data as Rec;
+    expect(rows["total"]).toBe(sg1["count"]);
+    expect(groupsOf(rows["rows"] as Rec[])).toEqual(["SG-1"]);
+  });
+
+  it("keeps a scoped viewer inside their scope while grouping", async () => {
+    H.active = "viewer@example.com";
+    const { api } = await load();
+    const g = api.getRegisterRows({ status: "all", groupBy: "support_group" }).data as Rec;
+    expect((g["groups"] as Rec[]).map((x) => x["value"])).toEqual(["SG-1"]);
+    const other = api.getRegisterRows({
+      status: "all", groupBy: "support_group", groupValue: "SG-2", pageSize: 500,
+    }).data as Rec;
+    expect(other["total"]).toBe(0);
+  });
+
+  it("treats an unknown column as no grouping, never an error", async () => {
+    H.active = "listed@example.com";
+    const { api } = await load();
+    const d = api.getRegisterRows({ status: "all", groupBy: "tags_json" }).data as Rec;
+    expect(d["groups"]).toBeUndefined();
+    expect(Array.isArray(d["rows"])).toBe(true);
+  });
+});

@@ -67,6 +67,18 @@ export const SCOPED_PAGES = {
       // Scope params are the SERVER's to set; nothing sent here can widen them.
       baseParams: () => ({}),
       csv: () => call("api_getExportCsv", { source: "findings" }),
+      // The categorical columns, in the order a reader reaches for them. The server holds the
+      // same allowlist (api.ts REGISTER_GROUP_COLUMNS) and ignores anything else.
+      groupable: [
+        { key: "severity", label: "Severity" },
+        { key: "asset_name", label: "Asset" },
+        { key: "cve", label: "CVE" },
+        { key: "risk_tier", label: "Tier" },
+        { key: "support_group", label: "Support group" },
+        { key: "domain", label: "Domain" },
+        { key: "subscription_name", label: "Subscription" },
+        { key: "awaiting_vendor_fix", label: "Fix availability" },
+      ],
       onRowOpen: (r, rows) => openFindingSheet(r, { rows }),
       rowLabel: findingRowLabel,
     }),

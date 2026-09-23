@@ -29,6 +29,18 @@ const CELL = {
   twin: (v) => textCell(v),
 };
 
+/** Columns the server may group by (readModels.ts REGISTER_GROUP_COLUMNS). */
+const GROUPABLE = ["severity", "identifier", "component", "repo_name", "language", "cwe",
+  "secret_kind", "validation_state", "awaiting_vendor_fix", "fixed_version"];
+
+/** This register's groupable columns, under the labels its own table uses. */
+function groupableFor(kind) {
+  const reg = REGISTERS[kind] || REGISTERS.sca;
+  return reg.columns
+    .filter((c) => GROUPABLE.indexOf(c.key) >= 0)
+    .map((c) => ({ key: c.key, label: c.label }));
+}
+
 function columnsFor(kind) {
   const reg = REGISTERS[kind] || REGISTERS.sca;
   return reg.columns.map((c) => ({
@@ -63,6 +75,7 @@ export const SCOPED_PAGES = {
       // Scope params are the SERVER's to set; only the register is chosen here.
       baseParams: (kind) => ({ scope: kind }),
       csv: (kind) => call("api_getExportCsv", { scope: kind }),
+      groupable: groupableFor,
       onRowOpen: (r, rows, kind) => openFindingSheet(kind, r, { rows }),
       rowLabel: (r, kind) => findingRowLabel(kind, r),
     }),

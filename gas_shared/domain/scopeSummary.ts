@@ -25,6 +25,8 @@ export interface ScopeSummarySev {
   /** Kaplan-Meier median days (still-open findings censored). */
   kmMedian: number | null;
   kmP90: number | null;
+  /** When the median is unobservable: the time it is AT LEAST (longest observation). */
+  kmLowerBound: number | null;
   /** Share of resolved findings closed inside their SLA target, 0-100. */
   slaPct: number | null;
   /** Open findings older than their SLA target. */
@@ -104,6 +106,7 @@ export function scopeSummaryOf(
   const km = obj(rem["km"]);
   const kmMedianPerSev = obj(rem["kmMedianPerSev"]);
   const kmP90PerSev = obj(rem["kmP90PerSev"]);
+  const kmLowerBoundPerSev = obj(rem["kmLowerBoundPerSev"]);
   const past = obj(rem["openPastSla"]);
   const pastPerSev = obj(past["perSev"]);
   const pastOverall = obj(past["overall"]);
@@ -127,6 +130,7 @@ export function scopeSummaryOf(
       resolved,
       kmMedian: numOrNull(kmMedianPerSev[sev]),
       kmP90: numOrNull(kmP90PerSev[sev]),
+      kmLowerBound: numOrNull(kmLowerBoundPerSev[sev]),
       slaPct: numOrNull(st["sla_pct"]),
       pastSla: numOr0(obj(pastPerSev[sev])["breached"]),
       slaTarget: numOrNull(st["sla_target"]),
@@ -138,9 +142,11 @@ export function scopeSummaryOf(
   const trendOut = thinPoints(points, SUMMARY_TREND_POINTS).map((p) => ({
     date: String(p["date"] ?? ""),
     open: numOrNull(p["open"]),
-    // The KM median where the trend carries one, the naive median otherwise — the same
-    // preference the MTTR page's headline line makes.
-    medianDays: numOrNull(p["km_median_days"]) ?? numOrNull(p["median_days"]),
+    // THE KAPLAN-MEIER MEDIAN ONLY — the estimator the hero reads. Falling back to the naive
+    // closed-only median where KM is unobservable put "30 days" at the end of this line under a
+    // hero reading "at least 210 days": two estimators on one page, the lower one looking like
+    // the answer. A point with no KM median is a gap in the line, not a different number.
+    medianDays: numOrNull(p["km_median_days"]),
   }));
 
   return {

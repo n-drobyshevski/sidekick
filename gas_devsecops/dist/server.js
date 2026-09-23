@@ -5400,7 +5400,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "46ef623b569d" : "dev";
+  var BUILD_ID = true ? "672a861739c4" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
@@ -8456,6 +8456,7 @@ var Server = (() => {
     const km = obj(rem["km"]);
     const kmMedianPerSev = obj(rem["kmMedianPerSev"]);
     const kmP90PerSev = obj(rem["kmP90PerSev"]);
+    const kmLowerBoundPerSev = obj(rem["kmLowerBoundPerSev"]);
     const past = obj(rem["openPastSla"]);
     const pastPerSev = obj(past["perSev"]);
     const pastOverall = obj(past["overall"]);
@@ -8476,6 +8477,7 @@ var Server = (() => {
         resolved,
         kmMedian: numOrNull(kmMedianPerSev[sev2]),
         kmP90: numOrNull(kmP90PerSev[sev2]),
+        kmLowerBound: numOrNull(kmLowerBoundPerSev[sev2]),
         slaPct: numOrNull(st["sla_pct"]),
         pastSla: numOr0(obj(pastPerSev[sev2])["breached"]),
         slaTarget: numOrNull(st["sla_target"]),
@@ -8484,13 +8486,15 @@ var Server = (() => {
     }
     const points = Array.isArray(trend["trend"]) ? trend["trend"] : [];
     const trendOut = thinPoints(points, SUMMARY_TREND_POINTS).map((p) => {
-      var _a2, _b;
+      var _a2;
       return {
         date: String((_a2 = p["date"]) != null ? _a2 : ""),
         open: numOrNull(p["open"]),
-        // The KM median where the trend carries one, the naive median otherwise — the same
-        // preference the MTTR page's headline line makes.
-        medianDays: (_b = numOrNull(p["km_median_days"])) != null ? _b : numOrNull(p["median_days"])
+        // THE KAPLAN-MEIER MEDIAN ONLY — the estimator the hero reads. Falling back to the naive
+        // closed-only median where KM is unobservable put "30 days" at the end of this line under a
+        // hero reading "at least 210 days": two estimators on one page, the lower one looking like
+        // the answer. A point with no KM median is a gap in the line, not a different number.
+        medianDays: numOrNull(p["km_median_days"])
       };
     });
     return {
@@ -8519,6 +8523,53 @@ var Server = (() => {
       perSev: sevRows,
       trend: trendOut
     };
+  }
+
+  // ../gas_shared/domain/rowGroups.ts
+  var NONE_GROUP = "\0none";
+  function groupKeyOf2(row, column) {
+    const v = row[column];
+    if (v === null || v === void 0 || v === "") return NONE_GROUP;
+    return String(v);
+  }
+  function rowsInGroup(rows, column, value) {
+    return rows.filter((r) => groupKeyOf2(r, column) === value);
+  }
+  function groupRows(rows, column, opts) {
+    var _a;
+    const rank = (s2) => {
+      const i = s2 === null ? -1 : opts.severityOrder.indexOf(s2);
+      return i < 0 ? opts.severityOrder.length : i;
+    };
+    const byKey = /* @__PURE__ */ new Map();
+    for (const r of rows) {
+      const key = groupKeyOf2(r, column);
+      let g = byKey.get(key);
+      if (!g) {
+        g = {
+          value: key,
+          raw: key === NONE_GROUP ? null : r[column],
+          count: 0,
+          open: 0,
+          worstSeverity: null,
+          oldestOpenDays: null
+        };
+        byKey.set(key, g);
+      }
+      g.count += 1;
+      const sev2 = r["severity"] === null || r["severity"] === void 0 ? null : String(r["severity"]).toUpperCase();
+      if (sev2 !== null && rank(sev2) < rank(g.worstSeverity)) g.worstSeverity = sev2;
+      if (opts.isOpen(r)) {
+        g.open += 1;
+        const age = r["age_days"];
+        if (typeof age === "number" && Number.isFinite(age) && (g.oldestOpenDays === null || age > g.oldestOpenDays)) {
+          g.oldestOpenDays = age;
+        }
+      }
+    }
+    const groups = Array.from(byKey.values()).sort((x, y) => rank(x.worstSeverity) - rank(y.worstSeverity) || y.open - x.open || y.count - x.count || (x.value < y.value ? -1 : x.value > y.value ? 1 : 0));
+    const cap = (_a = opts.cap) != null ? _a : 500;
+    return { groups: groups.slice(0, cap), truncated: Math.max(0, groups.length - cap) };
   }
 
   // src/server/readModels.ts
@@ -9271,6 +9322,19 @@ var Server = (() => {
       CLOCK_TTL_SEC
     );
   }
+  var REGISTER_GROUP_COLUMNS = [
+    "severity",
+    "identifier",
+    "component",
+    "repo_name",
+    "language",
+    "cwe",
+    "secret_kind",
+    "validation_state",
+    "awaiting_vendor_fix",
+    "fixed_version",
+    "status"
+  ];
   function normRowStatus(v) {
     const s2 = String(v != null ? v : "").toLowerCase();
     return s2 === "open" || s2 === "resolved" ? s2 : "all";
@@ -9291,7 +9355,7 @@ var Server = (() => {
     return s2 === "" ? "UNKNOWN" : s2;
   }
   function registerRowsModel(scope, p) {
-    var _a;
+    var _a, _b;
     const n2 = norm(p);
     const snap = baseSnapshot();
     const severityFilterSupported = scope !== "secrets";
@@ -9313,11 +9377,29 @@ var Server = (() => {
       }
       return !confidence.length || confidence.includes(String((_a2 = r.confidence) != null ? _a2 : "").trim().toUpperCase());
     }) : byStatus;
-    const def = REGISTER_ROW_DEFAULT_SORT[scope];
     const columns = registerRowColumns(scope);
+    const askedGroup = String((_a = p == null ? void 0 : p.groupBy) != null ? _a : "");
+    const groupBy = REGISTER_GROUP_COLUMNS.includes(askedGroup) && columns.includes(askedGroup) ? askedGroup : "";
+    if (groupBy && ((p == null ? void 0 : p.groupValue) === void 0 || (p == null ? void 0 : p.groupValue) === null)) {
+      const { groups, truncated } = groupRows(rows, groupBy, {
+        severityOrder: SEVERITY_ORDER,
+        isOpen: (r) => isOpen8(r["status"])
+      });
+      return {
+        asOf: snap.now,
+        scope,
+        groupBy,
+        groups,
+        truncated,
+        total: rows.length,
+        status
+      };
+    }
+    const grouped = groupBy ? rowsInGroup(rows, groupBy, String(p == null ? void 0 : p.groupValue)) : rows;
+    const def = REGISTER_ROW_DEFAULT_SORT[scope];
     const asked = typeof (p == null ? void 0 : p.sort) === "string" ? p.sort : "";
     const sort = columns.includes(asked) ? asked : def.sort;
-    const askedDir = String((_a = p == null ? void 0 : p.dir) != null ? _a : "").toLowerCase();
+    const askedDir = String((_b = p == null ? void 0 : p.dir) != null ? _b : "").toLowerCase();
     const dir = askedDir === "asc" || askedDir === "desc" ? askedDir : sort === def.sort ? def.dir : "asc";
     const pageSize = clampInt(
       p == null ? void 0 : p.pageSize,
@@ -9325,7 +9407,7 @@ var Server = (() => {
       1,
       REGISTER_ROWS_PAGE_SIZE_CAP
     );
-    const sorted = sortRegisterRows(rows, {
+    const sorted = sortRegisterRows(grouped, {
       value: registerSortValue(sort),
       descending: dir === "desc",
       // The row identity, and it is unique by construction (`lifecycle.findingKey`), so the
@@ -9747,7 +9829,7 @@ var Server = (() => {
     const params = { scope: null, severities: null, showNoFix: true, viewerScope: viewer };
     const n2 = norm(params);
     return durablyCached(
-      "dsScopeSummary1",
+      "dsScopeSummary2",
       { ...keyOf(n2), slaTargets: n2.slaTargets, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => {
         const latest = latestScanRowOf(loadScanRows());
@@ -10813,9 +10895,12 @@ var Server = (() => {
         // one place that decides a scope cannot carry them, exactly as it decides `severities`
         // cannot bite on secrets. Vetting here as well would put that rule in two files.
         validation: r["validation"],
-        confidence: r["confidence"]
+        confidence: r["confidence"],
+        groupBy: r["groupBy"],
+        groupValue: r["groupValue"]
       };
       const model = registerRowsModel(scope, params);
+      if (Array.isArray(model["groups"])) return model;
       return { ...model, rows: registerRowsSlice(model["rows"], scope) };
     });
   }

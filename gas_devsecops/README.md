@@ -373,9 +373,14 @@ read-only description. The editor offers:
 - **Exclusive lists.** Saving someone as a scoped viewer removes them from
   `ALLOWED_USERS`, and granting full access un-scopes them.
 
-The summary is `readModels.scopeSummaryModel` (`dsScopeSummary1`, durable). The warm adds
+The summary is `readModels.scopeSummaryModel` (`dsScopeSummary2`, durable). The warm adds
 one target per distinct scope set, after every full-user entry. Unscoped cache keys are
 unchanged.
+
+The summary leads with MTTR (the KM median hero, MTTR per severity against its target), and
+**My findings** groups by any categorical column the register carries, such as repository,
+package, rule, CWE or credential state. Grouping runs on the server over the whole filtered
+set (`registerRowsModel`'s `groupBy` / `groupValue`).
 
 The CSV export now also honours the header's **domain** view. It used to honour only the
 project view, so an export taken under a domain scope returned the whole register.

@@ -229,6 +229,7 @@ import { cached, dataVersion } from "./serverCache";
 import { durablyCached, duringWarm, sweepReadModels } from "./readModelStore";
 import { distinctScopes } from "../../../gas_shared/domain/scopedAccess";
 import { scopeSummaryOf } from "../../../gas_shared/domain/scopeSummary";
+import { groupRows, rowsInGroup } from "../../../gas_shared/domain/rowGroups";
 import { currentScoped, toViewerScope } from "./access";
 import { bootCoreModel } from "./bootCore";
 
@@ -1702,7 +1703,20 @@ export interface RowPageParams extends ModelParams {
   validation?: unknown;
   /** SECRETS ONLY: detector confidence grades to keep, matched against what the rows carry. */
   confidence?: unknown;
+  /** Group by this column (a categorical one this scope carries); unknown = no grouping. */
+  groupBy?: unknown;
+  /** With `groupBy`: that group's rows, paged. Without it: the groups themselves. */
+  groupValue?: unknown;
 }
+
+/**
+ * The columns a findings table may be grouped by: categorical ones, never a date or a score.
+ * Intersected with the scope's own columns, so a group-by names something the rows carry.
+ */
+const REGISTER_GROUP_COLUMNS = [
+  "severity", "identifier", "component", "repo_name", "language", "cwe", "secret_kind",
+  "validation_state", "awaiting_vendor_fix", "fixed_version", "status",
+] as const;
 
 export type RowStatusFilter = "all" | "open" | "resolved";
 
@@ -1830,8 +1844,25 @@ export function registerRowsModel(scope: Scope, p?: RowPageParams): Rec {
     })
     : byStatus;
 
-  const def = REGISTER_ROW_DEFAULT_SORT[scope]!;
   const columns = registerRowColumns(scope);
+  // GROUP BY over the whole filtered set, never a page (gas_shared/domain/rowGroups.ts).
+  const askedGroup = String(p?.groupBy ?? "");
+  const groupBy = (REGISTER_GROUP_COLUMNS as readonly string[]).includes(askedGroup)
+    && columns.includes(askedGroup) ? askedGroup : "";
+  if (groupBy && (p?.groupValue === undefined || p?.groupValue === null)) {
+    const { groups, truncated } = groupRows(rows as unknown as Rec[], groupBy, {
+      severityOrder: SEVERITY_ORDER,
+      isOpen: (r) => isOpen(r["status"] as string),
+    });
+    return {
+      asOf: snap.now, scope, groupBy, groups, truncated, total: rows.length, status,
+    };
+  }
+  const grouped = groupBy
+    ? rowsInGroup(rows as unknown as Rec[], groupBy, String(p?.groupValue)) as unknown as typeof rows
+    : rows;
+
+  const def = REGISTER_ROW_DEFAULT_SORT[scope]!;
   const asked = typeof p?.sort === "string" ? p.sort : "";
   // A sort on a column this scope does not carry would order every row by `undefined` and
   // leave the register in `loadBaseRows` order while claiming to be sorted. Fall back.
@@ -1847,7 +1878,7 @@ export function registerRowsModel(scope: Scope, p?: RowPageParams): Rec {
     1,
     REGISTER_ROWS_PAGE_SIZE_CAP,
   );
-  const sorted = sortRegisterRows(rows as unknown as Rec[], {
+  const sorted = sortRegisterRows(grouped as unknown as Rec[], {
     value: registerSortValue(sort),
     descending: dir === "desc",
     // The row identity, and it is unique by construction (`lifecycle.findingKey`), so the
@@ -2616,13 +2647,14 @@ export interface WarmReport {
  * ledger, so a cold summary costs what a cold MTTR page does; the warm is what makes a
  * viewer's first open one small read.
  *
- * "dsScopeSummary1": a new namespace — nothing served this shape before.
+ * "dsScopeSummary1" -> "dsScopeSummary2": the trend became KM-only (see
+ * gas_shared/domain/scopeSummary.ts); a warm "1" entry would keep the mixed-estimator line.
  */
 export function scopeSummaryModel(viewer: ViewerScope): Rec {
   const params: ModelParams = { scope: null, severities: null, showNoFix: true, viewerScope: viewer };
   const n = norm(params);
   return durablyCached(
-    "dsScopeSummary1",
+    "dsScopeSummary2",
     { ...keyOf(n), slaTargets: n.slaTargets, mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
     () => {
       const latest = latestScanRowOf(loadScanRows());

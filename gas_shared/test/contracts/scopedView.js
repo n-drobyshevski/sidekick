@@ -6,6 +6,7 @@
 // proves its own dimensions round-trip through the editor's payload.
 
 import {
+  groupLine, mttrHeroView, secondaryStats, sevMttrRows,
   draftProblems, foreignDomain, rosterChanged, rosterPayload, rowChips, rowReach, scopeLabel,
   scopeSentence, summaryTiles, SCOPE_DIM_LABELS,
 } from "../../ui/scopedViewModel.js";
@@ -79,6 +80,37 @@ export function registerScopedViewContract({ describe, it, expect, dims }) {
     it("warns about an address outside the owner's domain", () => {
       expect(foreignDomain("a@other.com", "example.com")).toBe(true);
       expect(foreignDomain("a@example.com", "example.com")).toBe(false);
+    });
+  });
+
+  describe("scoped view — MTTR is the headline", () => {
+    it("prints the median, falls back to 'at least' the bound, and never prints 0 days for nothing", () => {
+      expect(mttrHeroView({ mttr: { median: 12 }, open: 3, resolved: 5 }).value).toMatch(/^12 days$/);
+      const bound = mttrHeroView({ mttr: { median: null, medianLowerBound: 40 }, open: 3, resolved: 1 });
+      expect(bound.value).toMatch(/^at least 40 days$/);
+      expect(bound.isLowerBound).toBe(true);
+      expect(mttrHeroView({}).value).toBe("Not measured");
+    });
+
+    it("measures each severity's median against its own target, capped at a full bar", () => {
+      const rows = sevMttrRows({ perSev: [
+        { sev: "CRITICAL", kmMedian: 30, slaTarget: 15, pastSla: 2 },
+        { sev: "LOW", kmMedian: 45, slaTarget: 180, pastSla: 0 },
+      ] });
+      expect(rows[0]).toMatchObject({ sev: "CRITICAL", meterPct: 100, over: true });
+      expect(rows[0].sub).toMatch(/2 past SLA/);
+      expect(rows[1]).toMatchObject({ meterPct: 25, over: false });
+      const bounded = sevMttrRows({ perSev: [{ sev: "HIGH", kmMedian: null, kmLowerBound: 60, slaTarget: 14 }] });
+      expect(bounded[0]).toMatchObject({ value: "≥ 60 days", meterPct: 100, over: true });
+    });
+
+    it("keeps MTTR out of the secondary strip", () => {
+      expect(secondaryStats({}).map((t) => t.key)).not.toContain("mttr");
+    });
+
+    it("says a group's size, its open share and its oldest open finding", () => {
+      expect(groupLine({ count: 1, open: 0, oldestOpenDays: null })).toBe("1 finding · 0 open");
+      expect(groupLine({ count: 12, open: 9, oldestOpenDays: 210 })).toBe("12 findings · 9 open · oldest open 210 days");
     });
   });
 }

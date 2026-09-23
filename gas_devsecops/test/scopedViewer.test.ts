@@ -181,3 +181,22 @@ describe("the roster", () => {
     expect(projects.find((o) => o["value"] === "leaf-a")).toMatchObject({ label: "Leaf A" });
   });
 });
+
+describe("group by", () => {
+  it("groups the viewer's rows by repository and opens one group", async () => {
+    await as("viewer@example.com");
+    const g = ok(server.api.getRegisterRows({ scope: "sca", status: "all", groupBy: "repo_name" }));
+    const groups = g["groups"] as Rec[];
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({ value: "repo-one", count: 2, open: 1 });
+    const rows = ok(server.api.getRegisterRows({
+      scope: "sca", status: "all", groupBy: "repo_name", groupValue: "repo-one", pageSize: 500,
+    }));
+    expect(rows["total"]).toBe(2);
+  });
+
+  it("refuses a column the scope's rows do not carry", async () => {
+    const d = ok(server.api.getRegisterRows({ scope: "sast", status: "all", groupBy: "secret_kind" }));
+    expect(d["groups"]).toBeUndefined();
+  });
+});

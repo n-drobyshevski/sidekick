@@ -107,11 +107,13 @@ describe("scopeSummaryOf — a projection, not a second estimate", () => {
     expect(s.awaiting).toEqual({ count: 1, pctOfOpen: 25 });
   });
 
-  it("prefers the KM median in the trend and keeps the newest point when thinning", () => {
-    const pts = Array.from({ length: 200 }, (_, i) => ({ date: `d${i}`, open: i, km_median_days: null, median_days: i }));
+  it("draws the KM median only, and keeps the newest point when thinning", () => {
+    const pts = Array.from({ length: 200 }, (_, i) => ({ date: `d${i}`, open: i, km_median_days: i % 2 ? i : null, median_days: 1 }));
     const s = scopeSummaryOf(mttr, { trend: pts }, { asOf: "t", scan: null });
     expect(s.trend.length).toBe(60);
     expect(s.trend[s.trend.length - 1]).toEqual({ date: "d199", open: 199, medianDays: 199 });
+    // Never the naive median in a KM gap: that would put a second estimator under the hero.
+    expect(s.trend.some((p) => p.medianDays === 1)).toBe(false);
     expect(thinPoints([1, 2, 3], 10)).toEqual([1, 2, 3]);
   });
 });

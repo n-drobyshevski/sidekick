@@ -997,8 +997,12 @@ export function getRegisterRows(p?: unknown): ApiResult {
       // cannot bite on secrets. Vetting here as well would put that rule in two files.
       validation: r["validation"],
       confidence: r["confidence"],
+      groupBy: r["groupBy"],
+      groupValue: r["groupValue"],
     };
     const model = readModels.registerRowsModel(scope, params);
+    // A groups answer carries no rows — and the groups' `raw` is one categorical cell value.
+    if (Array.isArray(model["groups"])) return model;
     return { ...model, rows: registerRowsSlice(model["rows"], scope) };
   });
 }

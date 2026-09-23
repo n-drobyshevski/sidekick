@@ -62,6 +62,7 @@ import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
 import * as access from "./access";
 import { distinctScopes, rosterRows, scopeKey, serializeScoped, validateScoped } from "../../../gas_shared/domain/scopedAccess";
 import { scopeSummaryOf } from "../../../gas_shared/domain/scopeSummary";
+import { groupRows, rowsInGroup } from "../../../gas_shared/domain/rowGroups";
 import { hasWizCredentials, PROP_KEYS, setProp } from "./props";
 import { readHubUrl, writeHubUrl } from "./hubUrl";
 import { BASE_FILTER_WORDS } from "./wizClient";
@@ -2753,6 +2754,12 @@ const cachedRegisterRows = (p: unknown, filters: RegisterRowFilters): Rec =>
     3600,
   );
 
+/** The columns a findings table may be grouped by: categorical ones, never a date or a score. */
+const REGISTER_GROUP_COLUMNS = [
+  "severity", "risk_tier", "asset_name", "support_group", "domain", "subscription_name", "cve",
+  "awaiting_vendor_fix", "status",
+] as const;
+
 /** A page size the reader asked for, CLAMPED into range. Refuses null / blank / non-numeric
  *  BEFORE the cast — `Number(null)` is 0 and `Number.isFinite(0)` is true, so a cast-first
  *  form would read an absent `pageSize` as the clamp's floor of one row per page. */
@@ -2790,7 +2797,25 @@ export function getRegisterRows(p0?: unknown): ApiResult {
     const params = (p ?? {}) as Rec;
     const filters = registerRowFilters(p);
     const model = cachedRegisterRows(p, filters);
-    const rows = (Array.isArray(model["rows"]) ? model["rows"] : []) as Rec[];
+    let rows = (Array.isArray(model["rows"]) ? model["rows"] : []) as Rec[];
+
+    // GROUP BY, over the whole filtered set rather than a page (gas_shared/domain/rowGroups.ts
+    // says why). No `groupValue`: the groups themselves. A `groupValue`: that group's rows,
+    // sorted and paged below exactly like the ungrouped table. An unknown column is no
+    // grouping at all, never an error — it arrives from a URL hash.
+    const askedGroup = String(params["groupBy"] ?? "");
+    const groupBy = (REGISTER_GROUP_COLUMNS as readonly string[]).includes(askedGroup) ? askedGroup : "";
+    if (groupBy && (params["groupValue"] === undefined || params["groupValue"] === null)) {
+      const { groups, truncated } = groupRows(rows, groupBy, {
+        severityOrder: SEVERITY_ORDER,
+        isOpen: (r) => isOpenStatus(r["status"]),
+      });
+      return {
+        asOf: model["asOf"], groupBy, groups, truncated, total: rows.length,
+        status: filters.status, population: model["population"],
+      };
+    }
+    if (groupBy) rows = rowsInGroup(rows, groupBy, String(params["groupValue"]));
 
     const asked = String(params["sort"] ?? "");
     const sort = REGISTER_ROW_COLUMNS.includes(asked) ? asked : REGISTER_ROW_DEFAULT_SORT.sort;
@@ -3750,9 +3775,11 @@ function viewerParams(viewer: access.ViewerScope, severities: string[] | null): 
   return { domain: "", supportGroup: "", severities, viewerScope: viewer };
 }
 
-// "scopedBoot1" / "scopeSummary1": new namespaces, nothing served these shapes before.
-const SCOPED_BOOT = "scopedBoot1";
-const SCOPE_SUMMARY = "scopeSummary1";
+// "scopedBoot1" / "scopeSummary1" -> "…2": the summary trend became KM-only (it fell back to
+// the naive median in KM gaps, which put a second estimator under the hero). A warm "1" entry
+// would keep drawing the mixed line.
+const SCOPED_BOOT = "scopedBoot2"; // also: perSev gained kmLowerBound
+const SCOPE_SUMMARY = "scopeSummary2";
 
 function scopedBootParams(viewer: access.ViewerScope): Rec {
   return {

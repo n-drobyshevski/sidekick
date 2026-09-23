@@ -219,3 +219,81 @@ export function rosterChanged(a, b) {
     .sort((x, y) => (x.email < y.email ? -1 : x.email > y.email ? 1 : 0)));
   return key(a) !== key(b);
 }
+
+// ------------------------------------------------------------------ the MTTR-first summary
+
+/**
+ * The page's ONE headline: the Kaplan-Meier median time to remediate. The same censoring rule
+ * the Executive hero reads (`kmHalfLifeView`): a median the curve never reached prints as "at
+ * least N days" off the lower bound, and a register with nothing measured says so in words —
+ * never as "0 days", which would be the fastest remediation anyone has ever seen.
+ */
+export function mttrHeroView(summary) {
+  const s = summary || {};
+  const m = s.mttr || {};
+  const median = num(m.median);
+  const bound = num(m.medianLowerBound);
+  const p90 = num(m.p90);
+  const resolved = num(s.resolved) || 0;
+  const open = num(s.open) || 0;
+  const value = median !== null ? fmtDays(median)
+    : bound !== null ? "at least " + fmtDays(bound)
+      : "Not measured";
+  const qualifier = median !== null
+    ? "Half of all findings in your scope are fixed within this time."
+    : bound !== null
+      ? "Fewer than half have been fixed yet, so the median is still a lower bound."
+      : "Nothing in your scope has been fixed yet, so there is no time to report.";
+  const detail = [
+    p90 !== null ? `90% fixed within ${fmtDays(p90)}` : "90th percentile not observable yet",
+    `${resolved.toLocaleString()} fixed · ${open.toLocaleString()} still open`,
+  ].join(" · ");
+  return { value, qualifier, detail, measured: median !== null || bound !== null, isLowerBound: median === null && bound !== null };
+}
+
+/**
+ * MTTR per severity, against that severity's SLA target — the hero's aside. The meter is the
+ * median as a share of the target, capped at 100: a full bar is "at or past the deadline",
+ * and the number beside it says by how much.
+ */
+export function sevMttrRows(summary) {
+  const rows = summary && Array.isArray(summary.perSev) ? summary.perSev : [];
+  return rows.map((r) => {
+    const median = num(r.kmMedian);
+    const bound = num(r.kmLowerBound);
+    const target = num(r.slaTarget);
+    // A lower bound is still evidence against the target: "at least 314 days" on a 7-day
+    // window is a full bar and a breach, whatever the exact median turns out to be.
+    const days = median !== null ? median : bound;
+    const pct = days !== null && target ? Math.min(100, Math.round((days / target) * 100)) : null;
+    return {
+      sev: r.sev,
+      value: median !== null ? fmtDays(median) : bound !== null ? "≥ " + fmtDays(bound) : null,
+      sub: [
+        target !== null ? `target ${fmtDays(target)}` : null,
+        num(r.pastSla) ? `${Number(r.pastSla).toLocaleString()} past SLA` : null,
+      ].filter(Boolean).join(" · ") || "no target",
+      meterPct: pct,
+      over: days !== null && target !== null && days > target,
+    };
+  });
+}
+
+/** Everything that is not MTTR: the secondary strip under the hero. */
+export function secondaryStats(summary) {
+  return summaryTiles(summary).filter((t) => t.key !== "mttr");
+}
+
+// ------------------------------------------------------------------ grouped findings
+
+/** A group's heading line: "12 findings · 9 open · oldest 210 days". */
+export function groupLine(g) {
+  const count = num(g && g.count) || 0;
+  const open = num(g && g.open) || 0;
+  const age = num(g && g.oldestOpenDays);
+  return [
+    `${count.toLocaleString()} ${count === 1 ? "finding" : "findings"}`,
+    `${open.toLocaleString()} open`,
+    age !== null ? `oldest open ${fmtDays(age)}` : null,
+  ].filter(Boolean).join(" · ");
+}

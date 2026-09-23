@@ -1025,7 +1025,7 @@ What keeps them in their slice:
   (`access.enforcedScope()`). A console call asking for someone else's domain, or for `""`
   (the whole register), still gets their rows.
 - **They never receive the bootstrap core.** It carries every domain's name and count. A
-  scoped viewer gets the small `scopedBoot1` payload instead, with their summary inside it.
+  scoped viewer gets the small `scopedBoot2` payload instead, with their summary inside it.
 - **Fail closed.** Unparseable JSON, a non-object, or an entry with an empty scope admits
   nobody. Nothing is ever read as "scoped to everything".
 - **The narrower grant wins.** An address hand-edited onto both lists is treated as scoped.
@@ -1038,9 +1038,19 @@ per-domain shard, so a *cold* scoped summary costs about what a cold MTTR page d
 scheduled warm (`warmScopedViews`) therefore precomputes each **distinct** scope set in
 `SCOPED_USERS` into the durable read-model layer. Ten viewers sharing a domain cost one
 compute. A viewer's first open is then one small cache read with no ledger load. Saving the
-roster schedules a warm for any new viewer. Cache namespaces: `scopedBoot1`,
-`scopeSummary1`. Register rows key on the viewer scope only when one is present, so no
+roster schedules a warm for any new viewer. Cache namespaces: `scopedBoot2`,
+`scopeSummary2`. Register rows key on the viewer scope only when one is present, so no
 unscoped entry was orphaned.
+
+**The summary leads with MTTR.** The hero is the Kaplan-Meier median time to remediate, which
+reads "at least N days" when fewer than half are fixed. Beside it is MTTR per severity against
+each SLA target, with lower bounds where a median is not observable yet. Below it, MTTR over
+time is the page's one chart, and it is KM-only: it never falls back to the naive median.
+Open, past-SLA, closed-within-SLA and awaiting-fix are the secondary strip. **My findings** can
+be grouped by severity, asset, CVE, tier, support group, domain, subscription or fix
+availability. Grouping runs on the server over the whole filtered set (`groupBy` /
+`groupValue` on `getRegisterRows`, `gas_shared/domain/rowGroups.ts`), worst severity first.
+Each group expands into its own paged rows.
 
 ### The entry screen
 
