@@ -222,8 +222,9 @@ describe("getJob reads the tail, not the whole tab", () => {
   });
 });
 
-// bootstrap's live `activeJob` field read the whole jobs tab on every page load (~0.9 s,
-// measured in doGet). It now reads a display copy in CacheService that every writer drops.
+// bootstrap's live `activeJob` field read the whole jobs tab on every page load (~0.9 s, and up
+// to 9 s when it opened the spreadsheet). It now reads a display copy in CacheService, keyed by
+// a generation that every writer of the tab moves.
 describe("activeJobForDisplay", () => {
   const cache = new Map<string, string>();
   let cacheThrows = false;
@@ -257,6 +258,28 @@ describe("activeJobForDisplay", () => {
     updateJob("backfill-1", { phase: "DONE" }, NOW);
     expect(activeJobForDisplay()).toBeNull();
     expect(reads.full).toBe(3);
+  });
+
+  // The race the generation exists for: a reader that read the sheet before a write puts its
+  // answer back AFTER the writer moved on. It must land where nobody reads.
+  it("never serves an answer written under a generation a write has since retired", async () => {
+    const { activeJobForDisplay, createJob } = await load();
+    expect(activeJobForDisplay()).toBeNull();
+    const oldKey = [...cache.keys()].find((k) => k.startsWith("activeJob2:"))!;
+    createJob(newRow(), NOW);
+    cache.set(oldKey, "null"); // the slow reader's stale "nothing running", landing late
+    expect(activeJobForDisplay()?.job_id).toBe("backfill-1");
+  });
+
+  it("treats a lost generation as a miss, never as the old value", async () => {
+    const { activeJobForDisplay, createJob } = await load();
+    expect(activeJobForDisplay()).toBeNull();
+    createJob(newRow(), NOW);
+    expect(activeJobForDisplay()?.job_id).toBe("backfill-1");
+    cache.delete("activeJobGen"); // evicted
+    reads.full = 0;
+    expect(activeJobForDisplay()?.job_id).toBe("backfill-1");
+    expect(reads.full).toBe(1);
   });
 
   it("falls back to the tab when the cache throws", async () => {

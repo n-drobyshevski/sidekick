@@ -213,42 +213,70 @@ export function activeJob(): JobRow | null {
 
 // ------------------------------------------------------- the active job, for DISPLAY only
 //
-// `activeJob()` reads the whole jobs tab, measured at ~0.9 s — and bootstrap's live
-// `activeJob` field paid it on every page load, doGet's inline bootstrap included, where it was
-// most of that bootstrap's cost once the read-models were warm. This copy lives in CacheService
-// and every writer of the tab (`createJob`, `updateJob`, the ledger reset) drops it.
+// `activeJob()` reads the whole jobs tab — ~0.3–0.9 s as a read, but up to 7–9 s when it is the
+// first thing in an execution to open the spreadsheet, which on doGet it was. bootstrap's live
+// `activeJob` field paid that on every page load. This copy lives in CacheService.
 //
-// DISPLAY ONLY, NEVER A GUARD. A reader that computed from the sheet just before a write can put
-// its now-stale answer back after the writer dropped the key; the TTL bounds that to a minute,
-// which a progress card can live with — the client polls the job by id through `getJob`, which
-// is never cached. Anything whose correctness depends on the answer (the warm's in-flight check,
-// single-flight mutations) keeps calling `activeJob()`.
-const ACTIVE_JOB_CACHE_KEY = "activeJob1";
-const ACTIVE_JOB_CACHE_TTL_SEC = 60;
+// KEYED BY A GENERATION, NOT DROPPED ON WRITE. The first version of this cache dropped one fixed
+// key after each write and lived for 60 s, because a reader that read the sheet just before a
+// write could put its stale answer back after the drop — the TTL was all that bounded it. And a
+// 60 s TTL meant the first doGet after a quiet minute opened the spreadsheet again. Now every
+// writer of the tab (`createJob`, `updateJob`, the ledger reset) moves the generation, and the
+// value is cached under `activeJob2:<generation>`. A reader reads the generation BEFORE the
+// sheet, so a stale answer can only ever land under a generation nobody reads any more — which
+// is what lets the copy live for CacheService's six-hour maximum.
+//
+// A missing generation (evicted, expired, first run) is minted fresh: that costs one miss and
+// can never serve a stale value, because nothing was ever stored under a fresh one.
+//
+// DISPLAY ONLY, NEVER A GUARD. It feeds what a page shows; the client polls a running job by id
+// through `getJob`, which is never cached, and everything whose correctness depends on the
+// answer (the warm's in-flight check, single-flight mutations) keeps calling `activeJob()`.
+const ACTIVE_JOB_GEN_KEY = "activeJobGen";
+const ACTIVE_JOB_CACHE_PREFIX = "activeJob2:";
+const ACTIVE_JOB_CACHE_TTL_SEC = 21_600;
 
-/** `activeJob()` through a short-lived cache. For what a page SHOWS, never for what it guards. */
+function newGeneration(): string {
+  return String(Date.now()) + "-" + Math.floor(Math.random() * 1e9);
+}
+
+/** `activeJob()` through a generation-keyed cache. For what a page SHOWS, never what it guards. */
 export function activeJobForDisplay(): JobRow | null {
+  let key: string | null = null;
   try {
+    const cache = CacheService.getScriptCache();
+    let gen = cache.get(ACTIVE_JOB_GEN_KEY);
+    if (!gen) {
+      gen = newGeneration();
+      cache.put(ACTIVE_JOB_GEN_KEY, gen, ACTIVE_JOB_CACHE_TTL_SEC);
+    }
+    key = ACTIVE_JOB_CACHE_PREFIX + gen;
     // "null" is a cached answer (no job in flight); a missing key is a miss.
-    const raw = CacheService.getScriptCache().get(ACTIVE_JOB_CACHE_KEY);
+    const raw = cache.get(key);
     if (raw !== null) return JSON.parse(raw) as JobRow | null;
   } catch (e) {
     console.warn(`Active-job cache read failed: ${e}`);
+    key = null;
   }
   const job = activeJob();
-  try {
-    CacheService.getScriptCache().put(ACTIVE_JOB_CACHE_KEY, JSON.stringify(job), ACTIVE_JOB_CACHE_TTL_SEC);
-  } catch (e) {
-    console.warn(`Active-job cache write failed: ${e}`);
+  if (key) {
+    try {
+      CacheService.getScriptCache().put(key, JSON.stringify(job), ACTIVE_JOB_CACHE_TTL_SEC);
+    } catch (e) {
+      console.warn(`Active-job cache write failed: ${e}`);
+    }
   }
   return job;
 }
 
-/** Drop the display copy. Every writer of the jobs tab calls this after its write. */
+/**
+ * Move the display copy to a new generation. Every writer of the jobs tab calls this AFTER its
+ * write, so any reader that reads the new generation reads the sheet after the write too.
+ */
 export function forgetActiveJob(): void {
   try {
-    CacheService.getScriptCache().remove(ACTIVE_JOB_CACHE_KEY);
+    CacheService.getScriptCache().put(ACTIVE_JOB_GEN_KEY, newGeneration(), ACTIVE_JOB_CACHE_TTL_SEC);
   } catch (e) {
-    console.warn(`Active-job cache drop failed: ${e}`);
+    console.warn(`Active-job cache generation bump failed: ${e}`);
   }
 }
