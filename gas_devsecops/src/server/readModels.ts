@@ -893,6 +893,33 @@ export interface ShippedKM {
   /** The max exit time across the observed population, UNCAPPED by the reliability cut or the
    *  RMST horizon — what `restrictionTime` unconditionally meant before this package. */
   maxObserved: number | null;
+
+  // ------------------------------------------------------------------- row-accounting package
+  //
+  // Every row the estimator was handed, reconciled into named buckets rather than three ways
+  // to silently vanish (a row with no readable clock, an event past the reliability cut, a
+  // late entrant) — see `remediation.ts`'s `KMResult` (the row-accounting package's own
+  // comment there) for the identity these five hold: `rowsIn === events + censored +
+  // excludedPreEntry + noClock`. The MTTR page's accounting block (`accountingView`, mttr.js)
+  // is the one reader; nothing else on the wire needs them yet.
+
+  /** Every row `kaplanMeier` was handed, before any exclusion — the accounting block's header
+   *  total, which every other count here (plus `censored`/`excludedPreEntry` above) sums to. */
+  rowsIn: number;
+  /** Rows with neither a resolved remediation time nor an open age — no first-seen date this
+   *  register could measure from at all. */
+  noClock: number;
+  /** Of `events` (pre-cut — see this interface's own `events` field and `remediation.ts`'s
+   *  KMResult comment), the count whose time fell past `reliableUntil`: real fixes this
+   *  register saw, excluded from the median because too little of the risk set remained to
+   *  trust the curve that far out. 0 when nothing was cut. */
+  eventsPastCut: number;
+  /** Of the rows that survived pre-entry exclusion, how many had `entry_days > 0` — the
+   *  onboarding backlog already open, on its own clock, the day this register started
+   *  watching. */
+  lateEntrants: number;
+  /** The median `entry_days` among `lateEntrants`, in days. Null when `lateEntrants` is 0. */
+  lateEntryMedianAge: number | null;
 }
 
 function shipKM(km: KMResult): ShippedKM {
@@ -912,6 +939,11 @@ function shipKM(km: KMResult): ShippedKM {
     reliableUntil: km.reliableUntil ?? null,
     excludedPreEntry: km.excludedPreEntry ?? 0,
     maxObserved: km.maxObserved ?? null,
+    rowsIn: km.rowsIn ?? 0,
+    noClock: km.noClock ?? 0,
+    eventsPastCut: km.eventsPastCut ?? 0,
+    lateEntrants: km.lateEntrants ?? 0,
+    lateEntryMedianAge: km.lateEntryMedianAge ?? null,
   };
 }
 
@@ -1107,6 +1139,13 @@ export function mttrModel(p?: ModelParams): Rec {
   // new fields and carries the OLD numbers under the field names the page still reads —
   // silently wrong rather than silently missing, which is worse.
   //
+  // "dsMttr3" -> "dsMttr4" (row-accounting package): every `ShippedKM` gained `rowsIn`/
+  // `noClock`/`eventsPastCut`/`lateEntrants`/`lateEntryMedianAge` — the MTTR page's new
+  // accounting block reads all five off `remediation.km`. A warm dsMttr3 entry has none of
+  // them, and the block would draw as five zeroes beside a real header total rather than
+  // being missing outright — the same "silently wrong beats silently missing" reasoning as
+  // the bump above, which is exactly why this is a new key rather than a lazy backfill.
+  //
   // `slaTargets` JOINS THE KEY (not just `keyOf`'s base four) because this compute reads it —
   // `openPastSla`, `agingDistribution` and `mttrFromLedger`'s `sla_target`/`sla_pct` all take
   // it as an argument below. Without it in the key, an operator saving a new Deadlines window
@@ -1118,7 +1157,7 @@ export function mttrModel(p?: ModelParams): Rec {
   // which repositories every figure below is measured over, so an operator flipping it and
   // reloading would otherwise read the OLD half-life off an entry whose params look the same.
   return cached(
-    "dsMttr3",
+    "dsMttr4",
     { ...keyOf(n), slaTargets: n.slaTargets, mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
     () => buildMttr(n),
     CLOCK_TTL_SEC,
@@ -2392,8 +2431,13 @@ export function historyModel(p?: ModelParams): Rec {
   // `q25`/`q75`/`reliableUntil`/`excludedPreEntry`/`maxObserved`, and its `median`/`mean`/
   // `restrictionTime` now read a reliability-cut, horizon-capped curve — the same shape change
   // `mttrModel`'s own bump documents.
+  //
+  // "dsHistory3" -> "dsHistory4" (row-accounting package): `kpis.km` gained `rowsIn`/`noClock`/
+  // `eventsPastCut`/`lateEntrants`/`lateEntryMedianAge` too — `shipKM` is the one function
+  // behind both `kpis.km` here and `remediation.km` in `mttrModel`, so the shape change (and
+  // the bump it forces) is identical, even though this page draws no accounting block itself.
   return durablyCached(
-    "dsHistory3",
+    "dsHistory4",
     { ...keyOf(n), mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
     () => buildHistory(n),
   );

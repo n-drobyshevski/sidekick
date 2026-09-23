@@ -178,6 +178,56 @@ export interface KMResult {
    * field keeps the uncapped figure available (e.g. for "≥ N d still open" phrasing).
    */
   maxObserved?: number | null;
+
+  // --------------------------------------------------------------- row-accounting package
+  //
+  // The estimator used to have THREE silent ways for a row to vanish without ever being
+  // counted anywhere: a row with neither a resolved time nor an open age fell out of the loop
+  // below with nothing incremented; an event past the reliability cut disappeared from `curve`
+  // with nothing saying so; and a finding that entered the risk set late (the onboarding
+  // backlog `entry_days` exists for) was invisible in every published count. These five fields
+  // make every row this estimator was HANDED reach exactly one bucket, so
+  // `rowsIn === events + censored + excludedPreEntry + noClock` always — see `noClock`'s own
+  // comment for why `eventsPastCut` does not appear in that identity even though it is a real
+  // partition of `events`. `test/kmDelayedEntry.test.ts`'s "row accounting" block pins it.
+
+  /** Every row `kaplanMeier` was handed, before any exclusion — the header total the UI's
+   *  accounting block reconciles every other field here against. */
+  rowsIn?: number;
+  /**
+   * Rows where NEITHER `resolvedMttr` (a finite `mttr_days`) NOR `openAge` (an open row's
+   * finite `age_days`) produced a reading — a resolved row with no captured remediation time,
+   * or an open row with no captured age. These used to fall out of the loop below with nothing
+   * incremented anywhere: not an event, not censored, not `excludedPreEntry` (which only counts
+   * rows that DID have a reading, just one at-or-before their own entry). 0 whenever the
+   * extended estimator ran and every row had a readable clock.
+   */
+  noClock?: number;
+  /**
+   * Of `events` (this result's own field — see its call site for which population that already
+   * is: every row whose exit is a genuine post-entry event, REGARDLESS of the reliability cut),
+   * the count whose time `t` fell PAST `reliableUntil` — a real fix this register observed and
+   * excluded from the median because too little of the risk set remained to trust the curve out
+   * that far. 0 when `opts.minRisk` was not requested (nothing is cut) or when every event
+   * landed inside the cut.
+   *
+   * `events` already means "every observed event, pre-cut" (kaplanMeierExtended never narrows
+   * it to the cut curve, for backward compatibility with every existing reader), so the events
+   * actually USED by the shipped curve are `events − eventsPastCut`, computed by the one reader
+   * that needs that split (the accounting block) rather than shipped as a seventh count nothing
+   * else reads yet — which is also why `eventsPastCut` does not get its own term in the
+   * `rowsIn` identity above: `events` already carries both eventsUsed and eventsPastCut summed.
+   */
+  eventsPastCut?: number;
+  /** Of the rows that survived pre-entry exclusion (became an event or a censored
+   *  observation), how many had `entry_days > 0` — the onboarding backlog: findings already
+   *  open, on their own clock, the day this register started watching. 0 when nothing entered
+   *  late. */
+  lateEntrants?: number;
+  /** The median `entry_days` among `lateEntrants`, in days — "half the backlog was already at
+   *  least this old when we started watching". Null when `lateEntrants === 0` (nothing to take
+   *  a median of, not a measured zero). */
+  lateEntryMedianAge?: number | null;
 }
 
 /**
@@ -333,6 +383,15 @@ export function kmMedianFromCurve(curve: KMPoint[]): number | null {
  * See `KMOptions`, `kmCurveEntry`, `reliableUntilFromCurve` and the new KMResult fields for the
  * per-mechanism detail; `test/kmDelayedEntry.test.ts` pins all of it, including a randomized
  * "no entry, no opts" property test run against a literal copy of the pre-package algorithm.
+ *
+ * ROW ACCOUNTING (row-accounting package, extended path only): `rowsIn` (every row handed in),
+ * `noClock` (neither a resolved time nor an open age — the third silent drop this closes),
+ * `eventsPastCut` (real events excluded by the reliability cut), `lateEntrants` and
+ * `lateEntryMedianAge` (the onboarding backlog: rows already old on their own clock when this
+ * register started watching) together make `rowsIn === events + censored + excludedPreEntry +
+ * noClock` hold exactly — see `noClock`'s own KMResult comment for the identity and why
+ * `eventsPastCut` is not a separate term in it. Absent from `kaplanMeierLegacy`'s return, same
+ * as `q25`/`reliableUntil`.
  */
 export function kaplanMeier(rows: RemediationRow[], opts?: KMOptions): KMResult {
   if (opts === undefined && !rows.some((r) => normalizedEntry(r) > 0)) {
@@ -487,9 +546,15 @@ export function reliableUntilFromCurve(curve: KMPoint[]): number | null {
  * `kaplanMeier`'s docstring lists.
  */
 function kaplanMeierExtended(rows: RemediationRow[], opts: KMOptions | undefined): KMResult {
+  const rowsIn = rows.length;
   const events: { t: number; entry: number }[] = [];
   const censored: { t: number; entry: number }[] = [];
   let excludedPreEntry = 0;
+  // Rows with neither a resolved time nor an open age — the third silent hole this package
+  // closes. `lateEntryAges` collects the entry of every row that DID survive (event or
+  // censored) with `entry_days > 0`, for `lateEntrants`/`lateEntryMedianAge` below.
+  let noClock = 0;
+  const lateEntryAges: number[] = [];
   for (const row of rows) {
     const entry = normalizedEntry(row);
     const m = resolvedMttr(row);
@@ -498,6 +563,7 @@ function kaplanMeierExtended(rows: RemediationRow[], opts: KMOptions | undefined
         excludedPreEntry += 1; // resolved before this register could have observed it
       } else {
         events.push({ t: m, entry });
+        if (entry > 0) lateEntryAges.push(entry);
       }
       continue;
     }
@@ -507,9 +573,14 @@ function kaplanMeierExtended(rows: RemediationRow[], opts: KMOptions | undefined
         excludedPreEntry += 1; // already this old, on this clock, before entry
       } else {
         censored.push({ t: c, entry });
+        if (entry > 0) lateEntryAges.push(entry);
       }
+    } else {
+      noClock += 1; // neither resolvedMttr nor openAge produced a reading — dropped, uncounted
     }
   }
+  const lateEntrants = lateEntryAges.length;
+  const lateEntryMedianAge = lateEntrants > 0 ? median(lateEntryAges) : null;
 
   const total = events.length + censored.length;
   const obsTimes = events.concat(censored).map((o) => o.t);
@@ -545,6 +616,11 @@ function kaplanMeierExtended(rows: RemediationRow[], opts: KMOptions | undefined
       reliableUntil: null,
       excludedPreEntry,
       maxObserved,
+      rowsIn,
+      noClock,
+      eventsPastCut: 0, // no events at all -> nothing to have been cut past
+      lateEntrants,
+      lateEntryMedianAge,
     };
   }
 
@@ -557,6 +633,14 @@ function kaplanMeierExtended(rows: RemediationRow[], opts: KMOptions | undefined
     // First event already unreliable -> nothing on the curve is trustworthy; ship none of it.
     curve = reliableUntil === null ? [] : fullCurve.filter((p) => p.t <= reliableUntil!);
   }
+  // `eventsPastCut`: see its own KMResult comment. `opts?.minRisk` false means no cut ran at
+  // all — 0 by definition. `reliableUntil === null` under `minRisk` means the FIRST event
+  // already failed reliability, so nothing at all is trustworthy and every event is "past the
+  // cut" (curve is []). Otherwise it is exactly the raw events whose time landed after the cut.
+  const eventsPastCut =
+    !opts?.minRisk ? 0
+    : reliableUntil === null ? events.length
+    : events.filter((e) => e.t > reliableUntil!).length;
 
   const median_ = kmMedianFromCurve(curve);
   const q25 = kmQuantileFromCurve(curve, 0.25);
@@ -592,6 +676,11 @@ function kaplanMeierExtended(rows: RemediationRow[], opts: KMOptions | undefined
     reliableUntil,
     excludedPreEntry,
     maxObserved,
+    rowsIn,
+    noClock,
+    eventsPastCut,
+    lateEntrants,
+    lateEntryMedianAge,
   };
 }
 

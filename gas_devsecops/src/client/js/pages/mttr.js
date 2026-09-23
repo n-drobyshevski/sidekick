@@ -432,6 +432,103 @@ export function survivalAxisNote(scoped, km) {
     + " this register has been watching.";
 }
 
+/** "Fixes past the cut" row's own tip (row-accounting package) — the one new explanation this
+ *  block needs that nothing on the page had a copy of yet. "Closed before watching" reuses
+ *  `WINDOW_LINE_HELP` above rather than restating the same fact a second way. */
+export const PAST_CUT_HELP = {
+  lines: [
+    "A real fix the register saw happen — not a gap in the data.",
+    "Excluded from the median because too few findings remained at that age to trust the curve"
+    + " that far out.",
+  ],
+};
+
+/**
+ * The accounting block (row-accounting package): under the survival curve, where every row
+ * `remediation.km` started from WENT — five named buckets that always sum back to the header
+ * total, so nothing on this page can vanish without a line saying where.
+ *
+ * THE HEADER IS `rowsIn`, and the point of the block is that the rows below it reconcile
+ * against it exactly — `test/mttrAccounting.test.js` asserts the sum on every fixture rather
+ * than trusting the arithmetic by eye. `events` is `remediation.km`'s OWN field and (per
+ * `remediation.ts`'s KMResult comment) already counts every observed event REGARDLESS of the
+ * reliability cut, so "Fixes used" — the count actually inside the cut curve the chart above
+ * draws — is `events − eventsPastCut`, derived here rather than shipped as a seventh estimator
+ * field nothing else reads.
+ *
+ * "FIXES PAST THE CUT" IS HIDDEN ONLY WHEN NOTHING WAS EVER CUT — `reliableUntil === null` AND
+ * `eventsPastCut === 0` together, not `reliableUntil === null` alone. `reliableUntil` reads
+ * null two ways (`remediation.ts`'s own docstring): `opts.minRisk` was never requested (the
+ * common case this block will actually meet, since `eventsPastCut` is 0 there too), or the
+ * cut ran and its VERY FIRST event already failed reliability — in which case every event IS
+ * past the cut and hiding the row would delete that count from the visible breakdown entirely,
+ * which is exactly the silent disappearance this block exists to rule out. Checking both fields
+ * costs nothing in the common case and is the honest answer in the rare one.
+ *
+ * `lateEntrantsLine` — the onboarding-backlog sentence — is separate from the five rows because
+ * it is not a partition of `rowsIn`: a late entrant is also counted as an event or a censored
+ * row above it, so adding it to the sum would double count.
+ *
+ * @param {object|null|undefined} mttr  the MTTR page's own payload (`{remediation: {km}}`)
+ */
+export function accountingView(mttr) {
+  const km = (mttr && mttr.remediation && mttr.remediation.km) || null;
+  if (!km) return { show: false, total: 0, rows: [], lateEntrantsLine: null };
+
+  const rowsIn = num(km.rowsIn, 0);
+  const events = num(km.events, 0);
+  const censored = num(km.censored, 0);
+  const excludedPreEntry = num(km.excludedPreEntry, 0);
+  const noClock = num(km.noClock, 0);
+  const eventsPastCut = num(km.eventsPastCut, 0);
+  const reliableUntil = num(km.reliableUntil);
+  const eventsUsed = events - eventsPastCut;
+  const lateEntrants = num(km.lateEntrants, 0);
+  const lateEntryMedianAge = num(km.lateEntryMedianAge);
+
+  const rows = [
+    { key: "used", label: "Fixes used", count: eventsUsed, note: "inside the reliable window" },
+  ];
+  if (reliableUntil !== null || eventsPastCut > 0) {
+    const cutDays = Math.round(reliableUntil ?? 0);
+    rows.push({
+      key: "pastCut",
+      label: "Fixes past the cut",
+      count: eventsPastCut,
+      note: reliableUntil !== null
+        ? "seen, but beyond " + fmtCount(cutDays) + " " + pluralize(cutDays, "day")
+          + " — not in the median"
+        : "seen, but past a curve nothing on it could be trusted — not in the median",
+      tip: PAST_CUT_HELP,
+    });
+  }
+  rows.push(
+    {
+      key: "open", label: "Still open", count: censored,
+      note: "censored, still counted as evidence",
+    },
+    {
+      key: "closedBeforeWatching", label: "Closed before watching", count: excludedPreEntry,
+      note: "resolved before this register looked", tip: WINDOW_LINE_HELP,
+    },
+    {
+      key: "noClock", label: "No readable clock", count: noClock,
+      note: "no first-seen date to measure from",
+    },
+  );
+
+  return {
+    show: true,
+    total: rowsIn,
+    rows,
+    lateEntrantsLine: lateEntrants > 0
+      ? fmtCount(lateEntrants) + (lateEntrants === 1 ? " was" : " were")
+        + " already open when watching began (median age at entry "
+        + fmtDays(lateEntryMedianAge) + ")."
+      : null,
+  };
+}
+
 /**
  * What the end-of-life setting is doing to a remediation-speed figure, in one sentence — or
  * null. THE ONE COPY, imported by every page that draws one.
@@ -1119,6 +1216,7 @@ export async function renderMttr(host, params, _ctx) {
   const noticeHost = el("div", {});
   const heroHost = el("div", {});
   const curveHost = el("div", {});
+  const accountingHost = el("div", {});
   const sevHost = el("div", {});
   const slaHost = el("div", {});
   const agingHost = el("div", {});
@@ -1135,8 +1233,8 @@ export async function renderMttr(host, params, _ctx) {
   // header, then the figure and its stat strip.
   host.append(
     pageHeader({ route: "mttr" }),
-    noticeHost, heroHost, curveHost, sevHost, slaHost, agingHost, slaConsumedHost,
-    bucketHost, clockHost, trendHost,
+    noticeHost, heroHost, curveHost, accountingHost, sevHost, slaHost, agingHost,
+    slaConsumedHost, bucketHost, clockHost, trendHost,
   );
 
   let live = true;
@@ -1178,11 +1276,12 @@ export async function renderMttr(host, params, _ctx) {
     // this page owes a reader. Same shape as executive.js's `paint` (labels live inside each
     // renderX, so clearing the host removes label and box together).
     if (first) {
-      [curveHost, sevHost, slaHost, agingHost, slaConsumedHost, bucketHost, clockHost, trendHost]
-        .forEach(clear);
+      [curveHost, accountingHost, sevHost, slaHost, agingHost, slaConsumedHost, bucketHost,
+        clockHost, trendHost].forEach(clear);
       return;
     }
     guard("the survival curve", curveHost, () => renderCurve(mttr));
+    guard("the measurement accounting", accountingHost, () => renderAccounting(mttr));
     guard("the per-severity clock", sevHost, () => renderSeverity(mttr));
     guard("SLA by severity", slaHost, () => renderSla(mttr));
     guard("open findings by age", agingHost, () => renderAging(mttr));
@@ -1525,6 +1624,50 @@ export async function renderMttr(host, params, _ctx) {
     }).catch(() => {
       if (live) chartUnavailable(canvas);
     });
+  }
+
+  // ------------------------------------------------------- the measurement accounting block
+
+  /**
+   * "What the half-life is measured over" (row-accounting package) — directly under the
+   * survival curve, in the same heading/table/footnote shape `renderBuckets` below already
+   * uses: a `sectionLabel`, a `dataTable` of named counts, and a trailing `small muted`
+   * sentence for the one figure that is not part of the five-row partition.
+   */
+  function renderAccounting(mttr) {
+    const view = accountingView(mttr);
+    clear(accountingHost);
+    accountingHost.append(sectionLabel("What the half-life is measured over", {
+      lines: [
+        "Every row the estimate started from, accounted for — the rows below always sum to"
+        + " this total.",
+        "\"Fixes past the cut\" happened; they are excluded from the median, not from the"
+        + " register.",
+      ],
+    }));
+    if (!view.show || !view.total) {
+      accountingHost.append(emptyState(
+        "Nothing to account for yet.",
+        "The estimator has no rows to have started from — this block has nothing to reconcile.",
+      ));
+      return;
+    }
+    accountingHost.append(el("p", { class: "chart-note" },
+      fmtCount(view.total) + " " + pluralize(view.total, "finding")));
+    accountingHost.append(dataTable({
+      columns: [
+        {
+          key: "label", label: "Where it went",
+          cell: (r) => r.tip ? tipLabel(r.label, r.tip) : r.label,
+        },
+        { key: "count", label: "Findings", className: "num", cell: (r) => fmtCount(r.count) },
+        { key: "note", label: "Why", cell: (r) => r.note },
+      ],
+      rows: view.rows,
+    }));
+    if (view.lateEntrantsLine) {
+      accountingHost.append(el("p", { class: "small muted" }, view.lateEntrantsLine));
+    }
   }
 
   // ------------------------------------------------------------ the clock, per severity

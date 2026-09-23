@@ -483,7 +483,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "836a12441517" : "dev";
+  var BUILD_ID = true ? "196104e5214b" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -2712,9 +2712,12 @@ var Server = (() => {
     return lastReliable;
   }
   function kaplanMeierExtended(rows, opts) {
+    const rowsIn = rows.length;
     const events = [];
     const censored = [];
     let excludedPreEntry = 0;
+    let noClock = 0;
+    const lateEntryAges = [];
     for (const row of rows) {
       const entry = normalizedEntry(row);
       const m = resolvedMttr(row);
@@ -2723,6 +2726,7 @@ var Server = (() => {
           excludedPreEntry += 1;
         } else {
           events.push({ t: m, entry });
+          if (entry > 0) lateEntryAges.push(entry);
         }
         continue;
       }
@@ -2732,9 +2736,14 @@ var Server = (() => {
           excludedPreEntry += 1;
         } else {
           censored.push({ t: c, entry });
+          if (entry > 0) lateEntryAges.push(entry);
         }
+      } else {
+        noClock += 1;
       }
     }
+    const lateEntrants = lateEntryAges.length;
+    const lateEntryMedianAge = lateEntrants > 0 ? median(lateEntryAges) : null;
     const total = events.length + censored.length;
     const obsTimes = events.concat(censored).map((o) => o.t);
     const maxObserved = obsTimes.length ? maxNum(obsTimes) : null;
@@ -2758,7 +2767,13 @@ var Server = (() => {
         q75: null,
         reliableUntil: null,
         excludedPreEntry,
-        maxObserved
+        maxObserved,
+        rowsIn,
+        noClock,
+        eventsPastCut: 0,
+        // no events at all -> nothing to have been cut past
+        lateEntrants,
+        lateEntryMedianAge
       };
     }
     const fullCurve = kmCurveEntry(events, events.concat(censored));
@@ -2768,6 +2783,7 @@ var Server = (() => {
       reliableUntil = reliableUntilFromCurve(fullCurve);
       curve = reliableUntil === null ? [] : fullCurve.filter((p) => p.t <= reliableUntil);
     }
+    const eventsPastCut = !(opts == null ? void 0 : opts.minRisk) ? 0 : reliableUntil === null ? events.length : events.filter((e) => e.t > reliableUntil).length;
     const median_ = kmMedianFromCurve(curve);
     const q25 = kmQuantileFromCurve(curve, 0.25);
     const q75 = kmQuantileFromCurve(curve, 0.75);
@@ -2790,7 +2806,12 @@ var Server = (() => {
       q75,
       reliableUntil,
       excludedPreEntry,
-      maxObserved
+      maxObserved,
+      rowsIn,
+      noClock,
+      eventsPastCut,
+      lateEntrants,
+      lateEntryMedianAge
     };
   }
   function filterScope(rows, scope) {
@@ -8252,7 +8273,7 @@ var Server = (() => {
     };
   }
   function shipKM(km) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
     return {
       curve: km.curve.map((p) => ({ t: p.t, s: p.s })),
       median: km.median,
@@ -8268,7 +8289,12 @@ var Server = (() => {
       q75: (_b = km.q75) != null ? _b : null,
       reliableUntil: (_c = km.reliableUntil) != null ? _c : null,
       excludedPreEntry: (_d = km.excludedPreEntry) != null ? _d : 0,
-      maxObserved: (_e = km.maxObserved) != null ? _e : null
+      maxObserved: (_e = km.maxObserved) != null ? _e : null,
+      rowsIn: (_f = km.rowsIn) != null ? _f : 0,
+      noClock: (_g = km.noClock) != null ? _g : 0,
+      eventsPastCut: (_h = km.eventsPastCut) != null ? _h : 0,
+      lateEntrants: (_i = km.lateEntrants) != null ? _i : 0,
+      lateEntryMedianAge: (_j = km.lateEntryMedianAge) != null ? _j : null
     };
   }
   function latencySummary(rows, now, scope) {
@@ -8402,7 +8428,7 @@ var Server = (() => {
   function mttrModel(p) {
     const n2 = norm(p);
     return cached(
-      "dsMttr3",
+      "dsMttr4",
       { ...keyOf(n2), slaTargets: n2.slaTargets, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => buildMttr(n2),
       CLOCK_TTL_SEC
@@ -9156,7 +9182,7 @@ var Server = (() => {
   function historyModel(p) {
     const n2 = norm(p);
     return durablyCached(
-      "dsHistory3",
+      "dsHistory4",
       { ...keyOf(n2), mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => buildHistory(n2)
     );
