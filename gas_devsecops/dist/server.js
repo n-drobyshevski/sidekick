@@ -236,6 +236,10 @@ var Server = (() => {
     return String(v);
   }
   function parseTs(v) {
+    if (typeof v === "string" && v.length === 20 && v.charCodeAt(10) === 84 && v.charCodeAt(19) === 90) {
+      const t2 = Date.parse(v);
+      if (!Number.isNaN(t2)) return t2;
+    }
     const c = clean(v);
     if (c === null) return null;
     if (c instanceof Date) return isNaN(c.getTime()) ? null : c.getTime();
@@ -2085,12 +2089,21 @@ var Server = (() => {
     return typeof a === "number" && Number.isFinite(a) ? a : null;
   }
   function kmCurve(events, times) {
+    const ev = events.filter((x) => !Number.isNaN(x)).sort((a, b) => a - b);
+    const ts = times.filter((x) => !Number.isNaN(x)).sort((a, b) => a - b);
     const curve = [];
     let s2 = 1;
-    for (const t of [...new Set(events)].sort((a, b) => a - b)) {
-      const atRisk = times.filter((x) => x >= t).length;
+    let j = 0;
+    for (let i = 0; i < ev.length; ) {
+      const t = ev[i] + 0;
+      let d = 0;
+      while (i < ev.length && ev[i] === t) {
+        d += 1;
+        i += 1;
+      }
+      while (j < ts.length && ts[j] < t) j += 1;
+      const atRisk = ts.length - j;
       if (atRisk === 0) continue;
-      const d = events.filter((x) => x === t).length;
       s2 *= 1 - d / atRisk;
       curve.push({ t, s: s2, atRisk, events: d });
     }
@@ -3644,7 +3657,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "bac1692f899b" : "dev";
+  var BUILD_ID = true ? "22708654273c" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -3709,6 +3722,7 @@ var Server = (() => {
       entries[`${key}:${i}`] = c;
     });
     CacheService.getScriptCache().putAll(entries, ttlSec);
+    return json.length;
   }
   function cacheGetJson(key) {
     const cache = CacheService.getScriptCache();
@@ -3733,22 +3747,38 @@ var Server = (() => {
   }
   function cached(name, params, compute, ttlSec = DEFAULT_TTL_SEC, version) {
     let key = null;
+    const t0 = Date.now();
     try {
       key = cacheKey(name, params, `${version != null ? version : dataVersion()}.${configStamp()}`);
       const hit = cacheGetJson(key);
-      if (hit !== void 0) return hit;
+      if (hit !== void 0) {
+        console.log(JSON.stringify({ stage: "cache", name, hit: true, getMs: Date.now() - t0 }));
+        return hit;
+      }
     } catch (e) {
       console.warn(`Cache read failed for ${name}: ${e}`);
       key = null;
     }
+    const t1 = Date.now();
     const value = compute();
+    const t2 = Date.now();
+    let chars = 0;
     if (key) {
       try {
-        cachePutJson(key, value, ttlSec);
+        chars = cachePutJson(key, value, ttlSec);
       } catch (e) {
         console.warn(`Cache write failed for ${name}: ${e}`);
       }
     }
+    console.log(JSON.stringify({
+      stage: "cache",
+      name,
+      hit: false,
+      getMs: t1 - t0,
+      computeMs: t2 - t1,
+      putMs: Date.now() - t2,
+      chars
+    }));
     return value;
   }
 
@@ -4113,12 +4143,17 @@ var Server = (() => {
     return out;
   }
   function readAll(tab) {
+    const t0 = Date.now();
     const sh = sheet(tab);
     const lastRow = sh.getLastRow();
     const lastCol = sh.getLastColumn();
-    if (lastRow < 2 || lastCol < 1) return [];
-    const values = readGrid(sh, tab, lastRow, lastCol);
-    return mapRows(values[0].map(String), values.slice(1));
+    let rows = [];
+    if (lastRow >= 2 && lastCol >= 1) {
+      const values = readGrid(sh, tab, lastRow, lastCol);
+      rows = mapRows(values[0].map(String), values.slice(1));
+    }
+    console.log(JSON.stringify({ stage: "sheet", tab, rows: rows.length, ms: Date.now() - t0 }));
+    return rows;
   }
   function readTail(tab, n2) {
     const sh = sheet(tab);
@@ -5745,23 +5780,53 @@ var Server = (() => {
     while (existing.hasNext()) existing.next().setTrashed(true);
     return folder.createFile(blob);
   }
-  function parseGzBlob(blob, name) {
+  function parseGzBlob(blob, name, meta) {
     const bytes = blob.getBytes();
+    if (meta) meta.bytes = bytes.length;
     const isGzip = bytes.length > 2 && (bytes[0] & 255) === 31 && (bytes[1] & 255) === 139;
-    const text = isGzip ? Utilities.ungzip(blob).getDataAsString("UTF-8") : blob.getDataAsString("UTF-8");
+    const t0 = Date.now();
+    const plain = isGzip ? Utilities.ungzip(blob) : blob;
+    const t1 = Date.now();
+    const text = plain.getDataAsString("UTF-8");
+    const t2 = Date.now();
+    if (meta) {
+      meta.ungzipMs = t1 - t0;
+      meta.textMs = t2 - t1;
+    }
     try {
-      return JSON.parse(text);
+      const parsed = JSON.parse(text);
+      if (meta) meta.jsonMs = Date.now() - t2;
+      return parsed;
     } catch (e) {
       throw new Error(`Unparseable archive file ${name}: ${e}`);
     }
   }
-  function readGzJson(folder, name) {
+  function readGzJson(folder, name, label = "archiveRead") {
+    const t0 = Date.now();
     const it = folder.getFilesByName(name);
-    if (!it.hasNext()) return null;
-    return parseGzBlob(it.next().getBlob(), name);
+    if (!it.hasNext()) {
+      console.log(JSON.stringify({ stage: "drive", label, name, found: false, ms: Date.now() - t0 }));
+      return null;
+    }
+    const blob = it.next().getBlob();
+    const t1 = Date.now();
+    const meta = { bytes: 0, ungzipMs: 0, textMs: 0, jsonMs: 0 };
+    const parsed = parseGzBlob(blob, name, meta);
+    console.log(JSON.stringify({
+      stage: "drive",
+      label,
+      name,
+      bytes: meta.bytes,
+      fileMs: t1 - t0,
+      parseMs: Date.now() - t1,
+      ungzipMs: meta.ungzipMs,
+      textMs: meta.textMs,
+      jsonMs: meta.jsonMs
+    }));
+    return parsed;
   }
   function readGzJsonNamed(folder, name) {
-    return readGzJson(subfolder(folder), name);
+    return readGzJson(subfolder(folder), name, "readModel");
   }
   function listNames(folder) {
     const out = [];
@@ -5805,7 +5870,9 @@ var Server = (() => {
     return writeGzJson(scanFolder(scanId), SLIM_NAME, records).getId();
   }
   function readSlim(scanId) {
-    const parsed = readGzJson(scanFolder(scanId), SLIM_NAME);
+    const t0 = Date.now();
+    const parsed = readGzJson(scanFolder(scanId), SLIM_NAME, "archiveRead:slim");
+    console.log(JSON.stringify({ stage: "driveTotal", label: "slim", ms: Date.now() - t0 }));
     return Array.isArray(parsed) ? parsed : null;
   }
   var PAGE_RUNS_NAME = "pageruns.json.gz";
@@ -5847,7 +5914,9 @@ var Server = (() => {
     writeGzJson(subfolder("snapshots"), SNAPSHOT_NAME, snap);
   }
   function readLedgerSnapshot() {
-    const parsed = readGzJson(subfolder("snapshots"), SNAPSHOT_NAME);
+    const t0 = Date.now();
+    const parsed = readGzJson(subfolder("snapshots"), SNAPSHOT_NAME, "archiveRead:snapshot");
+    console.log(JSON.stringify({ stage: "driveTotal", label: "snapshot", ms: Date.now() - t0 }));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
     const obj = parsed;
     return looksLikeLedgerState(obj) ? obj : null;
@@ -6193,7 +6262,11 @@ var Server = (() => {
     return pages.length ? pages : null;
   };
   function loadBaseRows(options = {}) {
-    return baseRows(loadState(), options);
+    const state = loadState();
+    const t0 = Date.now();
+    const rows = baseRows(state, options);
+    console.log(JSON.stringify({ stage: "baseRows", rows: rows.length, ms: Date.now() - t0 }));
+    return rows;
   }
   var KM_TREND_MAX_RECONSTRUCTED = 48;
   function loadTrend(options = {}) {
@@ -7814,7 +7887,16 @@ var Server = (() => {
   function durablyCached(name, params, compute, ttlSec, version) {
     if (warming && touched) touched.add(readModelFileName(name, params));
     return cached(name, params, () => {
+      var _a;
+      const t0 = Date.now();
       const hit = l2Read(name, params, version);
+      console.log(JSON.stringify({
+        stage: "l2",
+        name,
+        hit: hit.hit,
+        why: hit.hit ? null : (_a = hit.why) != null ? _a : null,
+        ms: Date.now() - t0
+      }));
       if (hit.hit) return hit.value;
       const value = compute();
       if (warming) l2Write(name, params, version, value);
@@ -9700,9 +9782,24 @@ var Server = (() => {
       return fn();
     }));
   }
+  function stageLaps(stage) {
+    let t = Date.now();
+    const ms = {};
+    return {
+      lap(label) {
+        const now = Date.now();
+        ms[label] = now - t;
+        t = now;
+      },
+      log() {
+        console.log(JSON.stringify({ stage, ...ms }));
+      }
+    };
+  }
   function bootstrap(_p) {
     return run(() => {
       var _a, _b, _c, _d, _e, _f;
+      const laps = stageLaps("bootstrap");
       const scans = readAll(TABS.scans);
       let newestTs = "";
       let newestSyncId = "";
@@ -9754,17 +9851,36 @@ var Server = (() => {
           scopes: rows.map((r) => ({ scope: r.scope, total: r.total, severities: r.severities }))
         };
       }
+      laps.lap("scans");
       const settings = loadSettings();
+      laps.lap("settings");
       const allRows = loadBaseRows();
+      laps.lap("baseRows");
       attachRepoTags(allRows);
+      laps.lap("repoTags");
       const projectView = settings.projectView || null;
       const domainView = settings.domainView || null;
       const shown = projectView ? allRows.filter((r) => inProject(parseProjects(r.projects_json), projectView)).length : domainView ? allRows.filter((r) => inDomain(r, domainView)).length : allRows.length;
+      const unattributed = unattributedCount(allRows);
+      const noDomain = noDomainCount(allRows);
+      const projectList2 = projectCatalogue(allRows);
+      const domainList = domainCatalogue(allRows);
+      laps.lap("catalogues");
+      const job = activeJob();
+      const activeJobSummary = job ? jobSummarySlice(job, !isTerminalPhase(job.phase) && isStaleJob(job)) : null;
+      laps.lap("activeJob");
+      const hasCredentials = hasWizCredentials();
+      const wizVerifiedAt = getProp(PROP_KEYS.wizVerifiedAt);
+      const canEditAccess = canEditUsers();
+      const hubUrl = readHubUrl();
+      const syncProjectId = (_f = (_e = projectScope()) == null ? void 0 : _e[0]) != null ? _f : null;
+      laps.lap("live");
+      laps.log();
       return {
         product: "Wiz Sidekick DevSecOps",
         buildId: BUILD_ID,
-        hasCredentials: hasWizCredentials(),
-        wizVerifiedAt: getProp(PROP_KEYS.wizVerifiedAt),
+        hasCredentials,
+        wizVerifiedAt,
         scopes: SCOPES,
         scopeLabels: SCOPE_LABELS,
         severityOrder: SEVERITY_ORDER,
@@ -9772,27 +9888,24 @@ var Server = (() => {
         effectiveSlaTargets: effectiveSlaTargets(settings),
         latestSync,
         lastScanByScope,
-        activeJob: (() => {
-          const job = activeJob();
-          return job ? jobSummarySlice(job, !isTerminalPhase(job.phase) && isStaleJob(job)) : null;
-        })(),
-        canEditAccess: canEditUsers(),
-        hubUrl: readHubUrl(),
+        activeJob: activeJobSummary,
+        canEditAccess,
+        hubUrl,
         settings,
         scope: {
           projectView: settings.projectView,
           domainView: settings.domainView,
           shown,
           register: allRows.length,
-          unattributed: unattributedCount(allRows),
-          noDomain: noDomainCount(allRows),
+          unattributed,
+          noDomain,
           // The FETCH scope, reported only — see `settingsLogic.ts`'s "TWO PROJECT SCOPES, TWO
           // HOMES". `projectScope()` is `[id] | null`; only the first element is ever set today.
-          syncProjectId: (_f = (_e = projectScope()) == null ? void 0 : _e[0]) != null ? _f : null
+          syncProjectId
         },
         filterOptions: {
-          projectList: projectCatalogue(allRows),
-          domainList: domainCatalogue(allRows)
+          projectList: projectList2,
+          domainList
         }
       };
     });
@@ -9898,14 +10011,21 @@ var Server = (() => {
   function getExecutivePage(p) {
     return run(() => {
       const params = modelParams(p);
+      const laps = stageLaps("executive");
       const exec = executiveModel(params);
+      laps.lap("executiveModel");
+      const mttr = execMttrSlice(mttrModel(params));
+      laps.lap("mttr");
+      const byScope3 = execGroupSlice(exec["byScope"]);
+      laps.lap("byScope");
+      laps.log();
       return {
         asOf: exec["asOf"],
         scope: exec["scope"],
         severities: exec["severities"],
         showNoFix: exec["showNoFix"],
-        mttr: execMttrSlice(mttrModel(params)),
-        byScope: execGroupSlice(exec["byScope"]),
+        mttr,
+        byScope: byScope3,
         trackingSince: exec["trackingSince"],
         // Already minimal — a per-severity tally, a delta pair, the tier table and the coverage
         // caveat — so these four ship whole.

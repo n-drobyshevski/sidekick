@@ -696,7 +696,14 @@ export function loadBaseRows(
     trackingStartByScope?: Partial<Record<Scope, string | null>>;
   } = {},
 ): BaseRow[] {
-  return baseRows(loadState(), options);
+  const state = loadState();
+  // Timed to the execution log: the derivation alone — `loadState`'s own I/O already logs its
+  // "sheet" / "drive" lines — so repeated derivations in one execution show up as repeated
+  // lines (gas/ found the same derivation 5–27× per execution this way).
+  const t0 = Date.now();
+  const rows = baseRows(state, options);
+  console.log(JSON.stringify({ stage: "baseRows", rows: rows.length, ms: Date.now() - t0 }));
+  return rows;
 }
 
 /**

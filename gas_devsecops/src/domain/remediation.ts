@@ -239,12 +239,35 @@ export interface KMResult {
  * skipped, matching the original scalar estimator.
  */
 export function kmCurve(events: number[], times: number[]): KMPoint[] {
+  // ONE SORT AND ONE SWEEP, NOT A SCAN PER EVENT TIME. This used to re-filter both arrays for
+  // every distinct event time — O(distinct × n) — and `mttr_days` is fractional, so on a real
+  // register the distinct count is in the thousands. gas/ carried the same loop and measured
+  // it in production at 19 s per curve over 58,679 rows (#320); here it sits under
+  // `kaplanMeier`, i.e. the MTTR hero on the Executive and MTTR pages.
+  //
+  // THE ANSWER IS BIT-FOR-BIT THE OLD ONE, which is why the product below still runs over the
+  // distinct event times in ascending order — S(t) is a running product, and a different order
+  // of the same factors can land one ULP apart. `atRisk` is "times >= t" and `d` is
+  // "events === t", read off the sorted arrays instead of counted by a scan. NaN is dropped
+  // from both up front: it never satisfied `>=` or `===` in the old filters, so it was never
+  // at risk and never an event, and left in it would break the sort's ordering.
+  // test/kmCurveSweep.test.ts keeps the old loop verbatim as the oracle.
+  const ev = events.filter((x) => !Number.isNaN(x)).sort((a, b) => a - b);
+  const ts = times.filter((x) => !Number.isNaN(x)).sort((a, b) => a - b);
   const curve: KMPoint[] = [];
   let s = 1;
-  for (const t of [...new Set(events)].sort((a, b) => a - b)) {
-    const atRisk = times.filter((x) => x >= t).length;
+  let j = 0; // first index of `ts` with ts[j] >= t
+  for (let i = 0; i < ev.length; ) {
+    // `+ 0` turns -0 into +0, as the old `new Set(events)` did (a Set stores -0 as +0).
+    const t = ev[i]! + 0;
+    let d = 0;
+    while (i < ev.length && ev[i] === t) {
+      d += 1;
+      i += 1;
+    }
+    while (j < ts.length && ts[j]! < t) j += 1;
+    const atRisk = ts.length - j;
     if (atRisk === 0) continue;
-    const d = events.filter((x) => x === t).length;
     s *= 1 - d / atRisk;
     curve.push({ t, s, atRisk, events: d });
   }

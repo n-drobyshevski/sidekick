@@ -123,6 +123,11 @@ describe("cachePutJson / cacheGetJson", () => {
   it("misses on an absent key", () => {
     expect(cacheGetJson("nope")).toBeUndefined();
   });
+
+  it("returns the JSON length it stored, for cached()'s timing line", () => {
+    const value = { rows: [1, 2, 3] };
+    expect(cachePutJson("k", value)).toBe(JSON.stringify(value).length);
+  });
 });
 
 describe("cached", () => {

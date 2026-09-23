@@ -433,12 +433,21 @@ function mapRows(headers: string[], rows: unknown[][]): Rec[] {
 
 /** All data rows of a tab as objects keyed by header name. */
 export function readAll(tab: string): Rec[] {
+  // Timed to the execution log beside the Drive reads (archiveStore.readGzJson), so a slow
+  // page's I/O can be read off its own transcript rather than inferred. Started before
+  // `sheet(tab)`, so the first read of an execution carries the spreadsheet open — the cost
+  // gas/ measured at 2–9 s — and an empty tab still logs its (cheap) visit.
+  const t0 = Date.now();
   const sh = sheet(tab);
   const lastRow = sh.getLastRow();
   const lastCol = sh.getLastColumn();
-  if (lastRow < 2 || lastCol < 1) return [];
-  const values = readGrid(sh, tab, lastRow, lastCol);
-  return mapRows(values[0]!.map(String), values.slice(1));
+  let rows: Rec[] = [];
+  if (lastRow >= 2 && lastCol >= 1) {
+    const values = readGrid(sh, tab, lastRow, lastCol);
+    rows = mapRows(values[0]!.map(String), values.slice(1));
+  }
+  console.log(JSON.stringify({ stage: "sheet", tab, rows: rows.length, ms: Date.now() - t0 }));
+  return rows;
 }
 
 /**
