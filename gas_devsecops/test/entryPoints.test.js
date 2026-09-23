@@ -13,12 +13,21 @@ const ENTRY = readFileSync(new URL("../dist/entry.js", import.meta.url), "utf8")
 const API = readFileSync(new URL("../src/server/api.ts", import.meta.url), "utf8");
 const INDEX = readFileSync(new URL("../src/server/index.ts", import.meta.url), "utf8");
 
-const exported = [...API.matchAll(/^export function (\w+)/gm)].map((m) => m[1]);
+// api.ts exports that are deliberately NOT RPCs — called in-process, never over
+// google.script.run. Mirrors `NOT_RPCS` in esbuild.config.mjs.
+const NOT_RPCS = new Set(["bootstrapIfWarm"]);
+const exported = [...API.matchAll(/^export function (\w+)/gm)]
+  .map((m) => m[1])
+  .filter((n) => !NOT_RPCS.has(n));
 const delegated = [...ENTRY.matchAll(/^function api_(\w+)\(/gm)].map((m) => m[1]);
 
 describe("the RPC surface", () => {
   it("exports something at all", () => {
     expect(exported.length).toBeGreaterThan(0);
+  });
+
+  it("keeps NOT_RPCS honest: every allowlisted name is still exported", () => {
+    for (const n of NOT_RPCS) expect(API).toMatch(new RegExp(`^export function ${n}\\(`, "m"));
   });
 
   it("gives every api.ts export a delegator", () => {

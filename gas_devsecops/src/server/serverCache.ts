@@ -143,7 +143,7 @@ export function cacheKey(name: string, params: unknown, version: string): string
 function configStamp(): string {
   if (configStampMemo === undefined) {
     // TWO PROPERTIES NOW, and the second was a real gap rather than a completeness tidy.
-    // `WIZ_PROJECT_ID_V2` is read INSIDE the cached bootstrap core (api.ts, `scope
+    // `WIZ_PROJECT_ID_V2` is read INSIDE the cached bootstrap core (bootCore.ts, `scope
     // .syncProjectId`) and appeared in no cache key at all — so an operator who set or
     // corrected the sync's project scope in the GAS console would have gone on seeing the
     // old one for up to six hours, with no sync to run that would clear it. Exactly the trap
@@ -170,6 +170,39 @@ function configStamp(): string {
  */
 export function currentStamp(version?: string): string {
   return `${KEY_PREFIX}:${version ?? dataVersion()}.${configStamp()}`;
+}
+
+/**
+ * The entry `cached(name, params, …, version)` would return, WITHOUT computing it on a miss:
+ * undefined on a miss or any cache-layer error. For a caller that must not pay a cold compute —
+ * doGet's inline bootstrap — and would rather do without.
+ */
+export function peekCached(name: string, params: unknown, version?: string): unknown | undefined {
+  const t0 = Date.now();
+  try {
+    const hit = cacheGetJson(cacheKey(name, params, `${version ?? dataVersion()}.${configStamp()}`));
+    console.log(JSON.stringify({ stage: "cache", name, peek: true, hit: hit !== undefined, getMs: Date.now() - t0 }));
+    return hit;
+  } catch (e) {
+    console.warn(`Cache peek failed for ${name}: ${e}`);
+    return undefined;
+  }
+}
+
+/** Store what `cached(name, params, …, version)` would have stored. Best-effort, like every
+ *  write here. */
+export function primeCached(
+  name: string,
+  params: unknown,
+  value: unknown,
+  ttlSec = DEFAULT_TTL_SEC,
+  version?: string,
+): void {
+  try {
+    cachePutJson(cacheKey(name, params, `${version ?? dataVersion()}.${configStamp()}`), value, ttlSec);
+  } catch (e) {
+    console.warn(`Cache write failed for ${name}: ${e}`);
+  }
 }
 
 /** Pure chunk split (exported for tests). */

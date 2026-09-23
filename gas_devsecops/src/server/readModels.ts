@@ -227,6 +227,7 @@ import { BASE_FILTER_WORDS } from "./wizQueries";
 import { loadSettings } from "./settingsStore";
 import { cached, dataVersion } from "./serverCache";
 import { durablyCached, duringWarm, sweepReadModels } from "./readModelStore";
+import { bootCoreModel } from "./bootCore";
 
 // --------------------------------------------------------------------------------------- //
 //  Parameters
@@ -2560,7 +2561,11 @@ export interface WarmReport {
 function warmTargets(): { label: string; run: () => unknown }[] {
   const all: ModelParams = { scope: null, severities: null, showNoFix: true };
   const targets: { label: string; run: () => unknown }[] = [
-    // The durable four first: they are what the Drive layer exists for, and a budget cut-out
+    // The bootstrap core before everything: doGet inlines it only when it is already stored
+    // (`api.bootstrapIfWarm`), so it is the one entry every page load reads, and a cold one
+    // costs every open a second round trip plus the 6–7 s compute.
+    { label: "bootCore", run: () => bootCoreModel() },
+    // The durable four next: they are what the Drive layer exists for, and a budget cut-out
     // that never reached them would leave the expensive answers cold overnight.
     { label: "history", run: () => historyModel(all) },
     { label: "program", run: () => programModel(all) },

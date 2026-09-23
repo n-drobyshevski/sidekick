@@ -221,6 +221,10 @@ vi.mock("../src/server/serverCache", () => ({
 vi.mock("../src/server/readModelStore", () => ({
   durablyCached: (name: string, params: unknown, compute: () => unknown) =>
     memo(name, params, compute),
+  // The same memo, read without computing — what `durablyPeek` promises (L1 then L2, never a
+  // compute), collapsed onto the one layer this file fakes.
+  durablyPeek: (name: string, params: unknown) =>
+    cacheState.store.get(`${name}|${JSON.stringify(params ?? null)}|${cacheState.version}`),
   duringWarm: <T,>(fn: () => T): T => fn(),
   sweepReadModels: () => 0,
   __resetMemosForTest: () => {},
@@ -1186,9 +1190,20 @@ describe("the post-sync warm, and the ordering nothing else pins", () => {
 
   it("warms every target the warm list declares", async () => {
     await syncedRegister();
-    // 7 fixed + one per scope. Spelled as the arithmetic rather than as a literal so adding a
-    // scope moves it on its own.
-    expect(warmReports[0]!.warmed).toBe(7 + SCOPES.length);
+    // 8 fixed (the bootstrap core + 7 read-models) + one per scope. Spelled as the arithmetic
+    // rather than as a literal so adding a scope moves it on its own.
+    expect(warmReports[0]!.warmed).toBe(8 + SCOPES.length);
+  });
+
+  it("leaves the bootstrap core warm, so the next doGet inlines it", async () => {
+    // `syncedRegister` drops the cache the post-sync warm filled (every read is a fresh
+    // execution there), so the warm is run again here, as the 4-hourly trigger would.
+    const { api } = await syncedRegister();
+    expect(api.bootstrapIfWarm().ok).toBe(false);
+    const models = await import("../src/server/readModels");
+    models.warmReadModels();
+    const inline = api.bootstrapIfWarm();
+    expect(inline.ok, "the warm must cover the core doGet peeks at").toBe(true);
   });
 });
 
@@ -1367,19 +1382,72 @@ describe("timing lines", () => {
     }
   });
 
-  it("bootstrap logs one line naming every part, in milliseconds", async () => {
+  it("bootstrap logs its core and live parts, and the core's own parts when it computes", async () => {
     const { api } = await syncedRegister();
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       expect(api.bootstrap({}).ok).toBe(true);
-      const lines = stageLines(log, "bootstrap");
-      expect(lines).toHaveLength(1);
-      expect(Object.keys(lines[0]!).sort()).toEqual(
-        ["activeJob", "baseRows", "catalogues", "live", "repoTags", "scans", "settings", "stage"],
+      const boot = stageLines(log, "bootstrap");
+      expect(boot).toHaveLength(1);
+      expect(Object.keys(boot[0]!).sort()).toEqual(["core", "live", "stage"]);
+      const core = stageLines(log, "bootCore");
+      expect(core, "a cold core computes exactly once").toHaveLength(1);
+      expect(Object.keys(core[0]!).sort()).toEqual(
+        ["baseRows", "catalogues", "repoTags", "scans", "settings", "stage"],
       );
-      for (const [k, v] of Object.entries(lines[0]!)) if (k !== "stage") expect(typeof v).toBe("number");
+      for (const line of [...boot, ...core]) {
+        for (const [k, v] of Object.entries(line)) if (k !== "stage") expect(typeof v).toBe("number");
+      }
     } finally {
       log.mockRestore();
     }
+  });
+});
+
+// --------------------------------------------------------------------------------------- //
+//  bootstrapIfWarm: doGet's inline path peeks, never computes
+// --------------------------------------------------------------------------------------- //
+//
+// The first production log measured doGet spending 6.4 s (warm) to 7.1 s (cold) computing the
+// bootstrap inline on every page load. The core is cached now, and doGet only ever PEEKS at it.
+describe("bootstrapIfWarm", () => {
+  const coreKeys = () => [...cacheState.store.keys()].filter((k) => k.startsWith("dsBootCore1|"));
+
+  it("answers {ok:false} on a cold core and computes nothing", async () => {
+    const { api } = await syncedRegister();
+    cacheState.store.clear();
+    const res = api.bootstrapIfWarm();
+    expect(res.ok).toBe(false);
+    expect(res.errorKind).toBe("cold");
+    expect(coreKeys(), "a peek must never fill the cache").toHaveLength(0);
+  });
+
+  it("answers the same payload the RPC does once the core is warm", async () => {
+    const { api } = await syncedRegister();
+    const rpc = api.bootstrap({});
+    expect(rpc.ok).toBe(true);
+    const inline = api.bootstrapIfWarm();
+    expect(inline.ok).toBe(true);
+    expect(inline.data).toEqual(rpc.data);
+  });
+
+  it("goes cold again on a data-version bump", async () => {
+    const { api } = await syncedRegister();
+    api.bootstrap({});
+    expect(api.bootstrapIfWarm().ok).toBe(true);
+    api.putSettings({ settings: { ...DEFAULT_SETTINGS, retentionDays: 91 } });
+    expect(api.bootstrapIfWarm().ok).toBe(false);
+    const fresh = api.bootstrap({});
+    expect(fresh.data!.settings.retentionDays).toBe(91);
+  });
+
+  it("reads the live fields live: a hub URL saved without a bump shows at once", async () => {
+    const { api } = await syncedRegister();
+    api.bootstrap({});
+    const url = "https://script.google.com/macros/s/hub-under-test/exec";
+    const saved = api.saveHubUrl({ hubUrl: url });
+    expect(saved.ok, String(saved.error)).toBe(true);
+    expect(api.bootstrapIfWarm().data!.hubUrl).toBe(url);
+    expect(api.bootstrap({}).data!.hubUrl).toBe(url);
   });
 });

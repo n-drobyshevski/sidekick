@@ -37,6 +37,7 @@ var Server = (() => {
   var api_exports = {};
   __export(api_exports, {
     bootstrap: () => bootstrap,
+    bootstrapIfWarm: () => bootstrapIfWarm,
     cancelSync: () => cancelSync2,
     compact: () => compact,
     deleteScans: () => deleteScans2,
@@ -3428,35 +3429,6 @@ var Server = (() => {
     }
   }
 
-  // src/domain/domainScope.ts
-  var DOMAIN_FIELD = "_domain";
-  function domainOfRow(row) {
-    const v = row ? row._domain : null;
-    return typeof v === "string" ? v.trim() : "";
-  }
-  function domainCatalogue(rows) {
-    const byName = /* @__PURE__ */ new Map();
-    for (const row of rows) {
-      const name = domainOfRow(row);
-      if (!name) continue;
-      const seen = byName.get(name);
-      if (seen) seen.findings += 1;
-      else byName.set(name, { name, findings: 1 });
-    }
-    return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
-  }
-  function inDomain(row, name) {
-    if (!name) return false;
-    return domainOfRow(row) === name;
-  }
-  function noDomainCount(rows) {
-    let count = 0;
-    for (const row of rows) {
-      if (!domainOfRow(row)) count += 1;
-    }
-    return count;
-  }
-
   // src/domain/domainTag.ts
   var DEFAULT_DOMAIN_TAG_KEY = "domain";
   function resolveDomainTagKey(configured) {
@@ -3534,6 +3506,35 @@ var Server = (() => {
   }
   function domainOfTags(tags, key = DEFAULT_DOMAIN_TAG_KEY) {
     return tagValue(tags, key);
+  }
+
+  // src/domain/domainScope.ts
+  var DOMAIN_FIELD = "_domain";
+  function domainOfRow(row) {
+    const v = row ? row._domain : null;
+    return typeof v === "string" ? v.trim() : "";
+  }
+  function domainCatalogue(rows) {
+    const byName = /* @__PURE__ */ new Map();
+    for (const row of rows) {
+      const name = domainOfRow(row);
+      if (!name) continue;
+      const seen = byName.get(name);
+      if (seen) seen.findings += 1;
+      else byName.set(name, { name, findings: 1 });
+    }
+    return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }
+  function inDomain(row, name) {
+    if (!name) return false;
+    return domainOfRow(row) === name;
+  }
+  function noDomainCount(rows) {
+    let count = 0;
+    for (const row of rows) {
+      if (!domainOfRow(row)) count += 1;
+    }
+    return count;
   }
 
   // src/domain/lifecycleTag.ts
@@ -3657,7 +3658,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "22708654273c" : "dev";
+  var BUILD_ID = true ? "8807f1cd9ad9" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -3706,6 +3707,24 @@ var Server = (() => {
   }
   function currentStamp(version) {
     return `${KEY_PREFIX}:${version != null ? version : dataVersion()}.${configStamp()}`;
+  }
+  function peekCached(name, params, version) {
+    const t0 = Date.now();
+    try {
+      const hit = cacheGetJson(cacheKey(name, params, `${version != null ? version : dataVersion()}.${configStamp()}`));
+      console.log(JSON.stringify({ stage: "cache", name, peek: true, hit: hit !== void 0, getMs: Date.now() - t0 }));
+      return hit;
+    } catch (e) {
+      console.warn(`Cache peek failed for ${name}: ${e}`);
+      return void 0;
+    }
+  }
+  function primeCached(name, params, value, ttlSec = DEFAULT_TTL_SEC, version) {
+    try {
+      cachePutJson(cacheKey(name, params, `${version != null ? version : dataVersion()}.${configStamp()}`), value, ttlSec);
+    } catch (e) {
+      console.warn(`Cache write failed for ${name}: ${e}`);
+    }
   }
   function splitChunks(s2, size = CHUNK_CHARS) {
     const out = [];
@@ -5399,353 +5418,6 @@ var Server = (() => {
     return cleaned;
   }
 
-  // src/server/access.ts
-  var access_exports = {};
-  __export(access_exports, {
-    ACCESS_MAX_BYTES: () => ACCESS_MAX_BYTES,
-    ACCESS_MAX_ENTRIES: () => ACCESS_MAX_ENTRIES,
-    PRODUCT: () => PRODUCT,
-    __resetMemosForTest: () => __resetMemosForTest2,
-    accountChooserUrl: () => accountChooserUrl,
-    assertAllowed: () => assertAllowed,
-    canEditAdmins: () => canEditAdmins,
-    canEditUsers: () => canEditUsers,
-    check: () => check,
-    contactMailto: () => contactMailto,
-    currentAdmins: () => currentAdmins,
-    currentUsers: () => currentUsers,
-    decide: () => decide,
-    deniedHtml: () => deniedHtml,
-    deniedPage: () => deniedPage,
-    denyResult: () => denyResult,
-    isOwner: () => isOwner,
-    ownerDomain: () => ownerDomain,
-    ownerEmail: () => ownerEmail,
-    parseAllowlist: () => parseAllowlist,
-    serviceUrl: () => serviceUrl,
-    validateAddresses: () => validateAddresses
-  });
-
-  // src/server/pageShell.ts
-  var MARK_COMPACT_VIEWBOX = "12.2 8.4 52.7 74";
-  var MARK_COMPACT_RATIO = 52.7 / 74;
-  var MARK_ORBIT = "M47.64 80.58A32.1 32.1 0 0 1 17.83 52.04M19.82 36.92A32.1 32.1 0 0 1 54.21 16.76";
-  var MARK_ORBIT_WIDTH = 2.41;
-  var MARK_NODES = [[17.22, 44.33, 4.41], [45.96, 16.55, 7.56]];
-  var MARK_SHIELD = "M48.56 29.88C52.79 34.78 58.69 37.87 64.33 37.81C64.44 45.48 63.64 48.51 62.11 51.96C61.32 54.62 56.36 61.55 48.56 64.18C40.76 61.55 35.8 54.62 35.01 51.96C33.48 48.51 32.68 45.48 32.79 37.81C38.43 37.87 44.33 34.78 48.56 29.88Z";
-  var MARK_CHECK = "M42.3 48.81 46.19 52.7 54.89 43.99";
-  var MARK_CHECK_WIDTH = 3.04;
-  function brandMarkSvg(height) {
-    const width = Math.round(height * MARK_COMPACT_RATIO * 100) / 100;
-    const nodes = MARK_NODES.map(
-      (n2) => '<circle cx="' + n2[0] + '" cy="' + n2[1] + '" r="' + n2[2] + '" fill="#0a0a0a"/>'
-    ).join("");
-    return [
-      '<svg class="brand-mark" viewBox="' + MARK_COMPACT_VIEWBOX + '"',
-      ' width="' + width + '" height="' + height + '" focusable="false" aria-hidden="true">',
-      '<path d="' + MARK_ORBIT + '" fill="none" stroke="#0a0a0a" stroke-width="' + MARK_ORBIT_WIDTH,
-      '" stroke-linecap="round"/>',
-      nodes,
-      '<path d="' + MARK_SHIELD + '" fill="#0a0a0a"/>',
-      '<path d="' + MARK_CHECK + '" fill="none" stroke="#ffffff" stroke-width="' + MARK_CHECK_WIDTH,
-      '" stroke-linecap="round" stroke-linejoin="round"/>',
-      "</svg>"
-    ].join("");
-  }
-  function escapeHtml(s2) {
-    return s2.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-  }
-  function primaryAction(href, label) {
-    return '<a class="btn" target="_top" href="' + escapeHtml(href) + '">' + escapeHtml(label) + "</a>";
-  }
-  function secondaryAction(href, label) {
-    return '<a class="alt" target="_top" href="' + escapeHtml(href) + '">' + escapeHtml(label) + "</a>";
-  }
-  function cardPage(spec) {
-    const body = spec.paragraphs.map((p) => "<p>" + p + "</p>").join("");
-    const actions = spec.actions ? '<div class="actions">' + spec.actions + "</div>" : "";
-    return [
-      '<!DOCTYPE html><html><head><meta charset="utf-8">',
-      // Every link on these pages has to break out of the HtmlService sandbox iframe; the app's
-      // own index.html carries the same base tag for the same reason.
-      '<base target="_top">',
-      '<meta name="viewport" content="width=device-width, initial-scale=1">',
-      "<title>" + escapeHtml(spec.title) + "</title><style>",
-      "*{box-sizing:border-box}",
-      // --surface / --ink, and the same --font stack tokens.css:254 carries.
-      "body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;",
-      "background:#f8f8fa;color:#171717;",
-      "font-family:-apple-system,BlinkMacSystemFont,Inter,'Segoe UI',Roboto,'Helvetica Neue',sans-serif}",
-      // --page on --hairline at --radius-xl.
-      ".card{max-width:32rem;margin:24px;padding:32px;background:#ffffff;border:1px solid #e6e6e9;",
-      "border-radius:14px;box-shadow:0 1px 2px rgba(10,10,10,.06)}",
-      ".lockup{display:flex;align-items:center;gap:8px;margin:0 0 16px}",
-      // Mirrors .appbar-name in base.css (600 / --fs-lead 16px / -0.02em / --ink) so the
-      // wordmark is the same object here as in the header, not a near-miss of it.
-      ".lockup span{font-weight:600;font-size:1rem;letter-spacing:-0.02em;color:#171717;",
-      "white-space:nowrap}",
-      ".brand-mark{display:block;flex:0 0 auto}",
-      "h1{font-size:20px;line-height:1.3;margin:0 0 12px;font-weight:650}",
-      // --text-2, the same alpha the app's prose carries.
-      "p{margin:0 0 8px;font-size:14px;line-height:1.6;color:rgba(0,0,0,.65)}",
-      ".actions{margin-top:24px;display:flex;align-items:center;gap:20px;flex-wrap:wrap}",
-      // Graphite, not the accent: DESIGN.md keeps the accent for data, focus and links, and
-      // fills the one committing action with --graphite / --on-graphite.
-      ".btn{display:inline-flex;align-items:center;min-height:36px;padding:6px 14px;",
-      "border-radius:8px;background:#0a0a0a;color:#fafafa;font-size:14px;font-weight:500;",
-      "text-decoration:none}",
-      ".btn:hover{background:#27272a}",
-      // --accent-text. NOT --accent: this page is plain text on white, where #ffcb13 is 1.52:1.
-      // pages are the product's front door and must read as this product.
-      "a{color:#7c4a0a}",
-      // Never remove: CLAUDE.md names the focus-ring rules load-bearing, and these pages are
-      // reachable by keyboard only.
-      "a:focus-visible{outline:2px solid #7c4a0a;outline-offset:2px;border-radius:4px}",
-      '</style></head><body><main class="card">',
-      // The same lockup as the app header — mark then wordmark — so the door and the room
-      // behind it are recognisably one product.
-      '<div class="lockup">' + brandMarkSvg(22) + "<span>" + escapeHtml(spec.eyebrow) + "</span></div>",
-      "<h1>" + escapeHtml(spec.heading) + "</h1>",
-      body,
-      actions,
-      "</main></body></html>"
-    ].join("");
-  }
-
-  // src/server/access.ts
-  var PRODUCT = "Wiz Sidekick DevSecOps";
-  var DENIAL_MESSAGE = {
-    anonymous: "This app can't identify your Google account. It only recognizes accounts signed in to the same Google Workspace domain as the app.",
-    "not-listed": "Your account isn't on this app's access list."
-  };
-  function parseAllowlist(raw) {
-    if (!raw) return [];
-    const seen = {};
-    const out = [];
-    for (const part of raw.split(/[,;\s]+/)) {
-      const email = part.trim().toLowerCase();
-      if (!email || seen[email]) continue;
-      seen[email] = true;
-      out.push(email);
-    }
-    return out;
-  }
-  var ACCESS_MAX_BYTES = 8e3;
-  var ACCESS_MAX_ENTRIES = 500;
-  function validateAddresses(raw) {
-    const list = parseAllowlist(Array.isArray(raw) ? raw.join("\n") : String(raw != null ? raw : ""));
-    const bad = list.filter((e) => e.indexOf("@") < 0);
-    if (bad.length) throw new Error(`Not an email address: ${bad.join(", ")}`);
-    if (list.length > ACCESS_MAX_ENTRIES) {
-      throw new Error(`Too many people (${list.length}); the limit is ${ACCESS_MAX_ENTRIES}.`);
-    }
-    const bytes = list.join(",").length;
-    if (bytes > ACCESS_MAX_BYTES) {
-      throw new Error(`That list is too long to store (${bytes} of ${ACCESS_MAX_BYTES} bytes).`);
-    }
-    return list;
-  }
-  function decide(active, owner, raw, adminsRaw) {
-    const email = (active || "").trim();
-    const key = email.toLowerCase();
-    if (!key) return { allowed: false, email: "", reason: "anonymous" };
-    const ownerKey = (owner || "").trim().toLowerCase();
-    if (ownerKey && ownerKey === key) return { allowed: true, email, reason: "owner" };
-    if (parseAllowlist(adminsRaw != null ? adminsRaw : null).indexOf(key) >= 0) {
-      return { allowed: true, email, reason: "admin" };
-    }
-    return parseAllowlist(raw).indexOf(key) >= 0 ? { allowed: true, email, reason: "listed" } : { allowed: false, email, reason: "not-listed" };
-  }
-  var memo;
-  function check() {
-    if (memo === void 0) {
-      memo = decide(
-        Session.getActiveUser().getEmail(),
-        Session.getEffectiveUser().getEmail(),
-        getProp(PROP_KEYS.allowedUsers),
-        getProp(PROP_KEYS.allowedAdmins)
-      );
-    }
-    return memo;
-  }
-  function __resetMemosForTest2() {
-    memo = void 0;
-  }
-  function logDenial(op, d) {
-    console.log(JSON.stringify({ access: "denied", op, reason: d.reason, email: d.email }));
-  }
-  function denyResult(op) {
-    const d = check();
-    if (d.allowed) return null;
-    logDenial(op, d);
-    const env = {
-      ok: false,
-      error: DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"],
-      errorKind: "forbidden"
-    };
-    const who = ownerEmail().trim();
-    if (who) {
-      env.contact = who;
-      env.contactUrl = contactMailto(who);
-    }
-    return env;
-  }
-  function assertAllowed(op) {
-    const d = check();
-    if (d.allowed) return;
-    logDenial(op, d);
-    throw new Error(DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"]);
-  }
-  function contactMailto(email) {
-    return "mailto:" + email.trim() + "?subject=" + encodeURIComponent("Access to " + PRODUCT);
-  }
-  function deniedHtml(d, switchUrl, contact) {
-    const detail = d.email ? "You're signed in as <strong>" + escapeHtml(d.email) + "</strong>." : "This app can't see which Google account you're signed in as, which happens when the account isn't in the same Google Workspace domain as the app.";
-    const who = (contact || "").trim();
-    const ask = who ? 'If you think you should have access, contact <a href="' + escapeHtml(contactMailto(who)) + '">' + escapeHtml(who) + "</a>." : (
-      // No owner address resolved — never render "contact:" with nothing after it.
-      "If you think you should have access, ask whoever runs this dashboard to add you."
-    );
-    return cardPage({
-      title: PRODUCT,
-      eyebrow: PRODUCT,
-      heading: "You don't have access to this app.",
-      paragraphs: [detail, ask],
-      actions: switchUrl ? secondaryAction(switchUrl, "Switch Google account") : ""
-    });
-  }
-  function deniedPage() {
-    const d = check();
-    if (d.allowed) return null;
-    logDenial("doGet", d);
-    return HtmlService.createHtmlOutput(deniedHtml(d, accountChooserUrl(), ownerEmail())).setTitle(PRODUCT).addMetaTag("viewport", "width=device-width, initial-scale=1");
-  }
-  function serviceUrl() {
-    try {
-      return ScriptApp.getService().getUrl() || null;
-    } catch (_e) {
-      return null;
-    }
-  }
-  function accountChooserUrl() {
-    const url = serviceUrl();
-    return url ? "https://accounts.google.com/AccountChooser?continue=" + encodeURIComponent(url) : null;
-  }
-  function ownerEmail() {
-    return Session.getEffectiveUser().getEmail() || "";
-  }
-  function isOwner() {
-    return check().reason === "owner";
-  }
-  function canEditUsers() {
-    const r = check().reason;
-    return r === "owner" || r === "admin";
-  }
-  function canEditAdmins() {
-    return isOwner();
-  }
-  function currentUsers() {
-    return parseAllowlist(getProp(PROP_KEYS.allowedUsers));
-  }
-  function currentAdmins() {
-    return parseAllowlist(getProp(PROP_KEYS.allowedAdmins));
-  }
-  function ownerDomain() {
-    const at = ownerEmail().lastIndexOf("@");
-    return at >= 0 ? ownerEmail().slice(at + 1).toLowerCase() : "";
-  }
-
-  // src/server/jobsStore.ts
-  var ACTIVE_JOB_PROP = "ACTIVE_JOB_ID";
-  function normError(v) {
-    const s2 = v == null ? "" : String(v).trim();
-    return s2 === "" || s2 === "null" || s2 === "undefined" ? null : s2;
-  }
-  function newJobId(kind, now) {
-    return `${kind}-${nowIso(now).replace(/[:]/g, "")}`;
-  }
-  function createJob(row, now) {
-    const full = { ...row, started_at: nowIso(now), updated_at: nowIso(now) };
-    appendRows(TABS.jobs, [full]);
-    setProp(ACTIVE_JOB_PROP, full.job_id);
-    return full;
-  }
-  function updateJob(jobId, patch, now) {
-    updateWhere(TABS.jobs, "job_id", jobId, {
-      ...patch,
-      updated_at: nowIso(now)
-    });
-    if (patch.phase && isTerminalPhase(patch.phase)) deleteProp(ACTIVE_JOB_PROP);
-  }
-  function rowToJob(r) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
-    return {
-      job_id: String((_a = r["job_id"]) != null ? _a : ""),
-      kind: (_b = r["kind"]) != null ? _b : "sync",
-      phase: (_c = r["phase"]) != null ? _c : "FAILED",
-      scan_id: (_d = r["scan_id"]) != null ? _d : null,
-      scope: (_e = r["scope"]) != null ? _e : null,
-      cursor: (_f = r["cursor"]) != null ? _f : null,
-      page: Number((_g = r["page"]) != null ? _g : 0),
-      findings_so_far: Number((_h = r["findings_so_far"]) != null ? _h : 0),
-      page_size: Number((_i = r["page_size"]) != null ? _i : 0),
-      total_count: Number((_j = r["total_count"]) != null ? _j : 0),
-      params_json: (_k = r["params_json"]) != null ? _k : null,
-      journal_ref: (_l = r["journal_ref"]) != null ? _l : null,
-      error: normError(r["error"]),
-      started_at: String((_m = r["started_at"]) != null ? _m : ""),
-      updated_at: String((_n = r["updated_at"]) != null ? _n : "")
-    };
-  }
-  function listJobs() {
-    return readAll(TABS.jobs).map(rowToJob);
-  }
-  var JOB_TAIL_ROWS = 25;
-  function getJob(jobId) {
-    var _a, _b;
-    const recent = readTail(TABS.jobs, JOB_TAIL_ROWS).map(rowToJob);
-    return (_b = (_a = recent.find((j) => j.job_id === jobId)) != null ? _a : listJobs().find((j) => j.job_id === jobId)) != null ? _b : null;
-  }
-  var TERMINAL = ["DONE", "FAILED", "CANCELLED"];
-  function isTerminalPhase(phase) {
-    return TERMINAL.includes(phase);
-  }
-  var STALE_JOB_MS = 30 * 6e4;
-  function isStaleJob(job, now) {
-    const updated = parseTs(job.updated_at);
-    if (updated === null) return false;
-    return (now != null ? now : Date.now()) - updated >= STALE_JOB_MS;
-  }
-  function clearTriggers(handlerName) {
-    for (const t of ScriptApp.getProjectTriggers()) {
-      if (t.getHandlerFunction() === handlerName) ScriptApp.deleteTrigger(t);
-    }
-  }
-  var CONTINUE_HANDLERS = {
-    sync: "trigger_continueSync"
-  };
-  var WATCHDOG_HANDLERS = {
-    sync: "trigger_watchdogSync"
-  };
-  function reclaimIfStale(job, now) {
-    if (!isStaleJob(job, now)) return false;
-    for (const handler of [CONTINUE_HANDLERS[job.kind], WATCHDOG_HANDLERS[job.kind]]) {
-      if (handler) clearTriggers(handler);
-    }
-    updateJob(job.job_id, {
-      phase: "FAILED",
-      error: "Reclaimed: the job stalled with no progress."
-    });
-    return true;
-  }
-  function activeJob() {
-    var _a;
-    if (!getProp(ACTIVE_JOB_PROP)) return null;
-    const job = (_a = listJobs().find((j) => !isTerminalPhase(j.phase))) != null ? _a : null;
-    if (!job) deleteProp(ACTIVE_JOB_PROP);
-    return job;
-  }
-
   // src/server/archiveStore.ts
   function looksLikeLedgerState(v) {
     return Array.isArray(v["scans"]) && Array.isArray(v["episodes"]) && typeof v["ledger"] === "object" && v["ledger"] !== null && !Array.isArray(v["ledger"]);
@@ -5935,6 +5607,97 @@ var Server = (() => {
   }
   function trashBackup(jobId) {
     trashNamed("backups", backupFileName(jobId));
+  }
+
+  // src/server/jobsStore.ts
+  var ACTIVE_JOB_PROP = "ACTIVE_JOB_ID";
+  function normError(v) {
+    const s2 = v == null ? "" : String(v).trim();
+    return s2 === "" || s2 === "null" || s2 === "undefined" ? null : s2;
+  }
+  function newJobId(kind, now) {
+    return `${kind}-${nowIso(now).replace(/[:]/g, "")}`;
+  }
+  function createJob(row, now) {
+    const full = { ...row, started_at: nowIso(now), updated_at: nowIso(now) };
+    appendRows(TABS.jobs, [full]);
+    setProp(ACTIVE_JOB_PROP, full.job_id);
+    return full;
+  }
+  function updateJob(jobId, patch, now) {
+    updateWhere(TABS.jobs, "job_id", jobId, {
+      ...patch,
+      updated_at: nowIso(now)
+    });
+    if (patch.phase && isTerminalPhase(patch.phase)) deleteProp(ACTIVE_JOB_PROP);
+  }
+  function rowToJob(r) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
+    return {
+      job_id: String((_a = r["job_id"]) != null ? _a : ""),
+      kind: (_b = r["kind"]) != null ? _b : "sync",
+      phase: (_c = r["phase"]) != null ? _c : "FAILED",
+      scan_id: (_d = r["scan_id"]) != null ? _d : null,
+      scope: (_e = r["scope"]) != null ? _e : null,
+      cursor: (_f = r["cursor"]) != null ? _f : null,
+      page: Number((_g = r["page"]) != null ? _g : 0),
+      findings_so_far: Number((_h = r["findings_so_far"]) != null ? _h : 0),
+      page_size: Number((_i = r["page_size"]) != null ? _i : 0),
+      total_count: Number((_j = r["total_count"]) != null ? _j : 0),
+      params_json: (_k = r["params_json"]) != null ? _k : null,
+      journal_ref: (_l = r["journal_ref"]) != null ? _l : null,
+      error: normError(r["error"]),
+      started_at: String((_m = r["started_at"]) != null ? _m : ""),
+      updated_at: String((_n = r["updated_at"]) != null ? _n : "")
+    };
+  }
+  function listJobs() {
+    return readAll(TABS.jobs).map(rowToJob);
+  }
+  var JOB_TAIL_ROWS = 25;
+  function getJob(jobId) {
+    var _a, _b;
+    const recent = readTail(TABS.jobs, JOB_TAIL_ROWS).map(rowToJob);
+    return (_b = (_a = recent.find((j) => j.job_id === jobId)) != null ? _a : listJobs().find((j) => j.job_id === jobId)) != null ? _b : null;
+  }
+  var TERMINAL = ["DONE", "FAILED", "CANCELLED"];
+  function isTerminalPhase(phase) {
+    return TERMINAL.includes(phase);
+  }
+  var STALE_JOB_MS = 30 * 6e4;
+  function isStaleJob(job, now) {
+    const updated = parseTs(job.updated_at);
+    if (updated === null) return false;
+    return (now != null ? now : Date.now()) - updated >= STALE_JOB_MS;
+  }
+  function clearTriggers(handlerName) {
+    for (const t of ScriptApp.getProjectTriggers()) {
+      if (t.getHandlerFunction() === handlerName) ScriptApp.deleteTrigger(t);
+    }
+  }
+  var CONTINUE_HANDLERS = {
+    sync: "trigger_continueSync"
+  };
+  var WATCHDOG_HANDLERS = {
+    sync: "trigger_watchdogSync"
+  };
+  function reclaimIfStale(job, now) {
+    if (!isStaleJob(job, now)) return false;
+    for (const handler of [CONTINUE_HANDLERS[job.kind], WATCHDOG_HANDLERS[job.kind]]) {
+      if (handler) clearTriggers(handler);
+    }
+    updateJob(job.job_id, {
+      phase: "FAILED",
+      error: "Reclaimed: the job stalled with no progress."
+    });
+    return true;
+  }
+  function activeJob() {
+    var _a;
+    if (!getProp(ACTIVE_JOB_PROP)) return null;
+    const job = (_a = listJobs().find((j) => !isTerminalPhase(j.phase))) != null ? _a : null;
+    if (!job) deleteProp(ACTIVE_JOB_PROP);
+    return job;
   }
 
   // src/server/ledgerStore.ts
@@ -6495,6 +6258,491 @@ var Server = (() => {
       return 0;
     }
     return total;
+  }
+
+  // src/server/readModelStore.ts
+  var FOLDER = "readmodels";
+  var ENVELOPE_V = 1;
+  var MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
+  var warming = false;
+  var touched = null;
+  function duringWarm(fn) {
+    warming = true;
+    touched = /* @__PURE__ */ new Set();
+    try {
+      return fn();
+    } finally {
+      warming = false;
+      touched = null;
+    }
+  }
+  var disabled = false;
+  function readModelFileName(name, params) {
+    return `rm-${name}-${paramsHash(params)}.json.gz`;
+  }
+  function l2Read(name, params, version) {
+    if (disabled) return { hit: false, why: "absent" };
+    try {
+      const raw = readGzJsonNamed(FOLDER, readModelFileName(name, params));
+      if (!raw || typeof raw !== "object") return { hit: false, why: "absent" };
+      const env = raw;
+      if (env.v !== ENVELOPE_V || env.name !== name) return { hit: false, why: "stale" };
+      if (env.stamp !== currentStamp(version)) return { hit: false, why: "stale" };
+      if (typeof env.writtenAtMs !== "number") return { hit: false, why: "stale" };
+      if (Date.now() - env.writtenAtMs > MAX_AGE_MS) return { hit: false, why: "stale" };
+      return { hit: true, value: env.value };
+    } catch (e) {
+      disabled = true;
+      console.warn(`Durable read-model read failed (${name}) \u2014 L2 disabled for this run: ${e}`);
+      return { hit: false, why: "absent" };
+    }
+  }
+  function l2Write(name, params, version, value) {
+    if (disabled) return;
+    try {
+      const env = {
+        v: ENVELOPE_V,
+        stamp: currentStamp(version),
+        name,
+        hash: paramsHash(params),
+        writtenAtMs: Date.now(),
+        value
+      };
+      writeGzJson(subfolder(FOLDER), readModelFileName(name, params), env);
+    } catch (e) {
+      disabled = true;
+      console.warn(`Durable read-model write failed (${name}) \u2014 L2 disabled for this run: ${e}`);
+    }
+  }
+  function durablyCached(name, params, compute, ttlSec, version) {
+    if (warming && touched) touched.add(readModelFileName(name, params));
+    return cached(name, params, () => {
+      var _a;
+      const t0 = Date.now();
+      const hit = l2Read(name, params, version);
+      console.log(JSON.stringify({
+        stage: "l2",
+        name,
+        hit: hit.hit,
+        why: hit.hit ? null : (_a = hit.why) != null ? _a : null,
+        ms: Date.now() - t0
+      }));
+      if (hit.hit) return hit.value;
+      const value = compute();
+      if (warming) l2Write(name, params, version, value);
+      return value;
+    }, ttlSec, version);
+  }
+  function durablyPeek(name, params, version, ttlSec) {
+    var _a;
+    const l1 = peekCached(name, params, version);
+    if (l1 !== void 0) return l1;
+    const t0 = Date.now();
+    const hit = l2Read(name, params, version);
+    console.log(JSON.stringify({
+      stage: "l2",
+      name,
+      peek: true,
+      hit: hit.hit,
+      why: hit.hit ? null : (_a = hit.why) != null ? _a : null,
+      ms: Date.now() - t0
+    }));
+    if (!hit.hit) return void 0;
+    primeCached(name, params, hit.value, ttlSec, version);
+    return hit.value;
+  }
+  function sweepReadModels() {
+    if (disabled || !touched) return 0;
+    const keep = touched;
+    let trashed = 0;
+    try {
+      for (const name of listNames(FOLDER)) {
+        if (!keep.has(name)) {
+          trashNamed(FOLDER, name);
+          trashed += 1;
+        }
+      }
+    } catch (e) {
+      console.warn(`Durable read-model sweep failed: ${e}`);
+    }
+    return trashed;
+  }
+
+  // src/server/stageLog.ts
+  function stageLaps(stage) {
+    let t = Date.now();
+    const ms = {};
+    return {
+      lap(label) {
+        const now = Date.now();
+        ms[label] = now - t;
+        t = now;
+      },
+      log() {
+        console.log(JSON.stringify({ stage, ...ms }));
+      }
+    };
+  }
+
+  // src/server/bootCore.ts
+  var BOOT_CORE = "dsBootCore1";
+  var BOOT_CORE_PARAMS = {};
+  function bootCoreModel() {
+    return durablyCached(BOOT_CORE, BOOT_CORE_PARAMS, buildBootCore);
+  }
+  function peekBootCore() {
+    const core = durablyPeek(BOOT_CORE, BOOT_CORE_PARAMS);
+    return core && typeof core === "object" && !Array.isArray(core) ? core : null;
+  }
+  function buildBootCore() {
+    var _a, _b, _c, _d, _e, _f;
+    const laps = stageLaps("bootCore");
+    const scans = readAll(TABS.scans);
+    let newestTs = "";
+    let newestSyncId = "";
+    const lastScanByScope = {};
+    for (const scope of SCOPES) lastScanByScope[scope] = null;
+    for (const row of scans) {
+      const ts = String((_a = row.ts) != null ? _a : "");
+      if (!ts || ts <= newestTs) continue;
+      newestTs = ts;
+      newestSyncId = String((_b = row.scan_id) != null ? _b : "");
+    }
+    for (const row of scans) {
+      const ts = String((_c = row.ts) != null ? _c : "");
+      const scope = String((_d = row.scope) != null ? _d : "");
+      if (!ts || !(scope in lastScanByScope)) continue;
+      if (lastScanByScope[scope] === null || ts > lastScanByScope[scope]) {
+        lastScanByScope[scope] = ts;
+      }
+    }
+    let latestSync = null;
+    if (newestSyncId) {
+      const members = scans.filter((r) => {
+        var _a2;
+        return String((_a2 = r.scan_id) != null ? _a2 : "") === newestSyncId;
+      });
+      const order = new Map(SCOPES.map((sc, i) => [String(sc), i]));
+      const rows = members.map((r) => {
+        var _a2, _b2, _c2;
+        return {
+          scope: String((_a2 = r.scope) != null ? _a2 : ""),
+          total: Number((_b2 = r.total) != null ? _b2 : 0),
+          severities: r.severities == null ? null : String(r.severities),
+          ts: String((_c2 = r.ts) != null ? _c2 : "")
+        };
+      }).sort((a, b) => {
+        var _a2, _b2;
+        return ((_a2 = order.get(a.scope)) != null ? _a2 : 99) - ((_b2 = order.get(b.scope)) != null ? _b2 : 99);
+      });
+      let total = 0;
+      let ts = "";
+      for (const r of rows) {
+        total += r.total;
+        if (r.ts > ts) ts = r.ts;
+      }
+      latestSync = {
+        sync_id: newestSyncId,
+        ts: ts || newestTs,
+        total,
+        scopes: rows.map((r) => ({ scope: r.scope, total: r.total, severities: r.severities }))
+      };
+    }
+    laps.lap("scans");
+    const settings = loadSettings();
+    laps.lap("settings");
+    const allRows = loadBaseRows();
+    laps.lap("baseRows");
+    attachRepoTags(allRows);
+    laps.lap("repoTags");
+    const projectView = settings.projectView || null;
+    const domainView = settings.domainView || null;
+    const shown = projectView ? allRows.filter((r) => inProject(parseProjects(r.projects_json), projectView)).length : domainView ? allRows.filter((r) => inDomain(r, domainView)).length : allRows.length;
+    const core = {
+      product: "Wiz Sidekick DevSecOps",
+      scopes: SCOPES,
+      scopeLabels: SCOPE_LABELS,
+      severityOrder: SEVERITY_ORDER,
+      slaTargets: SLA_TARGETS,
+      effectiveSlaTargets: effectiveSlaTargets(settings),
+      latestSync,
+      lastScanByScope,
+      settings,
+      scope: {
+        projectView: settings.projectView,
+        domainView: settings.domainView,
+        shown,
+        register: allRows.length,
+        unattributed: unattributedCount(allRows),
+        noDomain: noDomainCount(allRows),
+        // The FETCH scope, reported only — see `settingsLogic.ts`'s "TWO PROJECT SCOPES, TWO
+        // HOMES". `projectScope()` is `[id] | null`; only the first element is ever set today.
+        syncProjectId: (_f = (_e = projectScope()) == null ? void 0 : _e[0]) != null ? _f : null
+      },
+      filterOptions: {
+        projectList: projectCatalogue(allRows),
+        domainList: domainCatalogue(allRows)
+      }
+    };
+    laps.lap("catalogues");
+    laps.log();
+    return core;
+  }
+
+  // src/server/access.ts
+  var access_exports = {};
+  __export(access_exports, {
+    ACCESS_MAX_BYTES: () => ACCESS_MAX_BYTES,
+    ACCESS_MAX_ENTRIES: () => ACCESS_MAX_ENTRIES,
+    PRODUCT: () => PRODUCT,
+    __resetMemosForTest: () => __resetMemosForTest2,
+    accountChooserUrl: () => accountChooserUrl,
+    assertAllowed: () => assertAllowed,
+    canEditAdmins: () => canEditAdmins,
+    canEditUsers: () => canEditUsers,
+    check: () => check,
+    contactMailto: () => contactMailto,
+    currentAdmins: () => currentAdmins,
+    currentUsers: () => currentUsers,
+    decide: () => decide,
+    deniedHtml: () => deniedHtml,
+    deniedPage: () => deniedPage,
+    denyResult: () => denyResult,
+    isOwner: () => isOwner,
+    ownerDomain: () => ownerDomain,
+    ownerEmail: () => ownerEmail,
+    parseAllowlist: () => parseAllowlist,
+    serviceUrl: () => serviceUrl,
+    validateAddresses: () => validateAddresses
+  });
+
+  // src/server/pageShell.ts
+  var MARK_COMPACT_VIEWBOX = "12.2 8.4 52.7 74";
+  var MARK_COMPACT_RATIO = 52.7 / 74;
+  var MARK_ORBIT = "M47.64 80.58A32.1 32.1 0 0 1 17.83 52.04M19.82 36.92A32.1 32.1 0 0 1 54.21 16.76";
+  var MARK_ORBIT_WIDTH = 2.41;
+  var MARK_NODES = [[17.22, 44.33, 4.41], [45.96, 16.55, 7.56]];
+  var MARK_SHIELD = "M48.56 29.88C52.79 34.78 58.69 37.87 64.33 37.81C64.44 45.48 63.64 48.51 62.11 51.96C61.32 54.62 56.36 61.55 48.56 64.18C40.76 61.55 35.8 54.62 35.01 51.96C33.48 48.51 32.68 45.48 32.79 37.81C38.43 37.87 44.33 34.78 48.56 29.88Z";
+  var MARK_CHECK = "M42.3 48.81 46.19 52.7 54.89 43.99";
+  var MARK_CHECK_WIDTH = 3.04;
+  function brandMarkSvg(height) {
+    const width = Math.round(height * MARK_COMPACT_RATIO * 100) / 100;
+    const nodes = MARK_NODES.map(
+      (n2) => '<circle cx="' + n2[0] + '" cy="' + n2[1] + '" r="' + n2[2] + '" fill="#0a0a0a"/>'
+    ).join("");
+    return [
+      '<svg class="brand-mark" viewBox="' + MARK_COMPACT_VIEWBOX + '"',
+      ' width="' + width + '" height="' + height + '" focusable="false" aria-hidden="true">',
+      '<path d="' + MARK_ORBIT + '" fill="none" stroke="#0a0a0a" stroke-width="' + MARK_ORBIT_WIDTH,
+      '" stroke-linecap="round"/>',
+      nodes,
+      '<path d="' + MARK_SHIELD + '" fill="#0a0a0a"/>',
+      '<path d="' + MARK_CHECK + '" fill="none" stroke="#ffffff" stroke-width="' + MARK_CHECK_WIDTH,
+      '" stroke-linecap="round" stroke-linejoin="round"/>',
+      "</svg>"
+    ].join("");
+  }
+  function escapeHtml(s2) {
+    return s2.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function primaryAction(href, label) {
+    return '<a class="btn" target="_top" href="' + escapeHtml(href) + '">' + escapeHtml(label) + "</a>";
+  }
+  function secondaryAction(href, label) {
+    return '<a class="alt" target="_top" href="' + escapeHtml(href) + '">' + escapeHtml(label) + "</a>";
+  }
+  function cardPage(spec) {
+    const body = spec.paragraphs.map((p) => "<p>" + p + "</p>").join("");
+    const actions = spec.actions ? '<div class="actions">' + spec.actions + "</div>" : "";
+    return [
+      '<!DOCTYPE html><html><head><meta charset="utf-8">',
+      // Every link on these pages has to break out of the HtmlService sandbox iframe; the app's
+      // own index.html carries the same base tag for the same reason.
+      '<base target="_top">',
+      '<meta name="viewport" content="width=device-width, initial-scale=1">',
+      "<title>" + escapeHtml(spec.title) + "</title><style>",
+      "*{box-sizing:border-box}",
+      // --surface / --ink, and the same --font stack tokens.css:254 carries.
+      "body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;",
+      "background:#f8f8fa;color:#171717;",
+      "font-family:-apple-system,BlinkMacSystemFont,Inter,'Segoe UI',Roboto,'Helvetica Neue',sans-serif}",
+      // --page on --hairline at --radius-xl.
+      ".card{max-width:32rem;margin:24px;padding:32px;background:#ffffff;border:1px solid #e6e6e9;",
+      "border-radius:14px;box-shadow:0 1px 2px rgba(10,10,10,.06)}",
+      ".lockup{display:flex;align-items:center;gap:8px;margin:0 0 16px}",
+      // Mirrors .appbar-name in base.css (600 / --fs-lead 16px / -0.02em / --ink) so the
+      // wordmark is the same object here as in the header, not a near-miss of it.
+      ".lockup span{font-weight:600;font-size:1rem;letter-spacing:-0.02em;color:#171717;",
+      "white-space:nowrap}",
+      ".brand-mark{display:block;flex:0 0 auto}",
+      "h1{font-size:20px;line-height:1.3;margin:0 0 12px;font-weight:650}",
+      // --text-2, the same alpha the app's prose carries.
+      "p{margin:0 0 8px;font-size:14px;line-height:1.6;color:rgba(0,0,0,.65)}",
+      ".actions{margin-top:24px;display:flex;align-items:center;gap:20px;flex-wrap:wrap}",
+      // Graphite, not the accent: DESIGN.md keeps the accent for data, focus and links, and
+      // fills the one committing action with --graphite / --on-graphite.
+      ".btn{display:inline-flex;align-items:center;min-height:36px;padding:6px 14px;",
+      "border-radius:8px;background:#0a0a0a;color:#fafafa;font-size:14px;font-weight:500;",
+      "text-decoration:none}",
+      ".btn:hover{background:#27272a}",
+      // --accent-text. NOT --accent: this page is plain text on white, where #ffcb13 is 1.52:1.
+      // pages are the product's front door and must read as this product.
+      "a{color:#7c4a0a}",
+      // Never remove: CLAUDE.md names the focus-ring rules load-bearing, and these pages are
+      // reachable by keyboard only.
+      "a:focus-visible{outline:2px solid #7c4a0a;outline-offset:2px;border-radius:4px}",
+      '</style></head><body><main class="card">',
+      // The same lockup as the app header — mark then wordmark — so the door and the room
+      // behind it are recognisably one product.
+      '<div class="lockup">' + brandMarkSvg(22) + "<span>" + escapeHtml(spec.eyebrow) + "</span></div>",
+      "<h1>" + escapeHtml(spec.heading) + "</h1>",
+      body,
+      actions,
+      "</main></body></html>"
+    ].join("");
+  }
+
+  // src/server/access.ts
+  var PRODUCT = "Wiz Sidekick DevSecOps";
+  var DENIAL_MESSAGE = {
+    anonymous: "This app can't identify your Google account. It only recognizes accounts signed in to the same Google Workspace domain as the app.",
+    "not-listed": "Your account isn't on this app's access list."
+  };
+  function parseAllowlist(raw) {
+    if (!raw) return [];
+    const seen = {};
+    const out = [];
+    for (const part of raw.split(/[,;\s]+/)) {
+      const email = part.trim().toLowerCase();
+      if (!email || seen[email]) continue;
+      seen[email] = true;
+      out.push(email);
+    }
+    return out;
+  }
+  var ACCESS_MAX_BYTES = 8e3;
+  var ACCESS_MAX_ENTRIES = 500;
+  function validateAddresses(raw) {
+    const list = parseAllowlist(Array.isArray(raw) ? raw.join("\n") : String(raw != null ? raw : ""));
+    const bad = list.filter((e) => e.indexOf("@") < 0);
+    if (bad.length) throw new Error(`Not an email address: ${bad.join(", ")}`);
+    if (list.length > ACCESS_MAX_ENTRIES) {
+      throw new Error(`Too many people (${list.length}); the limit is ${ACCESS_MAX_ENTRIES}.`);
+    }
+    const bytes = list.join(",").length;
+    if (bytes > ACCESS_MAX_BYTES) {
+      throw new Error(`That list is too long to store (${bytes} of ${ACCESS_MAX_BYTES} bytes).`);
+    }
+    return list;
+  }
+  function decide(active, owner, raw, adminsRaw) {
+    const email = (active || "").trim();
+    const key = email.toLowerCase();
+    if (!key) return { allowed: false, email: "", reason: "anonymous" };
+    const ownerKey = (owner || "").trim().toLowerCase();
+    if (ownerKey && ownerKey === key) return { allowed: true, email, reason: "owner" };
+    if (parseAllowlist(adminsRaw != null ? adminsRaw : null).indexOf(key) >= 0) {
+      return { allowed: true, email, reason: "admin" };
+    }
+    return parseAllowlist(raw).indexOf(key) >= 0 ? { allowed: true, email, reason: "listed" } : { allowed: false, email, reason: "not-listed" };
+  }
+  var memo;
+  function check() {
+    if (memo === void 0) {
+      memo = decide(
+        Session.getActiveUser().getEmail(),
+        Session.getEffectiveUser().getEmail(),
+        getProp(PROP_KEYS.allowedUsers),
+        getProp(PROP_KEYS.allowedAdmins)
+      );
+    }
+    return memo;
+  }
+  function __resetMemosForTest2() {
+    memo = void 0;
+  }
+  function logDenial(op, d) {
+    console.log(JSON.stringify({ access: "denied", op, reason: d.reason, email: d.email }));
+  }
+  function denyResult(op) {
+    const d = check();
+    if (d.allowed) return null;
+    logDenial(op, d);
+    const env = {
+      ok: false,
+      error: DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"],
+      errorKind: "forbidden"
+    };
+    const who = ownerEmail().trim();
+    if (who) {
+      env.contact = who;
+      env.contactUrl = contactMailto(who);
+    }
+    return env;
+  }
+  function assertAllowed(op) {
+    const d = check();
+    if (d.allowed) return;
+    logDenial(op, d);
+    throw new Error(DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"]);
+  }
+  function contactMailto(email) {
+    return "mailto:" + email.trim() + "?subject=" + encodeURIComponent("Access to " + PRODUCT);
+  }
+  function deniedHtml(d, switchUrl, contact) {
+    const detail = d.email ? "You're signed in as <strong>" + escapeHtml(d.email) + "</strong>." : "This app can't see which Google account you're signed in as, which happens when the account isn't in the same Google Workspace domain as the app.";
+    const who = (contact || "").trim();
+    const ask = who ? 'If you think you should have access, contact <a href="' + escapeHtml(contactMailto(who)) + '">' + escapeHtml(who) + "</a>." : (
+      // No owner address resolved — never render "contact:" with nothing after it.
+      "If you think you should have access, ask whoever runs this dashboard to add you."
+    );
+    return cardPage({
+      title: PRODUCT,
+      eyebrow: PRODUCT,
+      heading: "You don't have access to this app.",
+      paragraphs: [detail, ask],
+      actions: switchUrl ? secondaryAction(switchUrl, "Switch Google account") : ""
+    });
+  }
+  function deniedPage() {
+    const d = check();
+    if (d.allowed) return null;
+    logDenial("doGet", d);
+    return HtmlService.createHtmlOutput(deniedHtml(d, accountChooserUrl(), ownerEmail())).setTitle(PRODUCT).addMetaTag("viewport", "width=device-width, initial-scale=1");
+  }
+  function serviceUrl() {
+    try {
+      return ScriptApp.getService().getUrl() || null;
+    } catch (_e) {
+      return null;
+    }
+  }
+  function accountChooserUrl() {
+    const url = serviceUrl();
+    return url ? "https://accounts.google.com/AccountChooser?continue=" + encodeURIComponent(url) : null;
+  }
+  function ownerEmail() {
+    return Session.getEffectiveUser().getEmail() || "";
+  }
+  function isOwner() {
+    return check().reason === "owner";
+  }
+  function canEditUsers() {
+    const r = check().reason;
+    return r === "owner" || r === "admin";
+  }
+  function canEditAdmins() {
+    return isOwner();
+  }
+  function currentUsers() {
+    return parseAllowlist(getProp(PROP_KEYS.allowedUsers));
+  }
+  function currentAdmins() {
+    return parseAllowlist(getProp(PROP_KEYS.allowedAdmins));
+  }
+  function ownerDomain() {
+    const at = ownerEmail().lastIndexOf("@");
+    return at >= 0 ? ownerEmail().slice(at + 1).toLowerCase() : "";
   }
 
   // src/server/locks.ts
@@ -7803,7 +8051,7 @@ var Server = (() => {
   }
 
   // src/server/historyStore.ts
-  var FOLDER = "history";
+  var FOLDER2 = "history";
   var NAME_RE = /^(\d{4}-\d{2}-\d{2})\.json\.gz$/;
   function utcDay(now) {
     return new Date(now).toISOString().slice(0, 10);
@@ -7812,112 +8060,22 @@ var Server = (() => {
     return `${day}.json.gz`;
   }
   function recordDaily(stats, now = Date.now()) {
-    writeGzJson(subfolder(FOLDER), fileName(utcDay(now)), stats);
+    writeGzJson(subfolder(FOLDER2), fileName(utcDay(now)), stats);
   }
   function recordedDays() {
-    return listNames(FOLDER).map((n2) => {
+    return listNames(FOLDER2).map((n2) => {
       var _a;
       return (_a = NAME_RE.exec(n2)) == null ? void 0 : _a[1];
     }).filter((d) => Boolean(d)).sort();
   }
   function listHistory() {
-    return recordedDays().map((date) => ({ date, stats: readGzJson(subfolder(FOLDER), fileName(date)) }));
+    return recordedDays().map((date) => ({ date, stats: readGzJson(subfolder(FOLDER2), fileName(date)) }));
   }
   function latestHistory() {
     const days = recordedDays();
     if (days.length === 0) return null;
     const date = days[days.length - 1];
-    return { date, stats: readGzJson(subfolder(FOLDER), fileName(date)) };
-  }
-
-  // src/server/readModelStore.ts
-  var FOLDER2 = "readmodels";
-  var ENVELOPE_V = 1;
-  var MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
-  var warming = false;
-  var touched = null;
-  function duringWarm(fn) {
-    warming = true;
-    touched = /* @__PURE__ */ new Set();
-    try {
-      return fn();
-    } finally {
-      warming = false;
-      touched = null;
-    }
-  }
-  var disabled = false;
-  function readModelFileName(name, params) {
-    return `rm-${name}-${paramsHash(params)}.json.gz`;
-  }
-  function l2Read(name, params, version) {
-    if (disabled) return { hit: false, why: "absent" };
-    try {
-      const raw = readGzJsonNamed(FOLDER2, readModelFileName(name, params));
-      if (!raw || typeof raw !== "object") return { hit: false, why: "absent" };
-      const env = raw;
-      if (env.v !== ENVELOPE_V || env.name !== name) return { hit: false, why: "stale" };
-      if (env.stamp !== currentStamp(version)) return { hit: false, why: "stale" };
-      if (typeof env.writtenAtMs !== "number") return { hit: false, why: "stale" };
-      if (Date.now() - env.writtenAtMs > MAX_AGE_MS) return { hit: false, why: "stale" };
-      return { hit: true, value: env.value };
-    } catch (e) {
-      disabled = true;
-      console.warn(`Durable read-model read failed (${name}) \u2014 L2 disabled for this run: ${e}`);
-      return { hit: false, why: "absent" };
-    }
-  }
-  function l2Write(name, params, version, value) {
-    if (disabled) return;
-    try {
-      const env = {
-        v: ENVELOPE_V,
-        stamp: currentStamp(version),
-        name,
-        hash: paramsHash(params),
-        writtenAtMs: Date.now(),
-        value
-      };
-      writeGzJson(subfolder(FOLDER2), readModelFileName(name, params), env);
-    } catch (e) {
-      disabled = true;
-      console.warn(`Durable read-model write failed (${name}) \u2014 L2 disabled for this run: ${e}`);
-    }
-  }
-  function durablyCached(name, params, compute, ttlSec, version) {
-    if (warming && touched) touched.add(readModelFileName(name, params));
-    return cached(name, params, () => {
-      var _a;
-      const t0 = Date.now();
-      const hit = l2Read(name, params, version);
-      console.log(JSON.stringify({
-        stage: "l2",
-        name,
-        hit: hit.hit,
-        why: hit.hit ? null : (_a = hit.why) != null ? _a : null,
-        ms: Date.now() - t0
-      }));
-      if (hit.hit) return hit.value;
-      const value = compute();
-      if (warming) l2Write(name, params, version, value);
-      return value;
-    }, ttlSec, version);
-  }
-  function sweepReadModels() {
-    if (disabled || !touched) return 0;
-    const keep = touched;
-    let trashed = 0;
-    try {
-      for (const name of listNames(FOLDER2)) {
-        if (!keep.has(name)) {
-          trashNamed(FOLDER2, name);
-          trashed += 1;
-        }
-      }
-    } catch (e) {
-      console.warn(`Durable read-model sweep failed: ${e}`);
-    }
-    return trashed;
+    return { date, stats: readGzJson(subfolder(FOLDER2), fileName(date)) };
   }
 
   // src/server/readModels.ts
@@ -9124,7 +9282,11 @@ var Server = (() => {
   function warmTargets() {
     const all = { scope: null, severities: null, showNoFix: true };
     const targets = [
-      // The durable four first: they are what the Drive layer exists for, and a budget cut-out
+      // The bootstrap core before everything: doGet inlines it only when it is already stored
+      // (`api.bootstrapIfWarm`), so it is the one entry every page load reads, and a cold one
+      // costs every open a second round trip plus the 6–7 s compute.
+      { label: "bootCore", run: () => bootCoreModel() },
+      // The durable four next: they are what the Drive layer exists for, and a budget cut-out
       // that never reached them would leave the expensive answers cold overnight.
       { label: "history", run: () => historyModel(all) },
       { label: "program", run: () => programModel(all) },
@@ -9782,133 +9944,50 @@ var Server = (() => {
       return fn();
     }));
   }
-  function stageLaps(stage) {
-    let t = Date.now();
-    const ms = {};
-    return {
-      lap(label) {
-        const now = Date.now();
-        ms[label] = now - t;
-        t = now;
-      },
-      log() {
-        console.log(JSON.stringify({ stage, ...ms }));
-      }
-    };
-  }
   function bootstrap(_p) {
     return run(() => {
-      var _a, _b, _c, _d, _e, _f;
       const laps = stageLaps("bootstrap");
-      const scans = readAll(TABS.scans);
-      let newestTs = "";
-      let newestSyncId = "";
-      const lastScanByScope = {};
-      for (const scope of SCOPES) lastScanByScope[scope] = null;
-      for (const row of scans) {
-        const ts = String((_a = row.ts) != null ? _a : "");
-        if (!ts || ts <= newestTs) continue;
-        newestTs = ts;
-        newestSyncId = String((_b = row.scan_id) != null ? _b : "");
-      }
-      for (const row of scans) {
-        const ts = String((_c = row.ts) != null ? _c : "");
-        const scope = String((_d = row.scope) != null ? _d : "");
-        if (!ts || !(scope in lastScanByScope)) continue;
-        if (lastScanByScope[scope] === null || ts > lastScanByScope[scope]) {
-          lastScanByScope[scope] = ts;
-        }
-      }
-      let latestSync = null;
-      if (newestSyncId) {
-        const members = scans.filter((r) => {
-          var _a2;
-          return String((_a2 = r.scan_id) != null ? _a2 : "") === newestSyncId;
-        });
-        const order = new Map(SCOPES.map((sc, i) => [String(sc), i]));
-        const rows = members.map((r) => {
-          var _a2, _b2, _c2;
-          return {
-            scope: String((_a2 = r.scope) != null ? _a2 : ""),
-            total: Number((_b2 = r.total) != null ? _b2 : 0),
-            severities: r.severities == null ? null : String(r.severities),
-            ts: String((_c2 = r.ts) != null ? _c2 : "")
-          };
-        }).sort((a, b) => {
-          var _a2, _b2;
-          return ((_a2 = order.get(a.scope)) != null ? _a2 : 99) - ((_b2 = order.get(b.scope)) != null ? _b2 : 99);
-        });
-        let total = 0;
-        let ts = "";
-        for (const r of rows) {
-          total += r.total;
-          if (r.ts > ts) ts = r.ts;
-        }
-        latestSync = {
-          sync_id: newestSyncId,
-          ts: ts || newestTs,
-          total,
-          scopes: rows.map((r) => ({ scope: r.scope, total: r.total, severities: r.severities }))
-        };
-      }
-      laps.lap("scans");
-      const settings = loadSettings();
-      laps.lap("settings");
-      const allRows = loadBaseRows();
-      laps.lap("baseRows");
-      attachRepoTags(allRows);
-      laps.lap("repoTags");
-      const projectView = settings.projectView || null;
-      const domainView = settings.domainView || null;
-      const shown = projectView ? allRows.filter((r) => inProject(parseProjects(r.projects_json), projectView)).length : domainView ? allRows.filter((r) => inDomain(r, domainView)).length : allRows.length;
-      const unattributed = unattributedCount(allRows);
-      const noDomain = noDomainCount(allRows);
-      const projectList2 = projectCatalogue(allRows);
-      const domainList = domainCatalogue(allRows);
-      laps.lap("catalogues");
-      const job = activeJob();
-      const activeJobSummary = job ? jobSummarySlice(job, !isTerminalPhase(job.phase) && isStaleJob(job)) : null;
-      laps.lap("activeJob");
-      const hasCredentials = hasWizCredentials();
-      const wizVerifiedAt = getProp(PROP_KEYS.wizVerifiedAt);
-      const canEditAccess = canEditUsers();
-      const hubUrl = readHubUrl();
-      const syncProjectId = (_f = (_e = projectScope()) == null ? void 0 : _e[0]) != null ? _f : null;
+      const core = bootCoreModel();
+      laps.lap("core");
+      const out = withLiveBootFields(core);
       laps.lap("live");
       laps.log();
-      return {
-        product: "Wiz Sidekick DevSecOps",
-        buildId: BUILD_ID,
-        hasCredentials,
-        wizVerifiedAt,
-        scopes: SCOPES,
-        scopeLabels: SCOPE_LABELS,
-        severityOrder: SEVERITY_ORDER,
-        slaTargets: SLA_TARGETS,
-        effectiveSlaTargets: effectiveSlaTargets(settings),
-        latestSync,
-        lastScanByScope,
-        activeJob: activeJobSummary,
-        canEditAccess,
-        hubUrl,
-        settings,
-        scope: {
-          projectView: settings.projectView,
-          domainView: settings.domainView,
-          shown,
-          register: allRows.length,
-          unattributed,
-          noDomain,
-          // The FETCH scope, reported only — see `settingsLogic.ts`'s "TWO PROJECT SCOPES, TWO
-          // HOMES". `projectScope()` is `[id] | null`; only the first element is ever set today.
-          syncProjectId
-        },
-        filterOptions: {
-          projectList: projectList2,
-          domainList
-        }
-      };
+      return out;
     });
+  }
+  function bootstrapIfWarm() {
+    const t0 = Date.now();
+    const core = peekBootCore();
+    const t1 = Date.now();
+    if (!core) {
+      console.log(JSON.stringify({ stage: "bootstrapIfWarm", hit: false, peek: t1 - t0 }));
+      return { ok: false, error: "bootstrap core is cold", errorKind: "cold" };
+    }
+    const res = run(() => withLiveBootFields(core));
+    console.log(JSON.stringify({ stage: "bootstrapIfWarm", hit: true, peek: t1 - t0, live: Date.now() - t1 }));
+    return res;
+  }
+  function withLiveBootFields(core) {
+    const job = activeJob();
+    return {
+      product: core.product,
+      buildId: BUILD_ID,
+      hasCredentials: hasWizCredentials(),
+      wizVerifiedAt: getProp(PROP_KEYS.wizVerifiedAt),
+      scopes: core.scopes,
+      scopeLabels: core.scopeLabels,
+      severityOrder: core.severityOrder,
+      slaTargets: core.slaTargets,
+      effectiveSlaTargets: core.effectiveSlaTargets,
+      latestSync: core.latestSync,
+      lastScanByScope: core.lastScanByScope,
+      activeJob: job ? jobSummarySlice(job, !isTerminalPhase(job.phase) && isStaleJob(job)) : null,
+      canEditAccess: canEditUsers(),
+      hubUrl: readHubUrl(),
+      settings: core.settings,
+      scope: core.scope,
+      filterOptions: core.filterOptions
+    };
   }
   function testWizConnection(_p) {
     return run(() => {
@@ -10342,7 +10421,7 @@ var Server = (() => {
   // src/server/main.ts
   function doGet(_e) {
     const template = HtmlService.createTemplateFromFile("index");
-    template.bootJson = inlineBootJson(() => bootstrap());
+    template.bootJson = inlineBootJson(() => bootstrapIfWarm());
     return template.evaluate().setTitle("Wiz Sidekick DevSecOps").addMetaTag("viewport", "width=device-width, initial-scale=1").setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);
   }
   function include(filename) {
