@@ -168,6 +168,29 @@ export function cacheGetJson(key: string): unknown | undefined {
 }
 
 /**
+ * The entry `cached(name, params, …)` would return, WITHOUT computing it on a miss: undefined
+ * on a miss or any cache-layer error. For callers that must not pay a cold compute — doGet's
+ * inline bootstrap — and would rather do without.
+ */
+export function peekCached(name: string, params: unknown): unknown | undefined {
+  try {
+    return cacheGetJson(cacheKey(name, params, stamp()));
+  } catch (e) {
+    console.warn(`Cache peek failed for ${name}: ${e}`);
+    return undefined;
+  }
+}
+
+/** Store what `cached(name, params, …)` would have stored. Best-effort, like every write here. */
+export function primeCached(name: string, params: unknown, value: unknown, ttlSec = DEFAULT_TTL_SEC): void {
+  try {
+    cachePutJson(cacheKey(name, params, stamp()), value, ttlSec);
+  } catch (e) {
+    console.warn(`Cache write failed for ${name}: ${e}`);
+  }
+}
+
+/**
  * Version-keyed read-through cache. Any cache-layer error falls back to compute() —
  * caching is an optimization, never a correctness dependency.
  */

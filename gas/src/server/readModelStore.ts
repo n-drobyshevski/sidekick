@@ -29,7 +29,7 @@
 import {
   findSubfolder, listNames, readGzJsonIn, trashNamed, writeGzJson, subfolder,
 } from "./archiveStore";
-import { cached, currentStamp, paramsHash } from "./serverCache";
+import { cached, currentStamp, paramsHash, peekCached, primeCached } from "./serverCache";
 
 /** Envelope version. Bump only if the envelope itself changes shape. */
 const ENVELOPE_V = 1;
@@ -215,6 +215,20 @@ export function durablyCached<T>(
     if (warming && (hit.why === "absent" || hit.why === "stale")) l2Write(name, params, value);
     return value;
   }, ttlSec);
+}
+
+/**
+ * What `durablyCached(name, params, …)` would return, but only if it is already stored — L1, then
+ * the durable file — and never by computing it: undefined means "cold". An L2 hit is promoted to
+ * L1 exactly as the read-through would, so the next reader does not pay the Drive read again.
+ */
+export function durablyPeek(name: string, params: unknown): unknown | undefined {
+  const l1 = peekCached(name, params);
+  if (l1 !== undefined) return l1;
+  const hit = l2Read(name, params);
+  if (!hit.hit) return undefined;
+  primeCached(name, params, hit.value);
+  return hit.value;
 }
 
 /**

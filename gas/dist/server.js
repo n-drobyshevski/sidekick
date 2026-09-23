@@ -38,9 +38,11 @@ var Server = (() => {
   __export(api_exports, {
     backfillEpisodeTags: () => backfillEpisodeTags2,
     bootstrap: () => bootstrap,
+    bootstrapIfWarm: () => bootstrapIfWarm,
     cancelScan: () => cancelScan2,
     clearRecentErrors: () => clearRecentErrors,
     compact: () => compact,
+    continueWarm: () => continueWarm,
     deleteScans: () => deleteScans2,
     exportMigrationBundle: () => exportMigrationBundle,
     getAccess: () => getAccess,
@@ -6292,7 +6294,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "a6177de0610e" : "dev";
+  var BUILD_ID = true ? "ddf0bf9fcf21" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -6360,6 +6362,21 @@ var Server = (() => {
       Utilities.newBlob(bytes, "application/x-gzip")
     ).getDataAsString("UTF-8");
     return JSON.parse(json);
+  }
+  function peekCached(name, params) {
+    try {
+      return cacheGetJson(cacheKey(name, params, stamp()));
+    } catch (e) {
+      console.warn(`Cache peek failed for ${name}: ${e}`);
+      return void 0;
+    }
+  }
+  function primeCached(name, params, value, ttlSec = DEFAULT_TTL_SEC) {
+    try {
+      cachePutJson(cacheKey(name, params, stamp()), value, ttlSec);
+    } catch (e) {
+      console.warn(`Cache write failed for ${name}: ${e}`);
+    }
   }
   function cached(name, params, compute, ttlSec = DEFAULT_TTL_SEC) {
     let key = null;
@@ -8534,6 +8551,14 @@ var Server = (() => {
       return value;
     }, ttlSec);
   }
+  function durablyPeek(name, params) {
+    const l1 = peekCached(name, params);
+    if (l1 !== void 0) return l1;
+    const hit = l2Read(name, params);
+    if (!hit.hit) return void 0;
+    primeCached(name, params, hit.value);
+    return hit.value;
+  }
   function sweepReadModels() {
     if (disabled) return;
     if (!touched) return;
@@ -9790,8 +9815,12 @@ var Server = (() => {
       label
     );
   }
+  var BOOT_CORE = "bootstrapCore8";
+  function bootCoreParams() {
+    return { showNoFix: getShowNoFix2() };
+  }
   function bootstrap(_p) {
-    return run(() => ({
+    return run(() => withLiveBootFields({
       // The core is a pure function of ledger + settings state — cached per DATA_VERSION.
       // "bootstrapCore" → "bootstrapCore2": counts / unassigned / filterOptions now honor the
       // show-no-fix toggle and settings gained `showNoFix`; params null → {showNoFix} so the
@@ -9824,7 +9853,12 @@ var Server = (() => {
       // "bootstrapCore7" → "bootstrapCore8": `scopeCounts` gained `unassignedBase`. A stale
       // entry has none, and the switcher would keep printing the frame-only zero that made the
       // MTTR Unassigned bar look like a bug in the first place.
-      ...durablyCached("bootstrapCore8", { showNoFix: getShowNoFix2() }, bootstrapCore),
+      ...durablyCached(BOOT_CORE, bootCoreParams(), bootstrapCore)
+    }));
+  }
+  function withLiveBootFields(core) {
+    return {
+      ...core,
       // Live per-request fields: never cached (activeJob changes every poll tick).
       // OUTSIDE THE DURABLY-CACHED CORE, and that placement is the whole point. The hub URL is
       // a Script Property an operator can change at any moment through Settings; nothing about
@@ -9835,7 +9869,14 @@ var Server = (() => {
       hubUrl: readHubUrl(),
       hasCredentials: hasWizCredentials(),
       activeJob: activeJobSummary()
-    }));
+    };
+  }
+  function bootstrapIfWarm() {
+    const core = durablyPeek(BOOT_CORE, bootCoreParams());
+    if (core === void 0 || core === null || typeof core !== "object") {
+      return { ok: false, error: "bootstrap core is cold", errorKind: "cold" };
+    }
+    return run(() => withLiveBootFields(core));
   }
   function getChartsBundle(_p) {
     return run(() => {
@@ -12381,8 +12422,54 @@ var Server = (() => {
     return domainNames(getDomains2().items).length > 1 ? ["domain"] : ["atype"];
   }
   var WARM_BUDGET_MS = 27e4;
+  var WARM_CONTINUE_HANDLER = "trigger_continueWarm";
+  var WARM_CONTINUE_DELAY_MS = 1e3;
+  var WARM_BUSY_DELAY_MS = 6e4;
+  var WARM_MAX_HOPS = 6;
+  function warmHopsKey() {
+    return "warmHops:" + currentStamp();
+  }
+  function scheduleWarmContinuation(delayMs) {
+    var _a;
+    try {
+      const cache = CacheService.getScriptCache();
+      const key = warmHopsKey();
+      const hops = Number((_a = cache.get(key)) != null ? _a : "0") + 1;
+      if (hops > WARM_MAX_HOPS) {
+        console.warn(`Cache warm: gave up after ${WARM_MAX_HOPS} continuation hops`);
+        return;
+      }
+      cache.put(key, String(hops), 21600);
+      clearTriggers(WARM_CONTINUE_HANDLER);
+      ScriptApp.newTrigger(WARM_CONTINUE_HANDLER).timeBased().after(delayMs).create();
+    } catch (e) {
+      console.warn(`Cache warm: could not schedule a continuation: ${e}`);
+    }
+  }
   function warmReadModels(budgetMs = WARM_BUDGET_MS) {
-    duringWarm(() => warmReadModelsInner(budgetMs));
+    const skipped = duringWarm(() => warmReadModelsInner(budgetMs));
+    if (skipped) {
+      scheduleWarmContinuation(WARM_CONTINUE_DELAY_MS);
+      return;
+    }
+    try {
+      CacheService.getScriptCache().remove(warmHopsKey());
+    } catch (_e) {
+    }
+  }
+  function continueWarm(_e) {
+    try {
+      clearTriggers(WARM_CONTINUE_HANDLER);
+    } catch (e) {
+      console.warn(`Cache warm: could not clear the continuation trigger: ${e}`);
+    }
+    const job = activeJob();
+    if (job) {
+      console.log(`Cache warm: continuation deferred, ${job.kind} job ${job.job_id} is ${job.phase}`);
+      scheduleWarmContinuation(WARM_BUSY_DELAY_MS);
+      return;
+    }
+    warmReadModels();
   }
   function warmReadModelsInner(budgetMs) {
     const t0 = Date.now();
@@ -12401,13 +12488,12 @@ var Server = (() => {
       }
     };
     warm("bootstrap", () => bootstrap());
-    warm("scanHistory", () => cachedScanHistoryData());
-    warm("storageStats", () => cachedStorageStatsData());
     const display = getDisplaySeverities2();
-    const scopes = [null];
+    const scopes = [];
     if (Array.isArray(display) && display.length && display.length < SELECTABLE_SEVERITIES.length) {
       scopes.push([...display]);
     }
+    scopes.push(null);
     const groupingKeys = defaultGroupingKeys();
     for (const severities of scopes) {
       const p = { domain: "", supportGroup: "", severities };
@@ -12415,21 +12501,22 @@ var Server = (() => {
       warm("mttrByDomain", () => cachedMttrByDomainData(p));
       warm("execWeekTrend", () => cachedExecutiveWeekTrend(p));
       warm("execSevCounts", () => cachedExecutiveSeverityCounts(p));
-      warm("mttrTrend", () => cachedMttrTrendData(p));
       warm("insights", () => cachedInsightsData(p));
+      warm("coldZone", () => cachedColdZoneData(p));
+      warm("mttrTrend", () => cachedMttrTrendData(p));
       warm("program", () => cachedProgramData(p));
       warm("programTrend", () => cachedProgramTrendData(p));
       warm("mttrBySupportGroup", () => cachedMttrBySupportGroupData(p));
       warm("grouping", () => cachedGroupingData({ ...p, keys: groupingKeys }));
       warm("attribution", () => cachedAttributionData({ severities }));
     }
-    for (const severities of scopes) {
-      warm("coldZone", () => cachedColdZoneData({ domain: "", supportGroup: "", severities }));
-    }
+    warm("scanHistory", () => cachedScanHistoryData());
+    warm("storageStats", () => cachedStorageStatsData());
     if (skipped) {
       console.warn(`Cache warm: ran out of budget after ${warmed} entries, ${skipped} left cold`);
     }
     if (!skipped) sweepReadModels();
+    return skipped;
   }
   function warmReadModelsScheduled() {
     const job = activeJob();
@@ -12471,7 +12558,7 @@ var Server = (() => {
   // src/server/main.ts
   function doGet(_e) {
     const template = HtmlService.createTemplateFromFile("index");
-    template.bootJson = inlineBootJson(() => bootstrap());
+    template.bootJson = inlineBootJson(() => bootstrapIfWarm());
     return template.evaluate().setTitle("Wiz Sidekick OS").addMetaTag("viewport", "width=device-width, initial-scale=1").setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);
   }
   function include(filename) {

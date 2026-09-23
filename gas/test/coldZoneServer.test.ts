@@ -42,6 +42,8 @@ const H = vi.hoisted(() => ({
   coldThrows: false,
   // Operation labels `errorLog.recordError` was handed this run.
   recorded: [] as string[],
+  // What `durablyPeek` finds stored, by namespace — empty means every entry is cold.
+  peek: new Map<string, unknown>(),
 }));
 
 // Sheets/Drive never load: this file is about the read model, and api.ts's import graph reaches
@@ -59,6 +61,7 @@ vi.mock("../src/server/sheetsDb", () => ({
 vi.mock("../src/server/serverCache", () => ({
   BUILD_ID: "test",
   cached: (_ns: string, _params: unknown, compute: () => unknown) => compute(),
+  currentStamp: () => "stamp-" + H.version,
   dataVersion: () => String(H.version),
 }));
 
@@ -69,6 +72,7 @@ vi.mock("../src/server/readModelStore", () => ({
     if (ns === "coldZone1" && H.coldThrows) throw new Error("Erreur liée à un service : Drive");
     return compute();
   },
+  durablyPeek: (ns: string) => H.peek.get(ns),
   duringWarm: <T,>(fn: () => T): T => fn(),
   sweepReadModels: () => 0,
 }));
@@ -102,7 +106,7 @@ vi.mock("../src/server/errorLog", () => ({
   recentErrors: () => [],
 }));
 
-import { getColdZonePage, getExecutivePage } from "../src/server/api";
+import { bootstrapIfWarm, getColdZonePage, getExecutivePage, warmReadModels } from "../src/server/api";
 
 // --------------------------------------------------------------------------------------- //
 //  Fixture
@@ -158,6 +162,7 @@ beforeEach(() => {
   H.keys.length = 0;
   H.coldThrows = false;
   H.recorded.length = 0;
+  H.peek.clear();
   H.ruleVersion = 0;
   H.cold = { mode: "fixed", coldAfterDays: 90, targetSharePct: 20, floorDays: 14 };
   H.base = [
@@ -501,21 +506,112 @@ describe("the Executive slice", () => {
 // ordering.
 //
 // THE WARM RUNS UNDER A 270 s BUDGET and stops warming when it runs out, so ORDER IS PRIORITY.
-// The cold zone is the newest and heaviest model here; warmed in the middle of the per-scope loop
-// it could spend what was left and leave `bootstrap`, `mttr` or `program` cold — models every page
-// has depended on for far longer. Cold `bootstrapCore8` is the expensive one: it recomputes
-// `findings.currentScan()` against Drive on every load.
-describe("the cold zone is warmed last", () => {
+// This spec used to pin the cold zone LAST, so the heaviest model could only ever starve itself.
+// Measured after a deploy (every key cold at once), that order warmed 19 of 27 entries and left
+// the Display subset's `insights` and both cold-zone entries cold — exactly what the default
+// landing page reads — and Executive took 85–150 s to open. The order now follows what
+// `getExecutivePage` reads, in the scope the pages request, and a pass that runs out hands the
+// rest to a continuation trigger instead of leaving it cold for four hours.
+describe("the warm order puts the landing page first", () => {
   const API_SRC = readFileSync(new URL("../src/server/api.ts", import.meta.url), "utf8");
   const labels = [...API_SRC.matchAll(/\n\s*warm\("([A-Za-z]+)"/g)].map((m) => m[1]);
+  const EXECUTIVE = ["mttr", "mttrByDomain", "execWeekTrend", "execSevCounts", "insights", "coldZone"];
+  const REST = ["mttrTrend", "program", "programTrend", "mttrBySupportGroup", "grouping",
+    "attribution", "scanHistory", "storageStats"];
 
   it("has the warm set this spec thinks it has", () => {
-    expect(labels).toContain("bootstrap");
-    expect(labels).toContain("program");
-    expect(labels.filter((l) => l === "coldZone")).toHaveLength(1);
+    expect([...labels].sort()).toEqual(["bootstrap", ...EXECUTIVE, ...REST].sort());
   });
 
-  it("names it after every other model in the function", () => {
-    expect(labels[labels.length - 1]).toBe("coldZone");
+  it("warms the bootstrap core first", () => {
+    expect(labels[0]).toBe("bootstrap");
+  });
+
+  it("warms everything Executive reads before anything it does not", () => {
+    const lastExec = Math.max(...EXECUTIVE.map((l) => labels.indexOf(l)));
+    const firstRest = Math.min(...REST.map((l) => labels.indexOf(l)));
+    expect(lastExec).toBeLessThan(firstRest);
+  });
+
+  it("warms the Display-severity scope the pages send before the all-severities one", () => {
+    const subset = API_SRC.indexOf("scopes.push([...display]);");
+    const all = API_SRC.indexOf("scopes.push(null);");
+    expect(subset).toBeGreaterThan(-1);
+    expect(all).toBeGreaterThan(subset);
+  });
+
+  it("hands a cut-out pass to a continuation instead of dropping it", () => {
+    expect(API_SRC).toMatch(/if \(skipped\) \{\s*scheduleWarmContinuation\(/);
+  });
+});
+
+// --------------------------------------------------------------------------------------- //
+//  A warm that runs out of budget continues on a trigger
+// --------------------------------------------------------------------------------------- //
+//
+// Measured after a deploy: one pass warmed 19 of 27 entries and left the rest cold until the
+// next scheduled fire, four hours later. The cut-out now schedules a one-shot hop instead —
+// bounded, so an entry that alone outlasts the execution cap cannot chain forever.
+describe("a warm that runs out of budget", () => {
+  type Trig = { handler: string; after: number };
+  let triggers: Trig[];
+  let store: Map<string, string>;
+
+  beforeEach(() => {
+    triggers = [];
+    store = new Map();
+    vi.stubGlobal("ScriptApp", {
+      newTrigger: (handler: string) => ({
+        timeBased: () => ({ after: (after: number) => ({ create: () => { triggers.push({ handler, after }); } }) }),
+      }),
+      getProjectTriggers: () => triggers.map((t) => ({ getHandlerFunction: () => t.handler, t })),
+      deleteTrigger: (x: { t: Trig }) => { triggers = triggers.filter((t) => t !== x.t); },
+    });
+    vi.stubGlobal("CacheService", {
+      getScriptCache: () => ({
+        get: (k: string) => store.get(k) ?? null,
+        put: (k: string, v: string) => { store.set(k, v); },
+        remove: (k: string) => { store.delete(k); },
+      }),
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  it("computes nothing past the budget and schedules exactly one continuation", () => {
+    warmReadModels(0);
+    expect(H.keys).toEqual([]);
+    expect(triggers).toEqual([{ handler: "trigger_continueWarm", after: 1_000 }]);
+    warmReadModels(0); // the next cut-out replaces the pending hop rather than stacking one
+    expect(triggers).toHaveLength(1);
+  });
+
+  it("stops chaining after six hops on the same cache stamp", () => {
+    for (let i = 0; i < 6; i++) warmReadModels(0);
+    expect(triggers).toHaveLength(1);
+    triggers = [];
+    warmReadModels(0);
+    expect(triggers).toEqual([]);
+  });
+});
+
+// --------------------------------------------------------------------------------------- //
+//  doGet's inline bootstrap never computes
+// --------------------------------------------------------------------------------------- //
+//
+// Computing a cold core inside doGet held the page for ~20 s after a deploy, blank where the
+// boot splash used to be. The inline path peeks; cold means the client asks over the RPC.
+describe("bootstrapIfWarm", () => {
+  it("fails soft on a cold core without computing it", () => {
+    const res = bootstrapIfWarm();
+    expect(res.ok).toBe(false);
+    expect(res.errorKind).toBe("cold");
+    expect(H.keys.filter((k) => k.ns.startsWith("bootstrapCore"))).toEqual([]);
+    expect(H.recorded).toEqual([]); // cold is not a fault; nothing lands in the error log
+  });
+
+  it("peeks at the same entry the RPC path reads", () => {
+    const API_SRC = readFileSync(new URL("../src/server/api.ts", import.meta.url), "utf8");
+    expect(API_SRC).toContain("durablyCached(BOOT_CORE, bootCoreParams(), bootstrapCore)");
+    expect(API_SRC).toContain("durablyPeek(BOOT_CORE, bootCoreParams())");
   });
 });
