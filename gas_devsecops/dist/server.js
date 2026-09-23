@@ -33,613 +33,41 @@ var Server = (() => {
     welcome: () => welcome_exports
   });
 
-  // src/server/main.ts
-  function doGet(_e) {
-    const template = HtmlService.createTemplateFromFile("index");
-    return template.evaluate().setTitle("Wiz Sidekick DevSecOps").addMetaTag("viewport", "width=device-width, initial-scale=1").setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);
-  }
-  function include(filename) {
-    return HtmlService.createHtmlOutputFromFile(filename).getContent();
-  }
-
-  // src/server/access.ts
-  var access_exports = {};
-  __export(access_exports, {
-    ACCESS_MAX_BYTES: () => ACCESS_MAX_BYTES,
-    ACCESS_MAX_ENTRIES: () => ACCESS_MAX_ENTRIES,
-    PRODUCT: () => PRODUCT,
-    __resetMemosForTest: () => __resetMemosForTest,
-    accountChooserUrl: () => accountChooserUrl,
-    assertAllowed: () => assertAllowed,
-    canEditAdmins: () => canEditAdmins,
-    canEditUsers: () => canEditUsers,
-    check: () => check,
-    contactMailto: () => contactMailto,
-    currentAdmins: () => currentAdmins,
-    currentUsers: () => currentUsers,
-    decide: () => decide,
-    deniedHtml: () => deniedHtml,
-    deniedPage: () => deniedPage,
-    denyResult: () => denyResult,
-    isOwner: () => isOwner,
-    ownerDomain: () => ownerDomain,
-    ownerEmail: () => ownerEmail,
-    parseAllowlist: () => parseAllowlist,
-    serviceUrl: () => serviceUrl,
-    validateAddresses: () => validateAddresses
+  // src/server/api.ts
+  var api_exports = {};
+  __export(api_exports, {
+    bootstrap: () => bootstrap,
+    cancelSync: () => cancelSync2,
+    compact: () => compact,
+    deleteScans: () => deleteScans2,
+    domainMapHealth: () => domainMapHealth,
+    getAccess: () => getAccess,
+    getChartsBundle: () => getChartsBundle,
+    getExecutivePage: () => getExecutivePage,
+    getExportCsv: () => getExportCsv,
+    getJobStatus: () => getJobStatus,
+    getMttrPage: () => getMttrPage,
+    getProgramPage: () => getProgramPage,
+    getRecentErrors: () => getRecentErrors,
+    getRegisterPage: () => getRegisterPage,
+    getRegisterRows: () => getRegisterRows,
+    getReposPage: () => getReposPage,
+    getScanHistory: () => getScanHistory,
+    getSecretsPage: () => getSecretsPage,
+    getSettings: () => getSettings,
+    getSettingsImpact: () => getSettingsImpact,
+    getStorageStats: () => getStorageStats,
+    putSettings: () => putSettings,
+    refreshDomains: () => refreshDomains,
+    resetLedger: () => resetLedger2,
+    runSync: () => runSync,
+    saveAccess: () => saveAccess,
+    saveAdmins: () => saveAdmins,
+    saveHubUrl: () => saveHubUrl,
+    setDomainView: () => setDomainView,
+    setProjectView: () => setProjectView,
+    testWizConnection: () => testWizConnection
   });
-
-  // src/server/pageShell.ts
-  var MARK_COMPACT_VIEWBOX = "12.2 8.4 52.7 74";
-  var MARK_COMPACT_RATIO = 52.7 / 74;
-  var MARK_ORBIT = "M47.64 80.58A32.1 32.1 0 0 1 17.83 52.04M19.82 36.92A32.1 32.1 0 0 1 54.21 16.76";
-  var MARK_ORBIT_WIDTH = 2.41;
-  var MARK_NODES = [[17.22, 44.33, 4.41], [45.96, 16.55, 7.56]];
-  var MARK_SHIELD = "M48.56 29.88C52.79 34.78 58.69 37.87 64.33 37.81C64.44 45.48 63.64 48.51 62.11 51.96C61.32 54.62 56.36 61.55 48.56 64.18C40.76 61.55 35.8 54.62 35.01 51.96C33.48 48.51 32.68 45.48 32.79 37.81C38.43 37.87 44.33 34.78 48.56 29.88Z";
-  var MARK_CHECK = "M42.3 48.81 46.19 52.7 54.89 43.99";
-  var MARK_CHECK_WIDTH = 3.04;
-  function brandMarkSvg(height) {
-    const width = Math.round(height * MARK_COMPACT_RATIO * 100) / 100;
-    const nodes = MARK_NODES.map(
-      (n2) => '<circle cx="' + n2[0] + '" cy="' + n2[1] + '" r="' + n2[2] + '" fill="#0a0a0a"/>'
-    ).join("");
-    return [
-      '<svg class="brand-mark" viewBox="' + MARK_COMPACT_VIEWBOX + '"',
-      ' width="' + width + '" height="' + height + '" focusable="false" aria-hidden="true">',
-      '<path d="' + MARK_ORBIT + '" fill="none" stroke="#0a0a0a" stroke-width="' + MARK_ORBIT_WIDTH,
-      '" stroke-linecap="round"/>',
-      nodes,
-      '<path d="' + MARK_SHIELD + '" fill="#0a0a0a"/>',
-      '<path d="' + MARK_CHECK + '" fill="none" stroke="#ffffff" stroke-width="' + MARK_CHECK_WIDTH,
-      '" stroke-linecap="round" stroke-linejoin="round"/>',
-      "</svg>"
-    ].join("");
-  }
-  function escapeHtml(s2) {
-    return s2.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-  }
-  function primaryAction(href, label) {
-    return '<a class="btn" target="_top" href="' + escapeHtml(href) + '">' + escapeHtml(label) + "</a>";
-  }
-  function secondaryAction(href, label) {
-    return '<a class="alt" target="_top" href="' + escapeHtml(href) + '">' + escapeHtml(label) + "</a>";
-  }
-  function cardPage(spec) {
-    const body = spec.paragraphs.map((p) => "<p>" + p + "</p>").join("");
-    const actions = spec.actions ? '<div class="actions">' + spec.actions + "</div>" : "";
-    return [
-      '<!DOCTYPE html><html><head><meta charset="utf-8">',
-      // Every link on these pages has to break out of the HtmlService sandbox iframe; the app's
-      // own index.html carries the same base tag for the same reason.
-      '<base target="_top">',
-      '<meta name="viewport" content="width=device-width, initial-scale=1">',
-      "<title>" + escapeHtml(spec.title) + "</title><style>",
-      "*{box-sizing:border-box}",
-      // --surface / --ink, and the same --font stack tokens.css:254 carries.
-      "body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;",
-      "background:#f8f8fa;color:#171717;",
-      "font-family:-apple-system,BlinkMacSystemFont,Inter,'Segoe UI',Roboto,'Helvetica Neue',sans-serif}",
-      // --page on --hairline at --radius-xl.
-      ".card{max-width:32rem;margin:24px;padding:32px;background:#ffffff;border:1px solid #e6e6e9;",
-      "border-radius:14px;box-shadow:0 1px 2px rgba(10,10,10,.06)}",
-      ".lockup{display:flex;align-items:center;gap:8px;margin:0 0 16px}",
-      // Mirrors .appbar-name in base.css (600 / --fs-lead 16px / -0.02em / --ink) so the
-      // wordmark is the same object here as in the header, not a near-miss of it.
-      ".lockup span{font-weight:600;font-size:1rem;letter-spacing:-0.02em;color:#171717;",
-      "white-space:nowrap}",
-      ".brand-mark{display:block;flex:0 0 auto}",
-      "h1{font-size:20px;line-height:1.3;margin:0 0 12px;font-weight:650}",
-      // --text-2, the same alpha the app's prose carries.
-      "p{margin:0 0 8px;font-size:14px;line-height:1.6;color:rgba(0,0,0,.65)}",
-      ".actions{margin-top:24px;display:flex;align-items:center;gap:20px;flex-wrap:wrap}",
-      // Graphite, not the accent: DESIGN.md keeps the accent for data, focus and links, and
-      // fills the one committing action with --graphite / --on-graphite.
-      ".btn{display:inline-flex;align-items:center;min-height:36px;padding:6px 14px;",
-      "border-radius:8px;background:#0a0a0a;color:#fafafa;font-size:14px;font-weight:500;",
-      "text-decoration:none}",
-      ".btn:hover{background:#27272a}",
-      // --accent-text. NOT --accent: this page is plain text on white, where #ffcb13 is 1.52:1.
-      // pages are the product's front door and must read as this product.
-      "a{color:#7c4a0a}",
-      // Never remove: CLAUDE.md names the focus-ring rules load-bearing, and these pages are
-      // reachable by keyboard only.
-      "a:focus-visible{outline:2px solid #7c4a0a;outline-offset:2px;border-radius:4px}",
-      '</style></head><body><main class="card">',
-      // The same lockup as the app header — mark then wordmark — so the door and the room
-      // behind it are recognisably one product.
-      '<div class="lockup">' + brandMarkSvg(22) + "<span>" + escapeHtml(spec.eyebrow) + "</span></div>",
-      "<h1>" + escapeHtml(spec.heading) + "</h1>",
-      body,
-      actions,
-      "</main></body></html>"
-    ].join("");
-  }
-
-  // src/server/props.ts
-  var PROP_KEYS = {
-    wizApiToken: "WIZ_API_TOKEN",
-    wizClientId: "WIZ_CLIENT_ID",
-    wizClientSecret: "WIZ_CLIENT_SECRET",
-    wizAuthUrl: "WIZ_AUTH_URL",
-    wizApiUrl: "WIZ_API_URL",
-    wizProjectIdV2: "WIZ_PROJECT_ID_V2",
-    // The repository tag key whose VALUE is a business domain. Unset means `domain`, the bare
-    // word this tenant writes on the repository itself; a property rather than a setting because
-    // it is a fact about the tenant's tagging convention, not a per-operator view preference —
-    // the same tier WIZ_PROJECT_ID_V2 sits in. See domain/domainTag.ts for why it is resolved on
-    // READ: a key baked into the ledger would make correcting a typo cost a full re-scan. A
-    // tenant whose repositories carry the namespaced `Wiz/Domain` instead sets it here.
-    wizDomainTagKey: "WIZ_DOMAIN_TAG_KEY",
-    // The repository tag key whose VALUE is where that repository is in its life
-    // (`END_OF_LIFE`, `IN_PRODUCTION`, …). Unset means `lifecycle`. Same tier and same reasoning
-    // as the domain key above it, and the same standing of default: BOTH tags reach Wiz from the
-    // tenant's own catalogue under whatever key that system already used, so both defaults are
-    // GUESSES rather than facts about Wiz. That is why `repoTags.mapHealth` publishes how many
-    // repositories each key actually placed, SEPARATELY — a wrong guess shows up as a zero on the
-    // Settings page rather than as a quietly empty column, and the two keys can be wrong alone.
-    wizLifecycleTagKey: "WIZ_LIFECYCLE_TAG_KEY",
-    // The two keys the PERSISTED repository-tag map was actually built under, as
-    // `{"domain":"…","lifecycle":"…"}`, written by repoTags.setRepoTagMap on every refresh.
-    //
-    // WHY A MAP NEEDS TO REMEMBER ITS OWN PROVENANCE. `domain_map` outlives the keys above: a
-    // deployment that changes one — or takes a release that changes a DEFAULT — keeps serving
-    // values fetched under the old key until somebody presses Refresh, and the Settings card
-    // would print the new key over them and look perfectly healthy. That is the one picture
-    // `settings.js`'s domainMapCard exists to prevent, so the card compares the two and says so.
-    // Not a column on the tab: this is one fact about the whole map, not a fact per token.
-    repoTagMapKeys: "REPO_TAG_MAP_KEYS",
-    ledgerSpreadsheetId: "LEDGER_SPREADSHEET_ID",
-    archiveFolderId: "ARCHIVE_FOLDER_ID",
-    // Who may open the web app, on top of the deployment's own "anyone within <domain>" fence.
-    // Comma/semicolon/whitespace-separated addresses; see server/access.ts. Unset means nobody —
-    // the guard fails closed, and the owner is allowed by identity rather than by this list.
-    allowedUsers: "ALLOWED_USERS",
-    // Who may EDIT that list. Owner-only to change; see the admin-tier note in access.ts.
-    // Unset means owner-only, like its sibling. Admins are allowed into the app by being admins,
-    // not by also appearing in ALLOWED_USERS.
-    allowedAdmins: "ALLOWED_ADMINS",
-    // The /exec URL of the hub launcher (gas_hub), pasted from its Deploy > Manage deployments,
-    // or set from Settings > System. A PROPERTY RATHER THAN CODE for the platform's reason, not
-    // a preference: `ScriptApp.getService().getUrl()` answers for this deployment only and there
-    // is no API that hands one script project another's web-app URL, so somebody has to paste
-    // it. Unset (or blank) is legal and means the header simply carries no hub button — see
-    // server/hubUrl.ts, which owns the shape of the value and refuses anything that is neither a
-    // script.google.com URL nor a loopback dev-harness one.
-    urlHub: "URL_HUB",
-    // The warm schedule setup() last installed, as a signature string. A ClockTrigger exposes
-    // its handler and nothing else, so this is the ONLY way to tell a correctly-scheduled set
-    // from one an older deployment left behind. Written by setup(), read by setup().
-    warmTriggerSchedule: "WARM_TRIGGER_SCHEDULE",
-    /**
-     * When a real token exchange plus a real query last succeeded.
-     *
-     * Separate from the credentials themselves because they answer different questions.
-     * `hasWizCredentials()` says three strings are non-empty; this says the tenant accepted
-     * them, once, at a time you can read. A Settings page that showed only the first was
-     * inviting the stronger reading with nothing to support it.
-     */
-    wizVerifiedAt: "WIZ_VERIFIED_AT"
-  };
-  var DEFAULT_WIZ_AUTH_URL = "https://auth.app.wiz.io/oauth/token";
-  function getProp(key) {
-    return PropertiesService.getScriptProperties().getProperty(key);
-  }
-  function requireProp(key) {
-    const v = getProp(key);
-    if (!v) {
-      throw new Error(`Missing Script Property ${key} \u2014 run setup() or set it in Project Settings > Script Properties.`);
-    }
-    return v;
-  }
-  function setProp(key, value) {
-    PropertiesService.getScriptProperties().setProperty(key, value);
-  }
-  function deleteProp(key) {
-    PropertiesService.getScriptProperties().deleteProperty(key);
-  }
-  function projectScope() {
-    const id = getProp(PROP_KEYS.wizProjectIdV2);
-    return id && id.trim() ? [id.trim()] : null;
-  }
-  function resolveWizAuthMode(token, clientId, clientSecret) {
-    if (token && token.trim()) return "token";
-    if (clientId && clientSecret) return "oauth";
-    return null;
-  }
-  function hasWizCredentials() {
-    return Boolean(getProp(PROP_KEYS.wizApiUrl)) && resolveWizAuthMode(
-      getProp(PROP_KEYS.wizApiToken),
-      getProp(PROP_KEYS.wizClientId),
-      getProp(PROP_KEYS.wizClientSecret)
-    ) !== null;
-  }
-
-  // src/server/access.ts
-  var PRODUCT = "Wiz Sidekick DevSecOps";
-  var DENIAL_MESSAGE = {
-    anonymous: "This app can't identify your Google account. It only recognizes accounts signed in to the same Google Workspace domain as the app.",
-    "not-listed": "Your account isn't on this app's access list."
-  };
-  function parseAllowlist(raw) {
-    if (!raw) return [];
-    const seen = {};
-    const out = [];
-    for (const part of raw.split(/[,;\s]+/)) {
-      const email = part.trim().toLowerCase();
-      if (!email || seen[email]) continue;
-      seen[email] = true;
-      out.push(email);
-    }
-    return out;
-  }
-  var ACCESS_MAX_BYTES = 8e3;
-  var ACCESS_MAX_ENTRIES = 500;
-  function validateAddresses(raw) {
-    const list = parseAllowlist(Array.isArray(raw) ? raw.join("\n") : String(raw != null ? raw : ""));
-    const bad = list.filter((e) => e.indexOf("@") < 0);
-    if (bad.length) throw new Error(`Not an email address: ${bad.join(", ")}`);
-    if (list.length > ACCESS_MAX_ENTRIES) {
-      throw new Error(`Too many people (${list.length}); the limit is ${ACCESS_MAX_ENTRIES}.`);
-    }
-    const bytes = list.join(",").length;
-    if (bytes > ACCESS_MAX_BYTES) {
-      throw new Error(`That list is too long to store (${bytes} of ${ACCESS_MAX_BYTES} bytes).`);
-    }
-    return list;
-  }
-  function decide(active, owner, raw, adminsRaw) {
-    const email = (active || "").trim();
-    const key = email.toLowerCase();
-    if (!key) return { allowed: false, email: "", reason: "anonymous" };
-    const ownerKey = (owner || "").trim().toLowerCase();
-    if (ownerKey && ownerKey === key) return { allowed: true, email, reason: "owner" };
-    if (parseAllowlist(adminsRaw != null ? adminsRaw : null).indexOf(key) >= 0) {
-      return { allowed: true, email, reason: "admin" };
-    }
-    return parseAllowlist(raw).indexOf(key) >= 0 ? { allowed: true, email, reason: "listed" } : { allowed: false, email, reason: "not-listed" };
-  }
-  var memo;
-  function check() {
-    if (memo === void 0) {
-      memo = decide(
-        Session.getActiveUser().getEmail(),
-        Session.getEffectiveUser().getEmail(),
-        getProp(PROP_KEYS.allowedUsers),
-        getProp(PROP_KEYS.allowedAdmins)
-      );
-    }
-    return memo;
-  }
-  function __resetMemosForTest() {
-    memo = void 0;
-  }
-  function logDenial(op, d) {
-    console.log(JSON.stringify({ access: "denied", op, reason: d.reason, email: d.email }));
-  }
-  function denyResult(op) {
-    const d = check();
-    if (d.allowed) return null;
-    logDenial(op, d);
-    const env = {
-      ok: false,
-      error: DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"],
-      errorKind: "forbidden"
-    };
-    const who = ownerEmail().trim();
-    if (who) {
-      env.contact = who;
-      env.contactUrl = contactMailto(who);
-    }
-    return env;
-  }
-  function assertAllowed(op) {
-    const d = check();
-    if (d.allowed) return;
-    logDenial(op, d);
-    throw new Error(DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"]);
-  }
-  function contactMailto(email) {
-    return "mailto:" + email.trim() + "?subject=" + encodeURIComponent("Access to " + PRODUCT);
-  }
-  function deniedHtml(d, switchUrl, contact) {
-    const detail = d.email ? "You're signed in as <strong>" + escapeHtml(d.email) + "</strong>." : "This app can't see which Google account you're signed in as, which happens when the account isn't in the same Google Workspace domain as the app.";
-    const who = (contact || "").trim();
-    const ask = who ? 'If you think you should have access, contact <a href="' + escapeHtml(contactMailto(who)) + '">' + escapeHtml(who) + "</a>." : (
-      // No owner address resolved — never render "contact:" with nothing after it.
-      "If you think you should have access, ask whoever runs this dashboard to add you."
-    );
-    return cardPage({
-      title: PRODUCT,
-      eyebrow: PRODUCT,
-      heading: "You don't have access to this app.",
-      paragraphs: [detail, ask],
-      actions: switchUrl ? secondaryAction(switchUrl, "Switch Google account") : ""
-    });
-  }
-  function deniedPage() {
-    const d = check();
-    if (d.allowed) return null;
-    logDenial("doGet", d);
-    return HtmlService.createHtmlOutput(deniedHtml(d, accountChooserUrl(), ownerEmail())).setTitle(PRODUCT).addMetaTag("viewport", "width=device-width, initial-scale=1");
-  }
-  function serviceUrl() {
-    try {
-      return ScriptApp.getService().getUrl() || null;
-    } catch (_e) {
-      return null;
-    }
-  }
-  function accountChooserUrl() {
-    const url = serviceUrl();
-    return url ? "https://accounts.google.com/AccountChooser?continue=" + encodeURIComponent(url) : null;
-  }
-  function ownerEmail() {
-    return Session.getEffectiveUser().getEmail() || "";
-  }
-  function isOwner() {
-    return check().reason === "owner";
-  }
-  function canEditUsers() {
-    const r = check().reason;
-    return r === "owner" || r === "admin";
-  }
-  function canEditAdmins() {
-    return isOwner();
-  }
-  function currentUsers() {
-    return parseAllowlist(getProp(PROP_KEYS.allowedUsers));
-  }
-  function currentAdmins() {
-    return parseAllowlist(getProp(PROP_KEYS.allowedAdmins));
-  }
-  function ownerDomain() {
-    const at = ownerEmail().lastIndexOf("@");
-    return at >= 0 ? ownerEmail().slice(at + 1).toLowerCase() : "";
-  }
-
-  // src/server/welcome.ts
-  var welcome_exports = {};
-  __export(welcome_exports, {
-    ENTER_PARAM: () => ENTER_PARAM,
-    ENTRY_TTL_SEC: () => ENTRY_TTL_SEC,
-    gate: () => gate,
-    welcomeHtml: () => welcomeHtml
-  });
-
-  // ../gas_shared/domain/sha1.ts
-  function utf8Bytes(s2) {
-    const out = [];
-    for (let i = 0; i < s2.length; i++) {
-      let c = s2.charCodeAt(i);
-      if (c < 128) {
-        out.push(c);
-      } else if (c < 2048) {
-        out.push(192 | c >> 6, 128 | c & 63);
-      } else if (c >= 55296 && c <= 56319 && i + 1 < s2.length) {
-        const c2 = s2.charCodeAt(++i);
-        const cp = 65536 + (c - 55296 << 10) + (c2 - 56320);
-        out.push(
-          240 | cp >> 18,
-          128 | cp >> 12 & 63,
-          128 | cp >> 6 & 63,
-          128 | cp & 63
-        );
-      } else {
-        out.push(224 | c >> 12, 128 | c >> 6 & 63, 128 | c & 63);
-      }
-    }
-    return out;
-  }
-  function rotl(n2, b) {
-    return (n2 << b | n2 >>> 32 - b) >>> 0;
-  }
-  function sha1Hex(input) {
-    const bytes = utf8Bytes(input);
-    const bitLen = bytes.length * 8;
-    bytes.push(128);
-    while (bytes.length % 64 !== 56) bytes.push(0);
-    const hi = Math.floor(bitLen / 4294967296);
-    bytes.push(hi >>> 24 & 255, hi >>> 16 & 255, hi >>> 8 & 255, hi & 255);
-    bytes.push(bitLen >>> 24 & 255, bitLen >>> 16 & 255, bitLen >>> 8 & 255, bitLen & 255);
-    let h0 = 1732584193, h1 = 4023233417, h2 = 2562383102, h3 = 271733878, h4 = 3285377520;
-    const w = new Array(80);
-    for (let block = 0; block < bytes.length; block += 64) {
-      for (let i = 0; i < 16; i++) {
-        w[i] = (bytes[block + i * 4] << 24 | bytes[block + i * 4 + 1] << 16 | bytes[block + i * 4 + 2] << 8 | bytes[block + i * 4 + 3]) >>> 0;
-      }
-      for (let i = 16; i < 80; i++) {
-        w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
-      }
-      let a = h0, b = h1, c = h2, d = h3, e = h4;
-      for (let i = 0; i < 80; i++) {
-        let f, k;
-        if (i < 20) {
-          f = b & c | ~b & d;
-          k = 1518500249;
-        } else if (i < 40) {
-          f = b ^ c ^ d;
-          k = 1859775393;
-        } else if (i < 60) {
-          f = b & c | b & d | c & d;
-          k = 2400959708;
-        } else {
-          f = b ^ c ^ d;
-          k = 3395469782;
-        }
-        const t = rotl(a, 5) + f + e + k + w[i] >>> 0;
-        e = d;
-        d = c;
-        c = rotl(b, 30);
-        b = a;
-        a = t;
-      }
-      h0 = h0 + a >>> 0;
-      h1 = h1 + b >>> 0;
-      h2 = h2 + c >>> 0;
-      h3 = h3 + d >>> 0;
-      h4 = h4 + e >>> 0;
-    }
-    return [h0, h1, h2, h3, h4].map((x) => x.toString(16).padStart(8, "0")).join("");
-  }
-
-  // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "2a1fff1248f8" : "dev";
-
-  // src/server/serverCache.ts
-  var VERSION_PROP = "DATA_VERSION";
-  var WIZ_VERSION_PROP = "WIZ_DATA_VERSION";
-  var KEY_PREFIX = `wsk.${BUILD_ID}`;
-  var CHUNK_CHARS = 9e4;
-  var DEFAULT_TTL_SEC = 21600;
-  var dataVersionMemo;
-  var wizDataVersionMemo;
-  var configStampMemo;
-  function __resetMemosForTest2() {
-    dataVersionMemo = void 0;
-    wizDataVersionMemo = void 0;
-    configStampMemo = void 0;
-  }
-  function dataVersion() {
-    var _a;
-    if (dataVersionMemo === void 0) dataVersionMemo = (_a = getProp(VERSION_PROP)) != null ? _a : "0";
-    return dataVersionMemo;
-  }
-  function nextVersion(prev) {
-    const now = String(Date.now());
-    const [prevMs, prevN] = String(prev != null ? prev : "").split(".");
-    return prevMs === now ? `${now}.${(Number(prevN) || 0) + 1}` : `${now}.0`;
-  }
-  function bumpDataVersion() {
-    setProp(VERSION_PROP, nextVersion(getProp(VERSION_PROP)));
-    __resetMemosForTest2();
-  }
-  function bumpWizDataVersion() {
-    setProp(WIZ_VERSION_PROP, nextVersion(getProp(WIZ_VERSION_PROP)));
-    __resetMemosForTest2();
-  }
-  function paramsHash(params) {
-    return sha1Hex(JSON.stringify(params != null ? params : null)).slice(0, 12);
-  }
-  function cacheKey(name, params, version) {
-    return `${KEY_PREFIX}:${version}:${name}:${paramsHash(params)}`;
-  }
-  function configStamp() {
-    var _a;
-    if (configStampMemo === void 0) {
-      configStampMemo = sha1Hex(`${(_a = getProp(PROP_KEYS.wizProjectIdV2)) != null ? _a : ""}`).slice(0, 8);
-    }
-    return configStampMemo;
-  }
-  function currentStamp(version) {
-    return `${KEY_PREFIX}:${version != null ? version : dataVersion()}.${configStamp()}`;
-  }
-  function splitChunks(s2, size = CHUNK_CHARS) {
-    const out = [];
-    for (let i = 0; i < s2.length; i += size) out.push(s2.slice(i, i + size));
-    return out.length ? out : [""];
-  }
-  function cachePutJson(key, value, ttlSec = DEFAULT_TTL_SEC, chunkChars = CHUNK_CHARS) {
-    const json = JSON.stringify(value);
-    const gz = Utilities.gzip(Utilities.newBlob(json, "application/json"));
-    const packed = Utilities.base64Encode(gz.getBytes());
-    const chunks = splitChunks(packed, chunkChars);
-    const entries = { [`${key}:m`]: String(chunks.length) };
-    chunks.forEach((c, i) => {
-      entries[`${key}:${i}`] = c;
-    });
-    CacheService.getScriptCache().putAll(entries, ttlSec);
-  }
-  function cacheGetJson(key) {
-    const cache = CacheService.getScriptCache();
-    const meta = cache.get(`${key}:m`);
-    if (!meta) return void 0;
-    const n2 = Number(meta);
-    if (!Number.isInteger(n2) || n2 < 1) return void 0;
-    const names = [];
-    for (let i = 0; i < n2; i++) names.push(`${key}:${i}`);
-    const got = cache.getAll(names);
-    let packed = "";
-    for (const name of names) {
-      const chunk = got[name];
-      if (chunk === void 0 || chunk === null) return void 0;
-      packed += chunk;
-    }
-    const bytes = Utilities.base64Decode(packed);
-    const json = Utilities.ungzip(
-      Utilities.newBlob(bytes, "application/x-gzip")
-    ).getDataAsString("UTF-8");
-    return JSON.parse(json);
-  }
-  function cached(name, params, compute, ttlSec = DEFAULT_TTL_SEC, version) {
-    let key = null;
-    try {
-      key = cacheKey(name, params, `${version != null ? version : dataVersion()}.${configStamp()}`);
-      const hit = cacheGetJson(key);
-      if (hit !== void 0) return hit;
-    } catch (e) {
-      console.warn(`Cache read failed for ${name}: ${e}`);
-      key = null;
-    }
-    const value = compute();
-    if (key) {
-      try {
-        cachePutJson(key, value, ttlSec);
-      } catch (e) {
-        console.warn(`Cache write failed for ${name}: ${e}`);
-      }
-    }
-    return value;
-  }
-
-  // src/server/welcome.ts
-  var ENTRY_TTL_SEC = 21600;
-  var ENTER_PARAM = "enter";
-  function markerKey(email) {
-    return "entered:" + paramsHash(email.trim().toLowerCase());
-  }
-  function markEntered(email) {
-    try {
-      CacheService.getScriptCache().put(markerKey(email), "1", ENTRY_TTL_SEC);
-    } catch (e) {
-      console.warn("entry marker write failed: " + e);
-    }
-  }
-  function hasEntered(email) {
-    try {
-      return CacheService.getScriptCache().get(markerKey(email)) !== null;
-    } catch (e) {
-      console.warn("entry marker read failed: " + e);
-      return true;
-    }
-  }
-  function welcomeHtml(email, continueUrl, switchUrl) {
-    return cardPage({
-      title: PRODUCT,
-      eyebrow: PRODUCT,
-      heading: "You're signed in.",
-      paragraphs: [
-        "This dashboard will open as <strong>" + escapeHtml(email) + "</strong>.",
-        "If that isn't the account you meant to use, switch before you continue \u2014 the register you see depends on which account opens it."
-      ],
-      actions: primaryAction(continueUrl, "Continue") + (switchUrl ? secondaryAction(switchUrl, "Switch Google account") : "")
-    });
-  }
-  function gate(e) {
-    const email = check().email;
-    if (!email) return null;
-    if (e && e.parameter && e.parameter[ENTER_PARAM]) {
-      markEntered(email);
-      return null;
-    }
-    if (hasEntered(email)) {
-      markEntered(email);
-      return null;
-    }
-    const url = serviceUrl();
-    if (!url) return null;
-    const continueUrl = url + (url.indexOf("?") >= 0 ? "&" : "?") + ENTER_PARAM + "=1";
-    return HtmlService.createHtmlOutput(welcomeHtml(email, continueUrl, accountChooserUrl())).setTitle(PRODUCT).addMetaTag("viewport", "width=device-width, initial-scale=1");
-  }
 
   // src/domain/config.ts
   var SEVERITY_ORDER = [
@@ -954,6 +382,82 @@ var Server = (() => {
     const url = raw.trim();
     if (!url) return null;
     return isLegal(url) ? url : null;
+  }
+
+  // ../gas_shared/domain/sha1.ts
+  function utf8Bytes(s2) {
+    const out = [];
+    for (let i = 0; i < s2.length; i++) {
+      let c = s2.charCodeAt(i);
+      if (c < 128) {
+        out.push(c);
+      } else if (c < 2048) {
+        out.push(192 | c >> 6, 128 | c & 63);
+      } else if (c >= 55296 && c <= 56319 && i + 1 < s2.length) {
+        const c2 = s2.charCodeAt(++i);
+        const cp = 65536 + (c - 55296 << 10) + (c2 - 56320);
+        out.push(
+          240 | cp >> 18,
+          128 | cp >> 12 & 63,
+          128 | cp >> 6 & 63,
+          128 | cp & 63
+        );
+      } else {
+        out.push(224 | c >> 12, 128 | c >> 6 & 63, 128 | c & 63);
+      }
+    }
+    return out;
+  }
+  function rotl(n2, b) {
+    return (n2 << b | n2 >>> 32 - b) >>> 0;
+  }
+  function sha1Hex(input) {
+    const bytes = utf8Bytes(input);
+    const bitLen = bytes.length * 8;
+    bytes.push(128);
+    while (bytes.length % 64 !== 56) bytes.push(0);
+    const hi = Math.floor(bitLen / 4294967296);
+    bytes.push(hi >>> 24 & 255, hi >>> 16 & 255, hi >>> 8 & 255, hi & 255);
+    bytes.push(bitLen >>> 24 & 255, bitLen >>> 16 & 255, bitLen >>> 8 & 255, bitLen & 255);
+    let h0 = 1732584193, h1 = 4023233417, h2 = 2562383102, h3 = 271733878, h4 = 3285377520;
+    const w = new Array(80);
+    for (let block = 0; block < bytes.length; block += 64) {
+      for (let i = 0; i < 16; i++) {
+        w[i] = (bytes[block + i * 4] << 24 | bytes[block + i * 4 + 1] << 16 | bytes[block + i * 4 + 2] << 8 | bytes[block + i * 4 + 3]) >>> 0;
+      }
+      for (let i = 16; i < 80; i++) {
+        w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+      }
+      let a = h0, b = h1, c = h2, d = h3, e = h4;
+      for (let i = 0; i < 80; i++) {
+        let f, k;
+        if (i < 20) {
+          f = b & c | ~b & d;
+          k = 1518500249;
+        } else if (i < 40) {
+          f = b ^ c ^ d;
+          k = 1859775393;
+        } else if (i < 60) {
+          f = b & c | b & d | c & d;
+          k = 2400959708;
+        } else {
+          f = b ^ c ^ d;
+          k = 3395469782;
+        }
+        const t = rotl(a, 5) + f + e + k + w[i] >>> 0;
+        e = d;
+        d = c;
+        c = rotl(b, 30);
+        b = a;
+        a = t;
+      }
+      h0 = h0 + a >>> 0;
+      h1 = h1 + b >>> 0;
+      h2 = h2 + c >>> 0;
+      h3 = h3 + d >>> 0;
+      h4 = h4 + e >>> 0;
+    }
+    return [h0, h1, h2, h3, h4].map((x) => x.toString(16).padStart(8, "0")).join("");
   }
 
   // src/domain/metrics.ts
@@ -3823,6 +3327,431 @@ var Server = (() => {
     return (settings == null ? void 0 : settings.excludeEndOfLifeFromMttr) === true;
   }
 
+  // src/domain/projectScope.ts
+  function parseProjects(projectsJson2) {
+    if (!projectsJson2) return [];
+    let parsed;
+    try {
+      parsed = JSON.parse(projectsJson2);
+    } catch {
+      return [];
+    }
+    if (!Array.isArray(parsed)) return [];
+    const out = [];
+    for (const p of parsed) {
+      if (p === null || typeof p !== "object" || Array.isArray(p)) continue;
+      const rec = p;
+      const slug = rec["slug"];
+      const name = rec["name"];
+      if (typeof slug !== "string" || slug === "" || typeof name !== "string") continue;
+      if (isOrgWideProject(slug, name)) continue;
+      const ref = { slug, name };
+      if (typeof rec["isFolder"] === "boolean") ref.isFolder = rec["isFolder"];
+      out.push(ref);
+    }
+    return out;
+  }
+  function projectCatalogue(rows) {
+    const bySlug = /* @__PURE__ */ new Map();
+    const parentsOf = /* @__PURE__ */ new Map();
+    for (const row of rows) {
+      const projects = parseProjects(row.projects_json);
+      const groups = projects.filter((p) => isSupportGroup(p.name)).map((p) => p.name);
+      for (const p of projects) {
+        if (groups.length && isProduct(p.name)) {
+          let parents = parentsOf.get(p.slug);
+          if (!parents) {
+            parents = /* @__PURE__ */ new Set();
+            parentsOf.set(p.slug, parents);
+          }
+          for (const g of groups) parents.add(g);
+        }
+        const seen = bySlug.get(p.slug);
+        if (!seen) {
+          bySlug.set(p.slug, {
+            slug: p.slug,
+            name: p.name,
+            isFolder: p.isFolder,
+            findings: 1,
+            supportGroup: null,
+            supportGroupCount: 0
+          });
+          continue;
+        }
+        seen.findings += 1;
+        if (seen.isFolder === void 0 && p.isFolder !== void 0) seen.isFolder = p.isFolder;
+      }
+    }
+    for (const [slug, parents] of parentsOf) {
+      const entry = bySlug.get(slug);
+      if (!entry) continue;
+      entry.supportGroupCount = parents.size;
+      entry.supportGroup = parents.size === 1 ? [...parents][0] : null;
+    }
+    return [...bySlug.values()].sort(
+      (a, b) => a.isFolder === b.isFolder ? a.name.localeCompare(b.name) : a.isFolder ? -1 : 1
+    );
+  }
+  function inProject(projects, slug) {
+    if (!slug) return false;
+    return (projects != null ? projects : []).some((p) => p.slug === slug);
+  }
+  function unattributedCount(rows) {
+    let count = 0;
+    for (const row of rows) {
+      if (parseProjects(row.projects_json).length === 0) count += 1;
+    }
+    return count;
+  }
+  function attachProjectGrain(rows) {
+    for (const row of rows) {
+      const projects = parseProjects(row.projects_json);
+      const group = supportGroupOf(projects, row.owner_path);
+      const product = productOf(projects, row.owner_project);
+      if (group !== null) row._supportGroup = group;
+      if (product !== null) row._product = product;
+      const groups = projects.filter((p) => isSupportGroup(p.name)).length;
+      if (groups > 1) row._supportGroups = groups;
+    }
+  }
+
+  // src/domain/domainScope.ts
+  var DOMAIN_FIELD = "_domain";
+  function domainOfRow(row) {
+    const v = row ? row._domain : null;
+    return typeof v === "string" ? v.trim() : "";
+  }
+  function domainCatalogue(rows) {
+    const byName = /* @__PURE__ */ new Map();
+    for (const row of rows) {
+      const name = domainOfRow(row);
+      if (!name) continue;
+      const seen = byName.get(name);
+      if (seen) seen.findings += 1;
+      else byName.set(name, { name, findings: 1 });
+    }
+    return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }
+  function inDomain(row, name) {
+    if (!name) return false;
+    return domainOfRow(row) === name;
+  }
+  function noDomainCount(rows) {
+    let count = 0;
+    for (const row of rows) {
+      if (!domainOfRow(row)) count += 1;
+    }
+    return count;
+  }
+
+  // src/domain/domainTag.ts
+  var DEFAULT_DOMAIN_TAG_KEY = "domain";
+  function resolveDomainTagKey(configured) {
+    const k = (configured != null ? configured : "").trim();
+    return k || DEFAULT_DOMAIN_TAG_KEY;
+  }
+  function recordTags(record) {
+    if (!record) return {};
+    return { ...tagsJsonColumn(record), ...carriedTags(record) };
+  }
+  function tagsJsonColumn(record) {
+    const out = {};
+    const raw = record["tags_json"];
+    if (typeof raw === "string" && raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          for (const [k, v] of Object.entries(parsed)) out[k] = v;
+        }
+      } catch {
+      }
+    }
+    return out;
+  }
+  function carriedTags(record) {
+    if (!record) return {};
+    const out = {};
+    for (const asset of ["vulnerableAsset", "resource"]) {
+      const node = record[asset];
+      if (node && typeof node === "object" && !Array.isArray(node)) {
+        const nested = node["tags"];
+        if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+          for (const [k, v] of Object.entries(nested)) out[k] = v;
+        }
+      }
+      const flatBag = record[`${asset}.tags`];
+      if (flatBag && typeof flatBag === "object" && !Array.isArray(flatBag)) {
+        for (const [k, v] of Object.entries(flatBag)) out[k] = v;
+      }
+      const prefix = `${asset}.tags.`;
+      for (const [k, v] of Object.entries(record)) {
+        if (k.startsWith(prefix)) out[k.slice(prefix.length)] = v;
+      }
+    }
+    addTagList(out, record["tags"]);
+    for (const [k, v] of Object.entries(record)) {
+      if (k.startsWith("tag:")) out[k.slice(4)] = v;
+    }
+    return out;
+  }
+  function addTagList(out, tags) {
+    if (Array.isArray(tags)) {
+      for (const t of tags) {
+        if (!t || typeof t !== "object" || Array.isArray(t)) continue;
+        const key = t["key"];
+        if (!present(key)) continue;
+        out[String(key)] = t["value"];
+      }
+      return;
+    }
+    if (tags && typeof tags === "object") {
+      for (const [k, v] of Object.entries(tags)) out[k] = v;
+    }
+  }
+  function tagValue(tags, key) {
+    const want = String(key != null ? key : "").trim().toLowerCase();
+    if (!want || !tags) return null;
+    for (const [k, v] of Object.entries(tags)) {
+      if (String(k).trim().toLowerCase() !== want) continue;
+      if (!present(v)) continue;
+      const value = String(v).trim();
+      if (value) return value;
+    }
+    return null;
+  }
+  function domainOfTags(tags, key = DEFAULT_DOMAIN_TAG_KEY) {
+    return tagValue(tags, key);
+  }
+
+  // src/domain/lifecycleTag.ts
+  var DEFAULT_LIFECYCLE_TAG_KEY = "lifecycle";
+  function resolveLifecycleTagKey(configured) {
+    const k = (configured != null ? configured : "").trim();
+    return k || DEFAULT_LIFECYCLE_TAG_KEY;
+  }
+  var LIFECYCLE_FIELD = "_lifecycle";
+  function lifecycleOfTags(tags, key = DEFAULT_LIFECYCLE_TAG_KEY) {
+    return tagValue(tags, key);
+  }
+  var END_OF_LIFE_VALUES = ["END_OF_LIFE"];
+  function foldLifecycle(value) {
+    if (typeof value !== "string") return "";
+    return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+  }
+  var END_OF_LIFE_KEYS = new Set(END_OF_LIFE_VALUES.map(foldLifecycle));
+  function isEndOfLife(value) {
+    const folded = foldLifecycle(value);
+    return folded !== "" && END_OF_LIFE_KEYS.has(folded);
+  }
+
+  // src/server/props.ts
+  var PROP_KEYS = {
+    wizApiToken: "WIZ_API_TOKEN",
+    wizClientId: "WIZ_CLIENT_ID",
+    wizClientSecret: "WIZ_CLIENT_SECRET",
+    wizAuthUrl: "WIZ_AUTH_URL",
+    wizApiUrl: "WIZ_API_URL",
+    wizProjectIdV2: "WIZ_PROJECT_ID_V2",
+    // The repository tag key whose VALUE is a business domain. Unset means `domain`, the bare
+    // word this tenant writes on the repository itself; a property rather than a setting because
+    // it is a fact about the tenant's tagging convention, not a per-operator view preference —
+    // the same tier WIZ_PROJECT_ID_V2 sits in. See domain/domainTag.ts for why it is resolved on
+    // READ: a key baked into the ledger would make correcting a typo cost a full re-scan. A
+    // tenant whose repositories carry the namespaced `Wiz/Domain` instead sets it here.
+    wizDomainTagKey: "WIZ_DOMAIN_TAG_KEY",
+    // The repository tag key whose VALUE is where that repository is in its life
+    // (`END_OF_LIFE`, `IN_PRODUCTION`, …). Unset means `lifecycle`. Same tier and same reasoning
+    // as the domain key above it, and the same standing of default: BOTH tags reach Wiz from the
+    // tenant's own catalogue under whatever key that system already used, so both defaults are
+    // GUESSES rather than facts about Wiz. That is why `repoTags.mapHealth` publishes how many
+    // repositories each key actually placed, SEPARATELY — a wrong guess shows up as a zero on the
+    // Settings page rather than as a quietly empty column, and the two keys can be wrong alone.
+    wizLifecycleTagKey: "WIZ_LIFECYCLE_TAG_KEY",
+    // The two keys the PERSISTED repository-tag map was actually built under, as
+    // `{"domain":"…","lifecycle":"…"}`, written by repoTags.setRepoTagMap on every refresh.
+    //
+    // WHY A MAP NEEDS TO REMEMBER ITS OWN PROVENANCE. `domain_map` outlives the keys above: a
+    // deployment that changes one — or takes a release that changes a DEFAULT — keeps serving
+    // values fetched under the old key until somebody presses Refresh, and the Settings card
+    // would print the new key over them and look perfectly healthy. That is the one picture
+    // `settings.js`'s domainMapCard exists to prevent, so the card compares the two and says so.
+    // Not a column on the tab: this is one fact about the whole map, not a fact per token.
+    repoTagMapKeys: "REPO_TAG_MAP_KEYS",
+    ledgerSpreadsheetId: "LEDGER_SPREADSHEET_ID",
+    archiveFolderId: "ARCHIVE_FOLDER_ID",
+    // Who may open the web app, on top of the deployment's own "anyone within <domain>" fence.
+    // Comma/semicolon/whitespace-separated addresses; see server/access.ts. Unset means nobody —
+    // the guard fails closed, and the owner is allowed by identity rather than by this list.
+    allowedUsers: "ALLOWED_USERS",
+    // Who may EDIT that list. Owner-only to change; see the admin-tier note in access.ts.
+    // Unset means owner-only, like its sibling. Admins are allowed into the app by being admins,
+    // not by also appearing in ALLOWED_USERS.
+    allowedAdmins: "ALLOWED_ADMINS",
+    // The /exec URL of the hub launcher (gas_hub), pasted from its Deploy > Manage deployments,
+    // or set from Settings > System. A PROPERTY RATHER THAN CODE for the platform's reason, not
+    // a preference: `ScriptApp.getService().getUrl()` answers for this deployment only and there
+    // is no API that hands one script project another's web-app URL, so somebody has to paste
+    // it. Unset (or blank) is legal and means the header simply carries no hub button — see
+    // server/hubUrl.ts, which owns the shape of the value and refuses anything that is neither a
+    // script.google.com URL nor a loopback dev-harness one.
+    urlHub: "URL_HUB",
+    // The warm schedule setup() last installed, as a signature string. A ClockTrigger exposes
+    // its handler and nothing else, so this is the ONLY way to tell a correctly-scheduled set
+    // from one an older deployment left behind. Written by setup(), read by setup().
+    warmTriggerSchedule: "WARM_TRIGGER_SCHEDULE",
+    /**
+     * When a real token exchange plus a real query last succeeded.
+     *
+     * Separate from the credentials themselves because they answer different questions.
+     * `hasWizCredentials()` says three strings are non-empty; this says the tenant accepted
+     * them, once, at a time you can read. A Settings page that showed only the first was
+     * inviting the stronger reading with nothing to support it.
+     */
+    wizVerifiedAt: "WIZ_VERIFIED_AT"
+  };
+  var DEFAULT_WIZ_AUTH_URL = "https://auth.app.wiz.io/oauth/token";
+  function getProp(key) {
+    return PropertiesService.getScriptProperties().getProperty(key);
+  }
+  function requireProp(key) {
+    const v = getProp(key);
+    if (!v) {
+      throw new Error(`Missing Script Property ${key} \u2014 run setup() or set it in Project Settings > Script Properties.`);
+    }
+    return v;
+  }
+  function setProp(key, value) {
+    PropertiesService.getScriptProperties().setProperty(key, value);
+  }
+  function deleteProp(key) {
+    PropertiesService.getScriptProperties().deleteProperty(key);
+  }
+  function projectScope() {
+    const id = getProp(PROP_KEYS.wizProjectIdV2);
+    return id && id.trim() ? [id.trim()] : null;
+  }
+  function resolveWizAuthMode(token, clientId, clientSecret) {
+    if (token && token.trim()) return "token";
+    if (clientId && clientSecret) return "oauth";
+    return null;
+  }
+  function hasWizCredentials() {
+    return Boolean(getProp(PROP_KEYS.wizApiUrl)) && resolveWizAuthMode(
+      getProp(PROP_KEYS.wizApiToken),
+      getProp(PROP_KEYS.wizClientId),
+      getProp(PROP_KEYS.wizClientSecret)
+    ) !== null;
+  }
+
+  // ../gas_shared/server/buildInfo.ts
+  var BUILD_ID = true ? "bac1692f899b" : "dev";
+
+  // src/server/serverCache.ts
+  var VERSION_PROP = "DATA_VERSION";
+  var WIZ_VERSION_PROP = "WIZ_DATA_VERSION";
+  var KEY_PREFIX = `wsk.${BUILD_ID}`;
+  var CHUNK_CHARS = 9e4;
+  var DEFAULT_TTL_SEC = 21600;
+  var dataVersionMemo;
+  var wizDataVersionMemo;
+  var configStampMemo;
+  function __resetMemosForTest() {
+    dataVersionMemo = void 0;
+    wizDataVersionMemo = void 0;
+    configStampMemo = void 0;
+  }
+  function dataVersion() {
+    var _a;
+    if (dataVersionMemo === void 0) dataVersionMemo = (_a = getProp(VERSION_PROP)) != null ? _a : "0";
+    return dataVersionMemo;
+  }
+  function nextVersion(prev) {
+    const now = String(Date.now());
+    const [prevMs, prevN] = String(prev != null ? prev : "").split(".");
+    return prevMs === now ? `${now}.${(Number(prevN) || 0) + 1}` : `${now}.0`;
+  }
+  function bumpDataVersion() {
+    setProp(VERSION_PROP, nextVersion(getProp(VERSION_PROP)));
+    __resetMemosForTest();
+  }
+  function bumpWizDataVersion() {
+    setProp(WIZ_VERSION_PROP, nextVersion(getProp(WIZ_VERSION_PROP)));
+    __resetMemosForTest();
+  }
+  function paramsHash(params) {
+    return sha1Hex(JSON.stringify(params != null ? params : null)).slice(0, 12);
+  }
+  function cacheKey(name, params, version) {
+    return `${KEY_PREFIX}:${version}:${name}:${paramsHash(params)}`;
+  }
+  function configStamp() {
+    var _a;
+    if (configStampMemo === void 0) {
+      configStampMemo = sha1Hex(`${(_a = getProp(PROP_KEYS.wizProjectIdV2)) != null ? _a : ""}`).slice(0, 8);
+    }
+    return configStampMemo;
+  }
+  function currentStamp(version) {
+    return `${KEY_PREFIX}:${version != null ? version : dataVersion()}.${configStamp()}`;
+  }
+  function splitChunks(s2, size = CHUNK_CHARS) {
+    const out = [];
+    for (let i = 0; i < s2.length; i += size) out.push(s2.slice(i, i + size));
+    return out.length ? out : [""];
+  }
+  function cachePutJson(key, value, ttlSec = DEFAULT_TTL_SEC, chunkChars = CHUNK_CHARS) {
+    const json = JSON.stringify(value);
+    const gz = Utilities.gzip(Utilities.newBlob(json, "application/json"));
+    const packed = Utilities.base64Encode(gz.getBytes());
+    const chunks = splitChunks(packed, chunkChars);
+    const entries = { [`${key}:m`]: String(chunks.length) };
+    chunks.forEach((c, i) => {
+      entries[`${key}:${i}`] = c;
+    });
+    CacheService.getScriptCache().putAll(entries, ttlSec);
+  }
+  function cacheGetJson(key) {
+    const cache = CacheService.getScriptCache();
+    const meta = cache.get(`${key}:m`);
+    if (!meta) return void 0;
+    const n2 = Number(meta);
+    if (!Number.isInteger(n2) || n2 < 1) return void 0;
+    const names = [];
+    for (let i = 0; i < n2; i++) names.push(`${key}:${i}`);
+    const got = cache.getAll(names);
+    let packed = "";
+    for (const name of names) {
+      const chunk = got[name];
+      if (chunk === void 0 || chunk === null) return void 0;
+      packed += chunk;
+    }
+    const bytes = Utilities.base64Decode(packed);
+    const json = Utilities.ungzip(
+      Utilities.newBlob(bytes, "application/x-gzip")
+    ).getDataAsString("UTF-8");
+    return JSON.parse(json);
+  }
+  function cached(name, params, compute, ttlSec = DEFAULT_TTL_SEC, version) {
+    let key = null;
+    try {
+      key = cacheKey(name, params, `${version != null ? version : dataVersion()}.${configStamp()}`);
+      const hit = cacheGetJson(key);
+      if (hit !== void 0) return hit;
+    } catch (e) {
+      console.warn(`Cache read failed for ${name}: ${e}`);
+      key = null;
+    }
+    const value = compute();
+    if (key) {
+      try {
+        cachePutJson(key, value, ttlSec);
+      } catch (e) {
+        console.warn(`Cache write failed for ${name}: ${e}`);
+      }
+    }
+    return value;
+  }
+
   // src/server/sheetsDb.ts
   var TABS = {
     // The ledger. One row per finding_key, MERGED per scan and never truncated — the only
@@ -4281,193 +4210,6 @@ var Server = (() => {
     return ledgerSpreadsheet().getSheets().reduce((acc, sh) => acc + sh.getMaxRows() * sh.getMaxColumns(), 0);
   }
 
-  // src/server/setup.ts
-  var DAILY_SYNC_HANDLER = "trigger_dailySync";
-  var DAILY_SYNC_HOUR = DEFAULT_SYNC_HOUR;
-  var WARM_HANDLER = "trigger_warmReadModels";
-  var WARM_READY_BY_HOURS = [9, 13, 17];
-  var WARM_TRIGGER_HOURS = WARM_READY_BY_HOURS.map((h) => (h + 23) % 24);
-  var WARM_TRIGGER_NEAR_MINUTE = 30;
-  var WARM_TRIGGER_TZ = "Europe/Paris";
-  function warmTriggerSchedule() {
-    return `${WARM_TRIGGER_TZ}|${WARM_TRIGGER_HOURS.join(",")}@${WARM_TRIGGER_NEAR_MINUTE}`;
-  }
-  function setup() {
-    const notes = [];
-    let ssId = getProp(PROP_KEYS.ledgerSpreadsheetId);
-    let ss;
-    if (ssId) {
-      ss = SpreadsheetApp.openById(ssId);
-      notes.push(`Ledger: reusing ${ssId}`);
-    } else {
-      ss = SpreadsheetApp.create("Wiz Sidekick DevSecOps \u2014 ledger");
-      ssId = ss.getId();
-      setProp(PROP_KEYS.ledgerSpreadsheetId, ssId);
-      notes.push(`Ledger: created ${ssId}`);
-    }
-    ensureTabs(ss);
-    notes.push("Tabs: ensured (headers appended where missing)");
-    let folderId = getProp(PROP_KEYS.archiveFolderId);
-    if (!folderId) {
-      folderId = DriveApp.createFolder("Wiz Sidekick DevSecOps \u2014 archive").getId();
-      setProp(PROP_KEYS.archiveFolderId, folderId);
-      notes.push(`Archive: created ${folderId}`);
-    } else {
-      notes.push(`Archive: reusing ${folderId}`);
-    }
-    if (!getProp(PROP_KEYS.wizAuthUrl)) setProp(PROP_KEYS.wizAuthUrl, DEFAULT_WIZ_AUTH_URL);
-    if (!getProp(PROP_KEYS.allowedUsers)) {
-      const owner = Session.getEffectiveUser().getEmail();
-      if (owner) {
-        setProp(PROP_KEYS.allowedUsers, owner);
-        notes.push(`Access: seeded ALLOWED_USERS with ${owner}`);
-      }
-    }
-    const dailyExisting = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === DAILY_SYNC_HANDLER);
-    if (!dailyExisting.length) {
-      ScriptApp.newTrigger(DAILY_SYNC_HANDLER).timeBased().everyDays(1).atHour(DAILY_SYNC_HOUR).create();
-      notes.push(`Daily sync trigger: installed (${DAILY_SYNC_HOUR}:00 script-local)`);
-    } else {
-      notes.push("Daily sync trigger: already installed");
-    }
-    const warmExisting = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === WARM_HANDLER);
-    const wantSchedule = warmTriggerSchedule();
-    if (warmExisting.length === WARM_TRIGGER_HOURS.length && getProp(PROP_KEYS.warmTriggerSchedule) === wantSchedule) {
-      notes.push(`Warm triggers: already installed (${wantSchedule})`);
-    } else {
-      for (const t of warmExisting) ScriptApp.deleteTrigger(t);
-      for (const hour of WARM_TRIGGER_HOURS) {
-        ScriptApp.newTrigger(WARM_HANDLER).timeBased().everyDays(1).atHour(hour).nearMinute(WARM_TRIGGER_NEAR_MINUTE).inTimezone(WARM_TRIGGER_TZ).create();
-      }
-      setProp(PROP_KEYS.warmTriggerSchedule, wantSchedule);
-      notes.push(
-        `Warm triggers: installed ${WARM_TRIGGER_HOURS.length}x daily, warm by ${WARM_READY_BY_HOURS.map((h) => `${h}:00`).join(", ")} ${WARM_TRIGGER_TZ}` + (warmExisting.length ? ` (replaced ${warmExisting.length})` : "")
-      );
-    }
-    return notes.join("\n");
-  }
-
-  // src/server/jobsStore.ts
-  var ACTIVE_JOB_PROP = "ACTIVE_JOB_ID";
-  function normError(v) {
-    const s2 = v == null ? "" : String(v).trim();
-    return s2 === "" || s2 === "null" || s2 === "undefined" ? null : s2;
-  }
-  function newJobId(kind, now) {
-    return `${kind}-${nowIso(now).replace(/[:]/g, "")}`;
-  }
-  function createJob(row, now) {
-    const full = { ...row, started_at: nowIso(now), updated_at: nowIso(now) };
-    appendRows(TABS.jobs, [full]);
-    setProp(ACTIVE_JOB_PROP, full.job_id);
-    return full;
-  }
-  function updateJob(jobId, patch, now) {
-    updateWhere(TABS.jobs, "job_id", jobId, {
-      ...patch,
-      updated_at: nowIso(now)
-    });
-    if (patch.phase && isTerminalPhase(patch.phase)) deleteProp(ACTIVE_JOB_PROP);
-  }
-  function rowToJob(r) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
-    return {
-      job_id: String((_a = r["job_id"]) != null ? _a : ""),
-      kind: (_b = r["kind"]) != null ? _b : "sync",
-      phase: (_c = r["phase"]) != null ? _c : "FAILED",
-      scan_id: (_d = r["scan_id"]) != null ? _d : null,
-      scope: (_e = r["scope"]) != null ? _e : null,
-      cursor: (_f = r["cursor"]) != null ? _f : null,
-      page: Number((_g = r["page"]) != null ? _g : 0),
-      findings_so_far: Number((_h = r["findings_so_far"]) != null ? _h : 0),
-      page_size: Number((_i = r["page_size"]) != null ? _i : 0),
-      total_count: Number((_j = r["total_count"]) != null ? _j : 0),
-      params_json: (_k = r["params_json"]) != null ? _k : null,
-      journal_ref: (_l = r["journal_ref"]) != null ? _l : null,
-      error: normError(r["error"]),
-      started_at: String((_m = r["started_at"]) != null ? _m : ""),
-      updated_at: String((_n = r["updated_at"]) != null ? _n : "")
-    };
-  }
-  function listJobs() {
-    return readAll(TABS.jobs).map(rowToJob);
-  }
-  var JOB_TAIL_ROWS = 25;
-  function getJob(jobId) {
-    var _a, _b;
-    const recent = readTail(TABS.jobs, JOB_TAIL_ROWS).map(rowToJob);
-    return (_b = (_a = recent.find((j) => j.job_id === jobId)) != null ? _a : listJobs().find((j) => j.job_id === jobId)) != null ? _b : null;
-  }
-  var TERMINAL = ["DONE", "FAILED", "CANCELLED"];
-  function isTerminalPhase(phase) {
-    return TERMINAL.includes(phase);
-  }
-  var STALE_JOB_MS = 30 * 6e4;
-  function isStaleJob(job, now) {
-    const updated = parseTs(job.updated_at);
-    if (updated === null) return false;
-    return (now != null ? now : Date.now()) - updated >= STALE_JOB_MS;
-  }
-  function clearTriggers(handlerName) {
-    for (const t of ScriptApp.getProjectTriggers()) {
-      if (t.getHandlerFunction() === handlerName) ScriptApp.deleteTrigger(t);
-    }
-  }
-  var CONTINUE_HANDLERS = {
-    sync: "trigger_continueSync"
-  };
-  var WATCHDOG_HANDLERS = {
-    sync: "trigger_watchdogSync"
-  };
-  function reclaimIfStale(job, now) {
-    if (!isStaleJob(job, now)) return false;
-    for (const handler of [CONTINUE_HANDLERS[job.kind], WATCHDOG_HANDLERS[job.kind]]) {
-      if (handler) clearTriggers(handler);
-    }
-    updateJob(job.job_id, {
-      phase: "FAILED",
-      error: "Reclaimed: the job stalled with no progress."
-    });
-    return true;
-  }
-  function activeJob() {
-    var _a;
-    if (!getProp(ACTIVE_JOB_PROP)) return null;
-    const job = (_a = listJobs().find((j) => !isTerminalPhase(j.phase))) != null ? _a : null;
-    if (!job) deleteProp(ACTIVE_JOB_PROP);
-    return job;
-  }
-
-  // src/server/settingsStore.ts
-  var settingsMemo;
-  function loadSettings() {
-    var _a, _b;
-    if (settingsMemo) return settingsMemo;
-    const raw = {};
-    for (const row of readAll(TABS.settings)) {
-      const key = String((_a = row.key) != null ? _a : "");
-      if (!key) continue;
-      try {
-        raw[key] = JSON.parse(String((_b = row.value_json) != null ? _b : "null"));
-      } catch {
-        raw[key] = null;
-      }
-    }
-    settingsMemo = cleanSettings(raw);
-    return settingsMemo;
-  }
-  function saveSettings(next) {
-    const cleaned = cleanSettings(next);
-    const rows = Object.entries(cleaned).map(([key, value]) => ({
-      key,
-      value_json: JSON.stringify(value)
-    }));
-    overwrite(TABS.settings, rows);
-    settingsMemo = cleaned;
-    bumpDataVersion();
-    return cleaned;
-  }
-
   // src/server/wizQueries.ts
   var PAGE_SIZE = 500;
   var PAGE_SIZE_FALLBACK = 250;
@@ -4920,329 +4662,6 @@ var Server = (() => {
     forgetToken();
     const page = fetchPage(scope, {}, { pageSize: 1, pageNumber: 0 });
     return { ok: true, rows: page.totalCount };
-  }
-
-  // src/server/diagnostics.ts
-  function reporter() {
-    const lines = [];
-    return {
-      line(m) {
-        console.log(m);
-        lines.push(m);
-      },
-      text() {
-        return lines.join("\n");
-      }
-    };
-  }
-  function deploymentDiagnostic() {
-    const r = reporter();
-    const ok = (label, value) => r.line(`  OK    ${label}: ${value}`);
-    const bad = (label, value) => r.line(`  FAIL  ${label}: ${value}`);
-    r.line(`Wiz Sidekick DevSecOps \u2014 deployment diagnostic`);
-    r.line(`Build ${BUILD_ID}, schema v${SCHEMA_VERSION}`);
-    r.line("");
-    const ssId = getProp(PROP_KEYS.ledgerSpreadsheetId);
-    if (ssId) {
-      try {
-        const ss = ledgerSpreadsheet();
-        ok("Ledger spreadsheet", `${ss.getName()} (${ssId})`);
-        for (const tab of Object.values(TABS)) {
-          const rows = dataRowCount(tab);
-          r.line(`        ${tab}: ${rows} row${rows === 1 ? "" : "s"}`);
-        }
-        ok("Cells used", String(cellCount()));
-      } catch (e) {
-        bad("Ledger spreadsheet", `${ssId} exists as a property but could not be opened: ${e}`);
-      }
-    } else {
-      bad("Ledger spreadsheet", "not created \u2014 run setup()");
-    }
-    const folderId = getProp(PROP_KEYS.archiveFolderId);
-    if (folderId) ok("Archive folder", folderId);
-    else bad("Archive folder", "not created \u2014 run setup()");
-    if (hasWizCredentials()) ok("Wiz credentials", "present");
-    else bad("Wiz credentials", "absent \u2014 set WIZ_API_TOKEN, or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET");
-    const users = getProp(PROP_KEYS.allowedUsers);
-    if (users) ok("Allowlist", `${users.split(/[,;\s]+/).filter(Boolean).length} address(es)`);
-    else bad("Allowlist", "empty \u2014 the app is owner-only until ALLOWED_USERS is set");
-    const s2 = loadSettings();
-    ok("Scopes collected", s2.scopes.join(", ") || "(none)");
-    ok("Scopes available", SCOPES.join(", "));
-    for (const scope of SCOPES) {
-      ok(`Severities requested (${scope})`, s2.fetchSeverities[scope].join(", ") || "(all)");
-    }
-    r.line("");
-    const daily = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === "trigger_dailyScan").length;
-    if (daily) ok("Daily scan trigger", `installed (${daily})`);
-    else bad("Daily scan trigger", "not installed \u2014 run setup()");
-    const job = activeJob();
-    if (job) {
-      ok("Scan in flight", `${job.job_id} \u2014 ${job.phase}${job.scope ? ` (${job.scope})` : ""}`);
-      r.line(`        page ${job.page}, ${job.findings_so_far} finding(s) so far`);
-      if (isStaleJob(job)) {
-        bad("  heartbeat", "silent for over 30 minutes \u2014 run resetStuckJob() from the editor");
-      }
-    } else {
-      ok("Scan in flight", "none");
-    }
-    const verified = getProp(PROP_KEYS.wizVerifiedAt);
-    if (verified) ok("Credentials last verified", verified);
-    else bad("Credentials last verified", "never \u2014 the tenant has not accepted them yet");
-    return r.text();
-  }
-
-  // src/server/api.ts
-  var api_exports = {};
-  __export(api_exports, {
-    bootstrap: () => bootstrap,
-    cancelSync: () => cancelSync2,
-    compact: () => compact,
-    deleteScans: () => deleteScans2,
-    domainMapHealth: () => domainMapHealth,
-    getAccess: () => getAccess,
-    getChartsBundle: () => getChartsBundle,
-    getExecutivePage: () => getExecutivePage,
-    getExportCsv: () => getExportCsv,
-    getJobStatus: () => getJobStatus,
-    getMttrPage: () => getMttrPage,
-    getProgramPage: () => getProgramPage,
-    getRecentErrors: () => getRecentErrors,
-    getRegisterPage: () => getRegisterPage,
-    getRegisterRows: () => getRegisterRows,
-    getReposPage: () => getReposPage,
-    getScanHistory: () => getScanHistory,
-    getSecretsPage: () => getSecretsPage,
-    getSettings: () => getSettings,
-    getSettingsImpact: () => getSettingsImpact,
-    getStorageStats: () => getStorageStats,
-    putSettings: () => putSettings,
-    refreshDomains: () => refreshDomains,
-    resetLedger: () => resetLedger2,
-    runSync: () => runSync,
-    saveAccess: () => saveAccess,
-    saveAdmins: () => saveAdmins,
-    saveHubUrl: () => saveHubUrl,
-    setDomainView: () => setDomainView,
-    setProjectView: () => setProjectView,
-    testWizConnection: () => testWizConnection
-  });
-
-  // src/domain/projectScope.ts
-  function parseProjects(projectsJson2) {
-    if (!projectsJson2) return [];
-    let parsed;
-    try {
-      parsed = JSON.parse(projectsJson2);
-    } catch {
-      return [];
-    }
-    if (!Array.isArray(parsed)) return [];
-    const out = [];
-    for (const p of parsed) {
-      if (p === null || typeof p !== "object" || Array.isArray(p)) continue;
-      const rec = p;
-      const slug = rec["slug"];
-      const name = rec["name"];
-      if (typeof slug !== "string" || slug === "" || typeof name !== "string") continue;
-      if (isOrgWideProject(slug, name)) continue;
-      const ref = { slug, name };
-      if (typeof rec["isFolder"] === "boolean") ref.isFolder = rec["isFolder"];
-      out.push(ref);
-    }
-    return out;
-  }
-  function projectCatalogue(rows) {
-    const bySlug = /* @__PURE__ */ new Map();
-    const parentsOf = /* @__PURE__ */ new Map();
-    for (const row of rows) {
-      const projects = parseProjects(row.projects_json);
-      const groups = projects.filter((p) => isSupportGroup(p.name)).map((p) => p.name);
-      for (const p of projects) {
-        if (groups.length && isProduct(p.name)) {
-          let parents = parentsOf.get(p.slug);
-          if (!parents) {
-            parents = /* @__PURE__ */ new Set();
-            parentsOf.set(p.slug, parents);
-          }
-          for (const g of groups) parents.add(g);
-        }
-        const seen = bySlug.get(p.slug);
-        if (!seen) {
-          bySlug.set(p.slug, {
-            slug: p.slug,
-            name: p.name,
-            isFolder: p.isFolder,
-            findings: 1,
-            supportGroup: null,
-            supportGroupCount: 0
-          });
-          continue;
-        }
-        seen.findings += 1;
-        if (seen.isFolder === void 0 && p.isFolder !== void 0) seen.isFolder = p.isFolder;
-      }
-    }
-    for (const [slug, parents] of parentsOf) {
-      const entry = bySlug.get(slug);
-      if (!entry) continue;
-      entry.supportGroupCount = parents.size;
-      entry.supportGroup = parents.size === 1 ? [...parents][0] : null;
-    }
-    return [...bySlug.values()].sort(
-      (a, b) => a.isFolder === b.isFolder ? a.name.localeCompare(b.name) : a.isFolder ? -1 : 1
-    );
-  }
-  function inProject(projects, slug) {
-    if (!slug) return false;
-    return (projects != null ? projects : []).some((p) => p.slug === slug);
-  }
-  function unattributedCount(rows) {
-    let count = 0;
-    for (const row of rows) {
-      if (parseProjects(row.projects_json).length === 0) count += 1;
-    }
-    return count;
-  }
-  function attachProjectGrain(rows) {
-    for (const row of rows) {
-      const projects = parseProjects(row.projects_json);
-      const group = supportGroupOf(projects, row.owner_path);
-      const product = productOf(projects, row.owner_project);
-      if (group !== null) row._supportGroup = group;
-      if (product !== null) row._product = product;
-      const groups = projects.filter((p) => isSupportGroup(p.name)).length;
-      if (groups > 1) row._supportGroups = groups;
-    }
-  }
-
-  // src/domain/domainScope.ts
-  var DOMAIN_FIELD = "_domain";
-  function domainOfRow(row) {
-    const v = row ? row._domain : null;
-    return typeof v === "string" ? v.trim() : "";
-  }
-  function domainCatalogue(rows) {
-    const byName = /* @__PURE__ */ new Map();
-    for (const row of rows) {
-      const name = domainOfRow(row);
-      if (!name) continue;
-      const seen = byName.get(name);
-      if (seen) seen.findings += 1;
-      else byName.set(name, { name, findings: 1 });
-    }
-    return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
-  }
-  function inDomain(row, name) {
-    if (!name) return false;
-    return domainOfRow(row) === name;
-  }
-  function noDomainCount(rows) {
-    let count = 0;
-    for (const row of rows) {
-      if (!domainOfRow(row)) count += 1;
-    }
-    return count;
-  }
-
-  // src/domain/domainTag.ts
-  var DEFAULT_DOMAIN_TAG_KEY = "domain";
-  function resolveDomainTagKey(configured) {
-    const k = (configured != null ? configured : "").trim();
-    return k || DEFAULT_DOMAIN_TAG_KEY;
-  }
-  function recordTags(record) {
-    if (!record) return {};
-    return { ...tagsJsonColumn(record), ...carriedTags(record) };
-  }
-  function tagsJsonColumn(record) {
-    const out = {};
-    const raw = record["tags_json"];
-    if (typeof raw === "string" && raw) {
-      try {
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-          for (const [k, v] of Object.entries(parsed)) out[k] = v;
-        }
-      } catch {
-      }
-    }
-    return out;
-  }
-  function carriedTags(record) {
-    if (!record) return {};
-    const out = {};
-    for (const asset of ["vulnerableAsset", "resource"]) {
-      const node = record[asset];
-      if (node && typeof node === "object" && !Array.isArray(node)) {
-        const nested = node["tags"];
-        if (nested && typeof nested === "object" && !Array.isArray(nested)) {
-          for (const [k, v] of Object.entries(nested)) out[k] = v;
-        }
-      }
-      const flatBag = record[`${asset}.tags`];
-      if (flatBag && typeof flatBag === "object" && !Array.isArray(flatBag)) {
-        for (const [k, v] of Object.entries(flatBag)) out[k] = v;
-      }
-      const prefix = `${asset}.tags.`;
-      for (const [k, v] of Object.entries(record)) {
-        if (k.startsWith(prefix)) out[k.slice(prefix.length)] = v;
-      }
-    }
-    addTagList(out, record["tags"]);
-    for (const [k, v] of Object.entries(record)) {
-      if (k.startsWith("tag:")) out[k.slice(4)] = v;
-    }
-    return out;
-  }
-  function addTagList(out, tags) {
-    if (Array.isArray(tags)) {
-      for (const t of tags) {
-        if (!t || typeof t !== "object" || Array.isArray(t)) continue;
-        const key = t["key"];
-        if (!present(key)) continue;
-        out[String(key)] = t["value"];
-      }
-      return;
-    }
-    if (tags && typeof tags === "object") {
-      for (const [k, v] of Object.entries(tags)) out[k] = v;
-    }
-  }
-  function tagValue(tags, key) {
-    const want = String(key != null ? key : "").trim().toLowerCase();
-    if (!want || !tags) return null;
-    for (const [k, v] of Object.entries(tags)) {
-      if (String(k).trim().toLowerCase() !== want) continue;
-      if (!present(v)) continue;
-      const value = String(v).trim();
-      if (value) return value;
-    }
-    return null;
-  }
-  function domainOfTags(tags, key = DEFAULT_DOMAIN_TAG_KEY) {
-    return tagValue(tags, key);
-  }
-
-  // src/domain/lifecycleTag.ts
-  var DEFAULT_LIFECYCLE_TAG_KEY = "lifecycle";
-  function resolveLifecycleTagKey(configured) {
-    const k = (configured != null ? configured : "").trim();
-    return k || DEFAULT_LIFECYCLE_TAG_KEY;
-  }
-  var LIFECYCLE_FIELD = "_lifecycle";
-  function lifecycleOfTags(tags, key = DEFAULT_LIFECYCLE_TAG_KEY) {
-    return tagValue(tags, key);
-  }
-  var END_OF_LIFE_VALUES = ["END_OF_LIFE"];
-  function foldLifecycle(value) {
-    if (typeof value !== "string") return "";
-    return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
-  }
-  var END_OF_LIFE_KEYS = new Set(END_OF_LIFE_VALUES.map(foldLifecycle));
-  function isEndOfLife(value) {
-    const folded = foldLifecycle(value);
-    return folded !== "" && END_OF_LIFE_KEYS.has(folded);
   }
 
   // src/server/wizReposQuery.ts
@@ -5913,6 +5332,383 @@ var Server = (() => {
     const url = normalizeHubUrl(next);
     setProp(PROP_KEYS.urlHub, url);
     return url;
+  }
+
+  // src/server/settingsStore.ts
+  var settingsMemo;
+  function loadSettings() {
+    var _a, _b;
+    if (settingsMemo) return settingsMemo;
+    const raw = {};
+    for (const row of readAll(TABS.settings)) {
+      const key = String((_a = row.key) != null ? _a : "");
+      if (!key) continue;
+      try {
+        raw[key] = JSON.parse(String((_b = row.value_json) != null ? _b : "null"));
+      } catch {
+        raw[key] = null;
+      }
+    }
+    settingsMemo = cleanSettings(raw);
+    return settingsMemo;
+  }
+  function saveSettings(next) {
+    const cleaned = cleanSettings(next);
+    const rows = Object.entries(cleaned).map(([key, value]) => ({
+      key,
+      value_json: JSON.stringify(value)
+    }));
+    overwrite(TABS.settings, rows);
+    settingsMemo = cleaned;
+    bumpDataVersion();
+    return cleaned;
+  }
+
+  // src/server/access.ts
+  var access_exports = {};
+  __export(access_exports, {
+    ACCESS_MAX_BYTES: () => ACCESS_MAX_BYTES,
+    ACCESS_MAX_ENTRIES: () => ACCESS_MAX_ENTRIES,
+    PRODUCT: () => PRODUCT,
+    __resetMemosForTest: () => __resetMemosForTest2,
+    accountChooserUrl: () => accountChooserUrl,
+    assertAllowed: () => assertAllowed,
+    canEditAdmins: () => canEditAdmins,
+    canEditUsers: () => canEditUsers,
+    check: () => check,
+    contactMailto: () => contactMailto,
+    currentAdmins: () => currentAdmins,
+    currentUsers: () => currentUsers,
+    decide: () => decide,
+    deniedHtml: () => deniedHtml,
+    deniedPage: () => deniedPage,
+    denyResult: () => denyResult,
+    isOwner: () => isOwner,
+    ownerDomain: () => ownerDomain,
+    ownerEmail: () => ownerEmail,
+    parseAllowlist: () => parseAllowlist,
+    serviceUrl: () => serviceUrl,
+    validateAddresses: () => validateAddresses
+  });
+
+  // src/server/pageShell.ts
+  var MARK_COMPACT_VIEWBOX = "12.2 8.4 52.7 74";
+  var MARK_COMPACT_RATIO = 52.7 / 74;
+  var MARK_ORBIT = "M47.64 80.58A32.1 32.1 0 0 1 17.83 52.04M19.82 36.92A32.1 32.1 0 0 1 54.21 16.76";
+  var MARK_ORBIT_WIDTH = 2.41;
+  var MARK_NODES = [[17.22, 44.33, 4.41], [45.96, 16.55, 7.56]];
+  var MARK_SHIELD = "M48.56 29.88C52.79 34.78 58.69 37.87 64.33 37.81C64.44 45.48 63.64 48.51 62.11 51.96C61.32 54.62 56.36 61.55 48.56 64.18C40.76 61.55 35.8 54.62 35.01 51.96C33.48 48.51 32.68 45.48 32.79 37.81C38.43 37.87 44.33 34.78 48.56 29.88Z";
+  var MARK_CHECK = "M42.3 48.81 46.19 52.7 54.89 43.99";
+  var MARK_CHECK_WIDTH = 3.04;
+  function brandMarkSvg(height) {
+    const width = Math.round(height * MARK_COMPACT_RATIO * 100) / 100;
+    const nodes = MARK_NODES.map(
+      (n2) => '<circle cx="' + n2[0] + '" cy="' + n2[1] + '" r="' + n2[2] + '" fill="#0a0a0a"/>'
+    ).join("");
+    return [
+      '<svg class="brand-mark" viewBox="' + MARK_COMPACT_VIEWBOX + '"',
+      ' width="' + width + '" height="' + height + '" focusable="false" aria-hidden="true">',
+      '<path d="' + MARK_ORBIT + '" fill="none" stroke="#0a0a0a" stroke-width="' + MARK_ORBIT_WIDTH,
+      '" stroke-linecap="round"/>',
+      nodes,
+      '<path d="' + MARK_SHIELD + '" fill="#0a0a0a"/>',
+      '<path d="' + MARK_CHECK + '" fill="none" stroke="#ffffff" stroke-width="' + MARK_CHECK_WIDTH,
+      '" stroke-linecap="round" stroke-linejoin="round"/>',
+      "</svg>"
+    ].join("");
+  }
+  function escapeHtml(s2) {
+    return s2.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function primaryAction(href, label) {
+    return '<a class="btn" target="_top" href="' + escapeHtml(href) + '">' + escapeHtml(label) + "</a>";
+  }
+  function secondaryAction(href, label) {
+    return '<a class="alt" target="_top" href="' + escapeHtml(href) + '">' + escapeHtml(label) + "</a>";
+  }
+  function cardPage(spec) {
+    const body = spec.paragraphs.map((p) => "<p>" + p + "</p>").join("");
+    const actions = spec.actions ? '<div class="actions">' + spec.actions + "</div>" : "";
+    return [
+      '<!DOCTYPE html><html><head><meta charset="utf-8">',
+      // Every link on these pages has to break out of the HtmlService sandbox iframe; the app's
+      // own index.html carries the same base tag for the same reason.
+      '<base target="_top">',
+      '<meta name="viewport" content="width=device-width, initial-scale=1">',
+      "<title>" + escapeHtml(spec.title) + "</title><style>",
+      "*{box-sizing:border-box}",
+      // --surface / --ink, and the same --font stack tokens.css:254 carries.
+      "body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;",
+      "background:#f8f8fa;color:#171717;",
+      "font-family:-apple-system,BlinkMacSystemFont,Inter,'Segoe UI',Roboto,'Helvetica Neue',sans-serif}",
+      // --page on --hairline at --radius-xl.
+      ".card{max-width:32rem;margin:24px;padding:32px;background:#ffffff;border:1px solid #e6e6e9;",
+      "border-radius:14px;box-shadow:0 1px 2px rgba(10,10,10,.06)}",
+      ".lockup{display:flex;align-items:center;gap:8px;margin:0 0 16px}",
+      // Mirrors .appbar-name in base.css (600 / --fs-lead 16px / -0.02em / --ink) so the
+      // wordmark is the same object here as in the header, not a near-miss of it.
+      ".lockup span{font-weight:600;font-size:1rem;letter-spacing:-0.02em;color:#171717;",
+      "white-space:nowrap}",
+      ".brand-mark{display:block;flex:0 0 auto}",
+      "h1{font-size:20px;line-height:1.3;margin:0 0 12px;font-weight:650}",
+      // --text-2, the same alpha the app's prose carries.
+      "p{margin:0 0 8px;font-size:14px;line-height:1.6;color:rgba(0,0,0,.65)}",
+      ".actions{margin-top:24px;display:flex;align-items:center;gap:20px;flex-wrap:wrap}",
+      // Graphite, not the accent: DESIGN.md keeps the accent for data, focus and links, and
+      // fills the one committing action with --graphite / --on-graphite.
+      ".btn{display:inline-flex;align-items:center;min-height:36px;padding:6px 14px;",
+      "border-radius:8px;background:#0a0a0a;color:#fafafa;font-size:14px;font-weight:500;",
+      "text-decoration:none}",
+      ".btn:hover{background:#27272a}",
+      // --accent-text. NOT --accent: this page is plain text on white, where #ffcb13 is 1.52:1.
+      // pages are the product's front door and must read as this product.
+      "a{color:#7c4a0a}",
+      // Never remove: CLAUDE.md names the focus-ring rules load-bearing, and these pages are
+      // reachable by keyboard only.
+      "a:focus-visible{outline:2px solid #7c4a0a;outline-offset:2px;border-radius:4px}",
+      '</style></head><body><main class="card">',
+      // The same lockup as the app header — mark then wordmark — so the door and the room
+      // behind it are recognisably one product.
+      '<div class="lockup">' + brandMarkSvg(22) + "<span>" + escapeHtml(spec.eyebrow) + "</span></div>",
+      "<h1>" + escapeHtml(spec.heading) + "</h1>",
+      body,
+      actions,
+      "</main></body></html>"
+    ].join("");
+  }
+
+  // src/server/access.ts
+  var PRODUCT = "Wiz Sidekick DevSecOps";
+  var DENIAL_MESSAGE = {
+    anonymous: "This app can't identify your Google account. It only recognizes accounts signed in to the same Google Workspace domain as the app.",
+    "not-listed": "Your account isn't on this app's access list."
+  };
+  function parseAllowlist(raw) {
+    if (!raw) return [];
+    const seen = {};
+    const out = [];
+    for (const part of raw.split(/[,;\s]+/)) {
+      const email = part.trim().toLowerCase();
+      if (!email || seen[email]) continue;
+      seen[email] = true;
+      out.push(email);
+    }
+    return out;
+  }
+  var ACCESS_MAX_BYTES = 8e3;
+  var ACCESS_MAX_ENTRIES = 500;
+  function validateAddresses(raw) {
+    const list = parseAllowlist(Array.isArray(raw) ? raw.join("\n") : String(raw != null ? raw : ""));
+    const bad = list.filter((e) => e.indexOf("@") < 0);
+    if (bad.length) throw new Error(`Not an email address: ${bad.join(", ")}`);
+    if (list.length > ACCESS_MAX_ENTRIES) {
+      throw new Error(`Too many people (${list.length}); the limit is ${ACCESS_MAX_ENTRIES}.`);
+    }
+    const bytes = list.join(",").length;
+    if (bytes > ACCESS_MAX_BYTES) {
+      throw new Error(`That list is too long to store (${bytes} of ${ACCESS_MAX_BYTES} bytes).`);
+    }
+    return list;
+  }
+  function decide(active, owner, raw, adminsRaw) {
+    const email = (active || "").trim();
+    const key = email.toLowerCase();
+    if (!key) return { allowed: false, email: "", reason: "anonymous" };
+    const ownerKey = (owner || "").trim().toLowerCase();
+    if (ownerKey && ownerKey === key) return { allowed: true, email, reason: "owner" };
+    if (parseAllowlist(adminsRaw != null ? adminsRaw : null).indexOf(key) >= 0) {
+      return { allowed: true, email, reason: "admin" };
+    }
+    return parseAllowlist(raw).indexOf(key) >= 0 ? { allowed: true, email, reason: "listed" } : { allowed: false, email, reason: "not-listed" };
+  }
+  var memo;
+  function check() {
+    if (memo === void 0) {
+      memo = decide(
+        Session.getActiveUser().getEmail(),
+        Session.getEffectiveUser().getEmail(),
+        getProp(PROP_KEYS.allowedUsers),
+        getProp(PROP_KEYS.allowedAdmins)
+      );
+    }
+    return memo;
+  }
+  function __resetMemosForTest2() {
+    memo = void 0;
+  }
+  function logDenial(op, d) {
+    console.log(JSON.stringify({ access: "denied", op, reason: d.reason, email: d.email }));
+  }
+  function denyResult(op) {
+    const d = check();
+    if (d.allowed) return null;
+    logDenial(op, d);
+    const env = {
+      ok: false,
+      error: DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"],
+      errorKind: "forbidden"
+    };
+    const who = ownerEmail().trim();
+    if (who) {
+      env.contact = who;
+      env.contactUrl = contactMailto(who);
+    }
+    return env;
+  }
+  function assertAllowed(op) {
+    const d = check();
+    if (d.allowed) return;
+    logDenial(op, d);
+    throw new Error(DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"]);
+  }
+  function contactMailto(email) {
+    return "mailto:" + email.trim() + "?subject=" + encodeURIComponent("Access to " + PRODUCT);
+  }
+  function deniedHtml(d, switchUrl, contact) {
+    const detail = d.email ? "You're signed in as <strong>" + escapeHtml(d.email) + "</strong>." : "This app can't see which Google account you're signed in as, which happens when the account isn't in the same Google Workspace domain as the app.";
+    const who = (contact || "").trim();
+    const ask = who ? 'If you think you should have access, contact <a href="' + escapeHtml(contactMailto(who)) + '">' + escapeHtml(who) + "</a>." : (
+      // No owner address resolved — never render "contact:" with nothing after it.
+      "If you think you should have access, ask whoever runs this dashboard to add you."
+    );
+    return cardPage({
+      title: PRODUCT,
+      eyebrow: PRODUCT,
+      heading: "You don't have access to this app.",
+      paragraphs: [detail, ask],
+      actions: switchUrl ? secondaryAction(switchUrl, "Switch Google account") : ""
+    });
+  }
+  function deniedPage() {
+    const d = check();
+    if (d.allowed) return null;
+    logDenial("doGet", d);
+    return HtmlService.createHtmlOutput(deniedHtml(d, accountChooserUrl(), ownerEmail())).setTitle(PRODUCT).addMetaTag("viewport", "width=device-width, initial-scale=1");
+  }
+  function serviceUrl() {
+    try {
+      return ScriptApp.getService().getUrl() || null;
+    } catch (_e) {
+      return null;
+    }
+  }
+  function accountChooserUrl() {
+    const url = serviceUrl();
+    return url ? "https://accounts.google.com/AccountChooser?continue=" + encodeURIComponent(url) : null;
+  }
+  function ownerEmail() {
+    return Session.getEffectiveUser().getEmail() || "";
+  }
+  function isOwner() {
+    return check().reason === "owner";
+  }
+  function canEditUsers() {
+    const r = check().reason;
+    return r === "owner" || r === "admin";
+  }
+  function canEditAdmins() {
+    return isOwner();
+  }
+  function currentUsers() {
+    return parseAllowlist(getProp(PROP_KEYS.allowedUsers));
+  }
+  function currentAdmins() {
+    return parseAllowlist(getProp(PROP_KEYS.allowedAdmins));
+  }
+  function ownerDomain() {
+    const at = ownerEmail().lastIndexOf("@");
+    return at >= 0 ? ownerEmail().slice(at + 1).toLowerCase() : "";
+  }
+
+  // src/server/jobsStore.ts
+  var ACTIVE_JOB_PROP = "ACTIVE_JOB_ID";
+  function normError(v) {
+    const s2 = v == null ? "" : String(v).trim();
+    return s2 === "" || s2 === "null" || s2 === "undefined" ? null : s2;
+  }
+  function newJobId(kind, now) {
+    return `${kind}-${nowIso(now).replace(/[:]/g, "")}`;
+  }
+  function createJob(row, now) {
+    const full = { ...row, started_at: nowIso(now), updated_at: nowIso(now) };
+    appendRows(TABS.jobs, [full]);
+    setProp(ACTIVE_JOB_PROP, full.job_id);
+    return full;
+  }
+  function updateJob(jobId, patch, now) {
+    updateWhere(TABS.jobs, "job_id", jobId, {
+      ...patch,
+      updated_at: nowIso(now)
+    });
+    if (patch.phase && isTerminalPhase(patch.phase)) deleteProp(ACTIVE_JOB_PROP);
+  }
+  function rowToJob(r) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
+    return {
+      job_id: String((_a = r["job_id"]) != null ? _a : ""),
+      kind: (_b = r["kind"]) != null ? _b : "sync",
+      phase: (_c = r["phase"]) != null ? _c : "FAILED",
+      scan_id: (_d = r["scan_id"]) != null ? _d : null,
+      scope: (_e = r["scope"]) != null ? _e : null,
+      cursor: (_f = r["cursor"]) != null ? _f : null,
+      page: Number((_g = r["page"]) != null ? _g : 0),
+      findings_so_far: Number((_h = r["findings_so_far"]) != null ? _h : 0),
+      page_size: Number((_i = r["page_size"]) != null ? _i : 0),
+      total_count: Number((_j = r["total_count"]) != null ? _j : 0),
+      params_json: (_k = r["params_json"]) != null ? _k : null,
+      journal_ref: (_l = r["journal_ref"]) != null ? _l : null,
+      error: normError(r["error"]),
+      started_at: String((_m = r["started_at"]) != null ? _m : ""),
+      updated_at: String((_n = r["updated_at"]) != null ? _n : "")
+    };
+  }
+  function listJobs() {
+    return readAll(TABS.jobs).map(rowToJob);
+  }
+  var JOB_TAIL_ROWS = 25;
+  function getJob(jobId) {
+    var _a, _b;
+    const recent = readTail(TABS.jobs, JOB_TAIL_ROWS).map(rowToJob);
+    return (_b = (_a = recent.find((j) => j.job_id === jobId)) != null ? _a : listJobs().find((j) => j.job_id === jobId)) != null ? _b : null;
+  }
+  var TERMINAL = ["DONE", "FAILED", "CANCELLED"];
+  function isTerminalPhase(phase) {
+    return TERMINAL.includes(phase);
+  }
+  var STALE_JOB_MS = 30 * 6e4;
+  function isStaleJob(job, now) {
+    const updated = parseTs(job.updated_at);
+    if (updated === null) return false;
+    return (now != null ? now : Date.now()) - updated >= STALE_JOB_MS;
+  }
+  function clearTriggers(handlerName) {
+    for (const t of ScriptApp.getProjectTriggers()) {
+      if (t.getHandlerFunction() === handlerName) ScriptApp.deleteTrigger(t);
+    }
+  }
+  var CONTINUE_HANDLERS = {
+    sync: "trigger_continueSync"
+  };
+  var WATCHDOG_HANDLERS = {
+    sync: "trigger_watchdogSync"
+  };
+  function reclaimIfStale(job, now) {
+    if (!isStaleJob(job, now)) return false;
+    for (const handler of [CONTINUE_HANDLERS[job.kind], WATCHDOG_HANDLERS[job.kind]]) {
+      if (handler) clearTriggers(handler);
+    }
+    updateJob(job.job_id, {
+      phase: "FAILED",
+      error: "Reclaimed: the job stalled with no progress."
+    });
+    return true;
+  }
+  function activeJob() {
+    var _a;
+    if (!getProp(ACTIVE_JOB_PROP)) return null;
+    const job = (_a = listJobs().find((j) => !isTerminalPhase(j.phase))) != null ? _a : null;
+    if (!job) deleteProp(ACTIVE_JOB_PROP);
+    return job;
   }
 
   // src/server/archiveStore.ts
@@ -10401,6 +10197,229 @@ var Server = (() => {
         note: "Job failures only \u2014 this register has no error-log tab. A read that fails returns its message to the caller and records no row."
       };
     });
+  }
+
+  // ../gas_shared/server/inlineBoot.ts
+  var UNSAFE = /[<>&/'`\u2028\u2029]/g;
+  function inlineJson(value) {
+    const json = JSON.stringify(value);
+    if (json === void 0) return "";
+    return json.replace(UNSAFE, (c) => c === "/" ? "\\/" : "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"));
+  }
+  function inlineBootJson(bootstrap2) {
+    const t0 = Date.now();
+    try {
+      const res = bootstrap2();
+      if (!res || res.ok !== true) return "";
+      return inlineJson(res);
+    } catch (_e) {
+      return "";
+    } finally {
+      console.log(JSON.stringify({ api: "bootstrap", inline: true, ms: Date.now() - t0 }));
+    }
+  }
+
+  // src/server/main.ts
+  function doGet(_e) {
+    const template = HtmlService.createTemplateFromFile("index");
+    template.bootJson = inlineBootJson(() => bootstrap());
+    return template.evaluate().setTitle("Wiz Sidekick DevSecOps").addMetaTag("viewport", "width=device-width, initial-scale=1").setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);
+  }
+  function include(filename) {
+    return HtmlService.createHtmlOutputFromFile(filename).getContent();
+  }
+
+  // src/server/welcome.ts
+  var welcome_exports = {};
+  __export(welcome_exports, {
+    ENTER_PARAM: () => ENTER_PARAM,
+    ENTRY_TTL_SEC: () => ENTRY_TTL_SEC,
+    gate: () => gate,
+    welcomeHtml: () => welcomeHtml
+  });
+  var ENTRY_TTL_SEC = 21600;
+  var ENTER_PARAM = "enter";
+  function markerKey(email) {
+    return "entered:" + paramsHash(email.trim().toLowerCase());
+  }
+  function markEntered(email) {
+    try {
+      CacheService.getScriptCache().put(markerKey(email), "1", ENTRY_TTL_SEC);
+    } catch (e) {
+      console.warn("entry marker write failed: " + e);
+    }
+  }
+  function hasEntered(email) {
+    try {
+      return CacheService.getScriptCache().get(markerKey(email)) !== null;
+    } catch (e) {
+      console.warn("entry marker read failed: " + e);
+      return true;
+    }
+  }
+  function welcomeHtml(email, continueUrl, switchUrl) {
+    return cardPage({
+      title: PRODUCT,
+      eyebrow: PRODUCT,
+      heading: "You're signed in.",
+      paragraphs: [
+        "This dashboard will open as <strong>" + escapeHtml(email) + "</strong>.",
+        "If that isn't the account you meant to use, switch before you continue \u2014 the register you see depends on which account opens it."
+      ],
+      actions: primaryAction(continueUrl, "Continue") + (switchUrl ? secondaryAction(switchUrl, "Switch Google account") : "")
+    });
+  }
+  function gate(e) {
+    const email = check().email;
+    if (!email) return null;
+    if (e && e.parameter && e.parameter[ENTER_PARAM]) {
+      markEntered(email);
+      return null;
+    }
+    if (hasEntered(email)) {
+      markEntered(email);
+      return null;
+    }
+    const url = serviceUrl();
+    if (!url) return null;
+    const continueUrl = url + (url.indexOf("?") >= 0 ? "&" : "?") + ENTER_PARAM + "=1";
+    return HtmlService.createHtmlOutput(welcomeHtml(email, continueUrl, accountChooserUrl())).setTitle(PRODUCT).addMetaTag("viewport", "width=device-width, initial-scale=1");
+  }
+
+  // src/server/setup.ts
+  var DAILY_SYNC_HANDLER = "trigger_dailySync";
+  var DAILY_SYNC_HOUR = DEFAULT_SYNC_HOUR;
+  var WARM_HANDLER = "trigger_warmReadModels";
+  var WARM_READY_BY_HOURS = [9, 13, 17];
+  var WARM_TRIGGER_HOURS = WARM_READY_BY_HOURS.map((h) => (h + 23) % 24);
+  var WARM_TRIGGER_NEAR_MINUTE = 30;
+  var WARM_TRIGGER_TZ = "Europe/Paris";
+  function warmTriggerSchedule() {
+    return `${WARM_TRIGGER_TZ}|${WARM_TRIGGER_HOURS.join(",")}@${WARM_TRIGGER_NEAR_MINUTE}`;
+  }
+  function setup() {
+    const notes = [];
+    let ssId = getProp(PROP_KEYS.ledgerSpreadsheetId);
+    let ss;
+    if (ssId) {
+      ss = SpreadsheetApp.openById(ssId);
+      notes.push(`Ledger: reusing ${ssId}`);
+    } else {
+      ss = SpreadsheetApp.create("Wiz Sidekick DevSecOps \u2014 ledger");
+      ssId = ss.getId();
+      setProp(PROP_KEYS.ledgerSpreadsheetId, ssId);
+      notes.push(`Ledger: created ${ssId}`);
+    }
+    ensureTabs(ss);
+    notes.push("Tabs: ensured (headers appended where missing)");
+    let folderId = getProp(PROP_KEYS.archiveFolderId);
+    if (!folderId) {
+      folderId = DriveApp.createFolder("Wiz Sidekick DevSecOps \u2014 archive").getId();
+      setProp(PROP_KEYS.archiveFolderId, folderId);
+      notes.push(`Archive: created ${folderId}`);
+    } else {
+      notes.push(`Archive: reusing ${folderId}`);
+    }
+    if (!getProp(PROP_KEYS.wizAuthUrl)) setProp(PROP_KEYS.wizAuthUrl, DEFAULT_WIZ_AUTH_URL);
+    if (!getProp(PROP_KEYS.allowedUsers)) {
+      const owner = Session.getEffectiveUser().getEmail();
+      if (owner) {
+        setProp(PROP_KEYS.allowedUsers, owner);
+        notes.push(`Access: seeded ALLOWED_USERS with ${owner}`);
+      }
+    }
+    const dailyExisting = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === DAILY_SYNC_HANDLER);
+    if (!dailyExisting.length) {
+      ScriptApp.newTrigger(DAILY_SYNC_HANDLER).timeBased().everyDays(1).atHour(DAILY_SYNC_HOUR).create();
+      notes.push(`Daily sync trigger: installed (${DAILY_SYNC_HOUR}:00 script-local)`);
+    } else {
+      notes.push("Daily sync trigger: already installed");
+    }
+    const warmExisting = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === WARM_HANDLER);
+    const wantSchedule = warmTriggerSchedule();
+    if (warmExisting.length === WARM_TRIGGER_HOURS.length && getProp(PROP_KEYS.warmTriggerSchedule) === wantSchedule) {
+      notes.push(`Warm triggers: already installed (${wantSchedule})`);
+    } else {
+      for (const t of warmExisting) ScriptApp.deleteTrigger(t);
+      for (const hour of WARM_TRIGGER_HOURS) {
+        ScriptApp.newTrigger(WARM_HANDLER).timeBased().everyDays(1).atHour(hour).nearMinute(WARM_TRIGGER_NEAR_MINUTE).inTimezone(WARM_TRIGGER_TZ).create();
+      }
+      setProp(PROP_KEYS.warmTriggerSchedule, wantSchedule);
+      notes.push(
+        `Warm triggers: installed ${WARM_TRIGGER_HOURS.length}x daily, warm by ${WARM_READY_BY_HOURS.map((h) => `${h}:00`).join(", ")} ${WARM_TRIGGER_TZ}` + (warmExisting.length ? ` (replaced ${warmExisting.length})` : "")
+      );
+    }
+    return notes.join("\n");
+  }
+
+  // src/server/diagnostics.ts
+  function reporter() {
+    const lines = [];
+    return {
+      line(m) {
+        console.log(m);
+        lines.push(m);
+      },
+      text() {
+        return lines.join("\n");
+      }
+    };
+  }
+  function deploymentDiagnostic() {
+    const r = reporter();
+    const ok = (label, value) => r.line(`  OK    ${label}: ${value}`);
+    const bad = (label, value) => r.line(`  FAIL  ${label}: ${value}`);
+    r.line(`Wiz Sidekick DevSecOps \u2014 deployment diagnostic`);
+    r.line(`Build ${BUILD_ID}, schema v${SCHEMA_VERSION}`);
+    r.line("");
+    const ssId = getProp(PROP_KEYS.ledgerSpreadsheetId);
+    if (ssId) {
+      try {
+        const ss = ledgerSpreadsheet();
+        ok("Ledger spreadsheet", `${ss.getName()} (${ssId})`);
+        for (const tab of Object.values(TABS)) {
+          const rows = dataRowCount(tab);
+          r.line(`        ${tab}: ${rows} row${rows === 1 ? "" : "s"}`);
+        }
+        ok("Cells used", String(cellCount()));
+      } catch (e) {
+        bad("Ledger spreadsheet", `${ssId} exists as a property but could not be opened: ${e}`);
+      }
+    } else {
+      bad("Ledger spreadsheet", "not created \u2014 run setup()");
+    }
+    const folderId = getProp(PROP_KEYS.archiveFolderId);
+    if (folderId) ok("Archive folder", folderId);
+    else bad("Archive folder", "not created \u2014 run setup()");
+    if (hasWizCredentials()) ok("Wiz credentials", "present");
+    else bad("Wiz credentials", "absent \u2014 set WIZ_API_TOKEN, or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET");
+    const users = getProp(PROP_KEYS.allowedUsers);
+    if (users) ok("Allowlist", `${users.split(/[,;\s]+/).filter(Boolean).length} address(es)`);
+    else bad("Allowlist", "empty \u2014 the app is owner-only until ALLOWED_USERS is set");
+    const s2 = loadSettings();
+    ok("Scopes collected", s2.scopes.join(", ") || "(none)");
+    ok("Scopes available", SCOPES.join(", "));
+    for (const scope of SCOPES) {
+      ok(`Severities requested (${scope})`, s2.fetchSeverities[scope].join(", ") || "(all)");
+    }
+    r.line("");
+    const daily = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === "trigger_dailyScan").length;
+    if (daily) ok("Daily scan trigger", `installed (${daily})`);
+    else bad("Daily scan trigger", "not installed \u2014 run setup()");
+    const job = activeJob();
+    if (job) {
+      ok("Scan in flight", `${job.job_id} \u2014 ${job.phase}${job.scope ? ` (${job.scope})` : ""}`);
+      r.line(`        page ${job.page}, ${job.findings_so_far} finding(s) so far`);
+      if (isStaleJob(job)) {
+        bad("  heartbeat", "silent for over 30 minutes \u2014 run resetStuckJob() from the editor");
+      }
+    } else {
+      ok("Scan in flight", "none");
+    }
+    const verified = getProp(PROP_KEYS.wizVerifiedAt);
+    if (verified) ok("Credentials last verified", verified);
+    else bad("Credentials last verified", "never \u2014 the tenant has not accepted them yet");
+    return r.text();
   }
 
   // src/server/devSeed.ts

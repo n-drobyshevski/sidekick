@@ -37,147 +37,68 @@ var Server = (() => {
     wizDiagnostic: () => wizDiagnostic
   });
 
-  // src/server/main.ts
-  function doGet(_e) {
-    const template = HtmlService.createTemplateFromFile("index");
-    return template.evaluate().setTitle("Wiz SIDEKICK AI").addMetaTag("viewport", "width=device-width, initial-scale=1").setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);
-  }
-  function include(filename) {
-    return HtmlService.createHtmlOutputFromFile(filename).getContent();
-  }
-
-  // src/server/access.ts
-  var access_exports = {};
-  __export(access_exports, {
-    PRODUCT: () => PRODUCT,
-    __resetMemosForTest: () => __resetMemosForTest2,
-    accountChooserUrl: () => accountChooserUrl,
-    assertAllowed: () => assertAllowed,
-    canEditAdmins: () => canEditAdmins,
-    canEditUsers: () => canEditUsers,
-    check: () => check,
-    contactMailto: () => contactMailto,
-    currentAdmins: () => currentAdmins,
-    currentUsers: () => currentUsers,
-    decide: () => decide,
-    deniedHtml: () => deniedHtml,
-    deniedPage: () => deniedPage,
-    denyResult: () => denyResult,
-    isOwner: () => isOwner,
-    ownerDomain: () => ownerDomain,
-    ownerEmail: () => ownerEmail,
-    parseAllowlist: () => parseAllowlist,
-    serviceUrl: () => serviceUrl
+  // src/server/api.ts
+  var api_exports = {};
+  __export(api_exports, {
+    ISSUES_CLIENT_ALL_MAX: () => ISSUES_CLIENT_ALL_MAX,
+    bootstrap: () => bootstrap,
+    cancelSync: () => cancelSync2,
+    expandAsset: () => expandAsset,
+    getAarsRule: () => getAarsRule3,
+    getAccess: () => getAccess,
+    getActions: () => getActions,
+    getAssetDetail: () => getAssetDetail,
+    getAssetOptions: () => getAssetOptions,
+    getAssets: () => getAssets,
+    getAssetsHead: () => getAssetsHead,
+    getChartsBundle: () => getChartsBundle,
+    getCombosDigest: () => getCombosDigest,
+    getCompliance: () => getCompliance,
+    getConfigFindingDetail: () => getConfigFindingDetail,
+    getConfigFindings: () => getConfigFindings,
+    getFiveRsScope: () => getFiveRsScope,
+    getGraph: () => getGraph,
+    getIssueDetail: () => getIssueDetail,
+    getIssues: () => getIssues,
+    getJobStatus: () => getJobStatus,
+    getPostureRule: () => getPostureRule3,
+    getProblemRule: () => getProblemRule3,
+    getProblems: () => getProblems,
+    getQueryVocabulary: () => getQueryVocabulary,
+    getRankEval: () => getRankEval,
+    getRankRule: () => getRankRule3,
+    getScanQueries: () => getScanQueries,
+    getScanStepDetail: () => getScanStepDetail,
+    getSettings: () => getSettings,
+    getSettingsImpact: () => getSettingsImpact,
+    getStorageStats: () => getStorageStats,
+    getSyncHistory: () => getSyncHistory,
+    getToxicCombos: () => getToxicCombos,
+    previewAarsRule: () => previewAarsRule,
+    previewPostureRule: () => previewPostureRule,
+    previewProblemRule: () => previewProblemRule,
+    previewPrune: () => previewPrune,
+    probeSyncStep: () => probeSyncStep,
+    pruneToProject: () => pruneToProject2,
+    recomputePostures: () => recomputePostures2,
+    recomputeProblems: () => recomputeProblems,
+    rescoreAars: () => rescoreAars,
+    resetData: () => resetData2,
+    runGraphQuery: () => runGraphQuery,
+    runSync: () => runSync,
+    saveAccess: () => saveAccess,
+    saveAdmins: () => saveAdmins,
+    saveHubUrl: () => saveHubUrl,
+    scoreAarsSample: () => scoreAarsSample,
+    setAarsRule: () => setAarsRule2,
+    setPostureRule: () => setPostureRule2,
+    setProblemRule: () => setProblemRule2,
+    setRankRule: () => setRankRule2,
+    setScanVars: () => setScanVars2,
+    setSelectedFrameworks: () => setSelectedFrameworks2,
+    setSettings: () => setSettings,
+    testScanVars: () => testScanVars
   });
-
-  // src/server/pageShell.ts
-  var MARK_COMPACT_VIEWBOX = "12.2 8.4 52.7 74";
-  var MARK_COMPACT_RATIO = 52.7 / 74;
-  var MARK_ORBIT = "M47.64 80.58A32.1 32.1 0 0 1 17.83 52.04M19.82 36.92A32.1 32.1 0 0 1 54.21 16.76";
-  var MARK_ORBIT_WIDTH = 2.41;
-  var MARK_NODES = [[17.22, 44.33, 4.41], [45.96, 16.55, 7.56]];
-  var MARK_SHIELD = "M48.56 29.88C52.79 34.78 58.69 37.87 64.33 37.81C64.44 45.48 63.64 48.51 62.11 51.96C61.32 54.62 56.36 61.55 48.56 64.18C40.76 61.55 35.8 54.62 35.01 51.96C33.48 48.51 32.68 45.48 32.79 37.81C38.43 37.87 44.33 34.78 48.56 29.88Z";
-  var MARK_CHECK = "M42.3 48.81 46.19 52.7 54.89 43.99";
-  var MARK_CHECK_WIDTH = 3.04;
-  function brandMarkSvg(height) {
-    const width = Math.round(height * MARK_COMPACT_RATIO * 100) / 100;
-    const nodes = MARK_NODES.map(
-      (n) => '<circle cx="' + n[0] + '" cy="' + n[1] + '" r="' + n[2] + '" fill="#0a0a0a"/>'
-    ).join("");
-    return [
-      '<svg class="brand-mark" viewBox="' + MARK_COMPACT_VIEWBOX + '"',
-      ' width="' + width + '" height="' + height + '" focusable="false" aria-hidden="true">',
-      '<path d="' + MARK_ORBIT + '" fill="none" stroke="#0a0a0a" stroke-width="' + MARK_ORBIT_WIDTH,
-      '" stroke-linecap="round"/>',
-      nodes,
-      '<path d="' + MARK_SHIELD + '" fill="#0a0a0a"/>',
-      '<path d="' + MARK_CHECK + '" fill="none" stroke="#ffffff" stroke-width="' + MARK_CHECK_WIDTH,
-      '" stroke-linecap="round" stroke-linejoin="round"/>',
-      "</svg>"
-    ].join("");
-  }
-  function escapeHtml(s) {
-    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-  }
-  function primaryAction(href, label) {
-    return '<a class="btn" target="_top" href="' + escapeHtml(href) + '">' + escapeHtml(label) + "</a>";
-  }
-  function secondaryAction(href, label) {
-    return '<a class="alt" target="_top" href="' + escapeHtml(href) + '">' + escapeHtml(label) + "</a>";
-  }
-  function cardPage(spec) {
-    const body = spec.paragraphs.map((p) => "<p>" + p + "</p>").join("");
-    const actions = spec.actions ? '<div class="actions">' + spec.actions + "</div>" : "";
-    return [
-      '<!DOCTYPE html><html><head><meta charset="utf-8">',
-      // Every link on these pages has to break out of the HtmlService sandbox iframe; the app's
-      // own index.html carries the same base tag for the same reason.
-      '<base target="_top">',
-      '<meta name="viewport" content="width=device-width, initial-scale=1">',
-      "<title>" + escapeHtml(spec.title) + "</title><style>",
-      "*{box-sizing:border-box}",
-      // --surface / --ink, and the same --font stack tokens.css:254 carries.
-      "body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;",
-      "background:#f8f8fa;color:#171717;",
-      "font-family:-apple-system,BlinkMacSystemFont,Inter,'Segoe UI',Roboto,'Helvetica Neue',sans-serif}",
-      // --page on --hairline at --radius-xl.
-      ".card{max-width:32rem;margin:24px;padding:32px;background:#ffffff;border:1px solid #e6e6e9;",
-      "border-radius:14px;box-shadow:0 1px 2px rgba(10,10,10,.06)}",
-      ".lockup{display:flex;align-items:center;gap:8px;margin:0 0 16px}",
-      // Mirrors .appbar-name in base.css (600 / --fs-lead 16px / -0.02em / --ink) so the
-      // wordmark is the same object here as in the header, not a near-miss of it.
-      ".lockup span{font-weight:600;font-size:1rem;letter-spacing:-0.02em;color:#171717;",
-      "white-space:nowrap}",
-      ".brand-mark{display:block;flex:0 0 auto}",
-      "h1{font-size:20px;line-height:1.3;margin:0 0 12px;font-weight:650}",
-      // --text-2, the same alpha the app's prose carries.
-      "p{margin:0 0 8px;font-size:14px;line-height:1.6;color:rgba(0,0,0,.65)}",
-      ".actions{margin-top:24px;display:flex;align-items:center;gap:20px;flex-wrap:wrap}",
-      // Graphite, not the accent: DESIGN.md keeps the accent for data, focus and links, and
-      // fills the one committing action with --graphite / --on-graphite.
-      ".btn{display:inline-flex;align-items:center;min-height:36px;padding:6px 14px;",
-      "border-radius:8px;background:#0a0a0a;color:#fafafa;font-size:14px;font-weight:500;",
-      "text-decoration:none}",
-      ".btn:hover{background:#27272a}",
-      // --accent. gas_ai's accent is the crimson, NOT the sibling tool's Signal Blue — these
-      // pages are the product's front door and must read as this product.
-      "a{color:#be123c}",
-      // Never remove: CLAUDE.md names the focus-ring rules load-bearing, and these pages are
-      // reachable by keyboard only.
-      "a:focus-visible{outline:2px solid #be123c;outline-offset:2px;border-radius:4px}",
-      '</style></head><body><main class="card">',
-      // The same lockup as the app header — mark then wordmark — so the door and the room
-      // behind it are recognisably one product.
-      '<div class="lockup">' + brandMarkSvg(22) + "<span>" + escapeHtml(spec.eyebrow) + "</span></div>",
-      "<h1>" + escapeHtml(spec.heading) + "</h1>",
-      body,
-      actions,
-      "</main></body></html>"
-    ].join("");
-  }
-
-  // src/domain/domainTag.ts
-  var DEFAULT_DOMAIN_TAG_KEY = "Wiz/Domain";
-  function domainOfTags(tags, key = DEFAULT_DOMAIN_TAG_KEY) {
-    var _a5;
-    const want = key.trim().toLowerCase();
-    if (!want || !tags) return null;
-    for (const t of tags) {
-      if (!t || String(t.key).trim().toLowerCase() !== want) continue;
-      const value = String((_a5 = t.value) != null ? _a5 : "").trim();
-      if (value) return value;
-    }
-    return null;
-  }
-  function resolveDomainTagKey(configured) {
-    const k = (configured != null ? configured : "").trim();
-    return k || DEFAULT_DOMAIN_TAG_KEY;
-  }
-  function domainCoverage(nodes, key) {
-    let tagged = 0;
-    for (const n of nodes) if (n.domain) tagged += 1;
-    return { key, tagged, total: nodes.length };
-  }
 
   // src/domain/config.ts
   var SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
@@ -227,6 +148,571 @@ var Server = (() => {
   var EDGE_BUDGET_RATIO = 2.5;
   var SEED_WAVE_RATIO = 0.4;
   var DERIVATION_VERSION = 2;
+
+  // src/domain/util.ts
+  function toStr(v, fallback = "") {
+    return v === null || v === void 0 ? fallback : String(v);
+  }
+  function toNum(v, fallback = 0) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : fallback;
+  }
+  function clampInt(v, fallback, min, max) {
+    const n = Math.round(Number(v));
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(max, Math.max(min, n));
+  }
+  function cmp(a, b) {
+    return a < b ? -1 : a > b ? 1 : 0;
+  }
+  function cmpBy(key) {
+    return (a, b) => cmp(key(a), key(b));
+  }
+  function indexBy(xs, key) {
+    const out = /* @__PURE__ */ new Map();
+    for (const x of xs) out.set(key(x), x);
+    return out;
+  }
+  function pushInto(map, key, ...values) {
+    const bucket = map.get(key);
+    if (bucket) bucket.push(...values);
+    else map.set(key, [...values]);
+  }
+  function groupBy(xs, key) {
+    const out = /* @__PURE__ */ new Map();
+    for (const x of xs) pushInto(out, key(x), x);
+    return out;
+  }
+  function present(v) {
+    if (v === null || v === void 0) return false;
+    if (typeof v === "number" && Number.isNaN(v)) return false;
+    if (typeof v === "string" && v.trim() === "") return false;
+    return true;
+  }
+  function clean(v) {
+    return present(v) ? v : null;
+  }
+  function parseTs(v) {
+    const c = clean(v);
+    if (c === null) return null;
+    if (c instanceof Date) return isNaN(c.getTime()) ? null : c.getTime();
+    if (typeof c === "number" && Number.isFinite(c)) return c;
+    let s = String(c).trim();
+    if (!s) return null;
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(s)) s = s.replace(" ", "T");
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(s)) s += "Z";
+    const t = Date.parse(s);
+    return Number.isNaN(t) ? null : t;
+  }
+  function toIso(ms2) {
+    if (ms2 === null || !Number.isFinite(ms2)) return null;
+    return new Date(Math.floor(ms2 / 1e3) * 1e3).toISOString().replace(".000Z", "Z");
+  }
+  function nowIso(now) {
+    return toIso(now != null ? now : Date.now());
+  }
+  function mean(values) {
+    if (!values.length) return null;
+    return values.reduce((a, b) => a + b, 0) / values.length;
+  }
+  function quantile(values, q) {
+    if (!values.length) return null;
+    const sorted = [...values].sort((a, b) => a - b);
+    const idx = q * (sorted.length - 1);
+    const lo = Math.floor(idx);
+    const hi = Math.ceil(idx);
+    if (lo === hi) return sorted[lo];
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+  }
+
+  // src/domain/assetTable.ts
+  var ASSET_SORTS = [
+    "issues",
+    "findings",
+    "name",
+    "kind",
+    "cloud",
+    "region",
+    "severity",
+    "combos",
+    "domain"
+  ];
+  var DEFAULT_SORT_DIR = {
+    issues: "desc",
+    findings: "desc",
+    severity: "desc",
+    combos: "desc",
+    name: "asc",
+    kind: "asc",
+    cloud: "asc",
+    region: "asc",
+    domain: "asc"
+  };
+  var DEFAULT_PAGE_SIZE = 50;
+  var MAX_PAGE_SIZE = 500;
+  var CLIENT_ALL_MAX = 1500;
+  var FACET_KEYS = [
+    "severities",
+    "kinds",
+    "clouds",
+    "regions",
+    "projects",
+    "domains",
+    "flags"
+  ];
+  var ASSET_FLAGS = ["combo", "guardrail", "agentic", "datafindings"];
+  var SEV_RANK = {};
+  SEVERITY_ORDER.forEach((sev, i) => {
+    SEV_RANK[sev] = SEVERITY_ORDER.length - i;
+  });
+  function sevRank(v) {
+    var _a5;
+    return (_a5 = SEV_RANK[toStr(v).toUpperCase()]) != null ? _a5 : -1;
+  }
+  function list(v) {
+    const raw = Array.isArray(v) ? v : toStr(v).split(",");
+    const out = [];
+    for (const item of raw) {
+      const s = toStr(item).trim();
+      if (s && out.indexOf(s) < 0) out.push(s);
+    }
+    return out;
+  }
+  function listWithLegacy(...sources) {
+    for (const src of sources) {
+      const parsed = list(src);
+      if (parsed.length) return parsed;
+    }
+    return [];
+  }
+  function keepValid(values, allowed) {
+    return values.map((v) => v.toUpperCase()).filter((v) => allowed.indexOf(v) >= 0);
+  }
+  function resolveAssetQuery(params) {
+    const sort = toStr(params["sort"]);
+    const resolvedSort = ASSET_SORTS.indexOf(sort) >= 0 ? sort : "issues";
+    const dir = toStr(params["dir"]).toLowerCase();
+    const page = Number(params["page"]);
+    const pageSize = Number(params["pageSize"]);
+    return {
+      q: toStr(params["q"]).trim().toLowerCase(),
+      severities: keepValid(
+        listWithLegacy(params["severities"], params["severity"]),
+        SEVERITY_ORDER
+      ),
+      kinds: listWithLegacy(params["kinds"], params["kind"]),
+      clouds: listWithLegacy(params["clouds"], params["cloud"]),
+      regions: listWithLegacy(params["regions"], params["region"]),
+      projects: listWithLegacy(params["projects"], params["project"]),
+      domains: listWithLegacy(params["domains"], params["domain"]),
+      flags: list(params["flags"]).map((v) => v.toLowerCase()).filter((v) => ASSET_FLAGS.indexOf(v) >= 0),
+      sort: resolvedSort,
+      dir: dir === "asc" || dir === "desc" ? dir : DEFAULT_SORT_DIR[resolvedSort],
+      page: Number.isFinite(page) ? Math.max(0, Math.floor(page)) : 0,
+      pageSize: Number.isFinite(pageSize) && pageSize >= 1 ? Math.min(Math.floor(pageSize), MAX_PAGE_SIZE) : DEFAULT_PAGE_SIZE
+    };
+  }
+  function hasAssetFlag(row, flag) {
+    if (flag === "combo") return toNum(row["combos"]) > 0;
+    if (flag === "guardrail") return row["guardrailMissing"] === true;
+    if (flag === "agentic") return row["agentic"] === true;
+    if (flag === "datafindings") return toNum(row["dataFindings"]) > 0;
+    return false;
+  }
+  function rowProjects(row) {
+    const v = row["projects"];
+    return Array.isArray(v) ? v.map((v2) => toStr(v2)).filter(Boolean) : [];
+  }
+  function matchesAssetQuery(row, q) {
+    if (q.q && !toStr(row["name"]).toLowerCase().includes(q.q)) return false;
+    if (q.kinds.length && q.kinds.indexOf(toStr(row["kind"])) < 0) return false;
+    if (q.clouds.length && q.clouds.indexOf(toStr(row["cloud"])) < 0) return false;
+    if (q.regions.length && q.regions.indexOf(toStr(row["region"])) < 0) return false;
+    if (q.severities.length && q.severities.indexOf(toStr(row["severity"])) < 0) return false;
+    if (q.domains.length && q.domains.indexOf(toStr(row["domain"])) < 0) return false;
+    if (q.projects.length) {
+      const mine = rowProjects(row);
+      if (!q.projects.some((p) => mine.indexOf(p) >= 0)) return false;
+    }
+    if (q.flags.length && !q.flags.every((f) => hasAssetFlag(row, f))) return false;
+    return true;
+  }
+  function filterAssetRows(rows, q) {
+    return rows.filter((r) => matchesAssetQuery(r, q));
+  }
+  var PRIMARY = {
+    name: (a, b) => toStr(a["name"]).localeCompare(toStr(b["name"])),
+    kind: (a, b) => toStr(a["kind"]).localeCompare(toStr(b["kind"])),
+    cloud: (a, b) => toStr(a["cloud"]).localeCompare(toStr(b["cloud"])),
+    region: (a, b) => toStr(a["region"]).localeCompare(toStr(b["region"])),
+    severity: (a, b) => sevRank(a["severity"]) - sevRank(b["severity"]),
+    combos: (a, b) => toNum(a["combos"]) - toNum(b["combos"]),
+    issues: (a, b) => toNum(a["openIssues"]) - toNum(b["openIssues"]),
+    findings: (a, b) => toNum(a["openFindings"]) - toNum(b["openFindings"]),
+    domain: (a, b) => toStr(a["domain"]).localeCompare(toStr(b["domain"]))
+  };
+  var byRiskDesc = (a, b) => sevRank(b["severity"]) - sevRank(a["severity"]) || toNum(b["openIssues"]) - toNum(a["openIssues"]) || toNum(b["openFindings"]) - toNum(a["openFindings"]) || toStr(a["name"]).localeCompare(toStr(b["name"])) || toStr(a["id"]).localeCompare(toStr(b["id"]));
+  function assetComparator(sort, dir) {
+    var _a5;
+    const primary = (_a5 = PRIMARY[sort]) != null ? _a5 : PRIMARY.issues;
+    const sign = dir === "desc" ? -1 : 1;
+    return (a, b) => sign * primary(a, b) || byRiskDesc(a, b);
+  }
+  var ASSET_COMPARATORS = ASSET_SORTS.reduce((acc, s) => {
+    acc[s] = assetComparator(s, DEFAULT_SORT_DIR[s]);
+    return acc;
+  }, {});
+  function sortAssetRows(rows, sort, dir) {
+    const resolved = ASSET_SORTS.indexOf(sort) >= 0 ? sort : "issues";
+    return [...rows].sort(assetComparator(resolved, dir != null ? dir : DEFAULT_SORT_DIR[resolved]));
+  }
+  function facetValues(key, row) {
+    if (key === "kinds") return [toStr(row["kind"])].filter(Boolean);
+    if (key === "clouds") return [toStr(row["cloud"])].filter(Boolean);
+    if (key === "regions") return [toStr(row["region"])].filter(Boolean);
+    if (key === "severities") return [toStr(row["severity"])].filter(Boolean);
+    if (key === "projects") return rowProjects(row);
+    if (key === "domains") return [toStr(row["domain"])].filter(Boolean);
+    return ASSET_FLAGS.filter((f) => hasAssetFlag(row, f));
+  }
+  function facetSorter(key) {
+    if (key === "severities") {
+      const order = SEVERITY_ORDER;
+      return (a, b) => order.indexOf(a.value) - order.indexOf(b.value);
+    }
+    if (key === "flags") {
+      const order = ASSET_FLAGS;
+      return (a, b) => order.indexOf(a.value) - order.indexOf(b.value);
+    }
+    return (a, b) => a.value.localeCompare(b.value);
+  }
+  function facetCounts(rows, q) {
+    var _a5;
+    const out = { matched: 0 };
+    for (const key of FACET_KEYS) {
+      const scope = key === "flags" ? q : { ...q, [key]: [] };
+      const counts = /* @__PURE__ */ new Map();
+      for (const row of rows) {
+        if (!matchesAssetQuery(row, scope)) continue;
+        for (const value of facetValues(key, row)) {
+          counts.set(value, ((_a5 = counts.get(value)) != null ? _a5 : 0) + 1);
+        }
+      }
+      for (const value of q[key]) if (!counts.has(value)) counts.set(value, 0);
+      out[key] = Array.from(counts, ([value, count2]) => ({ value, count: count2 })).sort(facetSorter(key));
+    }
+    out.matched = rows.reduce((n, row) => matchesAssetQuery(row, q) ? n + 1 : n, 0);
+    return out;
+  }
+  function pageOf(rows, page, pageSize) {
+    const size = Math.max(1, Math.floor(pageSize));
+    const pageCount = Math.max(1, Math.ceil(rows.length / size));
+    const clamped = Math.min(Math.max(Math.floor(page) || 0, 0), pageCount - 1);
+    return {
+      rows: rows.slice(clamped * size, (clamped + 1) * size),
+      page: clamped,
+      pageCount
+    };
+  }
+
+  // src/domain/aars.ts
+  var DEFAULT_AARS_RULE = {
+    severityPoints: { CRITICAL: 50, HIGH: 35, MEDIUM: 20, LOW: 8 },
+    multiIssueMultiplier: 1.2,
+    multiIssueScaling: "flat",
+    pillarACap: 50,
+    // "code": the spec's unit — one gap per distinct framework code. See `GapUnit`.
+    gapUnit: "code",
+    issueAttribution: "direct",
+    gapPoints: [
+      { match: "exact", code: "NO_GUARDRAIL", points: 10 },
+      { match: "exact", code: "DEPRECATED_MODEL", points: 5 },
+      { match: "exact", code: "LLM04", points: 5 },
+      { match: "exact", code: "LLM05", points: 5 },
+      { match: "prefix", code: "LLM", points: 10 },
+      { match: "prefix", code: "ASI", points: 10 },
+      { match: "prefix", code: "ML", points: 5 },
+      { match: "exact", code: "FIVE_RS", points: 5 },
+      { match: "prefix", code: "5R", points: 5 }
+    ],
+    gapFallbackPoints: 5,
+    gapAggregation: "sum",
+    // Off: switching any of these on adds gaps the doc's applied table never priced.
+    gapSources: {
+      fiveRs: false,
+      deprecatedModel: false,
+      inactiveAgent: false,
+      frameworkMapping: false
+    },
+    // All 1: the spec reads a failing control as present-or-absent, never as more or less
+    // severe. Kept as a knob because ai_findings.severity is already persisted and unused.
+    findingSeverityWeights: { CRITICAL: 1, HIGH: 1, MEDIUM: 1, LOW: 1 },
+    pillarBCap: 30,
+    dataExposurePoints: { SENSITIVE: 20, DATA_ACCESS: 10, NONE: 0 },
+    // 5Rs framework at 53% — data-exposure controls are systemically weak, so all
+    // data-related points are amplified (ai/custom_score.md Pillar C).
+    dataAmplifier: 1.1,
+    // OFF: every point zero, so the term contributes nothing and pillar C is arithmetically
+    // what it has always been. ai/custom_score.md's applied 14-row table — which pins
+    // test/aars.test.ts — therefore keeps passing untouched. Sixth knob to follow that
+    // convention, after multiIssueScaling, gapAggregation, gapSources, findingSeverityWeights
+    // and exposurePoints.
+    dataFindingPoints: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 },
+    dataFindingScaling: "flat",
+    dataFindingMultiplier: 1,
+    // 22 = the old implicit ceiling (20 × 1.1), so naming it changes no score.
+    pillarCCap: 22,
+    // Pillar D is OFF in the spec rule. The doc reports internet exposure beside the score
+    // but never adds it to one, so scoring it here would change every published number.
+    exposurePoints: { CONFIRMED: 0, UNDETERMINED: 0, NONE: 0 },
+    bands: { critical: 70, high: 50, medium: 30, low: 10 }
+  };
+  var AARS_V2_RULE = {
+    severityPoints: { CRITICAL: 40, HIGH: 28, MEDIUM: 16, LOW: 6 },
+    multiIssueMultiplier: 1.2,
+    multiIssueScaling: "log2",
+    pillarACap: 45,
+    // Stays "code", same reasoning as `frameworkMapping` below: this preset was calibrated
+    // against the code-unit shape, and switching the unit is a bigger act than this pass —
+    // `AARS_V3_RULE` is that act, kept separate so v2 keeps meaning what it always meant.
+    gapUnit: "code",
+    issueAttribution: "direct",
+    gapPoints: [
+      { match: "exact", code: "NO_GUARDRAIL", points: 10 },
+      { match: "exact", code: "INACTIVE_AGENT", points: 10 },
+      { match: "exact", code: "DEPRECATED_MODEL", points: 5 },
+      { match: "exact", code: "LLM04", points: 5 },
+      { match: "exact", code: "LLM05", points: 5 },
+      { match: "prefix", code: "LLM", points: 10 },
+      { match: "prefix", code: "ASI", points: 10 },
+      { match: "prefix", code: "ML", points: 5 },
+      { match: "exact", code: "FIVE_RS", points: 5 },
+      { match: "prefix", code: "5R", points: 5 }
+    ],
+    gapFallbackPoints: 5,
+    gapAggregation: "rss",
+    // frameworkMapping stays OFF even here, where every other dormant source is on. Two
+    // reasons, and neither is timidity: ai/AARS_ASSESSMENT.md calibrated this preset before
+    // posture was collected at all, so switching it on would make the preset differ from the
+    // measurement that justifies its numbers; and its effect is DATA-DEPENDENT — it does
+    // nothing until a posture sync has run, then changes scores — so a preset carrying it
+    // would silently re-score a landscape on the strength of an unrelated sync finishing.
+    // It is switched on deliberately, through the Rules page, with the same preview.
+    gapSources: {
+      fiveRs: true,
+      deprecatedModel: true,
+      inactiveAgent: true,
+      frameworkMapping: false
+    },
+    findingSeverityWeights: { CRITICAL: 1.5, HIGH: 1.2, MEDIUM: 1, LOW: 0.6 },
+    pillarBCap: 25,
+    // Split, so the pillar takes more than two values. Reaching sensitive data is worth 6 —
+    // half what it was, because it is what most of the landscape shares — and what you reach is
+    // worth up to 6 more. An asset with one MEDIUM finding scores 6+2=8; one with three
+    // CRITICALs scores 6+7=13, clamped to the 12 cap. Two values become five.
+    dataExposurePoints: { SENSITIVE: 6, DATA_ACCESS: 3, NONE: 0 },
+    dataAmplifier: 1,
+    dataFindingPoints: { CRITICAL: 6, HIGH: 4, MEDIUM: 2, LOW: 1 },
+    dataFindingScaling: "log2",
+    dataFindingMultiplier: 1.2,
+    pillarCCap: 12,
+    exposurePoints: { CONFIRMED: 18, UNDETERMINED: 7, NONE: 0 },
+    bands: { critical: 70, high: 50, medium: 30, low: 10 }
+  };
+  var AARS_V3_RULE = {
+    ...AARS_V2_RULE,
+    gapUnit: "condition",
+    issueAttribution: "direct",
+    gapPoints: [
+      { match: "exact", code: "INACTIVE_AGENT", points: 10 },
+      { match: "exact", code: "DEPRECATED_MODEL", points: 5 },
+      { match: "exact", code: "COND_MISSING_GUARDRAIL", points: 10 },
+      { match: "exact", code: "COND_SENSITIVE_DATA", points: 8 },
+      { match: "exact", code: "COND_EXCESSIVE_PRIVILEGE", points: 8 },
+      { match: "exact", code: "COND_INTERNET_EXPOSURE", points: 6 },
+      { match: "prefix", code: "COMBO_", points: 5 }
+    ]
+  };
+  var AARS_MAX_SCORE = 100;
+  function achievableMax(rule) {
+    const maxExposure = Math.max(
+      rule.exposurePoints.CONFIRMED,
+      rule.exposurePoints.UNDETERMINED,
+      rule.exposurePoints.NONE
+    );
+    return Math.min(
+      AARS_MAX_SCORE,
+      rule.pillarACap + rule.pillarBCap + rule.pillarCCap + maxExposure
+    );
+  }
+  function derivationSignature(rule) {
+    const s = rule.gapSources;
+    return [
+      `gapUnit:${rule.gapUnit}`,
+      `issueAttribution:${rule.issueAttribution}`,
+      `fiveRs:${s.fiveRs ? 1 : 0}`,
+      `deprecatedModel:${s.deprecatedModel ? 1 : 0}`,
+      `inactiveAgent:${s.inactiveAgent ? 1 : 0}`,
+      `frameworkMapping:${s.frameworkMapping ? 1 : 0}`
+    ].join("|");
+  }
+  function gapPointsFor(code, rule = DEFAULT_AARS_RULE) {
+    const c = String(code != null ? code : "").trim().toUpperCase();
+    for (const row of rule.gapPoints) {
+      const hit = row.match === "exact" ? c === row.code : c.startsWith(row.code);
+      if (hit) return row.points;
+    }
+    return rule.gapFallbackPoints;
+  }
+  function gap(code, points) {
+    return points === void 0 ? { code } : { code, points };
+  }
+  function aarsSeverity(score, bands = DEFAULT_AARS_RULE.bands) {
+    if (score >= bands.critical) return "CRITICAL";
+    if (score >= bands.high) return "HIGH";
+    if (score >= bands.medium) return "MEDIUM";
+    if (score >= bands.low) return "LOW";
+    return "INFO";
+  }
+  function worstPoints(severities, points) {
+    var _a5;
+    let worst = 0;
+    for (const s of severities) {
+      const p = (_a5 = points[s]) != null ? _a5 : 0;
+      if (p > worst) worst = p;
+    }
+    return worst;
+  }
+  function worstSeverityPoints(severities, rule) {
+    return worstPoints(severities, rule.severityPoints);
+  }
+  function countFactor(count2, scaling, multiplier) {
+    if (count2 <= 1) return 1;
+    if (scaling === "log2") return 1 + (multiplier - 1) * Math.log2(count2);
+    return multiplier;
+  }
+  function multiIssueFactor(count2, rule) {
+    return countFactor(count2, rule.multiIssueScaling, rule.multiIssueMultiplier);
+  }
+  function dataFindingPointsFor(severities, rule) {
+    if (!severities.length) return 0;
+    return Math.round(
+      worstPoints(severities, rule.dataFindingPoints) * countFactor(severities.length, rule.dataFindingScaling, rule.dataFindingMultiplier)
+    );
+  }
+  function aggregateGapPoints(points, rule) {
+    if (rule.gapAggregation === "rss") {
+      return Math.round(Math.sqrt(points.reduce((acc, p) => acc + p * p, 0)));
+    }
+    return points.reduce((acc, p) => acc + p, 0);
+  }
+  function computeAars(input, rule = DEFAULT_AARS_RULE) {
+    var _a5, _b, _c, _d;
+    let toxic = worstSeverityPoints(input.issueSeverities, rule);
+    toxic *= multiIssueFactor(input.issueSeverities.length, rule);
+    toxic = Math.min(rule.pillarACap, Math.round(toxic));
+    const compliance = Math.min(
+      rule.pillarBCap,
+      aggregateGapPoints(
+        input.gaps.map((g) => {
+          var _a6;
+          return (_a6 = g.points) != null ? _a6 : gapPointsFor(g.code, rule);
+        }),
+        rule
+      )
+    );
+    const dataTier = (_a5 = rule.dataExposurePoints[input.dataExposure]) != null ? _a5 : 0;
+    const dataFound = dataFindingPointsFor((_b = input.dataFindingSeverities) != null ? _b : [], rule);
+    const data = Math.min(rule.pillarCCap, Math.round((dataTier + dataFound) * rule.dataAmplifier));
+    const exposure = (_d = rule.exposurePoints[(_c = input.internetExposure) != null ? _c : "NONE"]) != null ? _d : 0;
+    const score = Math.min(AARS_MAX_SCORE, toxic + compliance + data + exposure);
+    return {
+      score,
+      severity: aarsSeverity(score, rule.bands),
+      pillars: { toxic, compliance, data, exposure }
+    };
+  }
+  function gapBreakdown(gaps, rule = DEFAULT_AARS_RULE) {
+    return gaps.map((g) => {
+      var _a5;
+      return {
+        code: g.code,
+        points: (_a5 = g.points) != null ? _a5 : gapPointsFor(g.code, rule),
+        overridden: g.points !== void 0
+      };
+    });
+  }
+
+  // src/domain/rankStats.ts
+  function kendallTauB(a, b) {
+    if (a.length !== b.length) {
+      throw new Error(`kendallTauB: length mismatch (${a.length} vs ${b.length})`);
+    }
+    const n = a.length;
+    let concordantMinusDiscordant = 0;
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        concordantMinusDiscordant += Math.sign(a[i] - a[j]) * Math.sign(b[i] - b[j]);
+      }
+    }
+    const n0 = n * (n - 1) / 2;
+    const n1 = tiedPairCount(a);
+    const n2 = tiedPairCount(b);
+    const denom = (n0 - n1) * (n0 - n2);
+    if (denom <= 0) return 0;
+    return concordantMinusDiscordant / Math.sqrt(denom);
+  }
+  function tiedPairCount(values) {
+    var _a5;
+    const counts = /* @__PURE__ */ new Map();
+    for (const v of values) counts.set(v, ((_a5 = counts.get(v)) != null ? _a5 : 0) + 1);
+    let pairs = 0;
+    for (const c of counts.values()) pairs += c * (c - 1) / 2;
+    return pairs;
+  }
+  function tieRate(values) {
+    const n = values.length;
+    if (n < 2) return 0;
+    return tiedPairCount(values) / (n * (n - 1) / 2);
+  }
+  function effectiveCardinality(values) {
+    var _a5;
+    const n = values.length;
+    if (n === 0) return 0;
+    const counts = /* @__PURE__ */ new Map();
+    for (const v of values) counts.set(v, ((_a5 = counts.get(v)) != null ? _a5 : 0) + 1);
+    let entropy = 0;
+    for (const c of counts.values()) {
+      const p = c / n;
+      entropy += -p * Math.log(p);
+    }
+    return Math.exp(entropy);
+  }
+  function mulberry32(seed) {
+    let a = seed >>> 0;
+    return function next() {
+      a = a + 1831565813 | 0;
+      let t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function bootstrapCI(values, stat, samples, seed) {
+    const n = values.length;
+    const rng = mulberry32(seed);
+    const stats = [];
+    for (let s = 0; s < samples; s++) {
+      const resample = new Array(n);
+      for (let i = 0; i < n; i++) {
+        resample[i] = values[Math.floor(rng() * n)];
+      }
+      stats.push(stat(resample));
+    }
+    return {
+      lo: quantile(stats, 0.025),
+      hi: quantile(stats, 0.975)
+    };
+  }
 
   // src/domain/graphTypes.ts
   function severityRank(s) {
@@ -686,418 +1172,6 @@ var Server = (() => {
         assetIds: bucket.assetIds
       };
     });
-  }
-
-  // src/domain/registerScope.ts
-  var CANDIDATE_CATEGORIES = [
-    { id: RISK_CATEGORY_ID, name: "AI Security", count: 99, measuredAt: "2026-08-23", measuredScope: "VALUE-CHAIN project" },
-    { id: "wct-id-3", name: "Vulnerability Assessment", count: 677, measuredAt: "2026-08-23", measuredScope: "VALUE-CHAIN project" },
-    { id: "41a3ed79-9a2c-4466-9109-f845fd057bd4", name: "High Profile Threats", count: 536, measuredAt: "2026-08-23", measuredScope: "VALUE-CHAIN project" },
-    { id: "5c3c85b5-bb94-4ee7-8f3e-c186d0229280", name: "Data Security", count: 439, measuredAt: "2026-08-23", measuredScope: "VALUE-CHAIN project" },
-    { id: "1f28667a-9d12-48dd-898d-d326bb422f8d", name: "Key & Secret Management", count: 1390, measuredAt: "2026-08-23", measuredScope: "VALUE-CHAIN project" },
-    { id: "861eb856-54f6-4d1b-8ca1-1d6130841d20", name: "Identity Management", count: 3477, measuredAt: "2026-08-23", measuredScope: "VALUE-CHAIN project" }
-  ];
-  var DEFAULT_CATEGORY_IDS = [RISK_CATEGORY_ID];
-  function cleanCategoryIds(v) {
-    if (!Array.isArray(v)) return DEFAULT_CATEGORY_IDS.slice();
-    const seen = {};
-    const out = [];
-    for (const raw of v) {
-      if (typeof raw !== "string") continue;
-      const id = raw.trim();
-      if (!id || seen[id]) continue;
-      seen[id] = true;
-      out.push(id);
-    }
-    return out.length ? out : DEFAULT_CATEGORY_IDS.slice();
-  }
-  var DEFAULT_SYNC_SCOPE = "project";
-  function cleanSyncScope(v) {
-    return v === "tenant" ? "tenant" : DEFAULT_SYNC_SCOPE;
-  }
-  function resolveProjectScope(scope, propId) {
-    if (scope === "tenant") return null;
-    return typeof propId === "string" && propId.trim() ? [propId.trim()] : null;
-  }
-  var TENANT_SUFFIX = "#tenant";
-  function registerScopeSignature(ids, applied) {
-    const categories = cleanCategoryIds(ids.slice()).slice().sort().join("|");
-    return applied && applied.length ? categories : categories + TENANT_SUFFIX;
-  }
-
-  // src/domain/aars.ts
-  var DEFAULT_AARS_RULE = {
-    severityPoints: { CRITICAL: 50, HIGH: 35, MEDIUM: 20, LOW: 8 },
-    multiIssueMultiplier: 1.2,
-    multiIssueScaling: "flat",
-    pillarACap: 50,
-    // "code": the spec's unit — one gap per distinct framework code. See `GapUnit`.
-    gapUnit: "code",
-    issueAttribution: "direct",
-    gapPoints: [
-      { match: "exact", code: "NO_GUARDRAIL", points: 10 },
-      { match: "exact", code: "DEPRECATED_MODEL", points: 5 },
-      { match: "exact", code: "LLM04", points: 5 },
-      { match: "exact", code: "LLM05", points: 5 },
-      { match: "prefix", code: "LLM", points: 10 },
-      { match: "prefix", code: "ASI", points: 10 },
-      { match: "prefix", code: "ML", points: 5 },
-      { match: "exact", code: "FIVE_RS", points: 5 },
-      { match: "prefix", code: "5R", points: 5 }
-    ],
-    gapFallbackPoints: 5,
-    gapAggregation: "sum",
-    // Off: switching any of these on adds gaps the doc's applied table never priced.
-    gapSources: {
-      fiveRs: false,
-      deprecatedModel: false,
-      inactiveAgent: false,
-      frameworkMapping: false
-    },
-    // All 1: the spec reads a failing control as present-or-absent, never as more or less
-    // severe. Kept as a knob because ai_findings.severity is already persisted and unused.
-    findingSeverityWeights: { CRITICAL: 1, HIGH: 1, MEDIUM: 1, LOW: 1 },
-    pillarBCap: 30,
-    dataExposurePoints: { SENSITIVE: 20, DATA_ACCESS: 10, NONE: 0 },
-    // 5Rs framework at 53% — data-exposure controls are systemically weak, so all
-    // data-related points are amplified (ai/custom_score.md Pillar C).
-    dataAmplifier: 1.1,
-    // OFF: every point zero, so the term contributes nothing and pillar C is arithmetically
-    // what it has always been. ai/custom_score.md's applied 14-row table — which pins
-    // test/aars.test.ts — therefore keeps passing untouched. Sixth knob to follow that
-    // convention, after multiIssueScaling, gapAggregation, gapSources, findingSeverityWeights
-    // and exposurePoints.
-    dataFindingPoints: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 },
-    dataFindingScaling: "flat",
-    dataFindingMultiplier: 1,
-    // 22 = the old implicit ceiling (20 × 1.1), so naming it changes no score.
-    pillarCCap: 22,
-    // Pillar D is OFF in the spec rule. The doc reports internet exposure beside the score
-    // but never adds it to one, so scoring it here would change every published number.
-    exposurePoints: { CONFIRMED: 0, UNDETERMINED: 0, NONE: 0 },
-    bands: { critical: 70, high: 50, medium: 30, low: 10 }
-  };
-  var AARS_V2_RULE = {
-    severityPoints: { CRITICAL: 40, HIGH: 28, MEDIUM: 16, LOW: 6 },
-    multiIssueMultiplier: 1.2,
-    multiIssueScaling: "log2",
-    pillarACap: 45,
-    // Stays "code", same reasoning as `frameworkMapping` below: this preset was calibrated
-    // against the code-unit shape, and switching the unit is a bigger act than this pass —
-    // `AARS_V3_RULE` is that act, kept separate so v2 keeps meaning what it always meant.
-    gapUnit: "code",
-    issueAttribution: "direct",
-    gapPoints: [
-      { match: "exact", code: "NO_GUARDRAIL", points: 10 },
-      { match: "exact", code: "INACTIVE_AGENT", points: 10 },
-      { match: "exact", code: "DEPRECATED_MODEL", points: 5 },
-      { match: "exact", code: "LLM04", points: 5 },
-      { match: "exact", code: "LLM05", points: 5 },
-      { match: "prefix", code: "LLM", points: 10 },
-      { match: "prefix", code: "ASI", points: 10 },
-      { match: "prefix", code: "ML", points: 5 },
-      { match: "exact", code: "FIVE_RS", points: 5 },
-      { match: "prefix", code: "5R", points: 5 }
-    ],
-    gapFallbackPoints: 5,
-    gapAggregation: "rss",
-    // frameworkMapping stays OFF even here, where every other dormant source is on. Two
-    // reasons, and neither is timidity: ai/AARS_ASSESSMENT.md calibrated this preset before
-    // posture was collected at all, so switching it on would make the preset differ from the
-    // measurement that justifies its numbers; and its effect is DATA-DEPENDENT — it does
-    // nothing until a posture sync has run, then changes scores — so a preset carrying it
-    // would silently re-score a landscape on the strength of an unrelated sync finishing.
-    // It is switched on deliberately, through the Rules page, with the same preview.
-    gapSources: {
-      fiveRs: true,
-      deprecatedModel: true,
-      inactiveAgent: true,
-      frameworkMapping: false
-    },
-    findingSeverityWeights: { CRITICAL: 1.5, HIGH: 1.2, MEDIUM: 1, LOW: 0.6 },
-    pillarBCap: 25,
-    // Split, so the pillar takes more than two values. Reaching sensitive data is worth 6 —
-    // half what it was, because it is what most of the landscape shares — and what you reach is
-    // worth up to 6 more. An asset with one MEDIUM finding scores 6+2=8; one with three
-    // CRITICALs scores 6+7=13, clamped to the 12 cap. Two values become five.
-    dataExposurePoints: { SENSITIVE: 6, DATA_ACCESS: 3, NONE: 0 },
-    dataAmplifier: 1,
-    dataFindingPoints: { CRITICAL: 6, HIGH: 4, MEDIUM: 2, LOW: 1 },
-    dataFindingScaling: "log2",
-    dataFindingMultiplier: 1.2,
-    pillarCCap: 12,
-    exposurePoints: { CONFIRMED: 18, UNDETERMINED: 7, NONE: 0 },
-    bands: { critical: 70, high: 50, medium: 30, low: 10 }
-  };
-  var AARS_V3_RULE = {
-    ...AARS_V2_RULE,
-    gapUnit: "condition",
-    issueAttribution: "direct",
-    gapPoints: [
-      { match: "exact", code: "INACTIVE_AGENT", points: 10 },
-      { match: "exact", code: "DEPRECATED_MODEL", points: 5 },
-      { match: "exact", code: "COND_MISSING_GUARDRAIL", points: 10 },
-      { match: "exact", code: "COND_SENSITIVE_DATA", points: 8 },
-      { match: "exact", code: "COND_EXCESSIVE_PRIVILEGE", points: 8 },
-      { match: "exact", code: "COND_INTERNET_EXPOSURE", points: 6 },
-      { match: "prefix", code: "COMBO_", points: 5 }
-    ]
-  };
-  var AARS_MAX_SCORE = 100;
-  function achievableMax(rule) {
-    const maxExposure = Math.max(
-      rule.exposurePoints.CONFIRMED,
-      rule.exposurePoints.UNDETERMINED,
-      rule.exposurePoints.NONE
-    );
-    return Math.min(
-      AARS_MAX_SCORE,
-      rule.pillarACap + rule.pillarBCap + rule.pillarCCap + maxExposure
-    );
-  }
-  function derivationSignature(rule) {
-    const s = rule.gapSources;
-    return [
-      `gapUnit:${rule.gapUnit}`,
-      `issueAttribution:${rule.issueAttribution}`,
-      `fiveRs:${s.fiveRs ? 1 : 0}`,
-      `deprecatedModel:${s.deprecatedModel ? 1 : 0}`,
-      `inactiveAgent:${s.inactiveAgent ? 1 : 0}`,
-      `frameworkMapping:${s.frameworkMapping ? 1 : 0}`
-    ].join("|");
-  }
-  function gapPointsFor(code, rule = DEFAULT_AARS_RULE) {
-    const c = String(code != null ? code : "").trim().toUpperCase();
-    for (const row of rule.gapPoints) {
-      const hit = row.match === "exact" ? c === row.code : c.startsWith(row.code);
-      if (hit) return row.points;
-    }
-    return rule.gapFallbackPoints;
-  }
-  function gap(code, points) {
-    return points === void 0 ? { code } : { code, points };
-  }
-  function aarsSeverity(score, bands = DEFAULT_AARS_RULE.bands) {
-    if (score >= bands.critical) return "CRITICAL";
-    if (score >= bands.high) return "HIGH";
-    if (score >= bands.medium) return "MEDIUM";
-    if (score >= bands.low) return "LOW";
-    return "INFO";
-  }
-  function worstPoints(severities, points) {
-    var _a5;
-    let worst = 0;
-    for (const s of severities) {
-      const p = (_a5 = points[s]) != null ? _a5 : 0;
-      if (p > worst) worst = p;
-    }
-    return worst;
-  }
-  function worstSeverityPoints(severities, rule) {
-    return worstPoints(severities, rule.severityPoints);
-  }
-  function countFactor(count2, scaling, multiplier) {
-    if (count2 <= 1) return 1;
-    if (scaling === "log2") return 1 + (multiplier - 1) * Math.log2(count2);
-    return multiplier;
-  }
-  function multiIssueFactor(count2, rule) {
-    return countFactor(count2, rule.multiIssueScaling, rule.multiIssueMultiplier);
-  }
-  function dataFindingPointsFor(severities, rule) {
-    if (!severities.length) return 0;
-    return Math.round(
-      worstPoints(severities, rule.dataFindingPoints) * countFactor(severities.length, rule.dataFindingScaling, rule.dataFindingMultiplier)
-    );
-  }
-  function aggregateGapPoints(points, rule) {
-    if (rule.gapAggregation === "rss") {
-      return Math.round(Math.sqrt(points.reduce((acc, p) => acc + p * p, 0)));
-    }
-    return points.reduce((acc, p) => acc + p, 0);
-  }
-  function computeAars(input, rule = DEFAULT_AARS_RULE) {
-    var _a5, _b, _c, _d;
-    let toxic = worstSeverityPoints(input.issueSeverities, rule);
-    toxic *= multiIssueFactor(input.issueSeverities.length, rule);
-    toxic = Math.min(rule.pillarACap, Math.round(toxic));
-    const compliance = Math.min(
-      rule.pillarBCap,
-      aggregateGapPoints(
-        input.gaps.map((g) => {
-          var _a6;
-          return (_a6 = g.points) != null ? _a6 : gapPointsFor(g.code, rule);
-        }),
-        rule
-      )
-    );
-    const dataTier = (_a5 = rule.dataExposurePoints[input.dataExposure]) != null ? _a5 : 0;
-    const dataFound = dataFindingPointsFor((_b = input.dataFindingSeverities) != null ? _b : [], rule);
-    const data = Math.min(rule.pillarCCap, Math.round((dataTier + dataFound) * rule.dataAmplifier));
-    const exposure = (_d = rule.exposurePoints[(_c = input.internetExposure) != null ? _c : "NONE"]) != null ? _d : 0;
-    const score = Math.min(AARS_MAX_SCORE, toxic + compliance + data + exposure);
-    return {
-      score,
-      severity: aarsSeverity(score, rule.bands),
-      pillars: { toxic, compliance, data, exposure }
-    };
-  }
-  function gapBreakdown(gaps, rule = DEFAULT_AARS_RULE) {
-    return gaps.map((g) => {
-      var _a5;
-      return {
-        code: g.code,
-        points: (_a5 = g.points) != null ? _a5 : gapPointsFor(g.code, rule),
-        overridden: g.points !== void 0
-      };
-    });
-  }
-
-  // src/domain/util.ts
-  function toStr(v, fallback = "") {
-    return v === null || v === void 0 ? fallback : String(v);
-  }
-  function toNum(v, fallback = 0) {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : fallback;
-  }
-  function clampInt(v, fallback, min, max) {
-    const n = Math.round(Number(v));
-    if (!Number.isFinite(n)) return fallback;
-    return Math.min(max, Math.max(min, n));
-  }
-  function cmp(a, b) {
-    return a < b ? -1 : a > b ? 1 : 0;
-  }
-  function cmpBy(key) {
-    return (a, b) => cmp(key(a), key(b));
-  }
-  function indexBy(xs, key) {
-    const out = /* @__PURE__ */ new Map();
-    for (const x of xs) out.set(key(x), x);
-    return out;
-  }
-  function pushInto(map, key, ...values) {
-    const bucket = map.get(key);
-    if (bucket) bucket.push(...values);
-    else map.set(key, [...values]);
-  }
-  function groupBy(xs, key) {
-    const out = /* @__PURE__ */ new Map();
-    for (const x of xs) pushInto(out, key(x), x);
-    return out;
-  }
-  function present(v) {
-    if (v === null || v === void 0) return false;
-    if (typeof v === "number" && Number.isNaN(v)) return false;
-    if (typeof v === "string" && v.trim() === "") return false;
-    return true;
-  }
-  function clean(v) {
-    return present(v) ? v : null;
-  }
-  function parseTs(v) {
-    const c = clean(v);
-    if (c === null) return null;
-    if (c instanceof Date) return isNaN(c.getTime()) ? null : c.getTime();
-    if (typeof c === "number" && Number.isFinite(c)) return c;
-    let s = String(c).trim();
-    if (!s) return null;
-    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(s)) s = s.replace(" ", "T");
-    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(s)) s += "Z";
-    const t = Date.parse(s);
-    return Number.isNaN(t) ? null : t;
-  }
-  function toIso(ms2) {
-    if (ms2 === null || !Number.isFinite(ms2)) return null;
-    return new Date(Math.floor(ms2 / 1e3) * 1e3).toISOString().replace(".000Z", "Z");
-  }
-  function nowIso(now) {
-    return toIso(now != null ? now : Date.now());
-  }
-  function mean(values) {
-    if (!values.length) return null;
-    return values.reduce((a, b) => a + b, 0) / values.length;
-  }
-  function quantile(values, q) {
-    if (!values.length) return null;
-    const sorted = [...values].sort((a, b) => a - b);
-    const idx = q * (sorted.length - 1);
-    const lo = Math.floor(idx);
-    const hi = Math.ceil(idx);
-    if (lo === hi) return sorted[lo];
-    return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
-  }
-
-  // src/domain/rankStats.ts
-  function kendallTauB(a, b) {
-    if (a.length !== b.length) {
-      throw new Error(`kendallTauB: length mismatch (${a.length} vs ${b.length})`);
-    }
-    const n = a.length;
-    let concordantMinusDiscordant = 0;
-    for (let i = 0; i < n; i++) {
-      for (let j = i + 1; j < n; j++) {
-        concordantMinusDiscordant += Math.sign(a[i] - a[j]) * Math.sign(b[i] - b[j]);
-      }
-    }
-    const n0 = n * (n - 1) / 2;
-    const n1 = tiedPairCount(a);
-    const n2 = tiedPairCount(b);
-    const denom = (n0 - n1) * (n0 - n2);
-    if (denom <= 0) return 0;
-    return concordantMinusDiscordant / Math.sqrt(denom);
-  }
-  function tiedPairCount(values) {
-    var _a5;
-    const counts = /* @__PURE__ */ new Map();
-    for (const v of values) counts.set(v, ((_a5 = counts.get(v)) != null ? _a5 : 0) + 1);
-    let pairs = 0;
-    for (const c of counts.values()) pairs += c * (c - 1) / 2;
-    return pairs;
-  }
-  function tieRate(values) {
-    const n = values.length;
-    if (n < 2) return 0;
-    return tiedPairCount(values) / (n * (n - 1) / 2);
-  }
-  function effectiveCardinality(values) {
-    var _a5;
-    const n = values.length;
-    if (n === 0) return 0;
-    const counts = /* @__PURE__ */ new Map();
-    for (const v of values) counts.set(v, ((_a5 = counts.get(v)) != null ? _a5 : 0) + 1);
-    let entropy = 0;
-    for (const c of counts.values()) {
-      const p = c / n;
-      entropy += -p * Math.log(p);
-    }
-    return Math.exp(entropy);
-  }
-  function mulberry32(seed) {
-    let a = seed >>> 0;
-    return function next() {
-      a = a + 1831565813 | 0;
-      let t = Math.imul(a ^ a >>> 15, 1 | a);
-      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
-      return ((t ^ t >>> 14) >>> 0) / 4294967296;
-    };
-  }
-  function bootstrapCI(values, stat, samples, seed) {
-    const n = values.length;
-    const rng = mulberry32(seed);
-    const stats = [];
-    for (let s = 0; s < samples; s++) {
-      const resample = new Array(n);
-      for (let i = 0; i < n; i++) {
-        resample[i] = values[Math.floor(rng() * n)];
-      }
-      stats.push(stat(resample));
-    }
-    return {
-      lo: quantile(stats, 0.025),
-      hi: quantile(stats, 0.975)
-    };
   }
 
   // src/domain/aarsRule.ts
@@ -1689,6 +1763,393 @@ var Server = (() => {
       multiAgent: null,
       context: contextFactor(node2),
       language: languageFactor(node2)
+    };
+  }
+
+  // src/domain/registerScope.ts
+  var CANDIDATE_CATEGORIES = [
+    { id: RISK_CATEGORY_ID, name: "AI Security", count: 99, measuredAt: "2026-08-23", measuredScope: "VALUE-CHAIN project" },
+    { id: "wct-id-3", name: "Vulnerability Assessment", count: 677, measuredAt: "2026-08-23", measuredScope: "VALUE-CHAIN project" },
+    { id: "41a3ed79-9a2c-4466-9109-f845fd057bd4", name: "High Profile Threats", count: 536, measuredAt: "2026-08-23", measuredScope: "VALUE-CHAIN project" },
+    { id: "5c3c85b5-bb94-4ee7-8f3e-c186d0229280", name: "Data Security", count: 439, measuredAt: "2026-08-23", measuredScope: "VALUE-CHAIN project" },
+    { id: "1f28667a-9d12-48dd-898d-d326bb422f8d", name: "Key & Secret Management", count: 1390, measuredAt: "2026-08-23", measuredScope: "VALUE-CHAIN project" },
+    { id: "861eb856-54f6-4d1b-8ca1-1d6130841d20", name: "Identity Management", count: 3477, measuredAt: "2026-08-23", measuredScope: "VALUE-CHAIN project" }
+  ];
+  var DEFAULT_CATEGORY_IDS = [RISK_CATEGORY_ID];
+  function cleanCategoryIds(v) {
+    if (!Array.isArray(v)) return DEFAULT_CATEGORY_IDS.slice();
+    const seen = {};
+    const out = [];
+    for (const raw of v) {
+      if (typeof raw !== "string") continue;
+      const id = raw.trim();
+      if (!id || seen[id]) continue;
+      seen[id] = true;
+      out.push(id);
+    }
+    return out.length ? out : DEFAULT_CATEGORY_IDS.slice();
+  }
+  var DEFAULT_SYNC_SCOPE = "project";
+  function cleanSyncScope(v) {
+    return v === "tenant" ? "tenant" : DEFAULT_SYNC_SCOPE;
+  }
+  function resolveProjectScope(scope, propId) {
+    if (scope === "tenant") return null;
+    return typeof propId === "string" && propId.trim() ? [propId.trim()] : null;
+  }
+  var TENANT_SUFFIX = "#tenant";
+  function registerScopeSignature(ids, applied) {
+    const categories = cleanCategoryIds(ids.slice()).slice().sort().join("|");
+    return applied && applied.length ? categories : categories + TENANT_SUFFIX;
+  }
+
+  // src/domain/aarsTrend.ts
+  var PROJECT_TOTALS_COLUMN = "project_totals_json";
+  var PROJECT_TOTALS_MAX_CHARS = 45e3;
+  function countProjectTotals(nodes, decided) {
+    var _a5, _b, _c, _d;
+    const totals = {};
+    const projectsByAsset = /* @__PURE__ */ new Map();
+    function entry(projectId) {
+      let t = totals[projectId];
+      if (!t) {
+        const aars = {};
+        for (const sev of AARS_SEVERITY_ORDER) aars[sev] = 0;
+        const outcome = {};
+        for (const o of OUTCOME_VALUES) outcome[o] = 0;
+        t = { aars, outcome, counts: { issues: 0, findings: 0 } };
+        totals[projectId] = t;
+      }
+      return t;
+    }
+    for (const n of nodes) {
+      const projects = (_a5 = n.projects) != null ? _a5 : [];
+      if (!projects.length) continue;
+      projectsByAsset.set(n.id, projects);
+      const sev = normalizeAarsSeverity(n.aarsSeverity);
+      for (const p of projects) {
+        const t = entry(p.id);
+        if (sev) t.aars[sev] += 1;
+      }
+    }
+    for (const r of decided) {
+      const isFinding = r.assetId === void 0 && r.resourceId !== void 0;
+      const assetId = (_c = (_b = r.assetId) != null ? _b : r.resourceId) != null ? _c : "";
+      const projects = (_d = projectsByAsset.get(assetId)) != null ? _d : [];
+      for (const p of projects) {
+        const counts = entry(p.id).counts;
+        if (counts) counts[isFinding ? "findings" : "issues"] += 1;
+      }
+      const outcome = r.problemOutcome;
+      if (!outcome || !OUTCOME_VALUES.includes(outcome)) continue;
+      for (const p of projects) entry(p.id).outcome[outcome] += 1;
+    }
+    return totals;
+  }
+  function encodeProjectTotals(totals) {
+    const json = JSON.stringify(totals);
+    return json.length > PROJECT_TOTALS_MAX_CHARS ? null : json;
+  }
+  function countAarsSeverities(nodes) {
+    const counts = {};
+    for (const sev of AARS_SEVERITY_ORDER) counts[sev] = 0;
+    for (const n of nodes) {
+      const sev = normalizeAarsSeverity(n.aarsSeverity);
+      if (sev) counts[sev] += 1;
+    }
+    return counts;
+  }
+  function countsFromObject(parsed, keys, absentKeyIsNull = false) {
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const raw = parsed;
+    const counts = {};
+    for (const k of keys) {
+      if (absentKeyIsNull && !Object.prototype.hasOwnProperty.call(raw, k)) {
+        counts[k] = null;
+        continue;
+      }
+      const n = Number(raw[k]);
+      counts[k] = Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
+    }
+    return counts;
+  }
+  function parseCounts(v, keys, absentKeyIsNull = false) {
+    if (typeof v !== "string" || !v) return null;
+    try {
+      return countsFromObject(JSON.parse(v), keys, absentKeyIsNull);
+    } catch {
+      return null;
+    }
+  }
+  function parseAnnotations(v, keys) {
+    const out = {};
+    let raw = {};
+    if (typeof v === "string" && v) {
+      try {
+        const parsed = JSON.parse(v);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          raw = parsed;
+        }
+      } catch {
+        raw = {};
+      }
+    }
+    for (const k of keys) {
+      const n = Number(raw[k]);
+      out[k] = Object.prototype.hasOwnProperty.call(raw, k) && Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+    }
+    return out;
+  }
+  function parseProjectCounts(v, projectId, spec) {
+    if (typeof v !== "string" || !v) return null;
+    let parsed;
+    try {
+      parsed = JSON.parse(v);
+    } catch {
+      return null;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const entry = parsed[projectId];
+    if (!entry || typeof entry !== "object") return null;
+    return countsFromObject(
+      entry[spec.projectKey],
+      spec.keys,
+      spec.absentKeyIsNull
+    );
+  }
+  function readTrend(rows, spec, limit, projectId) {
+    var _a5;
+    const points = [];
+    if (!spec.keys.length) return points;
+    for (const r of rows) {
+      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
+      const counts = projectId ? parseProjectCounts(r[PROJECT_TOTALS_COLUMN], projectId, spec) : parseCounts(r[spec.countsColumn], spec.keys, spec.absentKeyIsNull);
+      if (!counts) continue;
+      if (spec.keys.every((k) => counts[k] === null)) continue;
+      const at = String(r["finished_at"] || r["started_at"] || "");
+      if (!at) continue;
+      const v = Number(r[spec.versionColumn]);
+      const ruleVersion = Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
+      const point = { at, counts, ruleVersion };
+      if (spec.annotationKeys && spec.annotationKeys.length) {
+        point.annotations = parseAnnotations(r[spec.countsColumn], spec.annotationKeys);
+      }
+      points.push(point);
+    }
+    points.sort(cmpBy((p) => p.at));
+    return limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
+  }
+  function trendFromHistory(rows, spec, limit = 90, projectId = "") {
+    return readTrend(rows, spec, limit, projectId);
+  }
+  function sparseTrendFromHistory(rows, spec, limit = 90, projectId = "") {
+    return readTrend(rows, spec, limit, projectId);
+  }
+  var COUNT_KEYS = ["issues", "findings", "postureFails"];
+  function cellCount(v) {
+    if (v === null || v === void 0 || v === "") return null;
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+  }
+  function projectCountEntry(cell2, projectId) {
+    let parsed = cell2;
+    if (typeof cell2 === "string") {
+      if (!cell2) return null;
+      try {
+        parsed = JSON.parse(cell2);
+      } catch {
+        return null;
+      }
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const entry = parsed[projectId];
+    if (!entry || typeof entry !== "object") return null;
+    const counts = entry["counts"];
+    if (!counts || typeof counts !== "object") return null;
+    const issues2 = cellCount(counts["issues"]);
+    const findings = cellCount(counts["findings"]);
+    return issues2 === null || findings === null ? null : { issues: issues2, findings };
+  }
+  function countTrendFromHistory(rows, limit = 90, projectId = "") {
+    var _a5;
+    const points = [];
+    for (const r of rows) {
+      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
+      const at = String(r["finished_at"] || r["started_at"] || "");
+      if (!at) continue;
+      let counts;
+      if (projectId) {
+        const scoped = projectCountEntry(r[PROJECT_TOTALS_COLUMN], projectId);
+        counts = {
+          issues: scoped ? scoped.issues : null,
+          findings: scoped ? scoped.findings : null,
+          postureFails: null
+        };
+      } else {
+        counts = {
+          issues: cellCount(r["issue_count"]),
+          findings: cellCount(r["finding_count"]),
+          postureFails: cellCount(r["posture_fail_count"])
+        };
+      }
+      if (COUNT_KEYS.every((k) => counts[k] === null)) continue;
+      points.push({ at, counts });
+    }
+    points.sort(cmpBy((p) => p.at));
+    return limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
+  }
+  var ADJACENCY_KEYS = ["DIRECT", "ADJACENT", "UNLINKED"];
+  var ADJACENCY_SPEC = {
+    keys: ADJACENCY_KEYS,
+    countsColumn: "adjacency_json",
+    versionColumn: "derivation_version",
+    projectKey: "adjacency",
+    annotationKeys: ["edgesKnown"]
+  };
+  function adjacencyTrendFromHistory(rows, limit = 90, projectId = "") {
+    return trendFromHistory(rows, ADJACENCY_SPEC, limit, projectId);
+  }
+  var EXPLOITATION_KEYS = ["kev", "exploit", "epss", "none", "unknown"];
+  var EXPLOITATION_SPEC = {
+    keys: EXPLOITATION_KEYS,
+    countsColumn: "exploitation_json",
+    versionColumn: "derivation_version",
+    projectKey: "exploitation",
+    annotationKeys: ["findings", "unjoined", "droppedNotInRegister"]
+  };
+  function exploitationTrendFromHistory(rows, limit = 90, projectId = "") {
+    return trendFromHistory(rows, EXPLOITATION_SPEC, limit, projectId);
+  }
+  var CATEGORY_COUNTS_COLUMN = "category_counts_json";
+  var CATEGORY_SPEC = {
+    keys: [],
+    countsColumn: CATEGORY_COUNTS_COLUMN,
+    versionColumn: "derivation_version",
+    projectKey: "categories",
+    absentKeyIsNull: true
+  };
+  function categorySpecFor(categoryIds) {
+    return { ...CATEGORY_SPEC, keys: [...categoryIds] };
+  }
+  function categoryTrendFromHistory(rows, categoryIds, limit = 90) {
+    return sparseTrendFromHistory(rows, categorySpecFor(categoryIds), limit);
+  }
+  function countIssueCategories(issues2) {
+    var _a5, _b;
+    const counts = {};
+    for (const issue2 of issues2) {
+      const seen = [];
+      for (const c of (_a5 = issue2.categories) != null ? _a5 : []) {
+        if (!c || seen.indexOf(c) >= 0) continue;
+        seen.push(c);
+        counts[c] = ((_b = counts[c]) != null ? _b : 0) + 1;
+      }
+    }
+    return counts;
+  }
+  var LEDGER_KEYS = ["new", "resolved", "reopened"];
+  var LEDGER_SPEC = {
+    keys: LEDGER_KEYS,
+    countsColumn: "ledger_json",
+    versionColumn: "derivation_version",
+    projectKey: "ledger"
+  };
+  function ledgerTrendFromHistory(rows, limit = 90, projectId = "") {
+    return trendFromHistory(rows, LEDGER_SPEC, limit, projectId);
+  }
+  var NET_CAPACITY_BAND_PCT = 2;
+  var MIN_COMPARABLE_SYNCS = 2;
+  function verdictOf(netPct) {
+    if (netPct === null || Math.abs(netPct) <= NET_CAPACITY_BAND_PCT) return "keeping-up";
+    return netPct > 0 ? "gaining" : "falling-behind";
+  }
+  function capacityFromLedgerDeltas(rows, limit = 90) {
+    var _a5, _b, _c;
+    const raw = [];
+    for (const r of rows) {
+      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
+      const counts = parseCounts(r["ledger_json"], [
+        "new",
+        "resolved",
+        "reopened",
+        "carried",
+        "skippedNarrowedScope"
+      ]);
+      if (!counts) continue;
+      const at = String(r["finished_at"] || r["started_at"] || "");
+      if (!at) continue;
+      const c = counts;
+      const n = (k) => {
+        var _a6;
+        return Number((_a6 = c[k]) != null ? _a6 : 0);
+      };
+      raw.push({
+        syncId: String((_b = r["sync_id"]) != null ? _b : ""),
+        at,
+        // "" is UNKNOWN, never "the same scope as the row beside it" — see case 2 above.
+        scope: String((_c = r["register_scope"]) != null ? _c : ""),
+        opened: n("new") + n("reopened"),
+        closed: n("resolved"),
+        openAtStart: n("carried") + n("resolved"),
+        skipped: n("skippedNarrowedScope")
+      });
+    }
+    raw.sort(cmpBy((p) => p.at));
+    const points = [];
+    let comparableCount = 0;
+    const rates = [];
+    const netPcts = [];
+    for (let i = 0; i < raw.length; i++) {
+      const cur = raw[i];
+      const prev = i > 0 ? raw[i - 1] : null;
+      const comparable = Boolean(
+        prev && cur.skipped === 0 && cur.scope !== "" && prev.scope !== "" && cur.scope === prev.scope
+      );
+      const netPct = cur.openAtStart > 0 ? (cur.closed - cur.opened) / cur.openAtStart * 100 : null;
+      if (comparable) {
+        comparableCount += 1;
+        if (cur.openAtStart > 0) {
+          rates.push(cur.closed / cur.openAtStart * 100);
+          netPcts.push(netPct != null ? netPct : 0);
+        }
+      }
+      points.push({
+        syncId: cur.syncId,
+        at: cur.at,
+        opened: cur.opened,
+        closed: cur.closed,
+        net: cur.closed - cur.opened,
+        comparable,
+        verdict: comparable ? verdictOf(netPct) : null
+      });
+    }
+    const enough = rates.length >= MIN_COMPARABLE_SYNCS;
+    const mean2 = (xs) => xs.reduce((a, x) => a + x, 0) / xs.length;
+    const trimmed = limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
+    return {
+      points: trimmed,
+      overall: {
+        mmcr: enough ? mean2(rates) : null,
+        verdict: enough ? verdictOf(mean2(netPcts)) : null,
+        syncs: points.length,
+        comparable: comparableCount
+      }
+    };
+  }
+  function labelCategories(ids) {
+    return ids.map((id) => {
+      const known = CANDIDATE_CATEGORIES.filter((c) => c.id === id)[0];
+      return { id, name: known ? known.name : id };
+    });
+  }
+  function postureTrendFromHistory(rows, categoryIds, limit = 90) {
+    return {
+      adjacency: adjacencyTrendFromHistory(rows, limit),
+      exploitation: exploitationTrendFromHistory(rows, limit),
+      categories: labelCategories(categoryIds),
+      categoryPoints: categoryTrendFromHistory(rows, categoryIds, limit),
+      ledger: ledgerTrendFromHistory(rows, limit),
+      capacity: capacityFromLedgerDeltas(rows, limit)
     };
   }
 
@@ -2773,205 +3234,6 @@ var Server = (() => {
     return worst;
   }
 
-  // src/domain/postureRule.ts
-  var AXIS_KEYS2 = ["capability", "containment", "consequence"];
-  var TRIFECTA_KEYS = ["privateData", "untrustedIngress", "externalEgress"];
-  var WHEN_KEYS = [...AXIS_KEYS2, ...TRIFECTA_KEYS];
-  var MAX_TIER_RULES = 40;
-  var TIER_CEILING_FLOOR = 1e-3;
-  function rec3(v) {
-    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
-  }
-  var DEFAULT_POSTURE_RULE = {
-    tierRules: [
-      // The lethal-trifecta row — UNREACHABLE by construction. See this const's own comment.
-      { when: { privateData: true, untrustedIngress: true, externalEgress: true }, tier: 4 },
-      { when: { capability: "BROAD", containment: "WEAK", consequence: "SEVERE" }, tier: 4 },
-      { when: { capability: "BROAD", containment: "WEAK" }, tier: 3 },
-      { when: { capability: "BROAD", consequence: "SEVERE" }, tier: 3 },
-      { when: { containment: "WEAK", consequence: "SEVERE" }, tier: 3 },
-      { when: { capability: "BROAD" }, tier: 2 },
-      { when: { containment: "WEAK" }, tier: 2 },
-      { when: { consequence: "SEVERE" }, tier: 2 },
-      { when: { capability: "MINIMAL", containment: "STRONG" }, tier: 1 },
-      // The former bare fallback, made an explicit row — see this const's own comment. Only
-      // reachable by a vector with none of BROAD capability, WEAK containment or SEVERE
-      // consequence (every rule above already claims those), so "nothing here reads at its
-      // worst" is exactly what tier 1 already means for row 9 immediately above it.
-      { when: {}, tier: 1 }
-    ],
-    fallbackTier: 1,
-    topTierCeiling: 0.15
-  };
-  function cleanTier(v, fallback) {
-    const n = Number(v);
-    return n === 1 || n === 2 || n === 3 || n === 4 ? n : fallback;
-  }
-  function cleanWhen2(v) {
-    const raw = rec3(v);
-    const when = {};
-    if (CAPABILITY_VALUES.includes(raw["capability"])) {
-      when.capability = raw["capability"];
-    }
-    if (CONTAINMENT_VALUES.includes(raw["containment"])) {
-      when.containment = raw["containment"];
-    }
-    if (CONSEQUENCE_VALUES.includes(raw["consequence"])) {
-      when.consequence = raw["consequence"];
-    }
-    for (const key of TRIFECTA_KEYS) {
-      if (typeof raw[key] === "boolean") when[key] = raw[key];
-    }
-    return when;
-  }
-  function cleanTierRule(v, fallback) {
-    const raw = rec3(v);
-    return { when: cleanWhen2(raw["when"]), tier: cleanTier(raw["tier"], fallback) };
-  }
-  function cleanPostureRule(raw) {
-    const r = rec3(raw);
-    const fallbackTier = cleanTier(r["fallbackTier"], DEFAULT_POSTURE_RULE.fallbackTier);
-    const rowsRaw = Array.isArray(r["tierRules"]) ? r["tierRules"] : null;
-    const tierRules = rowsRaw ? rowsRaw.slice(0, MAX_TIER_RULES).map((row) => cleanTierRule(row, fallbackTier)) : DEFAULT_POSTURE_RULE.tierRules.map((row) => ({ when: { ...row.when }, tier: row.tier }));
-    const ceilingRaw = Number(r["topTierCeiling"]);
-    const topTierCeiling = Number.isFinite(ceilingRaw) ? Math.min(1, Math.max(TIER_CEILING_FLOOR, ceilingRaw)) : DEFAULT_POSTURE_RULE.topTierCeiling;
-    return { tierRules, fallbackTier, topTierCeiling };
-  }
-  function pct2(share) {
-    return `${(share * 100).toFixed(1)}%`;
-  }
-  function validatePostureRule(rule) {
-    const errors = [];
-    if (!rule.tierRules.length) {
-      errors.push(
-        "The tier cascade has no rules; every vector would route to the fallback tier. Add a rule or accept the fallback deliberately."
-      );
-    }
-    if (rule.tierRules.length > MAX_TIER_RULES) {
-      errors.push(`The tier cascade is limited to ${MAX_TIER_RULES} rules.`);
-    }
-    rule.tierRules.forEach((row, i) => {
-      const isEmpty = WHEN_KEYS.every((k) => row.when[k] === void 0);
-      if (isEmpty && i !== rule.tierRules.length - 1) {
-        errors.push(
-          `Tier rule ${i + 1} has no conditions, so it matches every remaining vector and swallows every rule after it. Move it last or give it a condition.`
-        );
-      }
-    });
-    const seen = /* @__PURE__ */ new Map();
-    rule.tierRules.forEach((row, i) => {
-      const isEmpty = WHEN_KEYS.every((k) => row.when[k] === void 0);
-      if (isEmpty) return;
-      const key = WHEN_KEYS.filter((k) => row.when[k] !== void 0).map((k) => `${k}:${row.when[k]}`).join("|");
-      const earlier = seen.get(key);
-      if (earlier !== void 0) {
-        errors.push(`Tier rule ${i + 1} repeats the same condition as rule ${earlier + 1}.`);
-      } else {
-        seen.set(key, i);
-      }
-    });
-    const coverage = cellCoverage(rule);
-    const tier4Share = coverage.total ? coverage.byTier[4] / coverage.total : 0;
-    if (tier4Share > rule.topTierCeiling) {
-      errors.push(
-        `This rule sends ${coverage.byTier[4]} of ${coverage.total} cells to tier 4 (${pct2(tier4Share)}) \u2014 above the ${pct2(rule.topTierCeiling)} ceiling.`
-      );
-    }
-    return errors;
-  }
-  function shadowedTierRules(rule) {
-    const leaves = enumeratePostureVectors();
-    const dead = [];
-    rule.tierRules.forEach((row, i) => {
-      const rowLeaves = leaves.filter((v) => postureVectorMatches(v, row.when));
-      if (!rowLeaves.length) return;
-      const allClaimedEarlier = rowLeaves.every(
-        (v) => rule.tierRules.slice(0, i).some((earlier) => postureVectorMatches(v, earlier.when))
-      );
-      if (allClaimedEarlier) dead.push(i);
-    });
-    return dead;
-  }
-  function unreachableTierRules(rule) {
-    const leaves = enumeratePostureVectors();
-    const dead = [];
-    rule.tierRules.forEach((row, i) => {
-      const matchesAny = leaves.some((v) => postureVectorMatches(v, row.when));
-      if (!matchesAny) dead.push(i);
-    });
-    return dead;
-  }
-  function cellCoverage(rule) {
-    const leaves = enumeratePostureVectors();
-    const byRow = rule.tierRules.map(() => 0);
-    const byTier = { 1: 0, 2: 0, 3: 0, 4: 0 };
-    let byFallback = 0;
-    for (const v of leaves) {
-      const { tier, matchedRuleIndex } = decidePosture(v, rule);
-      if (matchedRuleIndex === -1) byFallback++;
-      else byRow[matchedRuleIndex] += 1;
-      byTier[tier]++;
-    }
-    return { total: leaves.length, byRow, byFallback, byTier };
-  }
-  function postureDiscrimination(decided) {
-    var _a5;
-    const tierOccupancy = { 1: 0, 2: 0, 3: 0, 4: 0 };
-    const cellOccupancy = {};
-    const unknownCounts = {
-      capability: 0,
-      containment: 0,
-      consequence: 0
-    };
-    let notEstablished = 0;
-    for (const d of decided) {
-      const established = tierEstablished(d.unknowns);
-      if (established && d.tier !== void 0) {
-        tierOccupancy[d.tier]++;
-        const key = postureKey(d.vector);
-        cellOccupancy[key] = ((_a5 = cellOccupancy[key]) != null ? _a5 : 0) + 1;
-      } else {
-        notEstablished++;
-      }
-      for (const u of d.unknowns) {
-        if (u === "capability" || u === "containment" || u === "consequence") unknownCounts[u]++;
-      }
-    }
-    const n = decided.length;
-    const rate = (count2) => n ? count2 / n : 0;
-    return {
-      decided,
-      tierOccupancy,
-      cellsReached: Object.keys(cellOccupancy).length,
-      cellOccupancy,
-      unknownRate: {
-        capability: rate(unknownCounts.capability),
-        containment: rate(unknownCounts.containment),
-        consequence: rate(unknownCounts.consequence),
-        tier: rate(notEstablished)
-      }
-    };
-  }
-  function postureRuleSummary(rule) {
-    const coverage = cellCoverage(rule);
-    const tier4Share = coverage.total ? coverage.byTier[4] / coverage.total : 0;
-    const unreachable = unreachableTierRules(rule);
-    return [
-      `${rule.tierRules.length} tier rules are tried in order, first match wins; a vector matching none of them falls back to tier ${rule.fallbackTier}.`,
-      `Tier 4 claims ${coverage.byTier[4]} of ${coverage.total} cells (${pct2(tier4Share)}), against a ceiling of ${pct2(rule.topTierCeiling)}.`,
-      unreachable.length ? `${unreachable.length} row(s) can never fire against any cell this app can derive \u2014 the lethal-trifecta row, kept as a documented gap rather than fed a guess.` : `Every row can fire against at least one of the 27 cells.`,
-      `Posture is a capability envelope against a containment, not a sum of open problems: an asset with zero open findings can still sit at a high tier.`
-    ];
-  }
-  function tierEqual(a, b) {
-    const withoutCeiling = (r) => {
-      const c = cleanPostureRule(r);
-      delete c.topTierCeiling;
-      return JSON.stringify(c);
-    };
-    return withoutCeiling(a) === withoutCeiling(b);
-  }
-
   // src/domain/rank.ts
   var TERM_ORDER = ["rule", "time", "exploitation", "adjacency"];
   var DEFAULT_RANK_RULE = {
@@ -3251,2377 +3513,1444 @@ var Server = (() => {
     return { ...base, ruleWeights: weights };
   }
 
-  // src/domain/scanVars.ts
-  var MAX_LIST_VALUES = 40;
-  var MAX_VALUE_LEN = 120;
-  var ISSUE_STATUSES = ["OPEN", "IN_PROGRESS", "RESOLVED", "REJECTED"];
-  var ORDER_DIRECTIONS = ["ASC", "DESC"];
-  var STEP_VAR_SPECS = [
-    {
-      stepId: "INVENTORY_AI",
-      fields: [
-        {
-          path: "filterBy.type.equals",
-          label: "Resource types",
-          help: "The Wiz resource types treated as AI assets. Resolved against this tenant's schema by default; setting them here pins the list instead.",
-          kind: "list",
-          required: true
-        }
-      ]
-    },
-    {
-      stepId: "ISSUES_TOXIC",
-      fields: [
-        {
-          path: "filterBy.status",
-          label: "Issue status",
-          help: "Which issue states to collect. Narrowing to OPEN drops in-progress work from the register and from AARS pillar A.",
-          kind: "list",
-          options: ISSUE_STATUSES,
-          required: true
-        },
-        {
-          path: "filterBy.type",
-          label: "Issue types",
-          // Optional, and empty is the default: the sync sends no type filter at all, so
-          // the category decides what is collected and Wiz's taxonomy does not. Marking it
-          // required would be incoherent now — an empty list and an absent one both mean
-          // "every type", and only one of them would be rejected.
-          help: "Empty (the default) collects every issue type in the AI risk category \u2014 including kinds this register has never modelled, which land in Other AI risk. Naming types here NARROWS that: each one left out disappears from the register total and from AARS pillar A with nothing on the page to mark its absence. Pinning TOXIC_COMBINATION and CLOUD_CONFIGURATION is what once hid every threat detection in the category.",
-          kind: "list",
-          options: ["TOXIC_COMBINATION", "CLOUD_CONFIGURATION", "THREAT_DETECTION"]
-        },
-        {
-          path: "filterBy.project",
-          label: "Project scope",
-          help: "Wiz project ids to restrict to. Empty means the whole tenant.",
-          kind: "list"
-        },
-        {
-          path: "orderBy.direction",
-          label: "Order direction",
-          help: "Which end of the severity order the paging walks first.",
-          kind: "enum",
-          options: ORDER_DIRECTIONS
-        }
-      ],
-      // STILL NOT offering filterBy.frameworkCategory, and the reason has moved rather than
-      // gone away. Every figure this app publishes — the issue count, AARS pillar A, the Toxic
-      // Combinations page, the tab literally called ai_issues — counts what this filter
-      // returned, and nothing in the response says which category a row matched. The register
-      // CAN now be widened, but only through the `issue_categories` Setting, which generates
-      // one ISSUES_CAT_<id> step per category so each row is stamped with the category that
-      // fetched it and each sync records the scope it applied.
-      //
-      // As a per-step variable it could not be either of those things: cleanStepVars would let
-      // a hand-edited cell change WHICH POPULATION every published figure counts, with no
-      // stamp on the rows and nothing in sync_history saying the scope moved. A knob that
-      // silently redefines the denominator is not a knob.
-      locked: "This step collects the AI risk category (wct-id-1998) and its category filter is not editable here: widening it would change what every published figure counts, with nothing on the row to say so. Choose categories in Settings (issue_categories) instead \u2014 each one gets its own step, and each row is stamped with the category it was collected under."
-    },
-    {
-      stepId: "AI_ASSET_PROPERTIES",
-      fields: [],
-      // The step exists only to fetch the properties bag for the SAME assets INVENTORY_AI
-      // already collected. Its type filter is not a knob: narrow it and some assets silently
-      // lose their publisher while others keep theirs, which looks like missing data rather
-      // than a setting. Widen it and the bag arrives for resources this app does not model.
-      locked: "This step mirrors the AI inventory's own type list \u2014 it exists to add two fields to assets already collected, so filtering it separately could only make the two disagree about which assets exist."
-    },
-    {
-      stepId: "VULN_FINDINGS",
-      fields: [],
-      // LOCKED, and for a reason none of the other locks state: this filter is not a scope
-      // knob, it is the CLAIM ITSELF.
-      //
-      // Nothing on a vulnerability finding says it is exploitation evidence for this register.
-      // What makes it so is that it names an issue in one of the selected categories — the
-      // filter is the entire assertion, and the row it produces is folded onto that issue and
-      // read as "this issue is exploited". Widen it and the register asserts exploitation for
-      // issues it does not hold; drop `hasRelatedIssue` and the same document answers 5,173,698
-      // rows in project scope (AARS_LIVE_MEASUREMENTS.md §6.4), which is not a bigger version of
-      // this step but a different product with no page and no storage budget behind it.
-      //
-      // The category list is not editable here either, and for the reason ISSUES_TOXIC's lock
-      // gives one entry up: it must stay the SAME list the issue steps use, or a finding joins
-      // an issue the register never collected and the axis quietly thins out. Settings
-      // (issue_categories) moves both together; a per-step cell could move only one.
-      locked: "This step's filter is the claim itself: a vulnerability finding counts as exploitation evidence only because it names an issue in the collected categories. Widening it would assert exploitation for issues this register does not hold, and dropping the related-issue filter turns one query into five million rows. The categories follow Settings (issue_categories), so this step and the issue steps can never read different registers."
-    },
-    {
-      stepId: "CONFIG_FINDINGS",
-      fields: [
-        {
-          path: "filterBy.status",
-          label: "Finding status",
-          help: "Compliance findings are additionally filtered to result FAIL after they arrive, so widening this collects more rows but stores only failures.",
-          kind: "list",
-          options: ["OPEN", "RESOLVED", "REJECTED"],
-          required: true
-        },
-        {
-          path: "orderBy.direction",
-          label: "Order direction",
-          help: "Which end of the severity order the paging walks first.",
-          kind: "enum",
-          options: ORDER_DIRECTIONS
-        }
-      ]
-    },
-    {
-      stepId: "AGENTIC_IDENTITIES",
-      fields: [
-        {
-          path: "filterBy.type.equals",
-          label: "Identity types",
-          help: "Which principal types to collect.",
-          kind: "list",
-          required: true
-        }
-      ],
-      // Still NOT offering filterBy.identityPurpose, but the reason has narrowed. Wiz DOES
-      // return the purpose — `IdentityPurposeAgentic`, in the graph entity's properties bag —
-      // and Q_PRINCIPALS now selects that bag, so a collected row normally carries its own
-      // label. The stamp survives as the fallback for a tenant whose schema rejects
-      // `graphEntity`, and that fallback is what a widened filter would turn into a mislabel:
-      // every row it collected would come back stamped AGENTIC with nothing to catch it.
-      locked: "The agentic-purpose filter is fixed: where the tenant does not return an identity's own purpose the sync falls back to labelling what this query returns as agentic, so widening it would mislabel exactly the identities it could not verify."
-    },
-    {
-      stepId: "SENSITIVE_DATA_ACCESS",
-      // No fields at all, so isEditableStep is false and the panel offers no control. Stated
-      // here rather than left to fall through, because "nothing to edit" and "editing this
-      // would be unsafe" are different facts and only the second one needs saying.
-      fields: [],
-      locked: "This step has no editable filter: normalizeSensitiveDataAccessPage rebuilds the chain's edges from which entity TYPES a row carries, so a changed selection set would yield confidently wrong edges rather than an error."
-    },
-    {
-      stepId: "CONFIG_RULES",
-      fields: [],
-      // It DOES take a filter now — `hasFindings: true`, which cuts 3,905 catalogue rows to
-      // 1,401 against the reference tenant. The old reason given here was that the filter
-      // input's type was unverified; phase0 sent CloudConfigurationRuleFilters against this
-      // tenant on 2026-08-23 and it answered (AARS_LIVE_MEASUREMENTS.md §6.10). Still not
-      // editable: the catalogue is a JOIN TARGET for issues and findings already stored, so
-      // narrowing it further is not a preference, it is a way to make a stored row's rule
-      // gloss disappear.
-      locked: "This step's one filter (rules that have findings) is not editable: the rule catalogue is what glosses the rule ids stored issues and findings already point at, so narrowing it further would blank references the ledger still holds."
-    },
-    {
-      stepId: "IDENTITY_HYGIENE",
-      // The rule list looks like the obvious knob and is the one thing that must not be one:
-      // it is not a preference, it is the resolution of a name match over the synced catalogue,
-      // and normalizeIdentityFindingsPage refuses any row whose rule is not in it. An operator
-      // who pasted an extra id would get the whole step aborted as an unhonoured filter.
-      fields: [],
-      locked: "This step's rule list is resolved from the synced rule catalogue by name, not chosen: the normalizer refuses any finding whose rule is not in that resolved set, so an edited list would abort the step rather than widen it."
-    },
-    {
-      stepId: "EFFECTIVE_ACCESS",
-      // `accessTypes: [DATA]` is the knob it appears to have. Withheld because the area's prose
-      // says "can reach the asset's data" — widening the filter would change what the figure
-      // means with nothing on the page to say so, which is the failure the whole Scans page is
-      // built to prevent.
-      fields: [],
-      locked: "This step has no editable filter: its access-type list is what the area's own figure claims to count, so widening it here would change what the number means without changing what the page says it means."
-    },
-    {
-      stepId: "LINEAGE",
-      // Nothing to edit, and the reason is the root list rather than a filter. lineageRoots()
-      // intersects AI_PIPELINE / AI_DATASET with what the tenant declares before the query is
-      // built, because an entity type the tenant does not have fails coercion of the WHOLE
-      // $query variable and empties the step. An operator-supplied root would reintroduce
-      // exactly that, and its symptom would be a refusal naming the type, not the traversal.
-      fields: [],
-      locked: "This step has no editable filter: its traversal is built from lineageSpec and its root types are resolved against the tenant first, so an edited root could only make the whole query fail coercion. probeEdgeSteps() reports what it came back with."
-    },
-    {
-      stepId: "IDENTITY_ACCESS",
-      // Its traversal is a $query variable now, so in principle the access-level list is a
-      // path an override could reach. Withheld for the reason ENDPOINT_EXPOSURE's is: those two
-      // values also live in HUMAN_ACCESS_TYPES (domain/identityQuery.ts), which is what
-      // withHumanAccess and withIdentityAccessNodes judge an edge by. Widening the filter would
-      // collect READ bindings the figure then refuses to count.
-      fields: [],
-      locked: "This step has no editable filter: the ADMIN / HIGH_PRIVILEGE bar is applied again when the reach is totalled and drawn, so widening it here would collect bindings that never reach a number."
-    },
-    {
-      stepId: "HOST_EXPOSURE",
-      fields: [],
-      locked: "This step has no editable filter: normalizeHostExposurePage rebuilds the HOSTED_ON and SERVES edges from which entity TYPES a row carries, and its whole claim is `accessibleFrom.internet` on the compute \u2014 widen that and the step reports unreachable hosts as reachable ones."
-    },
-    {
-      stepId: "ENDPOINT_EXPOSURE",
-      // No knob, and the exposure-level list is exactly the knob it looks like it should have.
-      // It is withheld because the same two values appear in a SECOND place: RATED_EXPOSURE_LEVELS
-      // in domain/exposureQuery.ts, which is what withExposureEvidence tests the returned level
-      // against. That double reading is deliberate — ENDPOINT rows also arrive from
-      // HOST_EXPOSURE, unfiltered and (in the capture) rated Low, so the bar has to be applied
-      // to the payload rather than assumed from the query. An operator who widened the filter
-      // here would collect Low-rated endpoints as graph nodes and see the exposure figure not
-      // move, which is a worse answer than no knob at all.
-      fields: [],
-      locked: "This step has no editable filter: the High/Medium bar is also applied to the endpoints the host-exposure step returns unfiltered, so moving it here would widen what is collected without moving what counts as an exposure."
-    },
-    {
-      stepId: "FRAMEWORKS_LIST",
-      // Declared with no fields rather than left out of this list entirely: an absent spec
-      // renders as the generic "no spec" fallback, which reads as an oversight, and someone
-      // will eventually "fix" it. Its only variable is a boolean, and the panel's controls
-      // are list/enum — a third field kind bought for one flag that changes nothing about
-      // what is collected is not worth the machinery.
-      fields: [],
-      locked: "This step's only filter picks whether disabled frameworks appear in the Settings picker. It does not decide what posture is collected \u2014 the framework selection does \u2014 so there is nothing here worth tuning per tenant."
-    },
-    {
-      // Matches every generated category step (ISSUES_CAT_wct-id-3, …) so the family shares
-      // one lock reason instead of falling through to the generic "no spec" text. Same shape
-      // as the posture family just below, and locked for the same kind of reason: the id is
-      // not a filter to tune, it is what the step's rows ARE — every row it returns is stamped
-      // with the category in its own name.
-      stepId: "ISSUES_CAT_",
-      prefix: true,
-      fields: [],
-      locked: "This step takes no editable variable: its category is not a filter to tune \u2014 it is what the step's rows are, and every row it collects is stamped with it. Choose categories in Settings (issue_categories) instead."
-    },
-    {
-      // Matches every generated posture step (COMPLIANCE_POSTURE_wf-id-275, …) so the family
-      // shares one lock reason instead of falling through to the generic "no spec" text.
-      stepId: "COMPLIANCE_POSTURE_",
-      prefix: true,
-      fields: [],
-      locked: "This step takes no editable variable: its `id` is not a filter \u2014 it selects WHICH framework is fetched, so editing it here would make a step whose name says one framework report another. Choose frameworks in Settings instead."
+  // src/domain/problems.ts
+  var PROBLEMS_CLIENT_ALL_MAX = 1e3;
+  var EXPLOITATION_TIERS = ["kev", "exploit", "epss", "none", "unknown"];
+  var AI_ADJACENCIES = ["DIRECT", "ADJACENT", "UNLINKED"];
+  function rankInputsOf(row) {
+    var _a5, _b, _c;
+    const tier = String((_a5 = row.exploitationTier) != null ? _a5 : "").trim().toLowerCase();
+    const adjacency2 = String((_b = row.aiAdjacency) != null ? _b : "").trim().toUpperCase();
+    const peak = typeof row.epssPeak === "number" && Number.isFinite(row.epssPeak) ? row.epssPeak : void 0;
+    const count2 = typeof row.exploitationFindingCount === "number" && Number.isFinite(row.exploitationFindingCount) ? row.exploitationFindingCount : void 0;
+    const via = String((_c = row.adjacencyVia) != null ? _c : "").trim();
+    return {
+      exploitationTier: EXPLOITATION_TIERS.indexOf(tier) >= 0 ? tier : void 0,
+      epssPeak: peak,
+      exploitationFindingCount: count2,
+      aiAdjacency: AI_ADJACENCIES.indexOf(adjacency2) >= 0 ? adjacency2 : void 0,
+      adjacencyVia: via || void 0
+    };
+  }
+  function issueToProblemRow(issue2, node2) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i;
+    return {
+      id: issue2.id,
+      kind: "ISSUE",
+      title: issue2.ruleName,
+      assetId: issue2.assetId || null,
+      assetName: issue2.assetName,
+      domain: (_a5 = node2 == null ? void 0 : node2.domain) != null ? _a5 : null,
+      problemOutcome: (_b = issue2.problemOutcome) != null ? _b : "",
+      vector: (_d = (_c = issue2.problemInput) == null ? void 0 : _c.vector) != null ? _d : null,
+      unknowns: (_f = (_e = issue2.problemInput) == null ? void 0 : _e.unknowns) != null ? _f : [],
+      dueAt: (_g = issue2.dueAt) != null ? _g : null,
+      postureTier: (_h = node2 == null ? void 0 : node2.postureTier) != null ? _h : null,
+      postureState: node2 ? postureStateOf(node2) : null,
+      amplification: nodeAmplificationVector(node2),
+      severity: (_i = issue2.adjustedSeverity) != null ? _i : null,
+      ruleId: issue2.ruleId || void 0,
+      businessImpact: issue2.businessImpact,
+      // No IaC link and no ignore-rule list on an issue — see this field's own doc comment.
+      iac: false,
+      ignored: false,
+      firstSeenAt: issue2.createdAt,
+      ruleRemediation: issue2.resolutionRecommendation,
+      ...rankInputsOf(issue2)
+    };
+  }
+  function findingToProblemRow(finding, node2) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j;
+    return {
+      id: finding.id,
+      kind: "FINDING",
+      title: finding.ruleName || finding.ruleShortId || "",
+      assetId: node2 ? node2.id : null,
+      assetName: node2 ? node2.name : finding.resourceName || finding.resourceId,
+      domain: (_a5 = node2 == null ? void 0 : node2.domain) != null ? _a5 : null,
+      problemOutcome: (_b = finding.problemOutcome) != null ? _b : "",
+      vector: (_d = (_c = finding.problemInput) == null ? void 0 : _c.vector) != null ? _d : null,
+      unknowns: (_f = (_e = finding.problemInput) == null ? void 0 : _e.unknowns) != null ? _f : [],
+      // FindingRow carries no SLA deadline — Wiz's config-finding evaluations have no dueAt
+      // field, only issuesV2 does. Null, never a made-up date.
+      dueAt: null,
+      postureTier: (_g = node2 == null ? void 0 : node2.postureTier) != null ? _g : null,
+      postureState: node2 ? postureStateOf(node2) : null,
+      amplification: nodeAmplificationVector(node2),
+      severity: (_h = finding.severity) != null ? _h : null,
+      ruleId: finding.ruleId,
+      ruleShortId: finding.ruleShortId || void 0,
+      businessImpact: finding.businessImpact,
+      iac: ((_i = finding.iacFindingIds) != null ? _i : []).length > 0,
+      ignored: ((_j = finding.ignoreRuleIds) != null ? _j : []).length > 0,
+      firstSeenAt: finding.firstSeenAt,
+      ruleRemediation: finding.remediationInstructions,
+      // The same read as the issue arm, against a row type that carries none of these fields
+      // today. Deliberate: the fold is upstream of this projection and may reach findings
+      // later, and an arm that silently could not see them would be the harder bug of the two.
+      ...rankInputsOf(finding)
+    };
+  }
+  function buildProblemRows(issues2, findings, assetsById) {
+    const rows = [];
+    for (const issue2 of issues2) {
+      if (!isUnresolvedIssue(issue2)) continue;
+      rows.push(issueToProblemRow(issue2, assetsById.get(issue2.assetId)));
     }
-  ];
-  var SPEC_BY_STEP = {};
-  for (const spec of STEP_VAR_SPECS) SPEC_BY_STEP[spec.stepId] = spec;
-  function varSpecFor(stepId) {
-    const exact = SPEC_BY_STEP[stepId];
-    if (exact) return exact;
-    for (const spec of STEP_VAR_SPECS) {
-      if (spec.prefix && stepId.indexOf(spec.stepId) === 0) return spec;
+    for (const finding of findings) {
+      if (!isOpenGap(finding)) continue;
+      rows.push(findingToProblemRow(finding, assetsById.get(finding.resourceId)));
     }
-    return null;
+    return rows;
   }
-  function isEditableStep(stepId) {
-    const spec = varSpecFor(stepId);
-    return !!spec && spec.fields.length > 0;
+  function withRankScores(rows, rule, nowIso2) {
+    return rows.map((row) => {
+      var _a5;
+      const result = rankOne(
+        {
+          id: row.id,
+          ruleId: row.ruleId,
+          ruleShortId: row.ruleShortId,
+          dueAt: (_a5 = row.dueAt) != null ? _a5 : void 0,
+          // THE BIRTH DATE, AND IT IS `firstSeenAt` ON BOTH ARMS. `FindingRow` carries no
+          // `createdAt` field at all — `findingToProblemRow` maps its `firstSeenAt` into this
+          // one, and `issueToProblemRow` maps the issue's own `createdAt` into the same place.
+          // One field, one meaning: when this row started being true. Read only by
+          // `timeSource: "dueAtElseAge"`, and only where there is no deadline.
+          createdAt: row.firstSeenAt,
+          exploitationTier: row.exploitationTier,
+          epssPeak: row.epssPeak,
+          exploitationFindingCount: row.exploitationFindingCount,
+          aiAdjacency: row.aiAdjacency,
+          adjacencyVia: row.adjacencyVia
+        },
+        rule,
+        nowIso2
+      );
+      return {
+        ...row,
+        rankScore: result.score,
+        rankTimed: result.timeComponent !== null,
+        rankTimeBasis: result.timeBasis,
+        rankReasons: result.reasons,
+        rankMeasured: result.measuredTerms,
+        rankExploitation: result.exploitationComponent,
+        rankAdjacency: result.adjacencyComponent
+      };
+    });
   }
-  function readPath(obj, path) {
-    let cur = obj;
-    for (const key of path.split(".")) {
-      if (!cur || typeof cur !== "object") return void 0;
-      cur = cur[key];
+  function slaRank(dueAt) {
+    const t = Date.parse(dueAt || "");
+    return Number.isNaN(t) ? Number.MAX_SAFE_INTEGER : t;
+  }
+  function severityRank2(sev) {
+    const i = SEVERITY_ORDER.indexOf(String(sev != null ? sev : ""));
+    return i < 0 ? SEVERITY_ORDER.length : i;
+  }
+  function compareProblems(a, b) {
+    const sev = severityRank2(a.severity) - severityRank2(b.severity);
+    if (sev !== 0) return sev;
+    const sla = slaRank(a.dueAt) - slaRank(b.dueAt);
+    if (sla !== 0) return sla;
+    const aSeen = a.firstSeenAt || "";
+    const bSeen = b.firstSeenAt || "";
+    if (aSeen !== bSeen) {
+      if (!aSeen) return 1;
+      if (!bSeen) return -1;
+      return aSeen < bSeen ? -1 : 1;
     }
-    return cur;
+    return a.id.localeCompare(b.id);
   }
-  function writePath(obj, path, value) {
-    const keys = path.split(".");
-    let cur = obj;
-    for (let i = 0; i < keys.length - 1; i++) {
-      const key = keys[i];
-      const next = cur[key];
-      if (!next || typeof next !== "object" || Array.isArray(next)) cur[key] = {};
-      cur = cur[keys[i]];
-    }
-    cur[keys[keys.length - 1]] = value;
+  function compareProblemsBy(leadWithRank) {
+    if (!leadWithRank) return compareProblems;
+    return (a, b) => {
+      const ra = typeof a.rankScore === "number" && Number.isFinite(a.rankScore) ? a.rankScore : null;
+      const rb = typeof b.rankScore === "number" && Number.isFinite(b.rankScore) ? b.rankScore : null;
+      if (ra === null && rb !== null) return 1;
+      if (rb === null && ra !== null) return -1;
+      if (ra !== null && rb !== null && ra !== rb) return rb - ra;
+      return compareProblems(a, b);
+    };
   }
-  function cleanValue(v) {
-    return String(v != null ? v : "").trim().slice(0, MAX_VALUE_LEN);
+  function rankProblems(rows, leadWithRank = false) {
+    return [...rows].sort(compareProblemsBy(leadWithRank));
   }
-  function cleanList(v) {
-    if (!Array.isArray(v)) return [];
-    const out = [];
-    for (const raw of v) {
-      const s = cleanValue(raw);
-      if (s && out.indexOf(s) < 0) out.push(s);
-      if (out.length >= MAX_LIST_VALUES) break;
+
+  // src/domain/rankEval.ts
+  var DAY_MS2 = 864e5;
+  var RANDOM_DRAWS = 20;
+  var BOOTSTRAP_SAMPLES = 200;
+  var MIN_SYNCS_FOR_CI = 3;
+  var DEFAULT_EVAL_SEED = 1234567;
+  var NO_RATE = { point: null, lo: null, hi: null };
+  function frac(num2, den) {
+    return den > 0 ? num2 / den : null;
+  }
+  function emptyMatrix() {
+    return {
+      tp: 0,
+      fp: 0,
+      fn: 0,
+      tn: 0,
+      unknownHigh: 0,
+      unknownLow: 0,
+      labelled: 0,
+      unknown: 0,
+      total: 0,
+      resolved: 0,
+      open: 0,
+      atRisk: 0,
+      notAtRisk: 0,
+      coverage: NO_RATE,
+      efficiency: NO_RATE,
+      prevalence: null,
+      labelCoverage: null
+    };
+  }
+  function finalize(m) {
+    m.labelled = m.tp + m.fp + m.fn + m.tn;
+    m.unknown = m.unknownHigh + m.unknownLow;
+    m.total = m.labelled + m.unknown;
+    m.resolved = m.tp + m.fp;
+    m.open = m.fn + m.tn;
+    m.atRisk = m.tp + m.fn;
+    m.notAtRisk = m.fp + m.tn;
+    m.coverage = {
+      point: frac(m.tp, m.tp + m.fn),
+      lo: frac(m.tp, m.tp + m.fn + m.unknownHigh),
+      hi: frac(m.tp + m.unknownHigh, m.tp + m.unknownHigh + m.fn)
+    };
+    m.efficiency = {
+      point: frac(m.tp, m.tp + m.fp),
+      lo: frac(m.tp, m.tp + m.fp + m.unknownLow),
+      hi: frac(m.tp + m.unknownHigh, m.tp + m.unknownHigh + m.fp)
+    };
+    m.prevalence = frac(m.atRisk, m.labelled);
+    m.labelCoverage = frac(m.labelled, m.total);
+    return m;
+  }
+  var NET_CAPACITY_BAND = 0.02;
+  var MIN_NET_POINTS = 2;
+  function verdictOf2(netRate) {
+    if (Math.abs(netRate) <= NET_CAPACITY_BAND) return "keeping-up";
+    return netRate > 0 ? "gaining" : "falling-behind";
+  }
+  var SEVERITY_ONLY_NOTE = "Not measured: the lifecycle ledger freezes the rank inputs only, and Wiz's severity is not one of them. Ranking by severity would need a ledger column that does not exist yet.";
+  function ms(iso) {
+    if (!iso) return null;
+    const n = Date.parse(String(iso));
+    return Number.isFinite(n) ? n : null;
+  }
+  function rankInputOf(row) {
+    var _a5;
+    const out = { id: row.issueId, ruleId: row.ruleId };
+    if (row.dueAt) out.dueAt = row.dueAt;
+    if (row.createdAt) out.createdAt = row.createdAt;
+    if (row.aiAdjacency !== void 0) out.aiAdjacency = row.aiAdjacency;
+    if (row.exploitationTier !== void 0) {
+      out.exploitationTier = row.exploitationTier;
+      out.epssPeak = (_a5 = row.epssPeak) != null ? _a5 : null;
     }
     return out;
   }
-  function cleanStepVars(stepId, raw) {
-    const spec = varSpecFor(stepId);
-    if (!spec || !raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-    const out = {};
-    let touched2 = false;
-    for (const field of spec.fields) {
-      const value = readPath(raw, field.path);
-      if (value === void 0 || value === null) continue;
-      if (field.kind === "list") {
-        const list2 = cleanList(value);
-        writePath(out, field.path, list2);
-        touched2 = true;
-      } else {
-        const s = cleanValue(value).toUpperCase();
-        if (!s) continue;
-        if (field.options && field.options.indexOf(s) < 0) continue;
-        writePath(out, field.path, s);
-        touched2 = true;
+  var UNDATED_SCORE = Number.MIN_SAFE_INTEGER;
+  function candidateScorer(rule) {
+    return (rows, atIso) => rows.map((r) => rankOne(rankInputOf(r), rule, atIso).score);
+  }
+  var dueAtScorer = (rows) => rows.map((r) => {
+    const due = ms(r.dueAt);
+    return due === null ? UNDATED_SCORE : -due;
+  });
+  function randomScorer(seed, draw) {
+    return (rows, _atIso, pointIndex) => {
+      const rng = mulberry32(seed + draw * 1000003 + pointIndex * 10007);
+      return rows.map(() => rng());
+    };
+  }
+  function orderOf(rows, scores) {
+    const idx = rows.map((_, i) => i);
+    idx.sort((a, b) => {
+      const d = scores[b] - scores[a];
+      if (d !== 0) return d < 0 ? -1 : 1;
+      const ia = rows[a].issueId;
+      const ib = rows[b].issueId;
+      return ia < ib ? -1 : ia > ib ? 1 : 0;
+    });
+    return idx;
+  }
+  function cleanKs(raw) {
+    const out = [];
+    for (const k of raw != null ? raw : []) {
+      const n = Math.floor(Number(k));
+      if (Number.isFinite(n) && n > 0 && out.indexOf(n) < 0) out.push(n);
+    }
+    return out.sort((a, b) => a - b);
+  }
+  function comparableWindows(syncs, ledger, horizonDays) {
+    var _a5, _b, _c, _d;
+    const ordered = (syncs != null ? syncs : []).filter((s) => s && s.syncId && ms(s.finishedAt) !== null).slice().sort((a, b) => ms(a.finishedAt) - ms(b.finishedAt));
+    const coverEnd = {};
+    for (const s of ordered) {
+      const scope = String((_a5 = s.registerScope) != null ? _a5 : "");
+      if (!scope) continue;
+      const at = ms(s.finishedAt);
+      if (coverEnd[scope] === void 0 || at > coverEnd[scope]) coverEnd[scope] = at;
+    }
+    const windows = [];
+    let scopeChanges = 0;
+    let unknownScopePairs = 0;
+    for (let i = 0; i < ordered.length - 1; i++) {
+      const sync = ordered[i];
+      const next = ordered[i + 1];
+      const scope = String((_b = sync.registerScope) != null ? _b : "");
+      const nextScope = String((_c = next.registerScope) != null ? _c : "");
+      if (!scope || !nextScope) {
+        unknownScopePairs += 1;
+        continue;
+      }
+      if (scope !== nextScope) {
+        scopeChanges += 1;
+        continue;
+      }
+      const atMs = ms(sync.finishedAt);
+      const horizonEndMs = atMs + horizonDays * DAY_MS2;
+      const covered = (_d = coverEnd[scope]) != null ? _d : null;
+      const rows = [];
+      const labels = [];
+      const arrivalsComplete = covered !== null && covered >= horizonEndMs;
+      let arrived = 0;
+      for (const row of ledger) {
+        const first = ms(row.firstSeenAt);
+        if (first === null) continue;
+        if (first > atMs) {
+          if (first <= horizonEndMs) arrived += 1;
+          continue;
+        }
+        const gone = ms(row.disappearedAt);
+        if (gone !== null && gone <= atMs) continue;
+        rows.push(row);
+        if (gone !== null && gone <= horizonEndMs) labels.push("resolved");
+        else if (covered !== null && covered >= horizonEndMs) labels.push("open");
+        else labels.push("unknown");
+      }
+      windows.push({
+        sync,
+        nextSyncId: next.syncId,
+        atMs,
+        horizonEndMs,
+        rows,
+        labels,
+        arrived: arrivalsComplete ? arrived : null
+      });
+    }
+    return { windows, scopeChanges, unknownScopePairs, ordered };
+  }
+  function pointFor(window, pointIndex, scorer, ks, prev) {
+    var _a5;
+    const { rows, labels } = window;
+    const scores = scorer(rows, window.sync.finishedAt, pointIndex);
+    const order = orderOf(rows, scores);
+    const counts = { resolved: 0, open: 0, unknown: 0 };
+    for (const l of labels) counts[l] += 1;
+    const precisionAtK = [];
+    let kAtRisk = null;
+    for (const k of ks) {
+      if (k > rows.length) {
+        precisionAtK.push({
+          k,
+          precision: null,
+          resolvedInTopK: 0,
+          labelledInTopK: 0,
+          unknownInTopK: 0,
+          applicable: false
+        });
+        continue;
+      }
+      kAtRisk = k;
+      let resolvedInTopK = 0;
+      let labelledInTopK = 0;
+      let unknownInTopK = 0;
+      for (let i = 0; i < k; i++) {
+        const label = labels[order[i]];
+        if (label === "unknown") unknownInTopK += 1;
+        else {
+          labelledInTopK += 1;
+          if (label === "resolved") resolvedInTopK += 1;
+        }
+      }
+      precisionAtK.push({
+        k,
+        precision: labelledInTopK > 0 ? resolvedInTopK / labelledInTopK : null,
+        resolvedInTopK,
+        labelledInTopK,
+        unknownInTopK,
+        applicable: true
+      });
+    }
+    const matrix = emptyMatrix();
+    if (kAtRisk !== null) {
+      const inTopK = new Array(rows.length).fill(false);
+      for (let i = 0; i < kAtRisk; i++) inTopK[order[i]] = true;
+      for (let i = 0; i < rows.length; i++) {
+        const label = labels[i];
+        if (label === "unknown") {
+          if (inTopK[i]) matrix.unknownHigh += 1;
+          else matrix.unknownLow += 1;
+        } else if (label === "resolved") {
+          if (inTopK[i]) matrix.tp += 1;
+          else matrix.fp += 1;
+        } else if (inTopK[i]) matrix.fn += 1;
+        else matrix.tn += 1;
       }
     }
-    return touched2 ? out : null;
+    finalize(matrix);
+    const byId = {};
+    for (let i = 0; i < rows.length; i++) byId[rows[i].issueId] = scores[i];
+    let tau = null;
+    let tauCommonIds = 0;
+    if (prev) {
+      const a = [];
+      const b = [];
+      for (const id of Object.keys(byId)) {
+        const before = prev.scores[id];
+        if (before === void 0) continue;
+        a.push(before);
+        b.push(byId[id]);
+      }
+      tauCommonIds = a.length;
+      if (a.length >= 2) tau = kendallTauB(a, b);
+    }
+    return {
+      point: {
+        syncId: window.sync.syncId,
+        at: window.sync.finishedAt,
+        horizonEndsAt: new Date(window.horizonEndMs).toISOString(),
+        nextSyncId: window.nextSyncId,
+        registerScope: String((_a5 = window.sync.registerScope) != null ? _a5 : ""),
+        population: rows.length,
+        labelled: counts.resolved + counts.open,
+        unknown: counts.unknown,
+        resolved: counts.resolved,
+        open: counts.open,
+        precisionAtK,
+        kAtRisk,
+        matrix,
+        tieRate: tieRate(scores.slice()),
+        effectiveCardinality: effectiveCardinality(scores.slice()),
+        tau,
+        tauCommonIds
+      },
+      scores: byId
+    };
   }
-  function validateStepVars(stepId, vars) {
-    const spec = varSpecFor(stepId);
-    if (!spec) return [`${stepId} does not take editable variables.`];
-    if (!vars) return [];
-    const errors = [];
-    for (const field of spec.fields) {
-      const value = readPath(vars, field.path);
-      if (value === void 0) continue;
-      if (field.kind === "list") {
-        const list2 = Array.isArray(value) ? value : [];
-        if (field.required && !list2.length) {
-          errors.push(
-            `${field.label} cannot be empty \u2014 an empty filter asks Wiz for everything, which is not what this step normalizes.`
-          );
-        }
-        if (list2.length >= MAX_LIST_VALUES) {
-          errors.push(`${field.label} is capped at ${MAX_LIST_VALUES} values.`);
+  function meanOf(values) {
+    const kept = values.filter((v) => v !== null && Number.isFinite(v));
+    return kept.length ? mean(kept) : null;
+  }
+  function basisFrom(key, label, note, points, ks, seed) {
+    const pooled = emptyMatrix();
+    for (const p of points) {
+      pooled.tp += p.matrix.tp;
+      pooled.fp += p.matrix.fp;
+      pooled.fn += p.matrix.fn;
+      pooled.tn += p.matrix.tn;
+      pooled.unknownHigh += p.matrix.unknownHigh;
+      pooled.unknownLow += p.matrix.unknownLow;
+    }
+    finalize(pooled);
+    const meanPrecisionAtK = ks.map((k) => {
+      const values = [];
+      for (const p of points) {
+        const cut = p.precisionAtK.find((c) => c.k === k);
+        if (cut && cut.precision !== null) values.push(cut.precision);
+      }
+      const ci = values.length >= MIN_SYNCS_FOR_CI ? bootstrapCI(values, (sample) => {
+        var _a5;
+        return (_a5 = mean(sample)) != null ? _a5 : 0;
+      }, BOOTSTRAP_SAMPLES, seed) : null;
+      return { k, mean: values.length ? mean(values) : null, n: values.length, ci };
+    });
+    return {
+      key,
+      label,
+      note,
+      points,
+      meanPrecisionAtK,
+      matrix: pooled,
+      meanTieRate: meanOf(points.map((p) => p.tieRate)),
+      meanEffectiveCardinality: meanOf(points.map((p) => p.effectiveCardinality)),
+      meanTau: meanOf(points.map((p) => p.tau)),
+      tauN: points.filter((p) => p.tau !== null).length
+    };
+  }
+  function pointsFor(windows, scorer, ks) {
+    const points = [];
+    let prev = null;
+    for (let i = 0; i < windows.length; i++) {
+      const { point, scores } = pointFor(windows[i], i, scorer, ks, prev);
+      points.push(point);
+      prev = { scores };
+    }
+    return points;
+  }
+  function averagePoints(perDraw) {
+    var _a5;
+    const first = (_a5 = perDraw[0]) != null ? _a5 : [];
+    return first.map((base, i) => {
+      const draws = perDraw.map((points) => points[i]);
+      const matrix = emptyMatrix();
+      matrix.tp = mean(draws.map((d) => d.matrix.tp));
+      matrix.fp = mean(draws.map((d) => d.matrix.fp));
+      matrix.fn = mean(draws.map((d) => d.matrix.fn));
+      matrix.tn = mean(draws.map((d) => d.matrix.tn));
+      matrix.unknownHigh = mean(draws.map((d) => d.matrix.unknownHigh));
+      matrix.unknownLow = mean(draws.map((d) => d.matrix.unknownLow));
+      finalize(matrix);
+      return {
+        ...base,
+        matrix,
+        precisionAtK: base.precisionAtK.map((cut, ci) => ({
+          k: cut.k,
+          applicable: cut.applicable,
+          precision: meanOf(draws.map((d) => d.precisionAtK[ci].precision)),
+          resolvedInTopK: mean(draws.map((d) => d.precisionAtK[ci].resolvedInTopK)),
+          labelledInTopK: mean(draws.map((d) => d.precisionAtK[ci].labelledInTopK)),
+          unknownInTopK: mean(draws.map((d) => d.precisionAtK[ci].unknownInTopK))
+        })),
+        tieRate: mean(draws.map((d) => d.tieRate)),
+        effectiveCardinality: mean(draws.map((d) => d.effectiveCardinality)),
+        tau: meanOf(draws.map((d) => d.tau))
+      };
+    });
+  }
+  function capacityFrom(windows, horizonDays) {
+    if (!windows.length) return null;
+    const points = [];
+    let sumResolved = 0;
+    let sumLabelled = 0;
+    let sumUnknown = 0;
+    const netRates = [];
+    for (const w of windows) {
+      let resolved = 0;
+      let open = 0;
+      let unknown = 0;
+      for (const l of w.labels) {
+        if (l === "resolved") resolved += 1;
+        else if (l === "open") open += 1;
+        else unknown += 1;
+      }
+      const labelled = resolved + open;
+      const population = labelled + unknown;
+      sumResolved += resolved;
+      sumLabelled += labelled;
+      sumUnknown += unknown;
+      const netRate = w.arrived !== null && population > 0 ? (resolved - w.arrived) / population : null;
+      if (netRate !== null) netRates.push(netRate);
+      points.push({
+        syncId: w.sync.syncId,
+        at: w.sync.finishedAt,
+        population,
+        resolved,
+        open,
+        unknown,
+        closeRate: {
+          point: frac(resolved, labelled),
+          lo: frac(resolved, labelled + unknown),
+          hi: frac(resolved + unknown, labelled + unknown)
+        },
+        arrived: w.arrived,
+        netRate,
+        verdict: netRate === null ? null : verdictOf2(netRate)
+      });
+    }
+    const closeRate = {
+      point: frac(sumResolved, sumLabelled),
+      lo: frac(sumResolved, sumLabelled + sumUnknown),
+      hi: frac(sumResolved + sumUnknown, sumLabelled + sumUnknown)
+    };
+    const closedPerHorizonMean = mean(points.map((p) => p.resolved));
+    const rounded = closedPerHorizonMean === null ? 0 : Math.round(closedPerHorizonMean);
+    const netMean = netRates.length >= MIN_NET_POINTS ? mean(netRates) : null;
+    return {
+      points,
+      closeRate,
+      oneInN: closeRate.point !== null && closeRate.point > 0 ? 1 / closeRate.point : null,
+      closedPerHorizonMean,
+      capacityK: rounded >= 1 ? rounded : null,
+      verdict: netMean === null ? null : verdictOf2(netMean),
+      netMeasuredPoints: netRates.length,
+      horizonDays
+    };
+  }
+  function evaluateRank(input) {
+    var _a5, _b, _c;
+    const ledger = ((_a5 = input == null ? void 0 : input.ledger) != null ? _a5 : []).filter((r) => r && r.issueId);
+    const horizonDays = Number.isFinite(input == null ? void 0 : input.horizonDays) && input.horizonDays > 0 ? input.horizonDays : 30;
+    const requestedKs = cleanKs(input == null ? void 0 : input.ks);
+    const seed = Number.isFinite(input == null ? void 0 : input.seed) ? Number(input.seed) : DEFAULT_EVAL_SEED;
+    const rule = (_b = input == null ? void 0 : input.rule) != null ? _b : DEFAULT_RANK_RULE;
+    const { windows, scopeChanges, unknownScopePairs, ordered } = comparableWindows((_c = input == null ? void 0 : input.syncs) != null ? _c : [], ledger, horizonDays);
+    const evaluated = {};
+    let labelledRows = 0;
+    let evaluatedRows = 0;
+    for (const w of windows) {
+      for (let i = 0; i < w.rows.length; i++) {
+        const id = w.rows[i].issueId;
+        const wasLabelled = evaluated[id];
+        if (wasLabelled === void 0) {
+          evaluatedRows += 1;
+          evaluated[id] = w.labels[i] !== "unknown";
+          if (evaluated[id]) labelledRows += 1;
+        } else if (!wasLabelled && w.labels[i] !== "unknown") {
+          evaluated[id] = true;
+          labelledRows += 1;
         }
       }
+    }
+    const capacity = capacityFrom(windows, horizonDays);
+    const capacityK = capacity ? capacity.capacityK : null;
+    const ks = capacityK === null ? requestedKs : cleanKs([...requestedKs, capacityK]);
+    const lastSync = ordered.length ? ordered[ordered.length - 1] : null;
+    const base = {
+      computed: false,
+      waitingFor: null,
+      horizonDays,
+      ks,
+      seed,
+      syncsAvailable: ordered.length,
+      comparablePairs: windows.length,
+      scopeChanges,
+      unknownScopePairs,
+      totalRows: ledger.length,
+      evaluatedRows,
+      labelledRows,
+      unknownRows: evaluatedRows - labelledRows,
+      lastSyncAt: lastSync ? lastSync.finishedAt : null,
+      capacity,
+      capacityK,
+      candidate: null,
+      baselines: { rankV1: null, dueAtOnly: null, random: null, severityOnly: null },
+      severityOnlyNote: SEVERITY_ONLY_NOTE
+    };
+    if (windows.length < 1) {
+      base.waitingFor = ordered.length < 2 ? `A label needs two committed syncs under one register scope; ${ordered.length} recorded so far.` : `No two consecutive syncs applied the same register scope, so nothing is comparable \u2014 ${scopeChanges} scope change(s) and ${unknownScopePairs} pair(s) with an unrecorded scope.`;
+      return base;
+    }
+    if (labelledRows < 1) {
+      base.waitingFor = `No row's outcome is known yet: the ${horizonDays}-day horizon on every comparable sync ends after the last sync that could have seen a row leave.`;
+      return base;
+    }
+    if (!ks.length) {
+      base.waitingFor = "No cut of the queue was asked for, so there is nothing to score at.";
+      return base;
+    }
+    const randomDraws = [];
+    for (let d = 0; d < RANDOM_DRAWS; d++) {
+      randomDraws.push(pointsFor(windows, randomScorer(seed, d), ks));
+    }
+    base.computed = true;
+    base.candidate = basisFrom(
+      "candidate",
+      "Candidate rule",
+      "The rule the register ranks by now.",
+      pointsFor(windows, candidateScorer(rule), ks),
+      ks,
+      seed
+    );
+    base.baselines.rankV1 = basisFrom(
+      "rankV1",
+      "Rank v1",
+      "The shipped default: the operator's rule weight and the overdue clock, half each.",
+      pointsFor(windows, candidateScorer(DEFAULT_RANK_RULE), ks),
+      ks,
+      seed
+    );
+    base.baselines.dueAtOnly = basisFrom(
+      "dueAtOnly",
+      "Due date only",
+      "Soonest deadline first, undated rows last.",
+      pointsFor(windows, dueAtScorer, ks),
+      ks,
+      seed
+    );
+    base.baselines.random = basisFrom(
+      "random",
+      "Random",
+      `Mean of ${RANDOM_DRAWS} seeded draws, re-drawn at every sync.`,
+      averagePoints(randomDraws),
+      ks,
+      seed
+    );
+    return base;
+  }
+
+  // src/domain/actions.ts
+  function actionKeyOf(row) {
+    var _a5, _b;
+    return `${row.kind}|${(_a5 = row.ruleId) != null ? _a5 : ""}|${(_b = row.ruleShortId) != null ? _b : ""}`;
+  }
+  var NO_SEVERITY = "";
+  function severityRank3(sev) {
+    const i = SEVERITY_ORDER.indexOf(sev);
+    return i < 0 ? SEVERITY_ORDER.length : i;
+  }
+  function candidatesFrom(pool) {
+    const groups = /* @__PURE__ */ new Map();
+    for (const row of pool) {
+      const key = actionKeyOf(row);
+      const bucket = groups.get(key);
+      if (bucket) bucket.push(row);
+      else groups.set(key, [row]);
+    }
+    return groups;
+  }
+  function scoreCandidate(key, rows) {
+    var _a5;
+    let worstRank = SEVERITY_ORDER.length;
+    const assetIds = /* @__PURE__ */ new Set();
+    for (const row of rows) {
+      const rank = severityRank3(String((_a5 = row.severity) != null ? _a5 : ""));
+      if (rank < worstRank) worstRank = rank;
+      if (row.assetId) assetIds.add(row.assetId);
+    }
+    return { key, rows, worstRank, assetCount: assetIds.size };
+  }
+  function compareCandidates(a, b) {
+    if (a.worstRank !== b.worstRank) return a.worstRank - b.worstRank;
+    if (a.rows.length !== b.rows.length) return b.rows.length - a.rows.length;
+    if (a.assetCount !== b.assetCount) return b.assetCount - a.assetCount;
+    return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+  }
+  function buildActionRow(key, rows) {
+    var _a5, _b, _c;
+    const sorted = [...rows].sort((a, b) => a.id.localeCompare(b.id));
+    const first = sorted[0];
+    const assetIds = /* @__PURE__ */ new Set();
+    const severityMix = {};
+    const businessImpacts = /* @__PURE__ */ new Set();
+    const domains = /* @__PURE__ */ new Set();
+    let worstRank = SEVERITY_ORDER.length;
+    let worstSeverity2 = NO_SEVERITY;
+    let iac = 0;
+    let ignored = 0;
+    let firstSeenAt = "";
+    let title = "";
+    let remediation;
+    for (const row of sorted) {
+      if (row.assetId) assetIds.add(row.assetId);
+      if (row.severity) severityMix[row.severity] = ((_a5 = severityMix[row.severity]) != null ? _a5 : 0) + 1;
+      if (row.businessImpact) businessImpacts.add(row.businessImpact);
+      if (row.domain) domains.add(row.domain);
+      const rank = severityRank3(String((_b = row.severity) != null ? _b : ""));
+      if (rank < worstRank) {
+        worstRank = rank;
+        worstSeverity2 = String((_c = row.severity) != null ? _c : "");
+      }
+      if (row.iac) iac += 1;
+      if (row.ignored) ignored += 1;
+      if (row.firstSeenAt && (!firstSeenAt || row.firstSeenAt < firstSeenAt)) {
+        firstSeenAt = row.firstSeenAt;
+      }
+      if (!title && row.title) title = row.title;
+      if (!remediation && row.ruleRemediation) remediation = row.ruleRemediation;
+    }
+    return {
+      key,
+      kind: first.kind,
+      ruleId: first.ruleId,
+      ruleShortId: first.ruleShortId,
+      title: title || first.title,
+      problems: rows.length,
+      assets: assetIds.size,
+      worstSeverity: worstSeverity2,
+      severityMix,
+      businessImpacts: [...businessImpacts].sort(),
+      domains: [...domains].sort(),
+      autoRemediable: false,
+      iac,
+      ignored,
+      firstSeenAt: firstSeenAt || void 0,
+      remediation
+    };
+  }
+  function rankActionsByCover(rows, limit) {
+    let remaining = rows.slice();
+    const ranked = [];
+    while (remaining.length > 0) {
+      const groups = candidatesFrom(remaining);
+      let best = null;
+      for (const [key, groupRows] of groups) {
+        const candidate = scoreCandidate(key, groupRows);
+        if (!best || compareCandidates(candidate, best) < 0) best = candidate;
+      }
+      if (!best) break;
+      ranked.push(buildActionRow(best.key, best.rows));
+      const covered = new Set(best.rows.map((r) => r.id));
+      remaining = remaining.filter((r) => !covered.has(r.id));
+    }
+    return limit !== void 0 && limit >= 0 ? ranked.slice(0, limit) : ranked;
+  }
+  function withAutoRemediation(actions, policies) {
+    const byId = /* @__PURE__ */ new Map();
+    const byShortId = /* @__PURE__ */ new Map();
+    for (const p of policies) {
+      if (p.hasAutoRemediation !== true) continue;
+      byId.set(p.policyId, true);
+      if (p.shortId) byShortId.set(p.shortId, true);
+    }
+    return actions.map((a) => {
+      const auto = a.ruleId !== void 0 && byId.get(a.ruleId) === true || a.ruleShortId !== void 0 && byShortId.get(a.ruleShortId) === true;
+      return auto ? { ...a, autoRemediable: true } : a;
+    });
+  }
+  function coverCurve(ranked, total2) {
+    const out = [];
+    let cumulative = 0;
+    let rank = 0;
+    for (const a of ranked) {
+      rank += 1;
+      cumulative += a.problems;
+      out.push({ rank, cumulative, share: total2 > 0 ? cumulative / total2 : 0 });
+    }
+    return out;
+  }
+  function concentrationRatio(ranked, total2) {
+    const problems = ranked.reduce((n, a) => n + a.problems, 0);
+    const top10 = ranked.slice(0, 10).reduce((n, a) => n + a.problems, 0);
+    return {
+      actions: ranked.length,
+      problems,
+      top10Share: total2 > 0 ? top10 / total2 : 0
+    };
+  }
+
+  // src/domain/postureRule.ts
+  var AXIS_KEYS2 = ["capability", "containment", "consequence"];
+  var TRIFECTA_KEYS = ["privateData", "untrustedIngress", "externalEgress"];
+  var WHEN_KEYS = [...AXIS_KEYS2, ...TRIFECTA_KEYS];
+  var MAX_TIER_RULES = 40;
+  var TIER_CEILING_FLOOR = 1e-3;
+  function rec3(v) {
+    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+  }
+  var DEFAULT_POSTURE_RULE = {
+    tierRules: [
+      // The lethal-trifecta row — UNREACHABLE by construction. See this const's own comment.
+      { when: { privateData: true, untrustedIngress: true, externalEgress: true }, tier: 4 },
+      { when: { capability: "BROAD", containment: "WEAK", consequence: "SEVERE" }, tier: 4 },
+      { when: { capability: "BROAD", containment: "WEAK" }, tier: 3 },
+      { when: { capability: "BROAD", consequence: "SEVERE" }, tier: 3 },
+      { when: { containment: "WEAK", consequence: "SEVERE" }, tier: 3 },
+      { when: { capability: "BROAD" }, tier: 2 },
+      { when: { containment: "WEAK" }, tier: 2 },
+      { when: { consequence: "SEVERE" }, tier: 2 },
+      { when: { capability: "MINIMAL", containment: "STRONG" }, tier: 1 },
+      // The former bare fallback, made an explicit row — see this const's own comment. Only
+      // reachable by a vector with none of BROAD capability, WEAK containment or SEVERE
+      // consequence (every rule above already claims those), so "nothing here reads at its
+      // worst" is exactly what tier 1 already means for row 9 immediately above it.
+      { when: {}, tier: 1 }
+    ],
+    fallbackTier: 1,
+    topTierCeiling: 0.15
+  };
+  function cleanTier(v, fallback) {
+    const n = Number(v);
+    return n === 1 || n === 2 || n === 3 || n === 4 ? n : fallback;
+  }
+  function cleanWhen2(v) {
+    const raw = rec3(v);
+    const when = {};
+    if (CAPABILITY_VALUES.includes(raw["capability"])) {
+      when.capability = raw["capability"];
+    }
+    if (CONTAINMENT_VALUES.includes(raw["containment"])) {
+      when.containment = raw["containment"];
+    }
+    if (CONSEQUENCE_VALUES.includes(raw["consequence"])) {
+      when.consequence = raw["consequence"];
+    }
+    for (const key of TRIFECTA_KEYS) {
+      if (typeof raw[key] === "boolean") when[key] = raw[key];
+    }
+    return when;
+  }
+  function cleanTierRule(v, fallback) {
+    const raw = rec3(v);
+    return { when: cleanWhen2(raw["when"]), tier: cleanTier(raw["tier"], fallback) };
+  }
+  function cleanPostureRule(raw) {
+    const r = rec3(raw);
+    const fallbackTier = cleanTier(r["fallbackTier"], DEFAULT_POSTURE_RULE.fallbackTier);
+    const rowsRaw = Array.isArray(r["tierRules"]) ? r["tierRules"] : null;
+    const tierRules = rowsRaw ? rowsRaw.slice(0, MAX_TIER_RULES).map((row) => cleanTierRule(row, fallbackTier)) : DEFAULT_POSTURE_RULE.tierRules.map((row) => ({ when: { ...row.when }, tier: row.tier }));
+    const ceilingRaw = Number(r["topTierCeiling"]);
+    const topTierCeiling = Number.isFinite(ceilingRaw) ? Math.min(1, Math.max(TIER_CEILING_FLOOR, ceilingRaw)) : DEFAULT_POSTURE_RULE.topTierCeiling;
+    return { tierRules, fallbackTier, topTierCeiling };
+  }
+  function pct2(share) {
+    return `${(share * 100).toFixed(1)}%`;
+  }
+  function validatePostureRule(rule) {
+    const errors = [];
+    if (!rule.tierRules.length) {
+      errors.push(
+        "The tier cascade has no rules; every vector would route to the fallback tier. Add a rule or accept the fallback deliberately."
+      );
+    }
+    if (rule.tierRules.length > MAX_TIER_RULES) {
+      errors.push(`The tier cascade is limited to ${MAX_TIER_RULES} rules.`);
+    }
+    rule.tierRules.forEach((row, i) => {
+      const isEmpty = WHEN_KEYS.every((k) => row.when[k] === void 0);
+      if (isEmpty && i !== rule.tierRules.length - 1) {
+        errors.push(
+          `Tier rule ${i + 1} has no conditions, so it matches every remaining vector and swallows every rule after it. Move it last or give it a condition.`
+        );
+      }
+    });
+    const seen = /* @__PURE__ */ new Map();
+    rule.tierRules.forEach((row, i) => {
+      const isEmpty = WHEN_KEYS.every((k) => row.when[k] === void 0);
+      if (isEmpty) return;
+      const key = WHEN_KEYS.filter((k) => row.when[k] !== void 0).map((k) => `${k}:${row.when[k]}`).join("|");
+      const earlier = seen.get(key);
+      if (earlier !== void 0) {
+        errors.push(`Tier rule ${i + 1} repeats the same condition as rule ${earlier + 1}.`);
+      } else {
+        seen.set(key, i);
+      }
+    });
+    const coverage = cellCoverage(rule);
+    const tier4Share = coverage.total ? coverage.byTier[4] / coverage.total : 0;
+    if (tier4Share > rule.topTierCeiling) {
+      errors.push(
+        `This rule sends ${coverage.byTier[4]} of ${coverage.total} cells to tier 4 (${pct2(tier4Share)}) \u2014 above the ${pct2(rule.topTierCeiling)} ceiling.`
+      );
     }
     return errors;
   }
-  function effectiveStepVars(stepId, base, override) {
-    const clean2 = cleanStepVars(stepId, override);
-    if (!clean2) return base;
-    const spec = varSpecFor(stepId);
-    const merged = JSON.parse(JSON.stringify(base != null ? base : {}));
-    for (const field of spec ? spec.fields : []) {
-      const value = readPath(clean2, field.path);
-      if (value === void 0) continue;
-      writePath(merged, field.path, value);
-    }
-    return merged;
-  }
-  function changedPaths(stepId, base, override) {
-    const clean2 = cleanStepVars(stepId, override);
-    if (!clean2) return [];
-    const spec = varSpecFor(stepId);
-    const out = [];
-    for (const field of spec ? spec.fields : []) {
-      const next = readPath(clean2, field.path);
-      if (next === void 0) continue;
-      if (JSON.stringify(next) !== JSON.stringify(readPath(base, field.path))) out.push(field.path);
-    }
-    return out;
-  }
-
-  // src/domain/settingsLogic.ts
-  function clampDepth(v) {
-    return clampInt(v, DEPTH_DEFAULT, DEPTH_MIN, DEPTH_MAX);
-  }
-  function getProjectView(settings) {
-    const v = settings["project_view"];
-    return typeof v === "string" ? v.trim() : "";
-  }
-  function withProjectView(settings, id) {
-    return {
-      ...settings,
-      project_view: typeof id === "string" ? id.trim() : "",
-      domain_view: ""
-    };
-  }
-  function getDomainView(settings) {
-    const v = settings["domain_view"];
-    return typeof v === "string" ? v.trim() : "";
-  }
-  function withDomainView(settings, domain) {
-    return {
-      ...settings,
-      domain_view: typeof domain === "string" ? domain.trim() : "",
-      project_view: ""
-    };
-  }
-  function getDefaultDepth(settings) {
-    var _a5;
-    return clampDepth((_a5 = settings["default_depth"]) != null ? _a5 : DEPTH_DEFAULT);
-  }
-  function withDefaultDepth(settings, depth) {
-    return { ...settings, default_depth: clampDepth(depth) };
-  }
-  function clampMaxNodes(v) {
-    return clampInt(v, MAX_NODES_DEFAULT, MAX_NODES_FLOOR, MAX_NODES_CEILING);
-  }
-  function getMaxNodes(settings) {
-    var _a5;
-    return clampMaxNodes((_a5 = settings["max_nodes"]) != null ? _a5 : MAX_NODES_DEFAULT);
-  }
-  function withMaxNodes(settings, maxNodes) {
-    return { ...settings, max_nodes: clampMaxNodes(maxNodes) };
-  }
-  function getAutoExpand(settings) {
-    return settings["auto_expand"] !== false;
-  }
-  function withAutoExpand(settings, on) {
-    return { ...settings, auto_expand: on === true };
-  }
-  function getAarsRule(settings) {
-    const raw = settings["aars_rule"];
-    if (!raw || typeof raw !== "object") {
-      return { version: 0, rule: cleanAarsRule(DEFAULT_AARS_RULE) };
-    }
-    const stored = raw;
-    const version = Number(stored["version"]);
-    return {
-      version: Number.isFinite(version) && version > 0 ? Math.round(version) : 0,
-      rule: cleanAarsRule(stored["rule"])
-    };
-  }
-  function withAarsRule(settings, rule) {
-    const current = getAarsRule(settings);
-    return {
-      ...settings,
-      aars_rule: { version: current.version + 1, rule: cleanAarsRule(rule) }
-    };
-  }
-  function getScoredRuleVersion(settings) {
-    const v = Number(settings["aars_scored_version"]);
-    return Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
-  }
-  function withScoredRuleVersion(settings, version) {
-    const v = Number(version);
-    return {
-      ...settings,
-      aars_scored_version: Number.isFinite(v) && v > 0 ? Math.round(v) : 0
-    };
-  }
-  function getProblemRule(settings) {
-    const raw = settings["problem_rule"];
-    if (!raw || typeof raw !== "object") {
-      return { version: 0, rule: cleanProblemRule(DEFAULT_PROBLEM_RULE) };
-    }
-    const stored = raw;
-    const version = Number(stored["version"]);
-    return {
-      version: Number.isFinite(version) && version > 0 ? Math.round(version) : 0,
-      // cleanProblemRule on every read IS the migration mechanism, exactly as cleanAarsRule
-      // is above: a rule blob written by an older schema is repaired on the way OUT rather
-      // than migrated once on the way in, so there is no separate migration step to forget
-      // to run when a field is added to ProblemRule later.
-      rule: cleanProblemRule(stored["rule"])
-    };
-  }
-  function withProblemRule(settings, rule) {
-    const current = getProblemRule(settings);
-    return {
-      ...settings,
-      problem_rule: { version: current.version + 1, rule: cleanProblemRule(rule) }
-    };
-  }
-  function getDecidedRuleVersion(settings) {
-    const v = Number(settings["problem_decided_version"]);
-    return Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
-  }
-  function withDecidedRuleVersion(settings, version) {
-    const v = Number(version);
-    return {
-      ...settings,
-      problem_decided_version: Number.isFinite(v) && v > 0 ? Math.round(v) : 0
-    };
-  }
-  function getPostureRule(settings) {
-    const raw = settings["posture_rule"];
-    if (!raw || typeof raw !== "object") {
-      return { version: 0, rule: cleanPostureRule(DEFAULT_POSTURE_RULE) };
-    }
-    const stored = raw;
-    const version = Number(stored["version"]);
-    return {
-      version: Number.isFinite(version) && version > 0 ? Math.round(version) : 0,
-      // cleanPostureRule on every read IS the migration mechanism — see getProblemRule's
-      // identical comment for why.
-      rule: cleanPostureRule(stored["rule"])
-    };
-  }
-  function withPostureRule(settings, rule) {
-    const current = getPostureRule(settings);
-    return {
-      ...settings,
-      posture_rule: { version: current.version + 1, rule: cleanPostureRule(rule) }
-    };
-  }
-  function getComputedPostureVersion(settings) {
-    const v = Number(settings["posture_computed_version"]);
-    return Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
-  }
-  function withComputedPostureVersion(settings, version) {
-    const v = Number(version);
-    return {
-      ...settings,
-      posture_computed_version: Number.isFinite(v) && v > 0 ? Math.round(v) : 0
-    };
-  }
-  function getRankRule(settings) {
-    const raw = settings["rank_rule"];
-    if (!raw || typeof raw !== "object") {
-      return { version: 0, rule: cleanRankRule(DEFAULT_RANK_RULE) };
-    }
-    const stored = raw;
-    const version = Number(stored["version"]);
-    return {
-      version: Number.isFinite(version) && version > 0 ? Math.round(version) : 0,
-      // cleanRankRule on every read IS the migration mechanism — see getProblemRule's
-      // identical comment for why. It matters more here than there: a rule persisted before
-      // the four-term blend carries `timeShare` and no `shares`, and cleanRankRule is what
-      // reads it as the two-term case so it scores identically rather than reading three
-      // absent shares as zeroes.
-      rule: cleanRankRule(stored["rule"])
-    };
-  }
-  function withRankRule(settings, rule) {
-    const current = getRankRule(settings);
-    return {
-      ...settings,
-      rank_rule: {
-        version: current.version + 1,
-        rule: cleanRankRule(rule)
-      }
-    };
-  }
-  function getRankLeadsSort(settings) {
-    return settings["rank_leads_sort"] === true;
-  }
-  function withRankLeadsSort(settings, on) {
-    return { ...settings, rank_leads_sort: on === true };
-  }
-  function getSyncDerivationVersion(settings) {
-    const v = Number(settings["last_sync_derivation_version"]);
-    return Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
-  }
-  function withSyncDerivationVersion(settings, version) {
-    const v = Number(version);
-    return {
-      ...settings,
-      last_sync_derivation_version: Number.isFinite(v) && v > 0 ? Math.round(v) : 0
-    };
-  }
-  function derivationIsStale(settings, current) {
-    return getSyncDerivationVersion(settings) < current;
-  }
-  var CONFIG_RULES_TTL_MS = 30 * 864e5;
-  function getConfigRulesSyncedAt(settings) {
-    const v = Number(settings["config_rules_synced_at"]);
-    return Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
-  }
-  function withConfigRulesSyncedAt(settings, at) {
-    const v = Number(at);
-    return {
-      ...settings,
-      config_rules_synced_at: Number.isFinite(v) && v > 0 ? Math.round(v) : 0
-    };
-  }
-  function configRulesAreFresh(settings, hasRows, now) {
-    if (!hasRows) return false;
-    const at = getConfigRulesSyncedAt(settings);
-    if (!at) return false;
-    return now - at < CONFIG_RULES_TTL_MS;
-  }
-  function getScanVars(settings) {
-    const raw = settings["scan_vars"];
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
-    const out = {};
-    for (const [stepId, value] of Object.entries(raw)) {
-      const clean2 = cleanStepVars(stepId, value);
-      if (clean2) out[stepId] = clean2;
-    }
-    return out;
-  }
-  function getSkippedSteps(settings) {
-    const raw = settings["last_skipped_steps"];
-    if (!Array.isArray(raw)) return [];
-    return raw.map((v) => String(v != null ? v : "")).filter(Boolean);
-  }
-  function withSkippedSteps(settings, steps) {
-    const list2 = Array.isArray(steps) ? steps.map((v) => String(v != null ? v : "")).filter(Boolean) : [];
-    return { ...settings, last_skipped_steps: list2 };
-  }
-  function getTruncatedSteps(settings) {
-    const raw = settings["last_truncated_steps"];
-    if (!Array.isArray(raw)) return [];
-    return raw.map((v) => String(v != null ? v : "")).filter(Boolean);
-  }
-  function withTruncatedSteps(settings, steps) {
-    const list2 = Array.isArray(steps) ? steps.map((v) => String(v != null ? v : "")).filter(Boolean) : [];
-    return { ...settings, last_truncated_steps: list2 };
-  }
-  function getStepRows(settings) {
-    const raw = settings["last_step_rows"];
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
-    const out = {};
-    for (const [k, v] of Object.entries(raw)) {
-      const n = Number(v);
-      if (k && Number.isFinite(n)) out[k] = n;
-    }
-    return out;
-  }
-  function withStepRows(settings, rows) {
-    return { ...settings, last_step_rows: getStepRows({ last_step_rows: rows }) };
-  }
-  function getPostureBaseline(settings) {
-    const raw = settings["posture_baseline"];
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-    const snap = raw;
-    return Array.isArray(snap["measures"]) ? snap : null;
-  }
-  function withPostureBaseline(settings, snapshot) {
-    return { ...settings, posture_baseline: snapshot != null ? snapshot : null };
-  }
-  function getSkipReasons(settings) {
-    const raw = settings["last_skip_reasons"];
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
-    const out = {};
-    for (const [k, v] of Object.entries(raw)) {
-      if (k && typeof v === "string" && v) out[k] = v;
-    }
-    return out;
-  }
-  function withSkipReasons(settings, reasons) {
-    return { ...settings, last_skip_reasons: getSkipReasons({ last_skip_reasons: reasons }) };
-  }
-  var DEFAULT_FRAMEWORK_IDS = [
-    "wf-id-275",
-    // OWASP Top 10 For Agentic Applications 2026
-    "wf-id-201",
-    // OWASP LLM Security Top 10
-    "wf-id-214",
-    // 5Rs - Wiz for Data Security
-    "wf-id-106"
-    // OWASP ML Security Top 10
-  ];
-  function getSelectedFrameworks(settings) {
-    const raw = settings["selected_frameworks"];
-    if (!Array.isArray(raw)) return DEFAULT_FRAMEWORK_IDS.slice();
-    return raw.map((v) => String(v != null ? v : "")).filter(Boolean);
-  }
-  function resolveDefaultFrameworks(catalogue) {
-    var _a5;
-    const wanted = ["AGENTIC", "LLM", "5R", "ML"];
-    const picked = [];
-    for (const want of wanted) {
-      for (const f of catalogue) {
-        const n = String((_a5 = f.name) != null ? _a5 : "").toUpperCase();
-        const hit = want === "5R" ? /\b5\s?RS?\b/.test(n) : want === "ML" ? n.includes("MACHINE LEARNING") || /\bML\b/.test(n) : want === "LLM" ? n.includes("LLM") : n.includes("AGENTIC");
-        if (hit && picked.indexOf(f.id) === -1) {
-          picked.push(f.id);
-          break;
-        }
-      }
-    }
-    return picked.length ? picked : DEFAULT_FRAMEWORK_IDS.slice();
-  }
-  function withSelectedFrameworks(settings, ids) {
-    const list2 = Array.isArray(ids) ? ids.map((v) => String(v != null ? v : "").trim()).filter(Boolean) : [];
-    const seen = {};
-    const deduped = list2.filter((id) => seen[id] ? false : seen[id] = true);
-    return { ...settings, selected_frameworks: deduped };
-  }
-  function getIssueCategories(settings) {
-    const raw = settings["issue_categories"];
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-      return DEFAULT_CATEGORY_IDS.slice();
-    }
-    return cleanCategoryIds(raw["ids"]);
-  }
-  function getIssueCategoriesVersion(settings) {
-    const raw = settings["issue_categories"];
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return 0;
-    const v = Number(raw["version"]);
-    return Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
-  }
-  function withIssueCategories(settings, ids) {
-    return {
-      ...settings,
-      issue_categories: {
-        version: getIssueCategoriesVersion(settings) + 1,
-        ids: cleanCategoryIds(ids)
-      }
-    };
-  }
-  function getSyncScope(settings) {
-    return cleanSyncScope(settings["sync_scope"]);
-  }
-  function withSyncScope(settings, v) {
-    return { ...settings, sync_scope: cleanSyncScope(v) };
-  }
-  function withScanVars(settings, stepId, vars) {
-    const current = getScanVars(settings);
-    const clean2 = cleanStepVars(stepId, vars);
-    const next = { ...current };
-    if (clean2) next[stepId] = clean2;
-    else delete next[stepId];
-    return { ...settings, scan_vars: next };
-  }
-  function coercePinList(v) {
-    if (!Array.isArray(v)) return [];
-    const out = [];
-    for (const raw of v) {
-      const s = String(raw != null ? raw : "").trim();
-      if (s && out.indexOf(s) === -1) out.push(s);
-    }
-    return out;
-  }
-  function coercePins(raw) {
-    const rec4 = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
-    const inList = coercePinList(rec4["in"]);
-    const outList = coercePinList(rec4["out"]);
-    const outSet = new Set(outList);
-    return { in: inList.filter((id) => !outSet.has(id)), out: outList };
-  }
-  function getFiveRsPins(settings) {
-    return coercePins(settings["five_rs_policy_pins"]);
-  }
-  function withFiveRsPins(settings, pins) {
-    return { ...settings, five_rs_policy_pins: coercePins(pins) };
-  }
-  function cleanFiveRsPins(pins, knownPolicyIds) {
-    const known = new Set(knownPolicyIds);
-    const base = coercePins(pins);
-    return {
-      in: base.in.filter((id) => known.has(id)),
-      out: base.out.filter((id) => known.has(id))
-    };
-  }
-
-  // ../gas_shared/domain/sha1.ts
-  function utf8Bytes(s) {
-    const out = [];
-    for (let i = 0; i < s.length; i++) {
-      let c = s.charCodeAt(i);
-      if (c < 128) {
-        out.push(c);
-      } else if (c < 2048) {
-        out.push(192 | c >> 6, 128 | c & 63);
-      } else if (c >= 55296 && c <= 56319 && i + 1 < s.length) {
-        const c2 = s.charCodeAt(++i);
-        const cp = 65536 + (c - 55296 << 10) + (c2 - 56320);
-        out.push(
-          240 | cp >> 18,
-          128 | cp >> 12 & 63,
-          128 | cp >> 6 & 63,
-          128 | cp & 63
-        );
-      } else {
-        out.push(224 | c >> 12, 128 | c >> 6 & 63, 128 | c & 63);
-      }
-    }
-    return out;
-  }
-  function rotl(n, b) {
-    return (n << b | n >>> 32 - b) >>> 0;
-  }
-  function sha1Hex(input) {
-    const bytes = utf8Bytes(input);
-    const bitLen = bytes.length * 8;
-    bytes.push(128);
-    while (bytes.length % 64 !== 56) bytes.push(0);
-    const hi = Math.floor(bitLen / 4294967296);
-    bytes.push(hi >>> 24 & 255, hi >>> 16 & 255, hi >>> 8 & 255, hi & 255);
-    bytes.push(bitLen >>> 24 & 255, bitLen >>> 16 & 255, bitLen >>> 8 & 255, bitLen & 255);
-    let h0 = 1732584193, h1 = 4023233417, h2 = 2562383102, h3 = 271733878, h4 = 3285377520;
-    const w = new Array(80);
-    for (let block = 0; block < bytes.length; block += 64) {
-      for (let i = 0; i < 16; i++) {
-        w[i] = (bytes[block + i * 4] << 24 | bytes[block + i * 4 + 1] << 16 | bytes[block + i * 4 + 2] << 8 | bytes[block + i * 4 + 3]) >>> 0;
-      }
-      for (let i = 16; i < 80; i++) {
-        w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
-      }
-      let a = h0, b = h1, c = h2, d = h3, e = h4;
-      for (let i = 0; i < 80; i++) {
-        let f, k;
-        if (i < 20) {
-          f = b & c | ~b & d;
-          k = 1518500249;
-        } else if (i < 40) {
-          f = b ^ c ^ d;
-          k = 1859775393;
-        } else if (i < 60) {
-          f = b & c | b & d | c & d;
-          k = 2400959708;
-        } else {
-          f = b ^ c ^ d;
-          k = 3395469782;
-        }
-        const t = rotl(a, 5) + f + e + k + w[i] >>> 0;
-        e = d;
-        d = c;
-        c = rotl(b, 30);
-        b = a;
-        a = t;
-      }
-      h0 = h0 + a >>> 0;
-      h1 = h1 + b >>> 0;
-      h2 = h2 + c >>> 0;
-      h3 = h3 + d >>> 0;
-      h4 = h4 + e >>> 0;
-    }
-    return [h0, h1, h2, h3, h4].map((x) => x.toString(16).padStart(8, "0")).join("");
-  }
-
-  // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "522cf92dee13" : "dev";
-  function buildInfo() {
-    return { id: BUILD_ID };
-  }
-
-  // src/server/serverCache.ts
-  var VERSION_PROP = "DATA_VERSION";
-  var WIZ_VERSION_PROP = "WIZ_DATA_VERSION";
-  var KEY_PREFIX = `wsk.${BUILD_ID}`;
-  var CHUNK_CHARS = 9e4;
-  var DEFAULT_TTL_SEC = 21600;
-  var dataVersionMemo;
-  var wizDataVersionMemo;
-  var configStampMemo;
-  function __resetMemosForTest() {
-    dataVersionMemo = void 0;
-    wizDataVersionMemo = void 0;
-    configStampMemo = void 0;
-  }
-  function dataVersion() {
-    var _a5;
-    if (dataVersionMemo === void 0) dataVersionMemo = (_a5 = getProp(VERSION_PROP)) != null ? _a5 : "0";
-    return dataVersionMemo;
-  }
-  function nextVersion(prev) {
-    const now = String(Date.now());
-    const [prevMs, prevN] = String(prev != null ? prev : "").split(".");
-    return prevMs === now ? `${now}.${(Number(prevN) || 0) + 1}` : `${now}.0`;
-  }
-  function bumpDataVersion() {
-    setProp(VERSION_PROP, nextVersion(getProp(VERSION_PROP)));
-    __resetMemosForTest();
-  }
-  function wizDataVersion() {
-    var _a5;
-    if (wizDataVersionMemo === void 0) wizDataVersionMemo = (_a5 = getProp(WIZ_VERSION_PROP)) != null ? _a5 : "0";
-    return wizDataVersionMemo;
-  }
-  function bumpWizDataVersion() {
-    setProp(WIZ_VERSION_PROP, nextVersion(getProp(WIZ_VERSION_PROP)));
-    __resetMemosForTest();
-  }
-  function paramsHash(params) {
-    return sha1Hex(JSON.stringify(params != null ? params : null)).slice(0, 12);
-  }
-  function cacheKey(name, params, version) {
-    return `${KEY_PREFIX}:${version}:${name}:${paramsHash(params)}`;
-  }
-  function configStamp() {
-    var _a5;
-    if (configStampMemo === void 0) {
-      configStampMemo = sha1Hex(`${domainTagKey()}\0${(_a5 = getProp(PROP_KEYS.wizProjectIdV2)) != null ? _a5 : ""}`).slice(0, 8);
-    }
-    return configStampMemo;
-  }
-  function currentStamp(version) {
-    return `${KEY_PREFIX}:${version != null ? version : dataVersion()}.${configStamp()}`;
-  }
-  function splitChunks(s, size = CHUNK_CHARS) {
-    const out = [];
-    for (let i = 0; i < s.length; i += size) out.push(s.slice(i, i + size));
-    return out.length ? out : [""];
-  }
-  function cachePutJson(key, value, ttlSec = DEFAULT_TTL_SEC, chunkChars = CHUNK_CHARS) {
-    const json = JSON.stringify(value);
-    const gz = Utilities.gzip(Utilities.newBlob(json, "application/json"));
-    const packed = Utilities.base64Encode(gz.getBytes());
-    const chunks = splitChunks(packed, chunkChars);
-    const entries = { [`${key}:m`]: String(chunks.length) };
-    chunks.forEach((c, i) => {
-      entries[`${key}:${i}`] = c;
-    });
-    CacheService.getScriptCache().putAll(entries, ttlSec);
-  }
-  function cacheGetJson(key) {
-    const cache = CacheService.getScriptCache();
-    const meta = cache.get(`${key}:m`);
-    if (!meta) return void 0;
-    const n = Number(meta);
-    if (!Number.isInteger(n) || n < 1) return void 0;
-    const names = [];
-    for (let i = 0; i < n; i++) names.push(`${key}:${i}`);
-    const got = cache.getAll(names);
-    let packed = "";
-    for (const name of names) {
-      const chunk = got[name];
-      if (chunk === void 0 || chunk === null) return void 0;
-      packed += chunk;
-    }
-    const bytes = Utilities.base64Decode(packed);
-    const json = Utilities.ungzip(
-      Utilities.newBlob(bytes, "application/x-gzip")
-    ).getDataAsString("UTF-8");
-    return JSON.parse(json);
-  }
-  function cached(name, params, compute, ttlSec = DEFAULT_TTL_SEC, version) {
-    let key = null;
-    try {
-      key = cacheKey(name, params, `${version != null ? version : dataVersion()}.${configStamp()}`);
-      const hit = cacheGetJson(key);
-      if (hit !== void 0) return hit;
-    } catch (e) {
-      console.warn(`Cache read failed for ${name}: ${e}`);
-      key = null;
-    }
-    const value = compute();
-    if (key) {
-      try {
-        cachePutJson(key, value, ttlSec);
-      } catch (e) {
-        console.warn(`Cache write failed for ${name}: ${e}`);
-      }
-    }
-    return value;
-  }
-
-  // src/server/sheetsDb.ts
-  var TABS = {
-    assets: "ai_assets",
-    edges: "ai_edges",
-    issues: "ai_issues",
-    findings: "ai_findings",
-    dataFindings: "ai_data_findings",
-    frameworks: "ai_frameworks",
-    frameworkPosture: "ai_framework_posture",
-    frameworkPolicies: "ai_framework_policies",
-    configRules: "ai_config_rules",
-    identityFindings: "ai_identity_findings",
-    issueExploitation: "ai_issue_exploitation",
-    issueLedger: "ai_issue_ledger",
-    syncHistory: "sync_history",
-    settings: "settings",
-    jobs: "jobs",
-    meta: "meta"
-  };
-  var TAB_HEADERS = {
-    [TABS.assets]: [
-      "id",
-      "kind",
-      "name",
-      "native_type",
-      "cloud",
-      "region",
-      "status",
-      "account_id",
-      "account_name",
-      "projects_json",
-      "first_seen",
-      "last_seen",
-      "internet",
-      "open_internet",
-      "sensitive_data",
-      "sensitive_access",
-      "high_priv",
-      "admin_priv",
-      "guardrail_missing",
-      "severity",
-      "aars",
-      "aars_severity",
-      "aars_pillars_json",
-      "aars_input_json",
-      "combo_groups",
-      "tags_json",
-      "technology_categories",
-      "identity_purpose",
-      "issue_analytics_json",
-      // DSPM classification on a datastore row. Appended, so an existing ledger picks them
-      // up on the next sync with no migration (see the note on ai_issues below).
-      "data_finding_count",
-      "data_findings_json",
-      // Network exposure. The first two are the dynamic scanner's verdicts and belong to
-      // ENDPOINT rows; the third is the join `withExposureEvidence` folds onto an AI asset,
-      // and is what lets the Inventory and the combos matrix — which read this tab directly
-      // and never see the graph document — agree with the graph about what is exposed.
-      // Appended for the same no-migration reason.
-      "exposure_level",
-      "port_validation",
-      "exposure_evidence_json",
-      // Human identity access. The first two belong to identity rows (Wiz's dormancy read from
-      // cloud audit events); the third is the join `withHumanAccess` folds onto an AI asset, so
-      // the register and the Scans figure can total reach without reading edges. Appended.
-      "inactive",
-      "inactive_timeframe",
-      "human_access_json",
-      // Identity display fields (the human title and address an operator gave the account) and
-      // the two AI-asset provenance fields the Security Graph's default columns read. All four
-      // come out of the graph entity's properties bag. Appended for the usual no-migration
-      // reason: ensureHeaders adds declared-but-missing headers to the right of whatever a tab
-      // already has, and every read maps by header NAME.
-      "display_name",
-      "email",
-      "publisher",
-      "discovery_methods",
-      // Worst business-impact tier across the asset's own projects (HBI/MBI/LBI), folded by
-      // enrichGraphDoc from `projects[].businessImpact` — the signal ai/AARS_ASSESSMENT.md §7
-      // named as dropped at the sheet boundary. Appended, for the usual no-migration reason:
-      // ensureHeaders adds declared-but-missing headers to the right of whatever a tab
-      // already has, and every read maps by header NAME, so an existing ledger picks this up
-      // on its next sync with no migration.
-      "business_impact",
-      // Phase 6: the Asset Posture Tier (posture.ts, postureRule.ts) — a capability envelope
-      // against a containment, folded BESIDE the AARS score above by graphEnrich.withPostureTiers,
-      // never blended into it. Appended, same no-migration contract as every block above.
-      "posture_tier",
-      "posture_input_json",
-      "worst_open_problem",
-      // Which AARS rule version produced this row's score. Per-asset rather than one global
-      // marker because a rescore can now be scoped to a project, which leaves the register
-      // holding scores from two rules at once — and `counts from two versions are not on the
-      // same scale` is a rule this ledger already enforces on sync_history's distribution.
-      // Appended, same no-migration contract as every block above: a row written before this
-      // existed reads back undefined, which means "unknown", not "the current rule".
-      "aars_rule_version"
-    ],
-    [TABS.edges]: ["id", "src", "dst", "type", "negated", "access_type"],
-    [TABS.issues]: [
-      "id",
-      "rule_id",
-      "rule_name",
-      "combo_group",
-      "native_severity",
-      "adjusted_severity",
-      "status",
-      "asset_id",
-      "asset_name",
-      "region",
-      "account",
-      "projects_json",
-      "frameworks_json",
-      "justification",
-      "created_at",
-      "due_at",
-      "resolution_recommendation",
-      "remediation",
-      // issuesV2 lifecycle and context. Appended, never inserted: ensureHeaders adds
-      // declared-but-missing headers to the right of whatever a tab already has and every
-      // read maps by header NAME, so a ledger written before this change picks these up on
-      // the next sync with no migration and no re-run of setup().
-      "issue_type",
-      "updated_at",
-      "resolved_at",
-      "resolution_reason",
-      "resolved_by",
-      "assignee",
-      "environments",
-      "validated_exploitable",
-      "business_impact",
-      "entity_status",
-      "subscription_id",
-      "ignore_note",
-      "ignore_expired_at",
-      "ticket_urls",
-      "ai_verdict",
-      "ai_recommended_severity",
-      // Phase 4: the Problem/Decision-Vector verdict (problem.ts, problemRule.ts). Appended,
-      // never inserted — same no-migration contract as every block above: ensureHeaders adds
-      // declared-but-missing headers to the right, and every read maps by header NAME.
-      //
-      // Deliberately NO `problem_points` column. The whole argument for a decision tree over
-      // a score is that its output is an ACTION (one of four queues), not a number — and a
-      // points column sitting next to it would be too tempting a sort comparator to leave
-      // alone. Add one and within a week something sorts the register by it, ranks ACT rows
-      // against each other by "how ACT" they are, and the tree has quietly grown the score it
-      // was built to replace. If a number is ever genuinely needed, it belongs in a rule's own
-      // preview surface, never on the row.
-      "problem_outcome",
-      "problem_input_json",
-      "problem_rule_version",
-      // Which AI assets this issue actually describes, and how they were reached. Appended,
-      // same no-migration contract. NOT a replacement for asset_id, which keeps naming the
-      // entity Wiz raised the issue on so the drill-down still matches the console — see
-      // IssueRow.attributedAssetIds for the measurement that made this necessary.
-      "attributed_asset_ids",
-      "attribution_hop",
-      // WHICH RISK CATEGORIES THIS ROW WAS COLLECTED UNDER. Appended, same no-migration
-      // contract as every block above — and declared here rather than only written, because
-      // writeGrid projects a row onto the DECLARED headers and silently discards the rest: an
-      // undeclared column is written every sync and read back as a default, forever.
-      //
-      // Comma-joined, matching `environments` and `attributed_asset_ids`; the `_json` suffix
-      // is reserved for structures. A row written before this column reads back as the AI
-      // category, which is the only scope those syncs ever ran.
-      "categories",
-      // THE ISSUE'S OWN PROJECT ATTRIBUTION, as objects. Appended, same no-migration contract —
-      // and declared here for the same `writeGrid` reason the block above states.
-      //
-      // `projects_json` beside it holds NAMES and must keep doing so (the facets and the asset
-      // table read them); this holds `{id, name, isFolder, businessImpact}`, because only the
-      // id can decide project membership — a name is not unique across the tenant and carries
-      // no ancestry. The project view needs that: an issue raised on a VM or an identity has no
-      // asset row to hang off, so scoping by the asset alone made every one of them vanish.
-      //
-      // An EMPTY CELL reads back as undefined, never as an empty array. A row written before
-      // this column has unknown refs; a live sync writing `[]` is saying Wiz attributed the
-      // issue to nothing. The project view must be able to tell those apart.
-      "project_refs_json",
-      // WHERE THE ROW SITS RELATIVE TO THE AI ESTATE — DIRECT / ADJACENT / UNLINKED, the edge
-      // type the hop came through, and the AI assets it reached. Appended, same no-migration
-      // contract, and declared here for the same `writeGrid` reason the two blocks above state:
-      // an undeclared column is projected away on every write and read back as a default.
-      //
-      // The ids are comma-joined, matching `attributed_asset_ids` and `environments`; the
-      // `_json` suffix stays reserved for structures. An empty `ai_adjacency` cell reads back as
-      // UNDEFINED and never as "UNLINKED" — no pass ran over that row, which is a different
-      // claim from having looked and found no link, and the ranker prices the two differently.
-      "ai_adjacency",
-      "adjacency_via",
-      "adjacent_asset_ids",
-      // THE EXPLOITATION READING, folded from the vulnerability findings that name this issue
-      // (ai_issue_exploitation holds the evidence). Appended, same no-migration contract, and
-      // declared here for the same `writeGrid` reason the three blocks above state.
-      //
-      // ALL THREE EMPTY IS THE FOURTH STATE and the one that matters: no evidence pass ran over
-      // this row — VULN_FINDINGS was refused, or the row predates the step. `rank.exploitationOf`
-      // prices an absent tier as null (the term leaves the blend) and `"none"` as a measurement
-      // that scores, so a reader defaulting the blank to "none" would score every register that
-      // never ran the step as one where nothing is exploited. `epss_peak` is empty rather than 0
-      // for the same reason one column over: 0 is a computed EPSS, blank is no EPSS.
-      "exploitation_tier",
-      "epss_peak",
-      "exploitation_findings"
-    ],
-    [TABS.findings]: [
-      "id",
-      "resource_id",
-      "rule_short_id",
-      "severity",
-      "remediation",
-      "framework_codes",
-      // The Cloud Configuration register. Appended, never inserted — same contract as the
-      // ai_issues block above: ensureHeaders adds declared-but-missing headers to the right
-      // and every read maps by header NAME, so a ledger written before this change picks
-      // them up on the next sync with no migration and no re-run of setup().
-      //
-      // Rows written by the previous version carry neither `result` nor `status`. That is
-      // why isOpenGap (domain/config.ts) treats an absent field as permissive: those rows
-      // were already filtered to FAIL + OPEN at ingest, and demanding the columns would
-      // read every one of them as "not a gap".
-      "name",
-      "status",
-      "result",
-      "deleted",
-      "first_seen_at",
-      "analyzed_at",
-      // The control. rule_description / remediation_instructions / opa_policy repeat
-      // verbatim across every finding of the same rule — sixteen identical Rego documents
-      // for one Bedrock rule in the sample tenant. Denormalized on purpose: the register
-      // reads them per row, the sync rewrites this tab wholesale, and a rules tab would buy
-      // a join to save a few hundred cells on a register the framework filter already
-      // bounds to the AI landscape.
-      "rule_id",
-      "rule_graph_id",
-      "rule_name",
-      "rule_description",
-      "remediation_instructions",
-      "opa_policy",
-      "risks_json",
-      "threats_json",
-      "resource_name",
-      "resource_type",
-      "resource_status",
-      "target_external_id",
-      "source",
-      "subscription_id",
-      "subscription_name",
-      "cloud_provider",
-      "projects_json",
-      "business_impact",
-      "ignore_rule_ids_json",
-      "iac_finding_ids_json",
-      // Phase 4: the Problem/Decision-Vector verdict. Same three columns as ai_issues above,
-      // same no-migration contract, and the same deliberate absence of a `problem_points`
-      // column — see that block's comment for why. Gated on `isOpenGap` rather than
-      // `isUnresolvedIssue` (graphEnrich.withProblemVerdicts).
-      "problem_outcome",
-      "problem_input_json",
-      "problem_rule_version"
-    ],
-    // DSPM findings, kept apart from the compliance findings above on purpose: that tab
-    // prices AARS pillar B and counts as `complianceGaps`, and a classification finding
-    // folded into it would inflate both.
-    [TABS.dataFindings]: ["id", "resource_id", "name", "severity"],
-    // ---- compliance framework posture (securityFramework/complianceAnalytics) ----
-    //
-    // Three tabs rather than one, because the posture tree has two genuinely different
-    // grains and a many-to-many edge between them.
-    //
-    // `ai_frameworks` is the catalogue: what the tenant has, so Settings can offer a picker
-    // instead of asking an operator to type "wf-id-275".
-    //
-    // No `selected` column. Selection is THIS APP's decision and lives in `settings`; a
-    // column here could only ever be a stale copy of it, written by a sync that has no
-    // reason to know. The API model folds the two together at read time instead.
-    [TABS.frameworks]: ["id", "name", "description", "builtin", "enabled", "policy_types"],
-    // `ai_framework_posture` is the TREE, flattened with a `level` discriminator
-    // (framework | category | subcategory) rather than split across three tabs. One read
-    // path, one wholesale rewrite, and the page rebuilds the hierarchy from external ids.
-    //
-    // `posture_pct` is stored EXACTLY as Wiz sent it and is never recomputed: it is their
-    // number, and a second locally-derived percentage sitting beside it would be two
-    // answers to one question. `empty_posture_reason` (NO_RESOURCES / NO_POLICIES) is what
-    // keeps a null posture from being read as a confident 0 — see compliancePosture.ts.
-    // The 5Rs AI-scoped posture (fiveRsPosture.ts) does not break this rule: it is derived
-    // at read time from PolicyScope's own counts and shipped as a separate payload field,
-    // never written back over this column.
-    [TABS.frameworkPosture]: [
-      "framework_id",
-      "level",
-      "category_external_id",
-      "subcategory_external_id",
-      "node_id",
-      "title",
-      "description",
-      "posture_pct",
-      "pass_count",
-      "fail_count",
-      "pass_subcategory_count",
-      "fail_subcategory_count",
-      "empty_posture_reason",
-      "assessment_scope",
-      "mapping_rationale",
-      "tags_json"
-    ],
-    // `ai_framework_policies` is the many-to-many EDGE, one row per
-    // (framework, subcategory, policy). The same control maps to several subcategories —
-    // one prompt-injection control lands under ASI01, ASI02 and ASI10 — so the mapping IS
-    // the row. Keying by policy id alone would lose it, which is exactly the join this
-    // feature exists to harvest: it is what lets a failing finding be labelled with the
-    // framework codes AARS pillar B already knows how to price.
-    [TABS.frameworkPolicies]: [
-      "framework_id",
-      "category_external_id",
-      "subcategory_external_id",
-      "policy_id",
-      "policy_kind",
-      "short_id",
-      "name",
-      "severity",
-      "enabled",
-      "builtin",
-      "pass_count",
-      "fail_count",
-      "assessed_count",
-      "rejected_count",
-      "no_resource_to_assess",
-      "target_native_type",
-      "subject_entity_type",
-      "cloud_provider",
-      "has_auto_remediation"
-    ],
-    // ---- the rule catalogue + identity hygiene (cloudConfigurationRules) ----
-    //
-    // `ai_config_rules` is Wiz's VOCABULARY, not this tenant's posture — the only tab here
-    // whose contents do not describe the landscape. It is what turns an opaque `SUB-082` in the
-    // AARS cascade into "Vertex AI Metadata Store should be encrypted with a customer-managed
-    // key", and what the identity-hygiene matchers resolve MFA and dormancy rules against
-    // instead of hardcoding ids that differ per cloud. ~3,858 rows, refreshed monthly rather
-    // than daily; see the CONFIG_RULES gate in syncJobs.
-    [TABS.configRules]: ["id", "short_id", "name", "subject_entity_type", "external_refs"],
-    // `ai_identity_findings` is separate from `ai_findings` for the reason `ai_data_findings`
-    // is: that tab prices AARS pillar B through buildAarsHintsFromFindings, which keys hints by
-    // resourceId — and a USER_ACCOUNT IS a row in ai_assets, put there by the identity-access
-    // traversal. Folding a person's missing MFA in there would give a human being an AI Asset
-    // Risk Score.
-    [TABS.identityFindings]: [
-      "id",
-      "resource_id",
-      "resource_name",
-      "rule_id",
-      "rule_short_id",
-      "rule_name",
-      "severity",
-      "status",
-      "result",
-      "first_seen_at",
-      "analyzed_at",
-      "remediation",
-      "hygiene"
-    ],
-    // Exploitation evidence, one row per ISSUE rather than per finding. The findings themselves
-    // are not stored: 7,368 of them fold to at most a few thousand rows here, they describe assets
-    // `ai_assets` does not hold (AARS_LIVE_MEASUREMENTS.md §6.4), and the OS-vulnerability register
-    // already owns that population. This tab is the fold and its audit trail.
-    //
-    // `has_kev` / `has_exploit` / `epss_peak` are TRI-STATE and an empty cell means UNMEASURED —
-    // Wiz answers null for a signal it never evaluated. The reader must not read a blank as false
-    // or as zero; `tier: "unknown"` is what an all-null row says out loud.
-    //
-    // The three derived columns also ride on `ai_issues` (`exploitation_tier`, `epss_peak`,
-    // `exploitation_findings`) so the ranker needs no join. Two homes for one fact, the same split
-    // `projects_json` / `project_refs_json` already carries: this tab is the evidence, those
-    // columns are the reading, and only this one can say WHICH findings it was folded from.
-    [TABS.issueExploitation]: [
-      "issue_id",
-      "tier",
-      "has_kev",
-      "has_exploit",
-      "epss_peak",
-      "finding_count",
-      "sample_finding_ids",
-      "observed_at"
-    ],
-    // THE ISSUE LIFECYCLE LEDGER — the one tab here that is never a snapshot.
-    //
-    // Every other data tab above is rewritten wholesale from what the last sync saw, which is
-    // correct for a register that describes today and useless for one that has to say when a
-    // row LEFT. `ai_issues` is filtered to OPEN/IN_PROGRESS, so a remediated issue simply
-    // vanishes from it on the next sync with nothing recording that it was ever there.
-    //
-    // "Never overwritten" is a claim about the CONTENT, not about the write call: `syncStore`
-    // reconciles the stored rows with this sync's register and writes the whole reconciled grid
-    // back, which is a full rewrite of the ledger FROM ITS OWN PRIOR CONTENT and never a
-    // replacement of it by the current snapshot. Nothing may write this tab from `ai_issues`
-    // alone — that is exactly the erasure the tab exists to prevent.
-    //
-    // `disappeared_at` IS NOT A RESOLUTION DATE. It is the timestamp of the sync that first
-    // failed to see the row: an upper bound whose error is the sync interval. `resolution_src`
-    // carries the provenance in the same row so a surface cannot render the date without the
-    // word that qualifies it — "gone by", never "resolved". See domain/issueLedger.ts.
-    //
-    // `register_scope` is the scope the sync that last SAW the row applied; `categories` is the
-    // union of every category that has ever matched it. Two different facts — which questions
-    // were asked, and which ones answered — and only the first can explain an absence.
-    //
-    // Comma-joined for `categories`, matching `environments` and `attributed_asset_ids` on
-    // ai_issues; the `_json` suffix stays reserved for structures. An empty `exploitation_tier`
-    // or `ai_adjacency` cell reads back as UNDEFINED and never as "none"/"UNLINKED": the fold
-    // did not reach the row on the sync that last saw it, which the ranker prices differently
-    // from a measurement.
-    [TABS.issueLedger]: [
-      "issue_id",
-      "first_seen_sync",
-      "first_seen_at",
-      "last_seen_sync",
-      "last_seen_at",
-      "disappeared_at",
-      "resolution_src",
-      "last_status",
-      "categories",
-      "rule_id",
-      "created_at",
-      "due_at",
-      "ai_adjacency",
-      "exploitation_tier",
-      "epss_peak",
-      "register_scope",
-      "episode"
-    ],
-    [TABS.syncHistory]: [
-      "sync_id",
-      "started_at",
-      "finished_at",
-      "status",
-      "mode",
-      "node_count",
-      "edge_count",
-      "issue_count",
-      "api_calls",
-      "snapshot_ref",
-      "error",
-      "aars_severity_json",
-      "aars_rule_version",
-      // Phase 4: the outcome distribution this sync produced, and which problem_rule version
-      // produced it — the problem-outcome analogue of the two columns just above, feeding
-      // aarsTrend.ts's second series. Appended, same no-migration contract.
-      "problem_outcome_json",
-      "problem_rule_version",
-      // BOTH distributions again, one level down: `{projectId: {aars, outcome}}`, an entry per
-      // project holding an asset. One cell rather than a tab, because a sync writes one row and
-      // the map is bounded by the project count, not the landscape — see PROJECT_TOTALS_COLUMN
-      // in aarsTrend.ts for the shape and for why an absent entry is never read as a zero.
-      // Appended, same no-migration contract: rows without it have no scoped series, which the
-      // trend reports rather than fabricates.
-      "project_totals_json",
-      // The count trend's two new series. `issue_count` above is the third and has been
-      // written since the first sync this ledger ever recorded, which is why the issues line
-      // has full history and these two start empty — appended under the same no-migration,
-      // no-backfill contract as everything above them. A row written before these existed
-      // carries NO value, and the reader plots a gap rather than a zero: see
-      // CountTrendPoint in aarsTrend.ts for why that distinction is load-bearing.
-      "finding_count",
-      "posture_fail_count",
-      // The posture distribution this sync produced, and which posture rule produced it. It
-      // carries the SCOPE SPLIT, not just tiers: an asset can lack a tier because nobody
-      // measured it (a coverage gap) or because the lattice does not describe its kind (not a
-      // gap at all), and a bare tier count cannot tell those apart.
-      "posture_tier_json",
-      "posture_rule_version",
-      // Which NORMALIZER produced the readings above, as opposed to which RULE priced them. A
-      // rule version moves when an operator edits a model; this moves when a code change alters
-      // what a stored fact MEANS, which only a full sync can repair. The trend marks the break
-      // here so a step is never read as movement.
-      "derivation_version",
-      // THE SCOPE THIS SYNC APPLIED — the sorted category signature, not the one settings hold
-      // now. The two differ across a settings change, and a total counted under six categories
-      // is not comparable with one counted under one; stamping today's list onto yesterday's
-      // row would erase exactly the discontinuity the trend has to mark. Same argument as
-      // `derivation_version` above it, one axis over: that records what a fact MEANS, this
-      // records which population was asked. Empty on a row written before the column, which
-      // reads as "unknown" and never as "a different scope".
-      "register_scope",
-      // THE ADJACENCY CENSUS THIS SYNC MEASURED — `{DIRECT, ADJACENT, UNLINKED, edgesKnown}`,
-      // mirroring `aars_severity_json` and `problem_outcome_json` one row up. Appended, same
-      // no-migration contract; absent on a row written before the column, which reads as "no
-      // adjacency pass" and never as an all-UNLINKED register.
-      //
-      // `edgesKnown` travels INSIDE the object rather than as its own column because the three
-      // counts are unreadable without it: 68 asset edges on the reference tenant means UNLINKED
-      // is mostly "not traversed". Splitting them into two columns is how a later reader ends up
-      // plotting the counts alone.
-      "adjacency_json",
-      // THE EXPLOITATION CENSUS THIS SYNC MEASURED — the five tiers, plus the two counts that say
-      // what the fold could NOT use (`unjoined`, `droppedNotInRegister`) and the number of findings
-      // it read. Appended, same no-migration contract.
-      //
-      // NULL, NOT A ZEROED CENSUS, when no evidence pass ran. VULN_FINDINGS is optional; a tenant
-      // that refuses it has no reading here, and "no issue carries exploitation evidence" is a very
-      // different claim from "we never asked". The two counts travel INSIDE the object for the
-      // reason `edgesKnown` does one row up: the tier counts are unreadable without them, and split
-      // into their own columns a later reader plots the tiers alone.
-      "exploitation_json",
-      // WHAT THE LIFECYCLE LEDGER DID ON THIS SYNC — `{new, resolved, reopened, carried,
-      // skippedNarrowedScope}` (domain/issueLedger.IssueLedgerDeltas). Appended, same
-      // no-migration contract as every column above.
-      //
-      // TRANSITION COUNTS, not a census of the tab: a row present on both syncs is counted by
-      // none of the five, so these numbers do not sum to the ledger's size and a reader must not
-      // try to make them. `skippedNarrowedScope` is the one to watch — a non-zero there says the
-      // category scope moved and that this sync deliberately resolved nothing by absence, which
-      // is what keeps a re-scoping from being read as a remediation programme.
-      //
-      // Rides here rather than on its own tab because it is one object per sync, exactly like
-      // `adjacency_json` and `exploitation_json` above it, and because `bootstrap.latestSync`
-      // ships the whole history row — so the client gets it with no new endpoint.
-      "ledger_json",
-      // OPEN ISSUES PER RISK CATEGORY at this sync — `{[categoryId]: openIssues}`, counted once
-      // per category a row carries. The scope-over-time series: `register_scope` beside it says
-      // WHICH questions this sync asked, and this says what each one answered.
-      //
-      // THE COUNTS DO NOT SUM TO `issue_count`, and that is a property of the register rather
-      // than a defect: an issue sits in roughly five categories on the reference tenant
-      // (AARS_LIVE_MEASUREMENTS.md §6.1), arrives once per selected category it matches, and is
-      // counted under each. A reader adding them up is measuring the overlap, not the register.
-      //
-      // A KEY ABSENT FROM THE OBJECT IS NOT A ZERO. A sync run under a narrower scope never
-      // collected the categories it was not asked for, so it has no number for them — the
-      // trend plots the gap (aarsTrend.ts CATEGORY_SPEC, `absentKeyIsNull`) rather than drawing
-      // a category that sat at zero until the day it was selected.
-      "category_counts_json",
-      // Issues carrying a KEV-tier exploitation reading at this sync — the one exploitation
-      // figure that earns a scalar column of its own, because it is the tier every surface
-      // leads with.
-      //
-      // NULL, NOT ZERO, when no evidence pass ran, exactly as `exploitation_json` beside it is
-      // null: VULN_FINDINGS is optional, and "no issue is on the KEV catalogue" is a very
-      // different claim from "we never asked". Derived from the same fold that writes that
-      // census, so the two can never disagree about one sync.
-      "kev_linked_count",
-      // EVERY FRAMEWORK'S COMPLIANCE POSTURE AT THIS SYNC — `{avg, scoredFrameworks,
-      // frameworks: {id: {pct, scored, subcategories}}}` (domain/complianceTrend.ts). The one
-      // record of a framework percentage over time: the `framework_posture` tab is overwritten
-      // wholesale on every commit, so it holds today's reading and nothing else, and
-      // `posture_fail_count` beside it counts failing POLICIES, which is a different quantity
-      // on a different scale.
-      //
-      // ONE CELL, NOT A COLUMN PER FRAMEWORK. Which frameworks are collected is a tenant
-      // setting that moves, and a column per framework would want a migration every time an
-      // operator selected one. Appended under the same no-migration contract as everything
-      // above it; absent on a row written before the column, which the trend reads as "no
-      // point" and never as a landscape scoring zero.
-      //
-      // THE COVERAGE TRAVELS INSIDE, for the reason `edgesKnown` rides inside `adjacency_json`
-      // above: a framework percentage is a share of the subcategories Wiz SCORED, so a line
-      // that rises because scoring narrowed is indistinguishable from one that rises because
-      // the landscape improved — unless `scored`/`subcategories` arrive on the same point.
-      // Split into their own columns, a later reader plots the percentage alone.
-      "compliance_posture_json"
-    ],
-    [TABS.settings]: ["key", "value_json"],
-    [TABS.jobs]: [
-      "job_id",
-      "kind",
-      "phase",
-      "sync_id",
-      "step_index",
-      "cursor",
-      "page",
-      "nodes_so_far",
-      "total_count",
-      "part_refs_json",
-      "params_json",
-      "error",
-      "started_at",
-      "updated_at"
-    ],
-    [TABS.meta]: ["version"]
-  };
-  var spreadsheetCache = null;
-  function ledgerSpreadsheet() {
-    if (spreadsheetCache === null) {
-      spreadsheetCache = SpreadsheetApp.openById(requireProp(PROP_KEYS.ledgerSpreadsheetId));
-    }
-    return spreadsheetCache;
-  }
-  function sheet(tab) {
-    const sh = ledgerSpreadsheet().getSheetByName(tab);
-    if (!sh) throw new Error(`Missing tab ${tab} \u2014 run setup().`);
-    return sh;
-  }
-  function ensureTabs(ss) {
-    ss.setSpreadsheetTimeZone("Etc/UTC");
-    for (const [tab, headers] of Object.entries(TAB_HEADERS)) {
-      let sh = ss.getSheetByName(tab);
-      if (!sh) {
-        sh = ss.insertSheet(tab);
-        sh.getRange(1, 1, sh.getMaxRows(), sh.getMaxColumns()).setNumberFormat("@");
-        sh.getRange(1, 1, 1, headers.length).setValues([headers]);
-        sh.setFrozenRows(1);
-      } else {
-        ensureHeaders(sh, tab);
-      }
-    }
-    const dflt = ss.getSheetByName("Sheet1");
-    if (dflt && ss.getSheets().length > 1) ss.deleteSheet(dflt);
-  }
-  function fromCell(v) {
-    if (v === "" || v === null || v === void 0) return null;
-    if (v instanceof Date) return toIso(v.getTime());
-    return v;
-  }
-  function toCell(v) {
-    if (v === null || v === void 0) return "";
-    return v;
-  }
-  var READ_BLOCK_CELLS = 2e5;
-  function readGrid(sh, tab, lastRow, lastCol) {
-    const out = [];
-    let block = Math.max(1, Math.floor(READ_BLOCK_CELLS / Math.max(1, lastCol)));
-    let row = 1;
-    while (row <= lastRow) {
-      const take = Math.min(block, lastRow - row + 1);
-      try {
-        for (const values of sh.getRange(row, 1, take, lastCol).getValues()) out.push(values);
-        row += take;
-      } catch (e) {
-        if (take <= 1) {
-          throw new Error(
-            `Reading ${tab} stopped at row ${row} of ${lastRow} (${lastCol} columns): ${e instanceof Error ? e.message : String(e)}`
-          );
-        }
-        block = Math.floor(take / 2);
-      }
-    }
-    return out;
-  }
-  function mapRows(headers, rows) {
-    const out = [];
-    for (const values of rows) {
-      const row = {};
-      let empty = true;
-      for (let j = 0; j < headers.length; j++) {
-        const h = headers[j];
-        if (!h) continue;
-        const v = fromCell(values[j]);
-        row[h] = v;
-        if (v !== null) empty = false;
-      }
-      if (!empty) out.push(row);
-    }
-    return out;
-  }
-  function readAll(tab) {
-    const sh = sheet(tab);
-    const lastRow = sh.getLastRow();
-    const lastCol = sh.getLastColumn();
-    if (lastRow < 2 || lastCol < 1) return [];
-    const values = readGrid(sh, tab, lastRow, lastCol);
-    return mapRows(values[0].map(String), values.slice(1));
-  }
-  function readTail(tab, n) {
-    const sh = sheet(tab);
-    const lastRow = sh.getLastRow();
-    const lastCol = sh.getLastColumn();
-    if (lastRow < 2 || lastCol < 1) return [];
-    const headers = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
-    const first = Math.max(2, lastRow - Math.max(1, n) + 1);
-    const values = sh.getRange(first, 1, lastRow - first + 1, lastCol).getValues();
-    return mapRows(headers, values);
-  }
-  function ensureHeaders(sh, tab) {
-    var _a5, _b;
-    const width = Math.max(sh.getLastColumn(), 1);
-    const raw = sh.getRange(1, 1, 1, width).getValues()[0].map(String);
-    let lastNamed = -1;
-    for (let i = 0; i < raw.length; i++) if (raw[i]) lastNamed = i;
-    for (let i = 0; i < lastNamed; i++) {
-      if (raw[i]) continue;
-      throw new Error(
-        `Tab "${tab}" has a blank header at column ${i + 1}, between named columns ("${(_a5 = raw.slice(0, i).filter(Boolean).pop()) != null ? _a5 : "?"}" and "${raw[lastNamed]}"). Every read and write maps columns by header name, so a gap silently misfiles every value after it. Name the column or delete it, then retry \u2014 no data was written.`
+  function shadowedTierRules(rule) {
+    const leaves = enumeratePostureVectors();
+    const dead = [];
+    rule.tierRules.forEach((row, i) => {
+      const rowLeaves = leaves.filter((v) => postureVectorMatches(v, row.when));
+      if (!rowLeaves.length) return;
+      const allClaimedEarlier = rowLeaves.every(
+        (v) => rule.tierRules.slice(0, i).some((earlier) => postureVectorMatches(v, earlier.when))
       );
+      if (allClaimedEarlier) dead.push(i);
+    });
+    return dead;
+  }
+  function unreachableTierRules(rule) {
+    const leaves = enumeratePostureVectors();
+    const dead = [];
+    rule.tierRules.forEach((row, i) => {
+      const matchesAny = leaves.some((v) => postureVectorMatches(v, row.when));
+      if (!matchesAny) dead.push(i);
+    });
+    return dead;
+  }
+  function cellCoverage(rule) {
+    const leaves = enumeratePostureVectors();
+    const byRow = rule.tierRules.map(() => 0);
+    const byTier = { 1: 0, 2: 0, 3: 0, 4: 0 };
+    let byFallback = 0;
+    for (const v of leaves) {
+      const { tier, matchedRuleIndex } = decidePosture(v, rule);
+      if (matchedRuleIndex === -1) byFallback++;
+      else byRow[matchedRuleIndex] += 1;
+      byTier[tier]++;
     }
-    const existing = raw.slice(0, lastNamed + 1);
-    const missing = ((_b = TAB_HEADERS[tab]) != null ? _b : []).filter((h) => !existing.includes(h));
-    if (missing.length) {
-      sh.getRange(1, existing.length + 1, 1, missing.length).setValues([missing]);
-    }
-    return [...existing, ...missing];
+    return { total: leaves.length, byRow, byFallback, byTier };
   }
-  function writeGrid(sh, headers, startRow, rows) {
-    if (!rows.length) return;
-    const grid = rows.map((r) => headers.map((h) => toCell(r[h])));
-    const range = sh.getRange(startRow, 1, grid.length, headers.length);
-    range.setNumberFormat("@");
-    range.setValues(grid);
-  }
-  function overwrite(tab, rows) {
-    const sh = sheet(tab);
-    const headers = ensureHeaders(sh, tab);
-    const lastRow = sh.getLastRow();
-    if (lastRow > 1) sh.getRange(2, 1, lastRow - 1, headers.length).clearContent();
-    writeGrid(sh, headers, 2, rows);
-  }
-  function appendRows(tab, rows) {
-    if (!rows.length) return;
-    const sh = sheet(tab);
-    writeGrid(sh, ensureHeaders(sh, tab), sh.getLastRow() + 1, rows);
-  }
-  function dataRowCount(tab) {
-    return Math.max(0, sheet(tab).getLastRow() - 1);
-  }
-  var TRIM_BUFFER_ROWS = 1e3;
-  function trimSurplusRows(tab, bufferRows = TRIM_BUFFER_ROWS) {
-    const sh = sheet(tab);
-    const keep = Math.max(sh.getLastRow(), 1) + Math.max(0, bufferRows);
-    const surplus = sh.getMaxRows() - keep;
-    if (surplus <= 0) return 0;
-    sh.deleteRows(keep + 1, surplus);
-    return surplus;
-  }
-  function updateWhere(tab, keyColumn, keyValue, patch) {
-    const sh = sheet(tab);
-    if (sh.getLastRow() < 2) return false;
-    const headers = ensureHeaders(sh, tab);
-    const lastRow = sh.getLastRow();
-    const lastCol = headers.length;
-    const values = readGrid(sh, tab, lastRow, lastCol);
-    const keyIdx = headers.indexOf(keyColumn);
-    if (keyIdx < 0) return false;
-    for (let i = 1; i < values.length; i++) {
-      if (fromCell(values[i][keyIdx]) === keyValue) {
-        const rowVals = values[i].slice();
-        for (const [k, v] of Object.entries(patch)) {
-          const idx = headers.indexOf(k);
-          if (idx >= 0) rowVals[idx] = toCell(v);
-        }
-        sh.getRange(i + 1, 1, 1, lastCol).setValues([rowVals]);
-        return true;
+  function postureDiscrimination(decided) {
+    var _a5;
+    const tierOccupancy = { 1: 0, 2: 0, 3: 0, 4: 0 };
+    const cellOccupancy = {};
+    const unknownCounts = {
+      capability: 0,
+      containment: 0,
+      consequence: 0
+    };
+    let notEstablished = 0;
+    for (const d of decided) {
+      const established = tierEstablished(d.unknowns);
+      if (established && d.tier !== void 0) {
+        tierOccupancy[d.tier]++;
+        const key = postureKey(d.vector);
+        cellOccupancy[key] = ((_a5 = cellOccupancy[key]) != null ? _a5 : 0) + 1;
+      } else {
+        notEstablished++;
+      }
+      for (const u of d.unknowns) {
+        if (u === "capability" || u === "containment" || u === "consequence") unknownCounts[u]++;
       }
     }
+    const n = decided.length;
+    const rate = (count2) => n ? count2 / n : 0;
+    return {
+      decided,
+      tierOccupancy,
+      cellsReached: Object.keys(cellOccupancy).length,
+      cellOccupancy,
+      unknownRate: {
+        capability: rate(unknownCounts.capability),
+        containment: rate(unknownCounts.containment),
+        consequence: rate(unknownCounts.consequence),
+        tier: rate(notEstablished)
+      }
+    };
+  }
+  function postureRuleSummary(rule) {
+    const coverage = cellCoverage(rule);
+    const tier4Share = coverage.total ? coverage.byTier[4] / coverage.total : 0;
+    const unreachable = unreachableTierRules(rule);
+    return [
+      `${rule.tierRules.length} tier rules are tried in order, first match wins; a vector matching none of them falls back to tier ${rule.fallbackTier}.`,
+      `Tier 4 claims ${coverage.byTier[4]} of ${coverage.total} cells (${pct2(tier4Share)}), against a ceiling of ${pct2(rule.topTierCeiling)}.`,
+      unreachable.length ? `${unreachable.length} row(s) can never fire against any cell this app can derive \u2014 the lethal-trifecta row, kept as a documented gap rather than fed a guess.` : `Every row can fire against at least one of the 27 cells.`,
+      `Posture is a capability envelope against a containment, not a sum of open problems: an asset with zero open findings can still sit at a high tier.`
+    ];
+  }
+  function tierEqual(a, b) {
+    const withoutCeiling = (r) => {
+      const c = cleanPostureRule(r);
+      delete c.topTierCeiling;
+      return JSON.stringify(c);
+    };
+    return withoutCeiling(a) === withoutCeiling(b);
+  }
+
+  // src/domain/configFindings.ts
+  var CONFIG_SORTS = [
+    "severity",
+    "rule",
+    "resource",
+    "firstSeen",
+    "status"
+  ];
+  var DEFAULT_CONFIG_SORT_DIR = {
+    severity: "desc",
+    firstSeen: "desc",
+    rule: "asc",
+    resource: "asc",
+    status: "asc"
+    // Phase 5: the problem tree's outcome, worst (ACT) first — same convention as severity.
+  };
+  var DEFAULT_CONFIG_PAGE_SIZE = 50;
+  var MAX_CONFIG_PAGE_SIZE = 500;
+  var CONFIG_CLIENT_ALL_MAX = 1e3;
+  var CONFIG_FACET_KEYS = [
+    "severities",
+    "statuses",
+    "clouds",
+    "resourceTypes",
+    "rules",
+    "projects",
+    "domains",
+    "linkage",
+    "flags"
+  ];
+  var LINKAGE_VALUES = ["linked", "unlinked"];
+  var CONFIG_FLAGS = ["gap", "ignored", "iac"];
+  var sevRank2 = (s) => {
+    const i = SEVERITY_ORDER.indexOf(s);
+    return i < 0 ? SEVERITY_ORDER.length : i;
+  };
+  function toConfigView(f, linked, domain = "") {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r;
+    return {
+      id: f.id,
+      name: (_b = (_a5 = f.name) != null ? _a5 : f.ruleName) != null ? _b : "",
+      severity: (_c = f.severity) != null ? _c : "UNKNOWN",
+      status: (_d = f.status) != null ? _d : "",
+      result: (_e = f.result) != null ? _e : "",
+      ruleShortId: (_f = f.ruleShortId) != null ? _f : "",
+      ruleName: (_g = f.ruleName) != null ? _g : "",
+      resourceId: f.resourceId,
+      resourceName: (_h = f.resourceName) != null ? _h : "",
+      resourceType: (_i = f.resourceType) != null ? _i : "",
+      cloud: (_j = f.cloudProvider) != null ? _j : "",
+      subscriptionName: (_k = f.subscriptionName) != null ? _k : "",
+      projects: ((_l = f.projects) != null ? _l : []).map((p) => p.name).filter(Boolean),
+      businessImpact: (_m = f.businessImpact) != null ? _m : "",
+      firstSeenAt: (_n = f.firstSeenAt) != null ? _n : "",
+      analyzedAt: (_o = f.analyzedAt) != null ? _o : "",
+      risks: (_p = f.risks) != null ? _p : [],
+      linked,
+      domain,
+      ignored: ((_q = f.ignoreRuleIds) != null ? _q : []).length > 0,
+      iac: ((_r = f.iacFindingIds) != null ? _r : []).length > 0,
+      gap: isOpenGap(f)
+    };
+  }
+  function listParam(v) {
+    if (Array.isArray(v)) return v.map((x) => String(x)).filter(Boolean);
+    const s = toStr(v);
+    return s ? s.split(",").map((x) => x.trim()).filter(Boolean) : [];
+  }
+  function resolveConfigQuery(params) {
+    var _a5;
+    return {
+      q: ((_a5 = toStr(params["q"])) != null ? _a5 : "").trim().toLowerCase(),
+      severities: listParam(params["severities"]),
+      statuses: listParam(params["statuses"]),
+      clouds: listParam(params["clouds"]),
+      resourceTypes: listParam(params["resourceTypes"]),
+      rules: listParam(params["rules"]),
+      projects: listParam(params["projects"]),
+      domains: listParam(params["domains"]),
+      linkage: listParam(params["linkage"]).filter(
+        (v) => LINKAGE_VALUES.indexOf(v) >= 0
+      ),
+      flags: listParam(params["flags"]).filter(
+        (v) => CONFIG_FLAGS.indexOf(v) >= 0
+      )
+    };
+  }
+  function hasConfigFlag(row, flag) {
+    if (flag === "gap") return row.gap;
+    if (flag === "ignored") return row.ignored;
+    if (flag === "iac") return row.iac;
     return false;
   }
-  function gridSize(tab) {
-    const sh = sheet(tab);
-    return { rows: sh.getMaxRows(), cols: sh.getMaxColumns() };
+  function anyOf(selected, value) {
+    return selected.length === 0 || selected.indexOf(value) >= 0;
   }
-  function cellCount() {
-    return ledgerSpreadsheet().getSheets().reduce((acc, sh) => acc + sh.getMaxRows() * sh.getMaxColumns(), 0);
-  }
-
-  // src/server/settingsStore.ts
-  var settingsMemo;
-  function loadSettings() {
-    if (settingsMemo !== void 0) return settingsMemo;
-    const out = {};
-    for (const row of readAll(TABS.settings)) {
-      const key = row["key"];
-      const raw = row["value_json"];
-      if (typeof key !== "string" || !key) continue;
-      if (typeof raw !== "string" || raw === "") {
-        out[key] = null;
-        continue;
-      }
-      try {
-        out[key] = JSON.parse(raw);
-      } catch {
-        console.warn(`Unreadable settings value for ${key}; ignoring`);
-      }
+  function matchesConfigQuery(row, q) {
+    if (!anyOf(q.severities, row.severity)) return false;
+    if (!anyOf(q.statuses, row.status)) return false;
+    if (!anyOf(q.clouds, row.cloud)) return false;
+    if (!anyOf(q.resourceTypes, row.resourceType)) return false;
+    if (!anyOf(q.rules, row.ruleShortId)) return false;
+    if (q.projects.length && !row.projects.some((p) => q.projects.indexOf(p) >= 0)) return false;
+    if (q.domains.length && q.domains.indexOf(row.domain) < 0) return false;
+    if (q.linkage.length && !anyOf(q.linkage, row.linked ? "linked" : "unlinked")) return false;
+    for (const flag of q.flags) if (!hasConfigFlag(row, flag)) return false;
+    if (q.q) {
+      const hay = [
+        row.name,
+        row.ruleShortId,
+        row.ruleName,
+        row.resourceName,
+        row.resourceType,
+        row.subscriptionName
+      ].join(" ").toLowerCase();
+      if (hay.indexOf(q.q) < 0) return false;
     }
-    settingsMemo = out;
-    return out;
+    return true;
   }
-  function saveSettings(settings) {
-    overwrite(
-      TABS.settings,
-      Object.entries(settings).map(([key, value]) => ({
-        key,
-        value_json: JSON.stringify(value != null ? value : null)
-      }))
-    );
-    settingsMemo = settings;
-    bumpDataVersion();
+  function filterConfigRows(rows, q) {
+    return rows.filter((r) => matchesConfigQuery(r, q));
   }
-  var getProjectView2 = () => getProjectView(loadSettings());
-  function setProjectView(id) {
-    const settings = loadSettings();
-    const next = withProjectView(settings, id);
-    if (next["project_view"] === getProjectView(settings) && next["domain_view"] === getDomainView(settings)) return;
-    saveSettings(next);
-  }
-  var getDomainView2 = () => getDomainView(loadSettings());
-  function setDomainView(domain) {
-    const settings = loadSettings();
-    const next = withDomainView(settings, domain);
-    if (next["domain_view"] === getDomainView(settings) && next["project_view"] === getProjectView(settings)) return;
-    saveSettings(next);
-  }
-  var getDefaultDepth2 = () => getDefaultDepth(loadSettings());
-  var getMaxNodes2 = () => getMaxNodes(loadSettings());
-  var getAutoExpand2 = () => getAutoExpand(loadSettings());
-  function setDefaultDepth(depth) {
-    saveSettings(withDefaultDepth(loadSettings(), depth));
-  }
-  function setMaxNodes(maxNodes) {
-    saveSettings(withMaxNodes(loadSettings(), maxNodes));
-  }
-  function setAutoExpand(on) {
-    saveSettings(withAutoExpand(loadSettings(), on));
-  }
-  var getAarsRule2 = () => getAarsRule(loadSettings());
-  function setAarsRule(rule) {
-    const settings = loadSettings();
-    const before = getAarsRule(settings);
-    const scoresWereCurrent = getScoredRuleVersion(settings) === before.version;
-    let next = withAarsRule(settings, rule);
-    const stored = getAarsRule(next);
-    if (scoresWereCurrent && scoringEqual(before.rule, stored.rule)) {
-      next = withScoredRuleVersion(next, stored.version);
-    }
-    saveSettings(next);
-    return stored;
-  }
-  var getProblemRule2 = () => getProblemRule(loadSettings());
-  function setProblemRule(rule) {
-    const settings = loadSettings();
-    const before = getProblemRule(settings);
-    const verdictsWereCurrent = getDecidedRuleVersion(settings) === before.version;
-    let next = withProblemRule(settings, rule);
-    const stored = getProblemRule(next);
-    if (verdictsWereCurrent && decisionEqual(before.rule, stored.rule)) {
-      next = withDecidedRuleVersion(next, stored.version);
-    }
-    saveSettings(next);
-    return stored;
-  }
-  var getPostureRule2 = () => getPostureRule(loadSettings());
-  function setPostureRule(rule) {
-    const settings = loadSettings();
-    const before = getPostureRule(settings);
-    const tiersWereCurrent = getComputedPostureVersion(settings) === before.version;
-    let next = withPostureRule(settings, rule);
-    const stored = getPostureRule(next);
-    if (tiersWereCurrent && tierEqual(before.rule, stored.rule)) {
-      next = withComputedPostureVersion(next, stored.version);
-    }
-    saveSettings(next);
-    return stored;
-  }
-  var getRankRule2 = () => getRankRule(loadSettings());
-  function setRankRule(rule) {
-    saveSettings(withRankRule(loadSettings(), rule));
-    return getRankRule2();
-  }
-  var getRankLeadsSort2 = () => getRankLeadsSort(loadSettings());
-  function setRankLeadsSort(on) {
-    saveSettings(withRankLeadsSort(loadSettings(), on));
-    return getRankLeadsSort2();
-  }
-  var getSkippedSteps2 = () => getSkippedSteps(loadSettings());
-  function setSkippedSteps(steps) {
-    const settings = loadSettings();
-    const next = withSkippedSteps(settings, steps);
-    const before = getSkippedSteps(settings).join(" ");
-    if (getSkippedSteps(next).join(" ") === before) return;
-    saveSettings(next);
-  }
-  var getTruncatedSteps2 = () => getTruncatedSteps(loadSettings());
-  function setTruncatedSteps(steps) {
-    const settings = loadSettings();
-    const next = withTruncatedSteps(settings, steps);
-    const before = getTruncatedSteps(settings).join(" ");
-    if (getTruncatedSteps(next).join(" ") === before) return;
-    saveSettings(next);
-  }
-  var getStepRows2 = () => getStepRows(loadSettings());
-  function setStepRows(rows) {
-    const settings = loadSettings();
-    const next = withStepRows(settings, rows);
-    const key = (r) => Object.keys(r).sort().map((k) => `${k}=${r[k]}`).join(" ");
-    if (key(getStepRows(next)) === key(getStepRows(settings))) return;
-    saveSettings(next);
-  }
-  var getPostureBaseline2 = () => getPostureBaseline(loadSettings());
-  function setPostureBaseline(snapshot) {
-    saveSettings(withPostureBaseline(loadSettings(), snapshot));
-  }
-  var getSkipReasons2 = () => getSkipReasons(loadSettings());
-  function setSkipReasons(reasons) {
-    const settings = loadSettings();
-    const next = withSkipReasons(settings, reasons);
-    const key = (r) => Object.keys(r).sort().map((k) => `${k}=${r[k]}`).join("\0");
-    if (key(getSkipReasons(next)) === key(getSkipReasons(settings))) return;
-    saveSettings(next);
-  }
-  function getSelectedFrameworks2(catalogue) {
-    const settings = loadSettings();
-    if (Array.isArray(settings["selected_frameworks"])) {
-      return getSelectedFrameworks(settings);
-    }
-    const rows = catalogue ? catalogue() : [];
-    return rows.length ? resolveDefaultFrameworks(rows) : getSelectedFrameworks(settings);
-  }
-  function setSelectedFrameworks(ids) {
-    saveSettings(withSelectedFrameworks(loadSettings(), ids));
-    return getSelectedFrameworks2();
-  }
-  var getIssueCategories2 = () => getIssueCategories(loadSettings());
-  function setIssueCategories(ids) {
-    saveSettings(withIssueCategories(loadSettings(), ids));
-    return getIssueCategories2();
-  }
-  var getSyncScope2 = () => getSyncScope(loadSettings());
-  function setSyncScope(v) {
-    saveSettings(withSyncScope(loadSettings(), v));
-    return getSyncScope2();
-  }
-  var getFiveRsPins2 = () => getFiveRsPins(loadSettings());
-  function setFiveRsPins(pins) {
-    const settings = loadSettings();
-    const next = withFiveRsPins(settings, pins);
-    const key = (p) => `${p.in.join(" ")}|${p.out.join(" ")}`;
-    if (key(getFiveRsPins(next)) === key(getFiveRsPins(settings))) {
-      return getFiveRsPins(settings);
-    }
-    saveSettings(next);
-    return getFiveRsPins2();
-  }
-  var getScanVars2 = () => getScanVars(loadSettings());
-  function setScanVars(stepId, vars) {
-    saveSettings(withScanVars(loadSettings(), stepId, vars));
-    return getScanVars2();
-  }
-  var getScoredRuleVersion2 = () => getScoredRuleVersion(loadSettings());
-  function setScoredRuleVersion(version) {
-    const settings = loadSettings();
-    const next = withScoredRuleVersion(settings, version);
-    if (getScoredRuleVersion(next) === getScoredRuleVersion(settings)) return;
-    saveSettings(next);
-  }
-  var getDecidedRuleVersion2 = () => getDecidedRuleVersion(loadSettings());
-  function setDecidedRuleVersion(version) {
-    const settings = loadSettings();
-    const next = withDecidedRuleVersion(settings, version);
-    if (getDecidedRuleVersion(next) === getDecidedRuleVersion(settings)) return;
-    saveSettings(next);
-  }
-  var getComputedPostureVersion2 = () => getComputedPostureVersion(loadSettings());
-  function setComputedPostureVersion(version) {
-    const settings = loadSettings();
-    const next = withComputedPostureVersion(settings, version);
-    if (getComputedPostureVersion(next) === getComputedPostureVersion(settings)) return;
-    saveSettings(next);
-  }
-  var getSyncDerivationVersion2 = () => getSyncDerivationVersion(loadSettings());
-  var derivationIsStale2 = () => derivationIsStale(loadSettings(), DERIVATION_VERSION);
-  function setSyncDerivationVersion(version) {
-    const settings = loadSettings();
-    const next = withSyncDerivationVersion(settings, version);
-    if (getSyncDerivationVersion(next) === getSyncDerivationVersion(settings)) return;
-    saveSettings(next);
-  }
-  function configRulesAreFresh2(hasRows, now) {
-    return configRulesAreFresh(loadSettings(), hasRows, now);
-  }
-  function setConfigRulesSyncedAt(at) {
-    saveSettings(withConfigRulesSyncedAt(loadSettings(), at));
-  }
-
-  // src/server/props.ts
-  var PROP_KEYS = {
-    wizApiToken: "WIZ_API_TOKEN",
-    wizClientId: "WIZ_CLIENT_ID",
-    wizClientSecret: "WIZ_CLIENT_SECRET",
-    wizAuthUrl: "WIZ_AUTH_URL",
-    wizApiUrl: "WIZ_API_URL",
-    wizProjectIdV2: "WIZ_PROJECT_ID_V2",
-    ledgerSpreadsheetId: "LEDGER_SPREADSHEET_ID",
-    archiveFolderId: "ARCHIVE_FOLDER_ID",
-    // Who may open the web app, on top of the deployment's own "anyone within <domain>" fence.
-    // Comma/semicolon/whitespace-separated addresses; see server/access.ts. Unset means nobody —
-    // the guard fails closed, and the owner is allowed by identity rather than by this list.
-    allowedUsers: "ALLOWED_USERS",
-    // Who may EDIT that list. Owner-only to change; see the admin-tier note in access.ts.
-    // Unset means owner-only, like its sibling. Admins are allowed into the app by being admins,
-    // not by also appearing in ALLOWED_USERS.
-    allowedAdmins: "ALLOWED_ADMINS",
-    // The /exec URL of the hub launcher (gas_hub), pasted from its Deploy > Manage deployments,
-    // or set from Settings > System. A PROPERTY RATHER THAN CODE for the platform's reason, not
-    // a preference: `ScriptApp.getService().getUrl()` answers for this deployment only and there
-    // is no API that hands one script project another's web-app URL, so somebody has to paste
-    // it. Unset (or blank) is legal and means the header simply carries no hub button — see
-    // server/hubUrl.ts, which owns the shape of the value and refuses anything that is neither a
-    // script.google.com URL nor a loopback dev-harness one.
-    urlHub: "URL_HUB",
-    // Optional comma-separated override of the AI resource-type enum values to
-    // query (e.g. "AI_AGENT,AI_MODEL") for tenants whose schema names differ.
-    wizAiResourceTypes: "WIZ_AI_RESOURCE_TYPES",
-    // The DERIVED resolution, written by resolveAiResourceTypes — never by an operator.
-    // Deliberately a different key from the override above: one is an instruction and the
-    // other is a memo, and conflating them would let a cached answer masquerade as a
-    // configured one (and survive the operator clearing the override).
-    wizAiResourceTypesResolved: "WIZ_AI_RESOURCE_TYPES_RESOLVED",
-    // Optional override of the resource tag key naming the owning business domain.
-    // Defaults to `Wiz/Domain` (domain/domainTag.ts) and is matched case-insensitively, so
-    // this only needs setting by a tenant that spells the key differently rather than
-    // merely differently-cased. Mirrors WIZ_SUPPORT_GROUP_TAG_KEY in the OS-vulns tool.
-    wizDomainTagKey: "WIZ_DOMAIN_TAG_KEY",
-    // The warm schedule setup() last installed, as a signature string. A ClockTrigger exposes
-    // its handler and nothing else, so this is the ONLY way to tell a correctly-scheduled set
-    // from one an older deployment left behind. Written by setup(), read by setup().
-    warmTriggerSchedule: "WARM_TRIGGER_SCHEDULE"
-  };
-  var DEFAULT_WIZ_AUTH_URL = "https://auth.app.wiz.io/oauth/token";
-  function getProp(key) {
-    return PropertiesService.getScriptProperties().getProperty(key);
-  }
-  function requireProp(key) {
-    const v = getProp(key);
-    if (!v) {
-      throw new Error(`Missing Script Property ${key} \u2014 run setup() or set it in Project Settings > Script Properties.`);
-    }
-    return v;
-  }
-  function setProp(key, value) {
-    PropertiesService.getScriptProperties().setProperty(key, value);
-  }
-  function deleteProp(key) {
-    PropertiesService.getScriptProperties().deleteProperty(key);
-  }
-  function projectScope() {
-    return resolveProjectScope(
-      getSyncScope2(),
-      getProp(PROP_KEYS.wizProjectIdV2)
-    );
-  }
-  function domainTagKey() {
-    return resolveDomainTagKey(getProp(PROP_KEYS.wizDomainTagKey));
-  }
-  function resolveWizAuthMode(token, clientId, clientSecret) {
-    if (token && token.trim()) return "token";
-    if (clientId && clientSecret) return "oauth";
-    return null;
-  }
-  function hasWizCredentials() {
-    return Boolean(getProp(PROP_KEYS.wizApiUrl)) && resolveWizAuthMode(
-      getProp(PROP_KEYS.wizApiToken),
-      getProp(PROP_KEYS.wizClientId),
-      getProp(PROP_KEYS.wizClientSecret)
-    ) !== null;
-  }
-
-  // src/server/access.ts
-  var PRODUCT = "Wiz SIDEKICK AI";
-  var DENIAL_MESSAGE = {
-    anonymous: "This app can't identify your Google account. It only recognizes accounts signed in to the same Google Workspace domain as the app.",
-    "not-listed": "Your account isn't on this app's access list."
-  };
-  function parseAllowlist(raw) {
-    if (!raw) return [];
-    const seen = {};
-    const out = [];
-    for (const part of raw.split(/[,;\s]+/)) {
-      const email = part.trim().toLowerCase();
-      if (!email || seen[email]) continue;
-      seen[email] = true;
-      out.push(email);
-    }
-    return out;
-  }
-  function decide(active, owner, raw, adminsRaw) {
-    const email = (active || "").trim();
-    const key = email.toLowerCase();
-    if (!key) return { allowed: false, email: "", reason: "anonymous" };
-    const ownerKey = (owner || "").trim().toLowerCase();
-    if (ownerKey && ownerKey === key) return { allowed: true, email, reason: "owner" };
-    if (parseAllowlist(adminsRaw != null ? adminsRaw : null).indexOf(key) >= 0) {
-      return { allowed: true, email, reason: "admin" };
-    }
-    return parseAllowlist(raw).indexOf(key) >= 0 ? { allowed: true, email, reason: "listed" } : { allowed: false, email, reason: "not-listed" };
-  }
-  var memo;
-  function check() {
-    if (memo === void 0) {
-      memo = decide(
-        Session.getActiveUser().getEmail(),
-        Session.getEffectiveUser().getEmail(),
-        getProp(PROP_KEYS.allowedUsers),
-        getProp(PROP_KEYS.allowedAdmins)
-      );
-    }
-    return memo;
-  }
-  function __resetMemosForTest2() {
-    memo = void 0;
-  }
-  function logDenial(op, d) {
-    console.log(JSON.stringify({ access: "denied", op, reason: d.reason, email: d.email }));
-  }
-  function denyResult(op) {
-    const d = check();
-    if (d.allowed) return null;
-    logDenial(op, d);
-    const env = {
-      ok: false,
-      error: DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"],
-      errorKind: "forbidden"
+  function configComparator(sort, dir) {
+    const d = (dir != null ? dir : DEFAULT_CONFIG_SORT_DIR[sort]) === "asc" ? 1 : -1;
+    const tie = (a, b) => a.id.localeCompare(b.id);
+    return (a, b) => {
+      let cmp2 = 0;
+      if (sort === "severity") cmp2 = sevRank2(b.severity) - sevRank2(a.severity);
+      else if (sort === "rule") cmp2 = a.ruleShortId.localeCompare(b.ruleShortId);
+      else if (sort === "resource") cmp2 = a.resourceName.localeCompare(b.resourceName);
+      else if (sort === "status") cmp2 = a.status.localeCompare(b.status);
+      else if (sort === "firstSeen") cmp2 = a.firstSeenAt.localeCompare(b.firstSeenAt);
+      return cmp2 !== 0 ? cmp2 * d : tie(a, b);
     };
-    const who = ownerEmail().trim();
-    if (who) {
-      env.contact = who;
-      env.contactUrl = contactMailto(who);
+  }
+  function sortConfigRows(rows, sort, dir) {
+    return rows.slice().sort(configComparator(sort, dir));
+  }
+  function facetValues2(key, row) {
+    if (key === "severities") return [row.severity].filter(Boolean);
+    if (key === "statuses") return [row.status].filter(Boolean);
+    if (key === "clouds") return [row.cloud].filter(Boolean);
+    if (key === "resourceTypes") return [row.resourceType].filter(Boolean);
+    if (key === "rules") return [row.ruleShortId].filter(Boolean);
+    if (key === "projects") return row.projects;
+    if (key === "domains") return [row.domain].filter(Boolean);
+    if (key === "linkage") return [row.linked ? "linked" : "unlinked"];
+    return CONFIG_FLAGS.filter((f) => hasConfigFlag(row, f));
+  }
+  function facetSorter2(key) {
+    if (key === "severities") return (a, b) => sevRank2(a.value) - sevRank2(b.value);
+    if (key === "flags") {
+      const order = CONFIG_FLAGS;
+      return (a, b) => order.indexOf(a.value) - order.indexOf(b.value);
     }
-    return env;
-  }
-  function assertAllowed(op) {
-    const d = check();
-    if (d.allowed) return;
-    logDenial(op, d);
-    throw new Error(DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"]);
-  }
-  function contactMailto(email) {
-    return "mailto:" + email.trim() + "?subject=" + encodeURIComponent("Access to " + PRODUCT);
-  }
-  function deniedHtml(d, switchUrl, contact) {
-    const detail = d.email ? "You're signed in as <strong>" + escapeHtml(d.email) + "</strong>." : "This app can't see which Google account you're signed in as, which happens when the account isn't in the same Google Workspace domain as the app.";
-    const who = (contact || "").trim();
-    const ask = who ? 'If you think you should have access, contact <a href="' + escapeHtml(contactMailto(who)) + '">' + escapeHtml(who) + "</a>." : (
-      // No owner address resolved — never render "contact:" with nothing after it.
-      "If you think you should have access, ask whoever runs this dashboard to add you."
-    );
-    return cardPage({
-      title: PRODUCT,
-      eyebrow: PRODUCT,
-      heading: "You don't have access to this app.",
-      paragraphs: [detail, ask],
-      actions: switchUrl ? secondaryAction(switchUrl, "Switch Google account") : ""
-    });
-  }
-  function deniedPage() {
-    const d = check();
-    if (d.allowed) return null;
-    logDenial("doGet", d);
-    return HtmlService.createHtmlOutput(deniedHtml(d, accountChooserUrl(), ownerEmail())).setTitle(PRODUCT).addMetaTag("viewport", "width=device-width, initial-scale=1");
-  }
-  function serviceUrl() {
-    try {
-      return ScriptApp.getService().getUrl() || null;
-    } catch (_e) {
-      return null;
+    if (key === "linkage") {
+      const order = LINKAGE_VALUES;
+      return (a, b) => order.indexOf(a.value) - order.indexOf(b.value);
     }
+    return (a, b) => a.value.localeCompare(b.value);
   }
-  function accountChooserUrl() {
-    const url = serviceUrl();
-    return url ? "https://accounts.google.com/AccountChooser?continue=" + encodeURIComponent(url) : null;
-  }
-  function ownerEmail() {
-    return Session.getEffectiveUser().getEmail() || "";
-  }
-  function isOwner() {
-    return check().reason === "owner";
-  }
-  function canEditUsers() {
-    const r = check().reason;
-    return r === "owner" || r === "admin";
-  }
-  function canEditAdmins() {
-    return isOwner();
-  }
-  function currentUsers() {
-    return parseAllowlist(getProp(PROP_KEYS.allowedUsers));
-  }
-  function currentAdmins() {
-    return parseAllowlist(getProp(PROP_KEYS.allowedAdmins));
-  }
-  function ownerDomain() {
-    const at = ownerEmail().lastIndexOf("@");
-    return at >= 0 ? ownerEmail().slice(at + 1).toLowerCase() : "";
-  }
-
-  // src/server/welcome.ts
-  var welcome_exports = {};
-  __export(welcome_exports, {
-    ENTER_PARAM: () => ENTER_PARAM,
-    ENTRY_TTL_SEC: () => ENTRY_TTL_SEC,
-    gate: () => gate,
-    welcomeHtml: () => welcomeHtml
-  });
-  var ENTRY_TTL_SEC = 21600;
-  var ENTER_PARAM = "enter";
-  function markerKey(email) {
-    return "entered:" + paramsHash(email.trim().toLowerCase());
-  }
-  function markEntered(email) {
-    try {
-      CacheService.getScriptCache().put(markerKey(email), "1", ENTRY_TTL_SEC);
-    } catch (e) {
-      console.warn("entry marker write failed: " + e);
+  function configFacetCounts(rows, q) {
+    var _a5;
+    const out = { matched: 0 };
+    for (const key of CONFIG_FACET_KEYS) {
+      const scope = key === "flags" ? q : { ...q, [key]: [] };
+      const counts = /* @__PURE__ */ new Map();
+      for (const row of rows) {
+        if (!matchesConfigQuery(row, scope)) continue;
+        for (const value of facetValues2(key, row)) {
+          counts.set(value, ((_a5 = counts.get(value)) != null ? _a5 : 0) + 1);
+        }
+      }
+      for (const value of q[key]) if (!counts.has(value)) counts.set(value, 0);
+      out[key] = Array.from(counts, ([value, count2]) => ({ value, count: count2 })).sort(facetSorter2(key));
     }
-  }
-  function hasEntered(email) {
-    try {
-      return CacheService.getScriptCache().get(markerKey(email)) !== null;
-    } catch (e) {
-      console.warn("entry marker read failed: " + e);
-      return true;
-    }
-  }
-  function welcomeHtml(email, continueUrl, switchUrl) {
-    return cardPage({
-      title: PRODUCT,
-      eyebrow: PRODUCT,
-      heading: "You're signed in.",
-      paragraphs: [
-        "This dashboard will open as <strong>" + escapeHtml(email) + "</strong>.",
-        "If that isn't the account you meant to use, switch before you continue \u2014 the register you see depends on which account opens it."
-      ],
-      actions: primaryAction(continueUrl, "Continue") + (switchUrl ? secondaryAction(switchUrl, "Switch Google account") : "")
-    });
-  }
-  function gate(e) {
-    const email = check().email;
-    if (!email) return null;
-    if (e && e.parameter && e.parameter[ENTER_PARAM]) {
-      markEntered(email);
-      return null;
-    }
-    if (hasEntered(email)) {
-      markEntered(email);
-      return null;
-    }
-    const url = serviceUrl();
-    if (!url) return null;
-    const continueUrl = url + (url.indexOf("?") >= 0 ? "&" : "?") + ENTER_PARAM + "=1";
-    return HtmlService.createHtmlOutput(welcomeHtml(email, continueUrl, accountChooserUrl())).setTitle(PRODUCT).addMetaTag("viewport", "width=device-width, initial-scale=1");
-  }
-
-  // src/server/archiveStore.ts
-  var SUBFOLDERS = ["syncs", "snapshots", "readmodels"];
-  var rootFolderMemo;
-  var subfolderMemo = /* @__PURE__ */ new Map();
-  var syncFolderMemo = /* @__PURE__ */ new Map();
-  function forgetFolders() {
-    rootFolderMemo = void 0;
-    subfolderMemo.clear();
-    syncFolderMemo.clear();
-  }
-  function rootFolder() {
-    if (!rootFolderMemo) {
-      rootFolderMemo = DriveApp.getFolderById(requireProp(PROP_KEYS.archiveFolderId));
-    }
-    return rootFolderMemo;
-  }
-  function childFolder(parent, name) {
-    const it = parent.getFoldersByName(name);
-    return it.hasNext() ? it.next() : parent.createFolder(name);
-  }
-  function subfolder(name) {
-    const hit = subfolderMemo.get(name);
-    if (hit) return hit;
-    const folder = childFolder(rootFolder(), name);
-    subfolderMemo.set(name, folder);
-    return folder;
-  }
-  function ensureFolders(rootId) {
-    forgetFolders();
-    const root = rootId ? DriveApp.getFolderById(rootId) : rootFolder();
-    for (const name of SUBFOLDERS) childFolder(root, name);
-    forgetFolders();
-    return root.getId();
-  }
-  function safeName(id) {
-    return id.replace(/[^0-9A-Za-z._-]/g, "") || "sync";
-  }
-  function writeGzJson(folder, name, payload) {
-    const json = JSON.stringify(payload);
-    const blob = Utilities.gzip(Utilities.newBlob(json, "application/json"), name);
-    const existing = folder.getFilesByName(name);
-    while (existing.hasNext()) existing.next().setTrashed(true);
-    return folder.createFile(blob);
-  }
-  function readGzJsonNamed(folder, name) {
-    const it = subfolder(folder).getFilesByName(name);
-    if (!it.hasNext()) return null;
-    return parseGzBlob(it.next().getBlob());
-  }
-  function listNames(folder) {
-    const out = [];
-    const it = subfolder(folder).getFiles();
-    while (it.hasNext()) out.push(it.next().getName());
+    out.matched = rows.reduce((n, row) => matchesConfigQuery(row, q) ? n + 1 : n, 0);
     return out;
   }
-  function trashNamed(folder, name) {
-    const it = subfolder(folder).getFilesByName(name);
-    while (it.hasNext()) it.next().setTrashed(true);
-  }
-  function trashReadModels() {
-    for (const name of listNames("readmodels")) trashNamed("readmodels", name);
-  }
-  function readGzJsonFile(fileId) {
-    try {
-      const file = DriveApp.getFileById(fileId);
-      return parseGzBlob(file.getBlob());
-    } catch (e) {
-      console.warn(`Unreadable Drive file ${fileId}: ${e}`);
-      return null;
+  function rollupByControl(rows) {
+    var _a5;
+    const byRule = /* @__PURE__ */ new Map();
+    for (const row of rows) {
+      const key = row.ruleShortId || row.ruleName || "\u2014";
+      const bucket = byRule.get(key);
+      if (bucket) bucket.push(row);
+      else byRule.set(key, [row]);
     }
-  }
-  function parseGzBlob(blob) {
-    try {
-      const bytes = blob.getBytes();
-      const isGzip = bytes.length > 2 && (bytes[0] & 255) === 31 && (bytes[1] & 255) === 139;
-      const text = isGzip ? Utilities.ungzip(blob).getDataAsString("UTF-8") : blob.getDataAsString("UTF-8");
-      return JSON.parse(text);
-    } catch (e) {
-      console.warn(`Failed to parse archive blob: ${e}`);
-      return null;
+    const out = [];
+    for (const [ruleShortId, group] of byRule) {
+      const resources = /* @__PURE__ */ new Set();
+      const gapResources = /* @__PURE__ */ new Set();
+      const unlinkedGapResources = /* @__PURE__ */ new Set();
+      const clouds = /* @__PURE__ */ new Set();
+      const projects = /* @__PURE__ */ new Set();
+      const domains = /* @__PURE__ */ new Set();
+      const risks = /* @__PURE__ */ new Set();
+      const severityMix = {};
+      let worst = "UNKNOWN";
+      let firstSeenAt = "";
+      let gaps = 0;
+      let linked = 0;
+      let unlinked = 0;
+      let ignored = 0;
+      let iac = 0;
+      for (const row of group) {
+        resources.add(row.resourceId);
+        if (row.cloud) clouds.add(row.cloud);
+        for (const p of row.projects) projects.add(p);
+        if (row.domain) domains.add(row.domain);
+        for (const r of row.risks) risks.add(r);
+        severityMix[row.severity] = ((_a5 = severityMix[row.severity]) != null ? _a5 : 0) + 1;
+        if (sevRank2(row.severity) < sevRank2(worst)) worst = row.severity;
+        if (row.firstSeenAt && (!firstSeenAt || row.firstSeenAt < firstSeenAt)) {
+          firstSeenAt = row.firstSeenAt;
+        }
+        if (row.gap) {
+          gaps += 1;
+          gapResources.add(row.resourceId);
+          if (!row.linked) unlinkedGapResources.add(row.resourceId);
+        }
+        if (row.linked) linked += 1;
+        else unlinked += 1;
+        if (row.ignored) ignored += 1;
+        if (row.iac) iac += 1;
+      }
+      out.push({
+        ruleShortId,
+        ruleName: group[0].ruleName || group[0].name || "",
+        severity: worst,
+        risks: [...risks].sort(),
+        findings: group.length,
+        gaps,
+        resources: resources.size,
+        gapResources: gapResources.size,
+        unlinkedGapResources: unlinkedGapResources.size,
+        linked,
+        unlinked,
+        ignored,
+        iac,
+        clouds: [...clouds].sort(),
+        projects: [...projects].sort(),
+        domains: [...domains].sort(),
+        severityMix,
+        firstSeenAt
+      });
     }
+    return out.sort((a, b) => sevRank2(a.severity) - sevRank2(b.severity) || b.gaps - a.gaps || b.resources - a.resources || a.ruleShortId.localeCompare(b.ruleShortId));
   }
-  function syncFolder(syncId) {
-    const key = safeName(syncId);
-    const hit = syncFolderMemo.get(key);
-    if (hit) return hit;
-    const folder = childFolder(subfolder("syncs"), key);
-    syncFolderMemo.set(key, folder);
-    return folder;
-  }
-  function writeSyncPage(syncId, stepIndex, pageNumber, payload) {
-    const name = `step-${stepIndex}-page-${String(pageNumber).padStart(4, "0")}.json.gz`;
-    return writeGzJson(syncFolder(syncId), name, payload).getId();
-  }
-  var SNAPSHOT_NAME = "graph-snapshot.json.gz";
-  function writeGraphSnapshot(doc) {
-    return writeGzJson(subfolder("snapshots"), SNAPSHOT_NAME, doc).getId();
-  }
-  function readGraphSnapshot() {
-    const files = subfolder("snapshots").getFilesByName(SNAPSHOT_NAME);
-    if (!files.hasNext()) return null;
-    const parsed = parseGzBlob(files.next().getBlob());
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    const doc = parsed;
-    return Array.isArray(doc.nodes) && Array.isArray(doc.edges) ? doc : null;
-  }
-  function trashGraphSnapshot() {
-    const files = subfolder("snapshots").getFilesByName(SNAPSHOT_NAME);
-    while (files.hasNext()) files.next().setTrashed(true);
-  }
-  function archiveBytes() {
-    let total2 = 0;
-    for (const name of SUBFOLDERS) {
-      const walk = (folder) => {
-        const files = folder.getFiles();
-        while (files.hasNext()) total2 += files.next().getSize();
-        const folders = folder.getFolders();
-        while (folders.hasNext()) walk(folders.next());
-      };
-      walk(subfolder(name));
+  function configTotals(rows) {
+    var _a5;
+    const controls = /* @__PURE__ */ new Set();
+    const resources = /* @__PURE__ */ new Set();
+    const severityMix = {};
+    let gaps = 0;
+    let unlinkedGaps = 0;
+    let ignored = 0;
+    let iac = 0;
+    for (const row of rows) {
+      if (row.ruleShortId) controls.add(row.ruleShortId);
+      resources.add(row.resourceId);
+      if (row.gap) {
+        gaps += 1;
+        severityMix[row.severity] = ((_a5 = severityMix[row.severity]) != null ? _a5 : 0) + 1;
+        if (!row.linked) unlinkedGaps += 1;
+      }
+      if (row.ignored) ignored += 1;
+      if (row.iac) iac += 1;
     }
-    return total2;
+    return {
+      findings: rows.length,
+      gaps,
+      controls: controls.size,
+      resources: resources.size,
+      unlinkedGaps,
+      ignored,
+      iac,
+      severityMix
+    };
   }
 
-  // src/server/setup.ts
-  var SPREADSHEET_NAME = "Wiz SIDEKICK AI Ledger";
-  var FOLDER_NAME = "wiz-sidekick-ai";
-  var DAILY_TRIGGER_HANDLER = "trigger_dailySync";
-  var DAILY_TRIGGER_HOUR = 5;
-  var WARM_TRIGGER_HANDLER = "trigger_warmReadModels";
-  var WARM_READY_BY_HOURS = [9, 13, 17];
-  var WARM_TRIGGER_NEAR_MINUTE = 30;
-  var WARM_TRIGGER_HOURS = WARM_READY_BY_HOURS.map((h) => (h + 23) % 24);
-  var WARM_TRIGGER_TZ = "Europe/Paris";
-  function warmScheduleSignature() {
-    return `${WARM_TRIGGER_TZ}|${WARM_TRIGGER_HOURS.join(",")}@${WARM_TRIGGER_NEAR_MINUTE}`;
+  // src/domain/complianceOverview.ts
+  function severityRank4(s) {
+    const i = SEVERITY_ORDER.indexOf(s);
+    return i === -1 ? SEVERITY_ORDER.length : i;
   }
-  function setup() {
-    const notes = [];
-    let ssId = getProp(PROP_KEYS.ledgerSpreadsheetId);
-    let ss;
-    if (ssId) {
-      ss = SpreadsheetApp.openById(ssId);
-      notes.push(`spreadsheet: existing ${ssId}`);
-    } else {
-      ss = SpreadsheetApp.create(SPREADSHEET_NAME);
-      ssId = ss.getId();
-      setProp(PROP_KEYS.ledgerSpreadsheetId, ssId);
-      notes.push(`spreadsheet: created ${ssId}`);
-    }
-    ensureTabs(ss);
-    let folderId = getProp(PROP_KEYS.archiveFolderId);
-    if (!folderId) {
-      folderId = DriveApp.createFolder(FOLDER_NAME).getId();
-      setProp(PROP_KEYS.archiveFolderId, folderId);
-      notes.push(`archive folder: created ${folderId}`);
-    } else {
-      notes.push(`archive folder: existing ${folderId}`);
-    }
-    ensureFolders(folderId);
-    if (!getProp(PROP_KEYS.wizAuthUrl)) setProp(PROP_KEYS.wizAuthUrl, DEFAULT_WIZ_AUTH_URL);
-    if (!getProp(PROP_KEYS.allowedUsers)) {
-      const owner = ownerEmail();
-      if (owner) {
-        setProp(PROP_KEYS.allowedUsers, owner);
-        notes.push(`allowlist: seeded with owner ${owner}`);
-      } else {
-        notes.push("allowlist: not seeded (owner email unavailable)");
+  var STATE_KEYS = ["scored", "noResources", "noPolicies", "unknown"];
+  function frameworkRail(trees) {
+    return trees.map((tree) => ({
+      frameworkId: tree.frameworkId,
+      name: tree.name,
+      posturePct: tree.posturePct,
+      state: tree.state,
+      postureBand: tree.postureBand,
+      emptyPostureReason: tree.emptyPostureReason,
+      categoryCount: tree.categories.length,
+      // From stateCounts, not from the listed nodes: the tree lists only scored
+      // subcategories (compliancePosture.ts), and a rail that counted those would report a
+      // framework's size as the part of it that happened to score.
+      subcategoryCount: STATE_KEYS.reduce((sum, k) => sum + (tree.stateCounts[k] || 0), 0),
+      policyCount: tree.policyCount,
+      failingPolicyCount: tree.failingPolicyCount,
+      worstFailingSeverity: tree.worstFailingSeverity,
+      // Copied rather than aliased: a caller holding this row must not be able to mutate
+      // the FrameworkTree it was built from by mutating what looks like its own object.
+      stateCounts: { ...tree.stateCounts }
+    }));
+  }
+  function isScoredRow(row) {
+    return row.state === "scored";
+  }
+  function weakestAreas(trees, limit) {
+    const rows = [];
+    for (const tree of trees) {
+      for (const category of tree.categories) {
+        for (const sub of category.subcategories) {
+          if (sub.state === "scored" && !sub.policies.length) continue;
+          rows.push({
+            frameworkId: tree.frameworkId,
+            frameworkName: tree.name,
+            categoryExternalId: category.externalId,
+            categoryTitle: category.title,
+            externalId: sub.externalId,
+            showExternalId: sub.showExternalId,
+            title: sub.title,
+            posturePct: sub.posturePct,
+            state: sub.state,
+            emptyPostureReason: sub.emptyPostureReason,
+            passCount: sub.passCount,
+            failCount: sub.failCount,
+            // Distinct policies THIS subcategory carries. buildFrameworkTree already
+            // deduped `policies` to that scope (compliancePosture.ts:190), so re-deduping
+            // here would be the wrong scope all over again — count the list as given.
+            policyCount: sub.policies.length,
+            failingPolicyCount: sub.failingPolicyCount,
+            postureBand: sub.postureBand
+          });
+        }
       }
-    } else {
-      notes.push("allowlist: existing (left alone)");
     }
-    const existing = ScriptApp.getProjectTriggers().filter(
-      (t) => t.getHandlerFunction() === DAILY_TRIGGER_HANDLER
-    );
-    if (!existing.length) {
-      ScriptApp.newTrigger(DAILY_TRIGGER_HANDLER).timeBased().everyDays(1).atHour(DAILY_TRIGGER_HOUR).create();
-      notes.push(`daily trigger: installed (hour ${DAILY_TRIGGER_HOUR} Europe/Paris)`);
-    } else {
-      notes.push("daily trigger: already installed");
-    }
-    const warmExisting = ScriptApp.getProjectTriggers().filter(
-      (t) => t.getHandlerFunction() === WARM_TRIGGER_HANDLER
-    );
-    const wantSchedule = warmScheduleSignature();
-    if (warmExisting.length === WARM_TRIGGER_HOURS.length && getProp(PROP_KEYS.warmTriggerSchedule) === wantSchedule) {
-      notes.push(`warm triggers: already installed (${wantSchedule})`);
-    } else {
-      for (const t of warmExisting) ScriptApp.deleteTrigger(t);
-      for (const hour of WARM_TRIGGER_HOURS) {
-        ScriptApp.newTrigger(WARM_TRIGGER_HANDLER).timeBased().everyDays(1).atHour(hour).nearMinute(WARM_TRIGGER_NEAR_MINUTE).inTimezone(WARM_TRIGGER_TZ).create();
+    const scored = rows.filter(isScoredRow);
+    scored.sort((a, b) => a.posturePct - b.posturePct || b.failingPolicyCount - a.failingPolicyCount || (a.frameworkName < b.frameworkName ? -1 : a.frameworkName > b.frameworkName ? 1 : 0) || (a.title < b.title ? -1 : a.title > b.title ? 1 : 0));
+    return typeof limit === "number" ? scored.slice(0, limit) : scored;
+  }
+  function sharedControls(trees) {
+    const byPolicy = /* @__PURE__ */ new Map();
+    for (const tree of trees) {
+      for (const category of tree.categories) {
+        for (const sub of category.subcategories) {
+          for (const p of sub.policies) {
+            let acc = byPolicy.get(p.policyId);
+            if (!acc) {
+              acc = {
+                policyId: p.policyId,
+                shortId: p.shortId,
+                name: p.name,
+                policyKind: p.policyKind,
+                severity: p.severity,
+                severityRank: severityRank4(p.severity),
+                hasAutoRemediation: p.hasAutoRemediation === true,
+                frameworkIds: [],
+                frameworkNames: [],
+                subcategoryKeys: /* @__PURE__ */ new Set(),
+                failCount: 0
+              };
+              byPolicy.set(p.policyId, acc);
+            }
+            const rank = severityRank4(p.severity);
+            if (rank < acc.severityRank) {
+              acc.severityRank = rank;
+              acc.severity = p.severity;
+              acc.shortId = p.shortId;
+              acc.name = p.name;
+              acc.policyKind = p.policyKind;
+              acc.hasAutoRemediation = p.hasAutoRemediation === true;
+            }
+            if (acc.frameworkIds.indexOf(tree.frameworkId) === -1) {
+              acc.frameworkIds.push(tree.frameworkId);
+              acc.frameworkNames.push(tree.name);
+            }
+            acc.subcategoryKeys.add(`${tree.frameworkId}|${sub.externalId}`);
+            if (p.failCount > acc.failCount) acc.failCount = p.failCount;
+          }
+        }
       }
-      setProp(PROP_KEYS.warmTriggerSchedule, wantSchedule);
-      notes.push(
-        `warm triggers: installed ${WARM_TRIGGER_HOURS.length} (${wantSchedule}), ready by ${WARM_READY_BY_HOURS.join(", ")} ${WARM_TRIGGER_TZ}` + (warmExisting.length ? ` (replaced ${warmExisting.length})` : "")
-      );
     }
-    const missing = [
-      PROP_KEYS.wizClientId,
-      PROP_KEYS.wizClientSecret,
-      PROP_KEYS.wizApiUrl
-    ].filter((k) => !getProp(k));
-    if (missing.length) {
-      notes.push(`NOTE: set Script Properties for live syncs: ${missing.join(", ")} (without them the app runs dry-run only)`);
+    const rows = [];
+    for (const acc of byPolicy.values()) {
+      if (acc.failCount <= 0) continue;
+      rows.push({
+        policyId: acc.policyId,
+        shortId: acc.shortId,
+        name: acc.name,
+        policyKind: acc.policyKind,
+        severity: acc.severity,
+        hasAutoRemediation: acc.hasAutoRemediation,
+        frameworkIds: acc.frameworkIds,
+        frameworkNames: acc.frameworkNames,
+        frameworkCount: acc.frameworkIds.length,
+        subcategoryCount: acc.subcategoryKeys.size,
+        failCount: acc.failCount
+      });
     }
-    return notes.join("\n");
+    rows.sort((a, b) => b.frameworkCount - a.frameworkCount || severityRank4(a.severity) - severityRank4(b.severity) || b.failCount - a.failCount || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    return rows;
+  }
+  function coverageSummary(trees, catalogue) {
+    const stateCounts = {
+      scored: 0,
+      noResources: 0,
+      noPolicies: 0,
+      unknown: 0
+    };
+    let subcategoryCount2 = 0;
+    for (const tree of trees) {
+      stateCounts.scored += tree.stateCounts.scored;
+      stateCounts.noResources += tree.stateCounts.noResources;
+      stateCounts.noPolicies += tree.stateCounts.noPolicies;
+      stateCounts.unknown += tree.stateCounts.unknown;
+      subcategoryCount2 += STATE_KEYS.reduce((sum, k) => sum + (tree.stateCounts[k] || 0), 0);
+    }
+    return {
+      collected: trees.length,
+      catalogued: catalogue.length,
+      scoredFrameworks: trees.filter((t) => t.state === "scored").length,
+      stateCounts,
+      subcategoryCount: subcategoryCount2
+    };
   }
 
   // src/domain/effectiveAccess.ts
@@ -5760,590 +5089,6 @@ var Server = (() => {
       ]
     };
   }
-
-  // src/server/wizQueriesAi.ts
-  var PAGE_SIZE = 100;
-  var PAGE_SIZE_FALLBACK = 50;
-  var PAGE_SIZE_WIDE = 500;
-  var PAGE_SIZE_TRAVERSAL = 250;
-  var MAX_PAGES = 1e3;
-  var IDENTITY_FIELDS = [
-    "id",
-    "name",
-    "type"
-  ];
-  var CLOUD_RESOURCE_FIELDS = [
-    "nativeType",
-    "cloudPlatform",
-    "region",
-    "status",
-    "firstSeen",
-    "lastSeen",
-    "externalId",
-    "isAccessibleFromInternet",
-    "isOpenToAllInternet",
-    "hasSensitiveData",
-    "hasAccessToSensitiveData",
-    "hasAdminPrivileges",
-    "hasHighPrivileges",
-    "technology { id name categories { id name } }",
-    "cloudAccount { id name externalId cloudProvider }",
-    // `isFolder` rides along for the project switcher. A Wiz project is either a folder or a
-    // leaf, and an asset carries its WHOLE ancestor chain — the captured inventory shows one
-    // agent listing CE-DPCP-PORTAL (folder) -> VALUE-CHAIN (folder) -> provisioning-CE-DPCP-PORTAL
-    // (leaf). That is what lets a switcher offer a business unit and have it mean the subtree,
-    // and what lets the picker draw the two apart the way the Wiz console does.
-    "projects { id name isFolder riskProfile { businessImpact } }",
-    "tags { key value }"
-  ];
-  function indented(fields, spaces) {
-    const pad = new Array(spaces + 1).join(" ");
-    return fields.map((f) => pad + f + "\n").join("");
-  }
-  var RESOURCE_FIELDS = indented(IDENTITY_FIELDS, 6) + indented(CLOUD_RESOURCE_FIELDS, 6);
-  var ENTITY_FIELDS = indented(IDENTITY_FIELDS, 8) + "        properties\n";
-  var AI_RESOURCE_TYPE_CANDIDATES = [
-    "AI_AGENT",
-    "AI_AGENT_REGISTRY",
-    "AI_DATASET",
-    "AI_DEPLOYMENT",
-    "AI_EXTENSION",
-    "AI_GATEWAY",
-    "AI_GUARDRAIL",
-    "AI_MODEL",
-    "AI_PIPELINE",
-    "AI_SERVICE",
-    "AI_SKILL",
-    "AI_SKILL_TEMPLATE",
-    "AI_TOOL",
-    "MCP_SERVER"
-  ];
-  function aiFlavored(values) {
-    return values.filter((v) => {
-      const tokens = v.toUpperCase().split(/[\s_]+/);
-      return tokens.includes("AI") || tokens.includes("MCP") || tokens.includes("GENAI") || tokens.includes("LLM");
-    });
-  }
-  function chooseAiResourceTypes(enumValues, override) {
-    if (override && override.length) return { types: override, source: "override", aiLooking: [] };
-    if (!enumValues) {
-      return { types: [...AI_RESOURCE_TYPE_CANDIDATES], source: "candidates", aiLooking: [] };
-    }
-    const present2 = new Set(enumValues);
-    const aiLooking = aiFlavored(enumValues);
-    const intersection = AI_RESOURCE_TYPE_CANDIDATES.filter((t) => present2.has(t));
-    if (intersection.length) return { types: intersection, source: "intersection", aiLooking };
-    if (aiLooking.length) return { types: aiLooking, source: "ai-tokens", aiLooking };
-    return { types: [], source: "none", aiLooking };
-  }
-  function isInvalidEnumValueError(message) {
-    if (/failed to parse object type/i.test(message)) return true;
-    return /HTTP 400/.test(message) && /cannot represent value/i.test(message);
-  }
-  var Q_AI_INVENTORY = "query SidekickAiInventory($first: Int, $after: String, $filterBy: CloudResourceV2Filters) {\n  cloudResourcesV2(first: $first, after: $after, filterBy: $filterBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n" + RESOURCE_FIELDS + "    }\n  }\n}\n";
-  function cloudResourceProjectFilter(scope) {
-    return scope && scope.length ? { idV2: { equals: [...scope] } } : null;
-  }
-  function aiInventoryVariables(types, scope = null) {
-    const filterBy = { type: { equals: [...types] } };
-    const project = cloudResourceProjectFilter(scope);
-    if (project) filterBy["project"] = project;
-    return { filterBy };
-  }
-  var Q_AGENTS_NO_GUARDRAIL = graphSearchVarQuery("SidekickAiAgentsWithoutGuardrail");
-  var Q_AGENT_RUNS_AS = graphSearchVarQuery("SidekickAiAgentRunsAs");
-  var Q_SA_EXCESSIVE_ACCESS = graphSearchVarQuery("SidekickAiAgentSaExcessiveAccess");
-  var Q_AGENT_SENSITIVE_DATA_ACCESS = graphSearchVarQuery("SidekickAiAgentSensitiveDataAccess");
-  function agentPathVariables(spec, scope) {
-    return {
-      query: toGraphEntityQuery(spec),
-      projectId: scope && scope.length ? scope[0] : null
-    };
-  }
-  var noGuardrailVariables = (types, scope) => agentPathVariables(noGuardrailSpec(guardrailRoots(types)), scope);
-  var agentRunsAsVariables = (types, scope) => agentPathVariables(agentRunsAsSpec(types), scope);
-  var saExcessiveAccessVariables = (types, scope) => agentPathVariables(saExcessiveAccessSpec(types), scope);
-  var sensitiveDataAccessVariables = (types, scope) => agentPathVariables(sensitiveDataAccessSpec(types), scope);
-  function graphSearchVarQuery(name) {
-    return "query " + name + "($quick: Boolean, $first: Int, $after: String, $query: GraphEntityQueryInput, $projectId: String) {\n  graphSearch(\n    quick: $quick\n    first: $first\n    after: $after\n    query: $query\n    projectId: $projectId\n  ) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      entities {\n" + ENTITY_FIELDS + "      }\n    }\n  }\n}\n";
-  }
-  var Q_IDENTITY_ACCESS = graphSearchVarQuery("SidekickAiIdentitiesWithAssetAccess");
-  function identityAccessVariables(types, scope) {
-    return {
-      query: toGraphEntityQuery(identityAccessSpec(types)),
-      projectId: scope && scope.length ? scope[0] : null
-    };
-  }
-  var Q_LINEAGE = graphSearchVarQuery("SidekickAiLineage");
-  function lineageVariables(types, scope) {
-    return {
-      query: toGraphEntityQuery(lineageSpec(lineageRoots(types))),
-      projectId: scope && scope.length ? scope[0] : null
-    };
-  }
-  var Q_AGENT_EXPANSION = "query SidekickAiAgentExpansion($quick: Boolean, $first: Int, $after: String, $query: GraphEntityQueryInput, $projectId: String) {\n  graphSearch(\n    quick: $quick\n    first: $first\n    after: $after\n    query: $query\n    projectId: $projectId\n  ) {\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      entities {\n" + ENTITY_FIELDS + "      }\n    }\n  }\n}\n";
-  var Q_AI_EXPOSURE = "query SidekickAiExposure($query: GraphEntityQueryInput, $controlId: ID, $projectId: String, $first: Int, $after: String, $fetchTotalCount: Boolean = false, $quick: Boolean = true, $fetchPublicExposurePaths: Boolean = false, $fetchInternalExposurePaths: Boolean = false, $fetchIssueAnalytics: Boolean = false, $fetchThreatAnalytics: Boolean = false, $fetchLateralMovement: Boolean = false, $fetchCodeSource: Boolean = false, $fetchKubernetes: Boolean = false, $fetchCost: Boolean = false, $issueId: ID) {\n  graphSearch(\n    query: $query\n    controlId: $controlId\n    projectId: $projectId\n    first: $first\n    after: $after\n    quick: $quick\n    issueId: $issueId\n  ) {\n    totalCount @include(if: $fetchTotalCount)\n    maxCountReached @include(if: $fetchTotalCount)\n    pageInfo { endCursor hasNextPage }\n    nodes {\n      entities {\n        providerUniqueId\n        deletedAt\n        isRestricted\n        ...PathGraphEntityFragment\n        userMetadata { isInWatchlist isIgnored note }\n        technologies { id icon }\n        cost(\n          filterBy: {timestamp: {inLast: {amount: 30, unit: DurationFilterValueUnitDays}}}\n        ) @include(if: $fetchCost) {\n          amortized\n          blended\n          unblended\n          netAmortized\n          netUnblended\n          currencyCode\n        }\n        costImpact @include(if: $fetchCost) { monthly }\n        publicExposures(first: 10) @include(if: $fetchPublicExposurePaths) {\n          nodes { ...NetworkExposureFragment }\n        }\n        otherSubscriptionExposures(first: 10) @include(if: $fetchInternalExposurePaths) {\n          nodes { ...NetworkExposureFragment }\n        }\n        otherVnetExposures(first: 10) @include(if: $fetchInternalExposurePaths) {\n          nodes { ...NetworkExposureFragment }\n        }\n        lateralMovementPaths(first: 10) @include(if: $fetchLateralMovement) {\n          nodes {\n            id\n            pathEntities { entity { providerUniqueId ...PathGraphEntityFragment } }\n          }\n        }\n        codeSourcePath(first: 10) @include(if: $fetchCodeSource) {\n          totalCount\n          nodes {\n            id\n            pathEntities { providerUniqueId ...PathGraphEntityFragment }\n          }\n        }\n        kubernetesPaths(first: 10) @include(if: $fetchKubernetes) {\n          nodes { id path { providerUniqueId ...PathGraphEntityFragment } }\n        }\n      }\n      aggregateCount\n    }\n  }\n}\n\nfragment PathGraphEntityFragment on GraphEntity {\n  providerUniqueId\n  id\n  name\n  type\n  properties\n  typedProperties { ... on GEAiAgent { description } }\n  issueAnalytics: issues(\n    filterBy: {status: [IN_PROGRESS, OPEN], type: [TOXIC_COMBINATION, CLOUD_CONFIGURATION]}\n  ) @include(if: $fetchIssueAnalytics) {\n    highSeverityCount\n    criticalSeverityCount\n  }\n  threatAnalytics: issues(\n    filterBy: {status: [IN_PROGRESS, OPEN], type: [THREAT_DETECTION], createdAt: {inLast: {amount: 7, unit: DurationFilterValueUnitDays}}}\n  ) @include(if: $fetchThreatAnalytics) {\n    highSeverityCount\n    criticalSeverityCount\n  }\n}\n\nfragment NetworkExposureFragment on NetworkExposure {\n  id\n  portRange\n  sourceIpRange\n  destinationIpRange\n  path { providerUniqueId ...PathGraphEntityFragment }\n  applicationEndpoints { providerUniqueId ...PathGraphEntityFragment }\n}\n";
-  var EXPOSURE_FETCH_FLAGS = {
-    fetchTotalCount: false,
-    fetchPublicExposurePaths: true,
-    fetchInternalExposurePaths: false,
-    fetchIssueAnalytics: false,
-    fetchThreatAnalytics: false,
-    fetchLateralMovement: true,
-    fetchCodeSource: true,
-    fetchKubernetes: false,
-    fetchCost: false
-  };
-  function hostExposureVariables(types, scope) {
-    return {
-      ...EXPOSURE_FETCH_FLAGS,
-      query: toGraphEntityQuery(hostExposureSpec(types)),
-      projectId: scope && scope.length ? scope[0] : null
-    };
-  }
-  function endpointExposureVariables(types, scope) {
-    return {
-      ...EXPOSURE_FETCH_FLAGS,
-      query: toGraphEntityQuery(endpointExposureSpec(types)),
-      projectId: scope && scope.length ? scope[0] : null
-    };
-  }
-  var Q_ISSUES = "query SidekickAiIssues($first: Int, $after: String, $filterBy: IssueFilters, $orderBy: IssueOrder) {\n  issuesV2(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      type\n      severity\n      status\n      createdAt\n      updatedAt\n      dueAt\n      resolvedAt\n      resolutionReason\n      resolutionNote\n      rejectionExpiredAt\n      validatedAsExploitable\n      environments\n      assignee { id name primaryEmail }\n      resolvedBy { user { id name email } serviceAccount { id name type } }\n      notes { id text }\n      serviceTickets { id externalId name url }\n      applicationServices { id displayName }\n      aiRemediationAnalysis { verdict recommendedSeverity }\n      projects { id name slug riskProfile { businessImpact } }\n      entitySnapshot {\n        id\n        type\n        status\n        name\n        cloudPlatform\n        region\n        subscriptionName\n        subscriptionId\n        subscriptionExternalId\n        nativeType\n        externalId\n        tags\n        kubernetesClusterName\n        kubernetesNamespaceName\n        resourceGroupId\n      }\n      sourceRules {\n        ... on Control {\n          id\n          name\n          description\n          severity\n          risks\n          threats\n          resolutionRecommendation\n        }\n        ... on CloudConfigurationRule {\n          id\n          name\n          description\n          risks\n          threats\n          control { resolutionRecommendation severity }\n        }\n        ... on CloudEventRule {\n          id\n          name\n          description\n          risks\n          threats\n        }\n      }\n    }\n  }\n}\n";
-  function aiIssuesVariables(scope, categoryIds) {
-    const filterBy = {
-      status: ["OPEN", "IN_PROGRESS"],
-      // ONE STEP PER CATEGORY, so this is a one-element list on every step the battery runs —
-      // never the whole selection at once. The response says nothing about which category a
-      // row matched (Issue has no category field), so a filter naming six of them returns rows
-      // that cannot be stamped, and an unstamped row is what turns "AI issues" into "issues"
-      // with nothing on the page to catch it. Absent means the default, which is what this
-      // register collected before the list was a setting.
-      frameworkCategory: categoryIds && categoryIds.length ? [...categoryIds] : [RISK_CATEGORY_ID]
-    };
-    if (scope && scope.length) filterBy["project"] = scope;
-    return { filterBy, orderBy: { field: "SEVERITY_EXPLOITABLE", direction: "DESC" } };
-  }
-  var Q_CONFIG_FINDINGS = "query SidekickAiConfigFindings($first: Int, $after: String, $filterBy: ConfigurationFindingFilters, $orderBy: ConfigurationFindingOrder) {\n  configurationFindings(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      name\n      deleted\n      analyzedAt\n      firstSeenAt\n      severity\n      result\n      status\n      remediation\n      source\n      targetExternalId\n      ignoreRules { id tags { key value } }\n      subscription {\n        id\n        name\n        externalId\n        cloudProvider\n        sourceDeployments { id name status }\n      }\n      resource {\n        id\n        name\n        type\n        status\n        projects { id name riskProfile { businessImpact } }\n      }\n      sourceMappedIacFindings { id name }\n      rule {\n        id\n        shortId\n        graphId\n        name\n        description\n        remediationInstructions\n        risks\n        threats\n        tags { key value }\n        opaPolicy\n      }\n    }\n  }\n}\n";
-  function aiConfigFindingsVariables(scope) {
-    const filterBy = {
-      status: ["OPEN", "RESOLVED"],
-      frameworkCategory: [RISK_CATEGORY_ID]
-    };
-    if (scope && scope.length) filterBy["resource"] = { projectId: scope };
-    return { filterBy, orderBy: { field: "SEVERITY", direction: "DESC" } };
-  }
-  var VULNERABLE_ASSET_MEMBERS = [
-    "VulnerableAssetBase",
-    "VulnerableAssetVirtualMachine",
-    "VulnerableAssetServerless",
-    "VulnerableAssetContainerImage",
-    "VulnerableAssetContainer",
-    "VulnerableAssetRepositoryBranch",
-    "VulnerableAssetIde",
-    "VulnerableAssetEndpoint",
-    "VulnerableAssetPaaSResource",
-    "VulnerableAssetVirtualMachineImage",
-    "VulnerableAssetCommon",
-    "VulnerableAssetDevice"
-  ];
-  var VULNERABLE_ASSET_SELECTION = "      vulnerableAsset {\n" + VULNERABLE_ASSET_MEMBERS.map((m) => `        ... on ${m} { id type name }
-`).join("") + "        ... on VulnerableAssetNetworkAddress { __typename }\n      }\n";
-  var RELATED_ISSUE_SELECTION = "      relatedIssues { id }\n";
-  var Q_VULN_FINDINGS = "query SidekickAiVulnFindings($first: Int, $after: String, $filterBy: VulnerabilityFindingFilters) {\n  vulnerabilityFindings(first: $first, after: $after, filterBy: $filterBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      name\n      status\n      severity\n      hasExploit\n      hasCisaKevExploit\n      epssProbability\n      epssPercentile\n      epssSeverity\n      firstDetectedAt\n      resolvedAt\n" + RELATED_ISSUE_SELECTION + VULNERABLE_ASSET_SELECTION + "    }\n  }\n}\n";
-  function aiVulnFindingsVariables(scope, categoryIds) {
-    const filterBy = {
-      // OPEN only. `IN_PROGRESS` is an ISSUE state; this root's statuses are the finding's own,
-      // and the funnel §6.4 counted was OPEN.
-      status: ["OPEN"],
-      hasRelatedIssue: true,
-      relatedIssueFrameworkCategory: {
-        equalsAny: categoryIds && categoryIds.length ? [...categoryIds] : [RISK_CATEGORY_ID]
-      }
-    };
-    if (scope && scope.length) filterBy["projectIdV2"] = { equals: [...scope] };
-    return { filterBy };
-  }
-  var Q_AI_PROPERTIES = "query SidekickAiAssetProperties($first: Int, $after: String, $filterBy: CloudResourceV2Filters) {\n  cloudResourcesV2(first: $first, after: $after, filterBy: $filterBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n" + indented(IDENTITY_FIELDS, 6) + "      graphEntity { properties }\n    }\n  }\n}\n";
-  function aiPropertiesVariables(types, scope = null) {
-    const filterBy = { type: { equals: [...types] } };
-    const project = cloudResourceProjectFilter(scope);
-    if (project) filterBy["project"] = project;
-    return { filterBy };
-  }
-  var Q_PRINCIPALS = "query SidekickAiPrincipals($first: Int, $after: String, $filterBy: CloudResourceV2Filters, $orderBy: CloudResourceOrder) {\n  cloudResourcesV2(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      name\n      type\n      nativeType\n      hasSensitiveData\n      hasAccessToSensitiveData\n      hasAdminPrivileges\n      hasHighPrivileges\n      technology { id name categories { id name } }\n      cloudAccount { id name externalId cloudProvider }\n      projects { id name riskProfile { businessImpact } }\n      graphEntity { properties }\n      issueAnalytics {\n        issueCount\n        informationalSeverityCount\n        lowSeverityCount\n        mediumSeverityCount\n        highSeverityCount\n        criticalSeverityCount\n      }\n    }\n  }\n}\n";
-  function aiPrincipalsVariables(scope) {
-    const filterBy = {
-      type: { equals: ["SERVICE_ACCOUNT", "ACCESS_KEY"] },
-      identityPurpose: { equals: ["AGENTIC"] }
-    };
-    const project = cloudResourceProjectFilter(scope);
-    if (project) filterBy["project"] = project;
-    return { filterBy, orderBy: { field: "RELATED_ISSUE_SEVERITY", direction: "DESC" } };
-  }
-  var Q_CONFIG_RULES = "query SidekickAiConfigRules($first: Int, $after: String, $filterBy: CloudConfigurationRuleFilters) {\n  cloudConfigurationRules(first: $first, after: $after, filterBy: $filterBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      name\n      shortId\n      subjectEntityType\n      externalReferences { id name }\n    }\n  }\n}\n";
-  function aiConfigRulesVariables() {
-    return { filterBy: { hasFindings: true } };
-  }
-  function aiIdentityHygieneVariables(ruleIds, scope) {
-    const filterBy = {
-      status: ["OPEN"],
-      rule: [...ruleIds]
-    };
-    if (scope && scope.length) filterBy["resource"] = { projectId: scope };
-    return { filterBy, orderBy: { field: "SEVERITY", direction: "DESC" } };
-  }
-  var Q_EFFECTIVE_ACCESS = "query SidekickAiEffectiveAccess($first: Int, $after: String, $filterBy: EntityEffectiveAccessFilters) {\n  entityEffectiveAccessEntries(first: $first, after: $after, filterBy: $filterBy) {\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      grantedEntity: grantedEntityV2 { id name type }\n      accessibleResource: accessibleResourceV2 { id name type }\n      accessTypes\n      permissions\n      paths {\n        accessTypes\n        permissions\n        principalPolicies { policy { id name type } }\n        resourcePolicies { policy { id name type } }\n      }\n    }\n  }\n}\n";
-  function effectiveAccessVariables(types, scope) {
-    return { filterBy: effectiveAccessFilter(types, scope) };
-  }
-  var Q_SECURITY_FRAMEWORKS = "query SidekickAiSecurityFrameworks($first: Int, $after: String, $filterBy: SecurityFrameworkFilters) {\n  securityFrameworks(first: $first, after: $after, filterBy: $filterBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      name\n      description\n      builtin\n      enabled\n      policyTypes\n    }\n  }\n}\n";
-  function aiSecurityFrameworksVariables() {
-    return { filterBy: { enabled: true } };
-  }
-  var Q_COMPLIANCE_POSTURE = "query SidekickAiCompliancePosture($id: ID!, $analyticsSelection: SecurityFrameworkComplianceAnalyticsSelection, $orderBy: SecurityFrameworkSelectionOrder) {\n  securityFramework(id: $id) {\n    id\n    name\n    description\n    builtin\n    enabled\n    complianceAnalytics(selection: $analyticsSelection, orderBy: $orderBy) {\n      passSubCategoryCount\n      failSubCategoryCount\n      averageCompliancePosture\n      emptyPostureReason\n      categoryAnalytics {\n        category { id name description externalId }\n        passCount\n        failCount\n        passSubCategoryCount\n        failSubCategoryCount\n        averageCompliancePosture\n        emptyPostureReason\n        subCategoryAnalytics {\n          passCount\n          failCount\n          compliancePosture\n          emptyPostureReason\n          subCategory {\n            id\n            title\n            description\n            externalId\n            assessmentScope\n            mappingRationale\n            tags { key value }\n          }\n          policyAnalytics {\n            failCount\n            passCount\n            rejectedCount\n            assessedCount\n            noResourceToAsses\n            control {\n              id\n              name\n              description\n              enabled\n              builtin\n              severity\n              scopeQuery\n            }\n            cloudConfigurationRule {\n              id\n              name\n              description\n              shortId\n              enabled\n              builtin\n              severity\n              targetNativeType\n              subjectEntityType\n              hasAutoRemediation\n              cloudProvider\n            }\n            hostConfigurationRule {\n              id\n              name\n              shortName\n              description\n              enabled\n              builtin\n              severity\n            }\n          }\n        }\n      }\n    }\n  }\n}\n";
-  function aiCompliancePostureVariables(scope) {
-    const analyticsSelection = {};
-    if (scope && scope.length) analyticsSelection["projectId"] = scope;
-    return { analyticsSelection };
-  }
-
-  // src/server/wizClientAi.ts
-  var WizQueryError = class extends Error {
-  };
-  var TOKEN_CACHE_KEY = "wiz_ai_token";
-  function getToken(forceRefresh = false) {
-    var _a5, _b;
-    const staticToken = getProp(PROP_KEYS.wizApiToken);
-    if (staticToken && staticToken.trim()) return staticToken.trim();
-    const cache = CacheService.getScriptCache();
-    if (!forceRefresh) {
-      const cached2 = cache.get(TOKEN_CACHE_KEY);
-      if (cached2) return cached2;
-    }
-    const authUrl = (_a5 = getProp(PROP_KEYS.wizAuthUrl)) != null ? _a5 : DEFAULT_WIZ_AUTH_URL;
-    const response = UrlFetchApp.fetch(authUrl, {
-      method: "post",
-      contentType: "application/x-www-form-urlencoded",
-      payload: {
-        grant_type: "client_credentials",
-        audience: "wiz-api",
-        client_id: requireProp(PROP_KEYS.wizClientId),
-        client_secret: requireProp(PROP_KEYS.wizClientSecret)
-      },
-      muteHttpExceptions: true
-    });
-    if (response.getResponseCode() !== 200) {
-      throw new WizQueryError(
-        `Wiz token request failed (${response.getResponseCode()}): ` + response.getContentText().slice(0, 500)
-      );
-    }
-    const body = JSON.parse(response.getContentText());
-    const token = body["access_token"];
-    if (typeof token !== "string" || !token) {
-      throw new WizQueryError("Wiz token response carried no access_token.");
-    }
-    const expiresIn = Number((_b = body["expires_in"]) != null ? _b : 3600);
-    const ttl = Math.max(60, Math.min(Math.trunc(expiresIn) - 300, 21600));
-    cache.put(TOKEN_CACHE_KEY, token, ttl);
-    return token;
-  }
-  function gqlPost(query, variables) {
-    const apiUrl = requireProp(PROP_KEYS.wizApiUrl);
-    let token = getToken();
-    let lastError = "";
-    for (let attempt = 0; attempt < 4; attempt++) {
-      const response = UrlFetchApp.fetch(apiUrl, {
-        method: "post",
-        contentType: "application/json",
-        headers: { Authorization: `Bearer ${token}` },
-        payload: JSON.stringify({ query, variables }),
-        muteHttpExceptions: true
-      });
-      const code = response.getResponseCode();
-      if (code === 401 && attempt === 0 && !getProp(PROP_KEYS.wizApiToken)) {
-        token = getToken(true);
-        continue;
-      }
-      if (code === 429 || code >= 500) {
-        lastError = `HTTP ${code}`;
-        const ceiling = 1e3 * Math.pow(2, attempt);
-        Utilities.sleep(Math.floor(ceiling / 2 + Math.random() * (ceiling / 2)));
-        continue;
-      }
-      if (code !== 200) {
-        const hint = code === 401 && getProp(PROP_KEYS.wizApiToken) ? " \u2014 WIZ_API_TOKEN was rejected; it may have expired. Refresh it, or set WIZ_CLIENT_ID/WIZ_CLIENT_SECRET for auto-refresh." : "";
-        throw new WizQueryError(
-          `Wiz query failed (HTTP ${code})${hint}: ${errorDigest(response.getContentText())}`
-        );
-      }
-      const body = JSON.parse(response.getContentText());
-      const data = body["data"];
-      if (!data) {
-        throw new WizQueryError(
-          `Wiz response carried no data: ${errorDigest(response.getContentText())}`
-        );
-      }
-      return data;
-    }
-    throw new WizQueryError(`Wiz query failed after retries (${lastError}).`);
-  }
-  function fetchEnumValues(enumName) {
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(enumName)) return null;
-    const q = 'query SidekickEnumProbe {\n  __type(name: "' + enumName + '") { enumValues { name } }\n}\n';
-    try {
-      const data = gqlPost(q, {});
-      const t = data["__type"];
-      const values = t && t["enumValues"];
-      if (!Array.isArray(values)) return null;
-      return values.map((v) => String(v["name"])).filter(Boolean);
-    } catch (e) {
-      console.warn(`Enum probe for ${enumName} failed: ${e}`);
-      return null;
-    }
-  }
-  function fetchTypeShape(name) {
-    var _a5;
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return null;
-    const q = 'query SidekickTypeProbe {\n  __type(name: "' + name + '") {\n    kind\n    enumValues { name }\n    inputFields { name }\n  }\n}\n';
-    try {
-      const data = gqlPost(q, {});
-      const t = data["__type"];
-      if (!t) return null;
-      const names = (v) => Array.isArray(v) ? v.map((e) => String(e["name"])).filter(Boolean) : [];
-      return {
-        kind: String((_a5 = t["kind"]) != null ? _a5 : ""),
-        enumValues: names(t["enumValues"]),
-        inputFields: names(t["inputFields"])
-      };
-    } catch (e) {
-      console.warn(`Type probe for ${name} failed: ${e}`);
-      return null;
-    }
-  }
-  var AI_TYPES_CACHE_KEY = "wiz_ai_resource_types_v2";
-  var AI_TYPES_PROP_TTL_MS = 7 * 864e5;
-  function readStoredAiTypes(now) {
-    var _a5;
-    const raw = getProp(PROP_KEYS.wizAiResourceTypesResolved);
-    if (!raw) return null;
-    try {
-      const parsed = JSON.parse(raw);
-      if (!parsed || !Array.isArray(parsed.types) || !parsed.types.length) return null;
-      if (!(now - Number(parsed.resolvedAt) < AI_TYPES_PROP_TTL_MS)) return null;
-      return { types: parsed.types, source: parsed.source, aiLooking: (_a5 = parsed.aiLooking) != null ? _a5 : [] };
-    } catch {
-      return null;
-    }
-  }
-  function writeStoredAiTypes(chosen, now) {
-    try {
-      setProp(
-        PROP_KEYS.wizAiResourceTypesResolved,
-        JSON.stringify({ ...chosen, resolvedAt: now })
-      );
-    } catch {
-    }
-  }
-  var PROBE_SENTINEL = "AI_SIDEKICK_NEGATIVE_CONTROL";
-  function probeOracleWorks(say) {
-    try {
-      fetchCloudResourcesPage({
-        query: Q_AI_INVENTORY,
-        first: 1,
-        extraVariables: aiInventoryVariables([PROBE_SENTINEL])
-      });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (isInvalidEnumValueError(msg)) return true;
-      throw e;
-    }
-    say(
-      `  \u26A0 negative control (${PROBE_SENTINEL}) was ACCEPTED \u2014 this gateway does not reject unknown type values, so the per-candidate probe cannot tell which types this tenant really has. Every candidate below will read as accepted. Set WIZ_AI_RESOURCE_TYPES to the types you actually want queried.`
-    );
-    return false;
-  }
-  function probeCandidateTypes(candidates, say) {
-    const verified = probeOracleWorks(say);
-    const accepted = [];
-    for (const t of candidates) {
-      try {
-        fetchCloudResourcesPage({
-          query: Q_AI_INVENTORY,
-          first: 1,
-          extraVariables: aiInventoryVariables([t])
-        });
-        accepted.push(t);
-        say(`  ${t}: accepted${verified ? "" : " (unverified \u2014 see the warning above)"}`);
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        if (isInvalidEnumValueError(msg)) {
-          say(`  ${t}: not in this tenant's schema`);
-          continue;
-        }
-        throw e;
-      }
-    }
-    return { accepted, verified };
-  }
-  function resolveAiResourceTypes(log) {
-    const say = log != null ? log : (() => void 0);
-    const overrideRaw = getProp(PROP_KEYS.wizAiResourceTypes);
-    const override = overrideRaw ? overrideRaw.split(",").map((s) => s.trim()).filter(Boolean) : null;
-    if (override && override.length) {
-      say(`AI resource types: WIZ_AI_RESOURCE_TYPES override \u2014 ${override.join(", ")}.`);
-      return { types: override, source: "override", aiLooking: [] };
-    }
-    const now = Date.now();
-    const cache = CacheService.getScriptCache();
-    if (!log) {
-      const hit = cache.get(AI_TYPES_CACHE_KEY);
-      if (hit) {
-        try {
-          return JSON.parse(hit);
-        } catch {
-        }
-      }
-      const stored = readStoredAiTypes(now);
-      if (stored) {
-        try {
-          cache.put(AI_TYPES_CACHE_KEY, JSON.stringify(stored), 21600);
-        } catch {
-        }
-        return stored;
-      }
-    }
-    let chosen;
-    const enumValues = fetchEnumValues("CloudResourceTypeFilter");
-    if (enumValues) {
-      const picked = chooseAiResourceTypes(enumValues, null);
-      say(
-        `CloudResourceTypeFilter has ${enumValues.length} members; AI-flavored: ${picked.aiLooking.join(", ") || "(none)"}.`
-      );
-      if (!picked.types.length) {
-        throw new WizQueryError(
-          `This tenant's CloudResourceTypeFilter enum has no recognizable AI resource types. Set the WIZ_AI_RESOURCE_TYPES Script Property (comma-separated enum values). AI-flavored members seen: ${picked.aiLooking.join(", ") || "(none)"}.`
-        );
-      }
-      chosen = picked;
-    } else {
-      say("Introspection unavailable \u2014 probing candidate types one by one:");
-      const { accepted, verified } = probeCandidateTypes(AI_RESOURCE_TYPE_CANDIDATES, say);
-      if (!accepted.length) {
-        throw new WizQueryError(
-          "None of the candidate AI resource types (" + AI_RESOURCE_TYPE_CANDIDATES.join(", ") + ") exist in this tenant's CloudResourceTypeFilter enum, and introspection is unavailable. Find the tenant's AI type names (Wiz docs \u2192 GraphQL schema, or the Wiz UI's inventory filter) and set the WIZ_AI_RESOURCE_TYPES Script Property."
-        );
-      }
-      chosen = {
-        types: accepted,
-        source: verified ? "probe" : "probe (unverified)",
-        aiLooking: []
-      };
-    }
-    say(`Inventory will query types (${chosen.source}): ${chosen.types.join(", ")}.`);
-    try {
-      cache.put(AI_TYPES_CACHE_KEY, JSON.stringify(chosen), 21600);
-    } catch {
-    }
-    writeStoredAiTypes(chosen, now);
-    return chosen;
-  }
-  var ERROR_BODY_MAX = 800;
-  function errorDigest(text) {
-    try {
-      const parsed = JSON.parse(text);
-      const errors = parsed["errors"];
-      if (Array.isArray(errors) && errors.length) {
-        const messages = errors.map((e) => {
-          var _a5;
-          return e && typeof e === "object" ? String((_a5 = e["message"]) != null ? _a5 : "") : "";
-        }).filter(Boolean);
-        if (messages.length) return messages.join(" | ").slice(0, ERROR_BODY_MAX);
-      }
-    } catch {
-    }
-    return String(text).slice(0, ERROR_BODY_MAX);
-  }
-  function readConnection(connection, field) {
-    var _a5, _b, _c;
-    if (!connection || typeof connection !== "object") {
-      throw new WizQueryError(`Wiz response carried no ${field} connection.`);
-    }
-    const pageInfo = (_a5 = connection["pageInfo"]) != null ? _a5 : {};
-    const rawTotal = connection["totalCount"];
-    return {
-      rows: (_b = connection["nodes"]) != null ? _b : [],
-      hasNextPage: Boolean(pageInfo["hasNextPage"]),
-      endCursor: (_c = pageInfo["endCursor"]) != null ? _c : null,
-      totalCount: typeof rawTotal === "number" ? rawTotal : null
-    };
-  }
-  function smallerPageCouldHelp(e) {
-    if (!(e instanceof WizQueryError)) return true;
-    const m = e.message;
-    if (/HTTP 4\d\d/.test(m)) return false;
-    if (/HTTP 429/.test(m)) return false;
-    if (/internal error has occurred/i.test(m)) return true;
-    if (/carried no data/.test(m)) return false;
-    if (/carried no .* connection/.test(m)) return false;
-    return true;
-  }
-  function isTenantRefusal(e) {
-    return e instanceof WizQueryError;
-  }
-  function fetchPage(field, o, extra) {
-    var _a5;
-    const run2 = (first2) => {
-      var _a6, _b;
-      return readConnection(
-        gqlPost(o.query, {
-          ...extra != null ? extra : {},
-          first: first2,
-          after: (_a6 = o.cursor) != null ? _a6 : null,
-          ...(_b = o.extraVariables) != null ? _b : {}
-        })[field],
-        field
-      );
-    };
-    const first = (_a5 = o.first) != null ? _a5 : PAGE_SIZE;
-    try {
-      return run2(first);
-    } catch (e) {
-      if (!smallerPageCouldHelp(e)) throw e;
-      if (first <= PAGE_SIZE_FALLBACK) throw e;
-      return run2(PAGE_SIZE_FALLBACK);
-    }
-  }
-  function fetchCloudResourcesPage(o) {
-    return fetchPage("cloudResourcesV2", o);
-  }
-  function fetchConnectionPage(field, o) {
-    return fetchPage(field, o);
-  }
-  function fetchGraphSearchPage(o) {
-    return fetchPage("graphSearch", o, { quick: false });
-  }
-  function fetchSingleObject(field, o) {
-    var _a5;
-    const obj = gqlPost(o.query, { ...(_a5 = o.extraVariables) != null ? _a5 : {} })[field];
-    if (!obj || typeof obj !== "object") {
-      throw new WizQueryError(`Wiz response carried no ${field} object.`);
-    }
-    return { rows: [obj], hasNextPage: false, endCursor: null, totalCount: 1 };
-  }
-
-  // src/server/syncJobs.ts
-  var syncJobs_exports = {};
-  __export(syncJobs_exports, {
-    cancelRequested: () => cancelRequested,
-    cancelSync: () => cancelSync,
-    clearCancelFlag: () => clearCancelFlag,
-    continueJob: () => continueJob,
-    dailySync: () => dailySync,
-    describeSyncSteps: () => describeSyncSteps,
-    jobStatus: () => jobStatus,
-    startSync: () => startSync,
-    testStepVariables: () => testStepVariables
-  });
 
   // src/domain/syncNormalize.ts
   function str3(v) {
@@ -7430,6 +6175,4121 @@ var Server = (() => {
     };
   }
 
+  // src/domain/complianceScope.ts
+  function severityRank5(s) {
+    const i = SEVERITY_ORDER.indexOf(s);
+    return i === -1 ? SEVERITY_ORDER.length : i;
+  }
+  function isAiFamily(family) {
+    return family === "OWASP_ASI" || family === "OWASP_LLM" || family === "OWASP_ML";
+  }
+  function scopeFiveRs(trees, findings, aiAssetIds2, pins) {
+    var _a5, _b, _c, _d;
+    const fiveRsTree = trees.find((t) => frameworkFamily(t.name) === "WIZ_5RS");
+    if (!fiveRsTree) {
+      return {
+        frameworkId: null,
+        frameworkName: "",
+        policies: [],
+        selected: 0,
+        total: 0
+      };
+    }
+    const mappedByPolicy = /* @__PURE__ */ new Map();
+    for (const tree of trees) {
+      if (tree === fiveRsTree) continue;
+      if (!isAiFamily(frameworkFamily(tree.name))) continue;
+      for (const category of tree.categories) {
+        for (const sub of category.subcategories) {
+          for (const p of sub.policies) {
+            const names = (_a5 = mappedByPolicy.get(p.policyId)) != null ? _a5 : /* @__PURE__ */ new Set();
+            names.add(tree.name);
+            mappedByPolicy.set(p.policyId, names);
+          }
+        }
+      }
+    }
+    const aiOpenFindings = findings.filter(
+      (f) => isOpenGap(f) && aiAssetIds2[f.resourceId] === true
+    );
+    const findingsByRuleId = /* @__PURE__ */ new Map();
+    const findingsByShortId = /* @__PURE__ */ new Map();
+    for (const f of aiOpenFindings) {
+      if (f.ruleId) pushInto(findingsByRuleId, f.ruleId, f);
+      if (f.ruleShortId) pushInto(findingsByShortId, f.ruleShortId, f);
+    }
+    const pinnedOut = new Set(pins.out);
+    const pinnedIn = new Set(pins.in);
+    const byPolicy = /* @__PURE__ */ new Map();
+    for (const category of fiveRsTree.categories) {
+      for (const sub of category.subcategories) {
+        for (const p of sub.policies) {
+          let acc = byPolicy.get(p.policyId);
+          if (!acc) {
+            acc = {
+              policyId: p.policyId,
+              shortId: p.shortId,
+              name: p.name,
+              policyKind: p.policyKind,
+              severity: p.severity,
+              categoryExternalId: category.externalId,
+              subcategoryExternalId: sub.externalId,
+              subcategoryTitle: sub.title,
+              failCount: 0,
+              passCount: 0,
+              // Sticky-false's INITIAL reading — see the PolicyScope.enabled doc comment.
+              enabled: p.enabled
+            };
+            byPolicy.set(p.policyId, acc);
+          }
+          if (p.failCount > acc.failCount) acc.failCount = p.failCount;
+          if (p.passCount > acc.passCount) acc.passCount = p.passCount;
+          if (p.enabled === false) acc.enabled = false;
+        }
+      }
+    }
+    const policies = [];
+    for (const acc of byPolicy.values()) {
+      const mappedBy = [...(_b = mappedByPolicy.get(acc.policyId)) != null ? _b : []].sort();
+      const crossMapped = mappedBy.length > 0;
+      const matched = /* @__PURE__ */ new Map();
+      for (const f of (_c = findingsByRuleId.get(acc.policyId)) != null ? _c : []) matched.set(f.id, f);
+      if (acc.shortId) {
+        for (const f of (_d = findingsByShortId.get(acc.shortId)) != null ? _d : []) matched.set(f.id, f);
+      }
+      const aiFindingCount = matched.size;
+      let selected;
+      let reason;
+      if (pinnedOut.has(acc.policyId)) {
+        selected = false;
+        reason = "pinnedOut";
+      } else if (pinnedIn.has(acc.policyId)) {
+        selected = true;
+        reason = "pinnedIn";
+      } else if (crossMapped) {
+        selected = true;
+        reason = "crossMapped";
+      } else if (aiFindingCount > 0) {
+        selected = true;
+        reason = "linkedFindings";
+      } else {
+        selected = false;
+        reason = "noAiLink";
+      }
+      policies.push({
+        policyId: acc.policyId,
+        shortId: acc.shortId,
+        name: acc.name,
+        policyKind: acc.policyKind,
+        severity: acc.severity,
+        categoryExternalId: acc.categoryExternalId,
+        subcategoryExternalId: acc.subcategoryExternalId,
+        subcategoryTitle: acc.subcategoryTitle,
+        selected,
+        reason,
+        mappedBy,
+        aiFindingCount,
+        failCount: acc.failCount,
+        passCount: acc.passCount,
+        enabled: acc.enabled
+      });
+    }
+    policies.sort((a, b) => (a.selected === b.selected ? 0 : a.selected ? 1 : -1) || severityRank5(a.severity) - severityRank5(b.severity) || b.failCount - a.failCount || cmp(a.name, b.name));
+    return {
+      frameworkId: fiveRsTree.frameworkId,
+      frameworkName: fiveRsTree.name,
+      policies,
+      selected: policies.filter((p) => p.selected).length,
+      total: policies.length
+    };
+  }
+  function unselectedPolicyIds(scope) {
+    return scope.policies.filter((p) => !p.selected).map((p) => p.policyId);
+  }
+  function withCountsFrom(scope, trees) {
+    var _a5;
+    if (scope.frameworkId === null) return scope;
+    const tree = trees.find((t) => t.frameworkId === scope.frameworkId);
+    if (!tree) {
+      return { ...scope, policies: [], selected: 0, total: 0 };
+    }
+    const counts = /* @__PURE__ */ new Map();
+    for (const category of tree.categories) {
+      for (const sub of category.subcategories) {
+        for (const p of sub.policies) {
+          const acc = (_a5 = counts.get(p.policyId)) != null ? _a5 : { passCount: 0, failCount: 0, enabled: p.enabled };
+          if (p.passCount > acc.passCount) acc.passCount = p.passCount;
+          if (p.failCount > acc.failCount) acc.failCount = p.failCount;
+          if (p.enabled === false) acc.enabled = false;
+          counts.set(p.policyId, acc);
+        }
+      }
+    }
+    const policies = scope.policies.filter((p) => counts.has(p.policyId)).map((p) => {
+      const c = counts.get(p.policyId);
+      return { ...p, passCount: c.passCount, failCount: c.failCount, enabled: c.enabled };
+    });
+    return {
+      ...scope,
+      policies,
+      selected: policies.filter((p) => p.selected).length,
+      total: policies.length
+    };
+  }
+  function dropUnselected(rows, scope) {
+    const dropped = new Set(unselectedPolicyIds(scope));
+    if (!dropped.size) return rows;
+    return rows.filter(
+      (pol) => pol.frameworkId !== scope.frameworkId || !dropped.has(pol.policyId)
+    );
+  }
+  function failingPolicyCount(scopedPolicies) {
+    const failing = /* @__PURE__ */ new Set();
+    for (const p of scopedPolicies) if (p.failCount > 0) failing.add(p.policyId);
+    return failing.size;
+  }
+
+  // src/domain/compliancePosture.ts
+  var POSTURE_BANDS = {
+    strong: { min: 90, label: "Strong" },
+    fair: { min: 70, label: "Work to do" },
+    poor: { min: 50, label: "Falling short" },
+    weak: { min: 0, label: "Materially failing" }
+  };
+  function postureBandOf(posturePct2) {
+    if (posturePct2 === null || posturePct2 === void 0) return null;
+    if (posturePct2 >= POSTURE_BANDS.strong.min) return "strong";
+    if (posturePct2 >= POSTURE_BANDS.fair.min) return "fair";
+    if (posturePct2 >= POSTURE_BANDS.poor.min) return "poor";
+    return "weak";
+  }
+  function postureState(posturePct2, emptyPostureReason) {
+    const reason = String(emptyPostureReason != null ? emptyPostureReason : "").trim().toUpperCase();
+    if (reason === "NO_RESOURCES") return "noResources";
+    if (reason === "NO_POLICIES") return "noPolicies";
+    if (reason) return "unknown";
+    return posturePct2 === null ? "unknown" : "scored";
+  }
+  function titleRepeatsExternalId(externalId, title) {
+    const id = String(externalId != null ? externalId : "").trim();
+    const t = String(title != null ? title : "").trim();
+    if (!id || !t) return false;
+    if (!(t.toUpperCase().indexOf(id.toUpperCase()) === 0)) return false;
+    const next = t.charAt(id.length);
+    return next === "" || next === " " || next === "	";
+  }
+  function severityRank6(s) {
+    const i = SEVERITY_ORDER.indexOf(s);
+    return i === -1 ? SEVERITY_ORDER.length : i;
+  }
+  function worstOf(a, b) {
+    if (a === null) return b;
+    if (b === null) return a;
+    return severityRank6(b) < severityRank6(a) ? b : a;
+  }
+  function worstFailingSeverityOf(policies) {
+    let worst = null;
+    for (const p of policies) if (p.failCount > 0) worst = worstOf(worst, p.severity);
+    return worst;
+  }
+  function emptyStateCounts() {
+    return { scored: 0, noResources: 0, noPolicies: 0, unknown: 0 };
+  }
+  function isAssessedPolicy(p) {
+    return p.assessedCount > 0 || p.passCount > 0 || p.failCount > 0 || p.rejectedCount > 0;
+  }
+  function toNode(row, externalId) {
+    return {
+      frameworkId: row.frameworkId,
+      externalId,
+      // Suppressed when the title already opens with it, so an OWASP LLM row reads
+      // "1 LLM01:2025 Prompt Injection" rather than "11 LLM01:2025 Prompt Injection".
+      showExternalId: !titleRepeatsExternalId(externalId, row.title),
+      title: row.title,
+      description: row.description,
+      posturePct: row.posturePct,
+      state: postureState(row.posturePct, row.emptyPostureReason),
+      // Read off the state, not off the number: a row carrying both a percentage and an
+      // emptyPostureReason is one postureState declines to score, and banding the number it
+      // just disowned would put a colour back on a row that has no posture.
+      postureBand: postureState(row.posturePct, row.emptyPostureReason) === "scored" ? postureBandOf(row.posturePct) : null,
+      passCount: row.passCount,
+      failCount: row.failCount,
+      emptyPostureReason: row.emptyPostureReason
+    };
+  }
+  function buildFrameworkTree(frameworkId, posture, policies, frameworks = []) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
+    const rows = posture.filter((p) => p.frameworkId === frameworkId);
+    if (!rows.length) return null;
+    const frameworkRow = rows.find((p) => p.level === "framework");
+    const catalogue = frameworks.find((f) => f.id === frameworkId);
+    const policiesBySub = /* @__PURE__ */ new Map();
+    for (const p of policies) {
+      if (p.frameworkId !== frameworkId) continue;
+      const list2 = (_a5 = policiesBySub.get(p.subcategoryExternalId)) != null ? _a5 : [];
+      list2.push(p);
+      policiesBySub.set(p.subcategoryExternalId, list2);
+    }
+    const stateCounts = emptyStateCounts();
+    const unassessedIds = /* @__PURE__ */ new Set();
+    const subsByCategory = /* @__PURE__ */ new Map();
+    for (const row of rows) {
+      if (row.level !== "subcategory") continue;
+      const externalId = (_b = row.subcategoryExternalId) != null ? _b : "";
+      const raw = (_c = policiesBySub.get(externalId)) != null ? _c : [];
+      const seen = /* @__PURE__ */ new Set();
+      const deduped = raw.filter((p) => {
+        if (seen.has(p.policyId)) return false;
+        seen.add(p.policyId);
+        return true;
+      });
+      deduped.sort(
+        (a, b) => severityRank6(a.severity) - severityRank6(b.severity) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
+      );
+      const assessed = [];
+      for (const p of deduped) {
+        if (isAssessedPolicy(p)) assessed.push(p);
+        else unassessedIds.add(p.policyId);
+      }
+      const node2 = {
+        ...toNode(row, externalId),
+        assessmentScope: row.assessmentScope,
+        mappingRationale: row.mappingRationale,
+        policies: assessed,
+        failingPolicyCount: assessed.filter((p) => p.failCount > 0).length,
+        unassessedPolicyCount: deduped.length - assessed.length,
+        // From the LISTED policies, so the tint on this row and the rules the row expands to
+        // show can never name different severities.
+        worstFailingSeverity: worstFailingSeverityOf(assessed)
+      };
+      stateCounts[node2.state] += 1;
+      if (node2.state !== "scored") continue;
+      const key = (_d = row.categoryExternalId) != null ? _d : "";
+      const list2 = (_e = subsByCategory.get(key)) != null ? _e : [];
+      list2.push(node2);
+      subsByCategory.set(key, list2);
+    }
+    const categories = rows.filter((r) => r.level === "category").map((row) => {
+      var _a6, _b2;
+      const externalId = (_a6 = row.categoryExternalId) != null ? _a6 : "";
+      const subcategories = (_b2 = subsByCategory.get(externalId)) != null ? _b2 : [];
+      return {
+        ...toNode(row, externalId),
+        subcategories,
+        mirrorsCategory: subcategories.length === 1 && subcategories[0].externalId === externalId,
+        worstFailingSeverity: subcategories.reduce(
+          (worst, sub) => worstOf(worst, sub.worstFailingSeverity),
+          null
+        )
+      };
+    }).filter((cat) => cat.subcategories.length > 0);
+    const distinct = /* @__PURE__ */ new Map();
+    for (const cat of categories) {
+      for (const sub of cat.subcategories) {
+        for (const p of sub.policies) {
+          distinct.set(p.policyId, ((_f = distinct.get(p.policyId)) != null ? _f : false) || p.failCount > 0);
+        }
+      }
+    }
+    const worstFailingSeverity = categories.reduce(
+      (worst, cat) => worstOf(worst, cat.worstFailingSeverity),
+      null
+    );
+    const frameworkState = postureState(
+      (_g = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _g : null,
+      (_h = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _h : null
+    );
+    return {
+      frameworkId,
+      name: (_j = (_i = frameworkRow == null ? void 0 : frameworkRow.title) != null ? _i : catalogue == null ? void 0 : catalogue.name) != null ? _j : frameworkId,
+      description: (_k = frameworkRow == null ? void 0 : frameworkRow.description) != null ? _k : catalogue == null ? void 0 : catalogue.description,
+      posturePct: (_l = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _l : null,
+      state: frameworkState,
+      // Same guard toNode applies one level down: only a row that actually scored gets a
+      // band, so an unscored framework's hero draws no bar rather than a failing-coloured one.
+      postureBand: frameworkState === "scored" ? postureBandOf((_m = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _m : null) : null,
+      emptyPostureReason: (_n = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _n : null,
+      passSubCategoryCount: (_o = frameworkRow == null ? void 0 : frameworkRow.passSubCategoryCount) != null ? _o : 0,
+      failSubCategoryCount: (_p = frameworkRow == null ? void 0 : frameworkRow.failSubCategoryCount) != null ? _p : 0,
+      categories,
+      stateCounts,
+      policyCount: distinct.size,
+      failingPolicyCount: [...distinct.values()].filter(Boolean).length,
+      // Only ids that appear NOWHERE in the listed tree. A control mapped under six
+      // subcategories and evaluated under one of them is a listed policy, not a dropped one,
+      // and counting it in both places would describe the same rule twice.
+      unassessedPolicyCount: [...unassessedIds].filter((id) => !distinct.has(id)).length,
+      worstFailingSeverity
+    };
+  }
+  function buildAllFrameworkTrees(posture, policies, frameworks = []) {
+    const ids = [];
+    for (const p of posture) if (ids.indexOf(p.frameworkId) === -1) ids.push(p.frameworkId);
+    const trees = ids.map((id) => buildFrameworkTree(id, posture, policies, frameworks)).filter((t) => t !== null);
+    trees.sort((a, b) => {
+      if (a.posturePct === null && b.posturePct === null) return a.name < b.name ? -1 : 1;
+      if (a.posturePct === null) return 1;
+      if (b.posturePct === null) return -1;
+      return a.posturePct - b.posturePct || (a.name < b.name ? -1 : 1);
+    });
+    return trees;
+  }
+  function complianceKpis(posture, policies = []) {
+    const frameworkRows = posture.filter((p) => p.level === "framework");
+    const scored = frameworkRows.filter(
+      (p) => postureState(p.posturePct, p.emptyPostureReason) === "scored"
+    );
+    const averagePosture = scored.length ? Math.round(scored.reduce((sum, p) => {
+      var _a5;
+      return sum + ((_a5 = p.posturePct) != null ? _a5 : 0);
+    }, 0) / scored.length) : null;
+    const failingSubcategories = posture.filter(
+      (p) => p.level === "subcategory" && p.failCount > 0
+    ).length;
+    const failing = /* @__PURE__ */ new Set();
+    for (const p of policies) if (p.failCount > 0) failing.add(p.policyId);
+    return {
+      frameworks: frameworkRows.length,
+      scoredFrameworks: scored.length,
+      averagePosture,
+      averagePostureBand: postureBandOf(averagePosture),
+      failingSubcategories,
+      failingPolicies: failing.size
+    };
+  }
+
+  // src/domain/fiveRsPosture.ts
+  function isActiveFiveRsPolicy(p) {
+    return p.selected && p.enabled !== false;
+  }
+  function clampAwayFromFalseExtreme(rounded, hasFailing, hasPassing) {
+    if (rounded === 100 && hasFailing) return 99;
+    if (rounded === 0 && hasPassing) return 1;
+    return rounded;
+  }
+  function fiveRsDerivedPosture(scope, wizPosturePct) {
+    if (scope.frameworkId === null) return null;
+    let passCount = 0;
+    let failCount = 0;
+    let cleanPolicyCount = 0;
+    let failingPolicyCount2 = 0;
+    let activePolicyCount = 0;
+    let disabledPolicyCount = 0;
+    for (const p of scope.policies) {
+      if (p.selected && p.enabled === false) disabledPolicyCount += 1;
+      if (!isActiveFiveRsPolicy(p)) continue;
+      activePolicyCount += 1;
+      passCount += p.passCount;
+      failCount += p.failCount;
+      if (p.failCount === 0) cleanPolicyCount += 1;
+      else failingPolicyCount2 += 1;
+    }
+    const posturePct2 = activePolicyCount === 0 || passCount + failCount === 0 ? null : clampAwayFromFalseExtreme(
+      Math.round(100 * passCount / (passCount + failCount)),
+      failCount > 0,
+      passCount > 0
+    );
+    const controlPassPct = activePolicyCount === 0 ? null : clampAwayFromFalseExtreme(
+      Math.round(100 * cleanPolicyCount / activePolicyCount),
+      failingPolicyCount2 > 0,
+      cleanPolicyCount > 0
+    );
+    return {
+      frameworkId: scope.frameworkId,
+      posturePct: posturePct2,
+      postureBand: postureBandOf(posturePct2),
+      controlPassPct,
+      cleanPolicyCount,
+      failingPolicyCount: failingPolicyCount2,
+      activePolicyCount,
+      disabledPolicyCount,
+      passCount,
+      failCount,
+      wizPosturePct
+    };
+  }
+
+  // src/domain/landscapePosture.ts
+  function isApplicableControl(enabled) {
+    return enabled !== false;
+  }
+  function landscapeDerivedPosture(trees, wiz) {
+    const byPolicy = /* @__PURE__ */ new Map();
+    for (const tree of trees) {
+      for (const category of tree.categories) {
+        for (const sub of category.subcategories) {
+          for (const p of sub.policies) {
+            let acc = byPolicy.get(p.policyId);
+            if (!acc) {
+              acc = {
+                passCount: 0,
+                failCount: 0,
+                // Sticky-false's initial reading, overridden below by any later row saying
+                // false — `scopeFiveRs` accumulates `enabled` the identical way.
+                enabled: p.enabled,
+                frameworkIds: /* @__PURE__ */ new Set()
+              };
+              byPolicy.set(p.policyId, acc);
+            }
+            if (p.passCount > acc.passCount) acc.passCount = p.passCount;
+            if (p.failCount > acc.failCount) acc.failCount = p.failCount;
+            if (p.enabled === false) acc.enabled = false;
+            acc.frameworkIds.add(tree.frameworkId);
+          }
+        }
+      }
+    }
+    let passCount = 0;
+    let failCount = 0;
+    let cleanPolicyCount = 0;
+    let failingPolicyCount2 = 0;
+    let applicablePolicyCount = 0;
+    let disabledPolicyCount = 0;
+    const frameworks = /* @__PURE__ */ new Set();
+    for (const acc of byPolicy.values()) {
+      if (!isApplicableControl(acc.enabled)) {
+        disabledPolicyCount += 1;
+        continue;
+      }
+      applicablePolicyCount += 1;
+      passCount += acc.passCount;
+      failCount += acc.failCount;
+      if (acc.failCount === 0) cleanPolicyCount += 1;
+      else failingPolicyCount2 += 1;
+      for (const id of acc.frameworkIds) frameworks.add(id);
+    }
+    const posturePct2 = applicablePolicyCount === 0 || passCount + failCount === 0 ? null : clampAwayFromFalseExtreme(
+      Math.round(100 * passCount / (passCount + failCount)),
+      failCount > 0,
+      passCount > 0
+    );
+    const controlPassPct = applicablePolicyCount === 0 ? null : clampAwayFromFalseExtreme(
+      Math.round(100 * cleanPolicyCount / applicablePolicyCount),
+      failingPolicyCount2 > 0,
+      cleanPolicyCount > 0
+    );
+    return {
+      posturePct: posturePct2,
+      postureBand: postureBandOf(posturePct2),
+      controlPassPct,
+      cleanPolicyCount,
+      failingPolicyCount: failingPolicyCount2,
+      applicablePolicyCount,
+      disabledPolicyCount,
+      frameworkCount: frameworks.size,
+      passCount,
+      failCount,
+      wizAveragePosture: wiz.averagePosture,
+      scoredFrameworks: wiz.scoredFrameworks
+    };
+  }
+
+  // src/domain/settingsImpact.ts
+  function categoryMaskOf(categories, candidateIds) {
+    let mask = 0;
+    for (const cat of categories != null ? categories : []) {
+      const idx = candidateIds.indexOf(cat);
+      if (idx >= 0) mask |= 1 << idx;
+    }
+    return mask;
+  }
+  function buildCategoryCube(rows, candidateIds, configuredIds) {
+    var _a5;
+    const cells = {};
+    let seenBits = 0;
+    for (const r of rows) {
+      const mask = categoryMaskOf(r.categories, candidateIds);
+      seenBits |= mask;
+      const key = String(mask);
+      cells[key] = ((_a5 = cells[key]) != null ? _a5 : 0) + 1;
+    }
+    const configured = new Set(configuredIds);
+    const measuredCandidateIds = candidateIds.filter(
+      (id, i) => configured.has(id) || (seenBits & 1 << i) !== 0
+    );
+    return { total: rows.length, cells, candidateIds: [...candidateIds], measuredCandidateIds };
+  }
+  var DEFAULT_CANDIDATE_IDS = CANDIDATE_CATEGORIES.map((c) => c.id);
+  function parsesAsDate(v) {
+    return typeof v === "string" && v !== "" && Number.isFinite(Date.parse(v));
+  }
+  function termCoverageOf(rows) {
+    var _a5;
+    let dueAtN = 0;
+    let createdAtN = 0;
+    let exploitationN = 0;
+    let adjacencyN = 0;
+    for (const r of rows) {
+      if (parsesAsDate(r.dueAt)) dueAtN += 1;
+      if (parsesAsDate(r.createdAt)) createdAtN += 1;
+      const tier = String((_a5 = r.exploitationTier) != null ? _a5 : "").trim().toLowerCase();
+      if (tier && tier !== "unknown") exploitationN += 1;
+      if (r.aiAdjacency) adjacencyN += 1;
+    }
+    return {
+      total: rows.length,
+      rule: rows.length,
+      time: { dueAt: dueAtN, createdAt: createdAtN },
+      exploitation: exploitationN,
+      adjacency: adjacencyN
+    };
+  }
+  var RANK_EPSS_BINS = 100;
+  var RANK_DAY_MS = 864e5;
+  function rankLadderIdx(value, buckets) {
+    let idx = 0;
+    for (let i = 0; i < buckets.length; i++) if (value > buckets[i]) idx = i + 1;
+    return idx;
+  }
+  function rankClamp01(v) {
+    const n = typeof v === "number" ? v : Number(v);
+    if (!Number.isFinite(n)) return 0;
+    return n < 0 ? 0 : n > 1 ? 1 : n;
+  }
+  function rankWeightFor(row, rule) {
+    var _a5, _b;
+    for (const rw of (_a5 = rule.ruleWeights) != null ? _a5 : []) {
+      if (rw && String((_b = rw.ruleId) != null ? _b : "").trim() === rankKeyOf(row)) return rankClamp01(rw.weight);
+    }
+    return rankClamp01(rule.defaultRuleWeight);
+  }
+  function rankEpssBinOf(v, bins = RANK_EPSS_BINS) {
+    if (v >= 1) return bins;
+    return Math.max(0, Math.min(bins - 1, Math.floor(v * bins + 1e-9)));
+  }
+  function rankTupleOf(row, rule, nowIso2) {
+    var _a5, _b, _c, _d;
+    const overdueBuckets = (_a5 = rule.overdueDayBuckets) != null ? _a5 : DEFAULT_RANK_RULE.overdueDayBuckets;
+    const ageBuckets = (_b = rule.ageDayBuckets) != null ? _b : DEFAULT_RANK_RULE.ageDayBuckets;
+    const now = Date.parse(nowIso2);
+    const due = row.dueAt ? Date.parse(row.dueAt) : NaN;
+    const dueStep = Number.isFinite(due) && Number.isFinite(now) ? rankLadderIdx((now - due) / RANK_DAY_MS, overdueBuckets) : null;
+    const created = row.createdAt ? Date.parse(row.createdAt) : NaN;
+    const ageStep = Number.isFinite(created) && Number.isFinite(now) ? rankLadderIdx((now - created) / RANK_DAY_MS, ageBuckets) : null;
+    const tier = String((_c = row.exploitationTier) != null ? _c : "").trim().toLowerCase();
+    const peak = typeof row.epssPeak === "number" && Number.isFinite(row.epssPeak) ? row.epssPeak : null;
+    let exploitationTier = "unmeasured";
+    let epssBin = null;
+    if (tier === "kev") exploitationTier = "kev";
+    else if (tier === "exploit") exploitationTier = "exploit";
+    else if (tier === "none") exploitationTier = "none";
+    else if (tier === "epss") {
+      if (peak !== null) {
+        exploitationTier = "epss";
+        epssBin = rankEpssBinOf(peak);
+      } else exploitationTier = "none";
+    }
+    const adjRaw = String((_d = row.aiAdjacency) != null ? _d : "").trim().toUpperCase();
+    const adjacency2 = adjRaw === "DIRECT" || adjRaw === "ADJACENT" || adjRaw === "UNLINKED" ? adjRaw : "unmeasured";
+    return { ruleWeightKey: rankWeightFor(row, rule), dueStep, ageStep, exploitationTier, epssBin, adjacency: adjacency2 };
+  }
+  var RANK_EXPL_CODE = {
+    kev: "k",
+    exploit: "e",
+    epss: "p",
+    none: "n",
+    unmeasured: "u"
+  };
+  var RANK_ADJ_CODE = {
+    DIRECT: "D",
+    ADJACENT: "A",
+    UNLINKED: "U",
+    unmeasured: "u"
+  };
+  function rankTupleKey(t) {
+    return [
+      t.ruleWeightKey.toFixed(4),
+      t.dueStep === null ? "x" : t.dueStep,
+      t.ageStep === null ? "x" : t.ageStep,
+      RANK_EXPL_CODE[t.exploitationTier],
+      t.epssBin === null ? "x" : t.epssBin,
+      RANK_ADJ_CODE[t.adjacency]
+    ].join("|");
+  }
+  function buildRankCube(rows, rule, nowIso2) {
+    var _a5, _b, _c;
+    const overdueBuckets = (_a5 = rule.overdueDayBuckets) != null ? _a5 : DEFAULT_RANK_RULE.overdueDayBuckets;
+    const ageBuckets = (_b = rule.ageDayBuckets) != null ? _b : DEFAULT_RANK_RULE.ageDayBuckets;
+    const cells = {};
+    for (const row of rows) {
+      const key = rankTupleKey(rankTupleOf(row, rule, nowIso2));
+      cells[key] = ((_c = cells[key]) != null ? _c : 0) + 1;
+    }
+    return {
+      total: rows.length,
+      cells,
+      overdueSteps: overdueBuckets.length,
+      ageSteps: ageBuckets.length,
+      epssBins: RANK_EPSS_BINS
+    };
+  }
+
+  // src/domain/scanVars.ts
+  var MAX_LIST_VALUES = 40;
+  var MAX_VALUE_LEN = 120;
+  var ISSUE_STATUSES = ["OPEN", "IN_PROGRESS", "RESOLVED", "REJECTED"];
+  var ORDER_DIRECTIONS = ["ASC", "DESC"];
+  var STEP_VAR_SPECS = [
+    {
+      stepId: "INVENTORY_AI",
+      fields: [
+        {
+          path: "filterBy.type.equals",
+          label: "Resource types",
+          help: "The Wiz resource types treated as AI assets. Resolved against this tenant's schema by default; setting them here pins the list instead.",
+          kind: "list",
+          required: true
+        }
+      ]
+    },
+    {
+      stepId: "ISSUES_TOXIC",
+      fields: [
+        {
+          path: "filterBy.status",
+          label: "Issue status",
+          help: "Which issue states to collect. Narrowing to OPEN drops in-progress work from the register and from AARS pillar A.",
+          kind: "list",
+          options: ISSUE_STATUSES,
+          required: true
+        },
+        {
+          path: "filterBy.type",
+          label: "Issue types",
+          // Optional, and empty is the default: the sync sends no type filter at all, so
+          // the category decides what is collected and Wiz's taxonomy does not. Marking it
+          // required would be incoherent now — an empty list and an absent one both mean
+          // "every type", and only one of them would be rejected.
+          help: "Empty (the default) collects every issue type in the AI risk category \u2014 including kinds this register has never modelled, which land in Other AI risk. Naming types here NARROWS that: each one left out disappears from the register total and from AARS pillar A with nothing on the page to mark its absence. Pinning TOXIC_COMBINATION and CLOUD_CONFIGURATION is what once hid every threat detection in the category.",
+          kind: "list",
+          options: ["TOXIC_COMBINATION", "CLOUD_CONFIGURATION", "THREAT_DETECTION"]
+        },
+        {
+          path: "filterBy.project",
+          label: "Project scope",
+          help: "Wiz project ids to restrict to. Empty means the whole tenant.",
+          kind: "list"
+        },
+        {
+          path: "orderBy.direction",
+          label: "Order direction",
+          help: "Which end of the severity order the paging walks first.",
+          kind: "enum",
+          options: ORDER_DIRECTIONS
+        }
+      ],
+      // STILL NOT offering filterBy.frameworkCategory, and the reason has moved rather than
+      // gone away. Every figure this app publishes — the issue count, AARS pillar A, the Toxic
+      // Combinations page, the tab literally called ai_issues — counts what this filter
+      // returned, and nothing in the response says which category a row matched. The register
+      // CAN now be widened, but only through the `issue_categories` Setting, which generates
+      // one ISSUES_CAT_<id> step per category so each row is stamped with the category that
+      // fetched it and each sync records the scope it applied.
+      //
+      // As a per-step variable it could not be either of those things: cleanStepVars would let
+      // a hand-edited cell change WHICH POPULATION every published figure counts, with no
+      // stamp on the rows and nothing in sync_history saying the scope moved. A knob that
+      // silently redefines the denominator is not a knob.
+      locked: "This step collects the AI risk category (wct-id-1998) and its category filter is not editable here: widening it would change what every published figure counts, with nothing on the row to say so. Choose categories in Settings (issue_categories) instead \u2014 each one gets its own step, and each row is stamped with the category it was collected under."
+    },
+    {
+      stepId: "AI_ASSET_PROPERTIES",
+      fields: [],
+      // The step exists only to fetch the properties bag for the SAME assets INVENTORY_AI
+      // already collected. Its type filter is not a knob: narrow it and some assets silently
+      // lose their publisher while others keep theirs, which looks like missing data rather
+      // than a setting. Widen it and the bag arrives for resources this app does not model.
+      locked: "This step mirrors the AI inventory's own type list \u2014 it exists to add two fields to assets already collected, so filtering it separately could only make the two disagree about which assets exist."
+    },
+    {
+      stepId: "VULN_FINDINGS",
+      fields: [],
+      // LOCKED, and for a reason none of the other locks state: this filter is not a scope
+      // knob, it is the CLAIM ITSELF.
+      //
+      // Nothing on a vulnerability finding says it is exploitation evidence for this register.
+      // What makes it so is that it names an issue in one of the selected categories — the
+      // filter is the entire assertion, and the row it produces is folded onto that issue and
+      // read as "this issue is exploited". Widen it and the register asserts exploitation for
+      // issues it does not hold; drop `hasRelatedIssue` and the same document answers 5,173,698
+      // rows in project scope (AARS_LIVE_MEASUREMENTS.md §6.4), which is not a bigger version of
+      // this step but a different product with no page and no storage budget behind it.
+      //
+      // The category list is not editable here either, and for the reason ISSUES_TOXIC's lock
+      // gives one entry up: it must stay the SAME list the issue steps use, or a finding joins
+      // an issue the register never collected and the axis quietly thins out. Settings
+      // (issue_categories) moves both together; a per-step cell could move only one.
+      locked: "This step's filter is the claim itself: a vulnerability finding counts as exploitation evidence only because it names an issue in the collected categories. Widening it would assert exploitation for issues this register does not hold, and dropping the related-issue filter turns one query into five million rows. The categories follow Settings (issue_categories), so this step and the issue steps can never read different registers."
+    },
+    {
+      stepId: "CONFIG_FINDINGS",
+      fields: [
+        {
+          path: "filterBy.status",
+          label: "Finding status",
+          help: "Compliance findings are additionally filtered to result FAIL after they arrive, so widening this collects more rows but stores only failures.",
+          kind: "list",
+          options: ["OPEN", "RESOLVED", "REJECTED"],
+          required: true
+        },
+        {
+          path: "orderBy.direction",
+          label: "Order direction",
+          help: "Which end of the severity order the paging walks first.",
+          kind: "enum",
+          options: ORDER_DIRECTIONS
+        }
+      ]
+    },
+    {
+      stepId: "AGENTIC_IDENTITIES",
+      fields: [
+        {
+          path: "filterBy.type.equals",
+          label: "Identity types",
+          help: "Which principal types to collect.",
+          kind: "list",
+          required: true
+        }
+      ],
+      // Still NOT offering filterBy.identityPurpose, but the reason has narrowed. Wiz DOES
+      // return the purpose — `IdentityPurposeAgentic`, in the graph entity's properties bag —
+      // and Q_PRINCIPALS now selects that bag, so a collected row normally carries its own
+      // label. The stamp survives as the fallback for a tenant whose schema rejects
+      // `graphEntity`, and that fallback is what a widened filter would turn into a mislabel:
+      // every row it collected would come back stamped AGENTIC with nothing to catch it.
+      locked: "The agentic-purpose filter is fixed: where the tenant does not return an identity's own purpose the sync falls back to labelling what this query returns as agentic, so widening it would mislabel exactly the identities it could not verify."
+    },
+    {
+      stepId: "SENSITIVE_DATA_ACCESS",
+      // No fields at all, so isEditableStep is false and the panel offers no control. Stated
+      // here rather than left to fall through, because "nothing to edit" and "editing this
+      // would be unsafe" are different facts and only the second one needs saying.
+      fields: [],
+      locked: "This step has no editable filter: normalizeSensitiveDataAccessPage rebuilds the chain's edges from which entity TYPES a row carries, so a changed selection set would yield confidently wrong edges rather than an error."
+    },
+    {
+      stepId: "CONFIG_RULES",
+      fields: [],
+      // It DOES take a filter now — `hasFindings: true`, which cuts 3,905 catalogue rows to
+      // 1,401 against the reference tenant. The old reason given here was that the filter
+      // input's type was unverified; phase0 sent CloudConfigurationRuleFilters against this
+      // tenant on 2026-08-23 and it answered (AARS_LIVE_MEASUREMENTS.md §6.10). Still not
+      // editable: the catalogue is a JOIN TARGET for issues and findings already stored, so
+      // narrowing it further is not a preference, it is a way to make a stored row's rule
+      // gloss disappear.
+      locked: "This step's one filter (rules that have findings) is not editable: the rule catalogue is what glosses the rule ids stored issues and findings already point at, so narrowing it further would blank references the ledger still holds."
+    },
+    {
+      stepId: "IDENTITY_HYGIENE",
+      // The rule list looks like the obvious knob and is the one thing that must not be one:
+      // it is not a preference, it is the resolution of a name match over the synced catalogue,
+      // and normalizeIdentityFindingsPage refuses any row whose rule is not in it. An operator
+      // who pasted an extra id would get the whole step aborted as an unhonoured filter.
+      fields: [],
+      locked: "This step's rule list is resolved from the synced rule catalogue by name, not chosen: the normalizer refuses any finding whose rule is not in that resolved set, so an edited list would abort the step rather than widen it."
+    },
+    {
+      stepId: "EFFECTIVE_ACCESS",
+      // `accessTypes: [DATA]` is the knob it appears to have. Withheld because the area's prose
+      // says "can reach the asset's data" — widening the filter would change what the figure
+      // means with nothing on the page to say so, which is the failure the whole Scans page is
+      // built to prevent.
+      fields: [],
+      locked: "This step has no editable filter: its access-type list is what the area's own figure claims to count, so widening it here would change what the number means without changing what the page says it means."
+    },
+    {
+      stepId: "LINEAGE",
+      // Nothing to edit, and the reason is the root list rather than a filter. lineageRoots()
+      // intersects AI_PIPELINE / AI_DATASET with what the tenant declares before the query is
+      // built, because an entity type the tenant does not have fails coercion of the WHOLE
+      // $query variable and empties the step. An operator-supplied root would reintroduce
+      // exactly that, and its symptom would be a refusal naming the type, not the traversal.
+      fields: [],
+      locked: "This step has no editable filter: its traversal is built from lineageSpec and its root types are resolved against the tenant first, so an edited root could only make the whole query fail coercion. probeEdgeSteps() reports what it came back with."
+    },
+    {
+      stepId: "IDENTITY_ACCESS",
+      // Its traversal is a $query variable now, so in principle the access-level list is a
+      // path an override could reach. Withheld for the reason ENDPOINT_EXPOSURE's is: those two
+      // values also live in HUMAN_ACCESS_TYPES (domain/identityQuery.ts), which is what
+      // withHumanAccess and withIdentityAccessNodes judge an edge by. Widening the filter would
+      // collect READ bindings the figure then refuses to count.
+      fields: [],
+      locked: "This step has no editable filter: the ADMIN / HIGH_PRIVILEGE bar is applied again when the reach is totalled and drawn, so widening it here would collect bindings that never reach a number."
+    },
+    {
+      stepId: "HOST_EXPOSURE",
+      fields: [],
+      locked: "This step has no editable filter: normalizeHostExposurePage rebuilds the HOSTED_ON and SERVES edges from which entity TYPES a row carries, and its whole claim is `accessibleFrom.internet` on the compute \u2014 widen that and the step reports unreachable hosts as reachable ones."
+    },
+    {
+      stepId: "ENDPOINT_EXPOSURE",
+      // No knob, and the exposure-level list is exactly the knob it looks like it should have.
+      // It is withheld because the same two values appear in a SECOND place: RATED_EXPOSURE_LEVELS
+      // in domain/exposureQuery.ts, which is what withExposureEvidence tests the returned level
+      // against. That double reading is deliberate — ENDPOINT rows also arrive from
+      // HOST_EXPOSURE, unfiltered and (in the capture) rated Low, so the bar has to be applied
+      // to the payload rather than assumed from the query. An operator who widened the filter
+      // here would collect Low-rated endpoints as graph nodes and see the exposure figure not
+      // move, which is a worse answer than no knob at all.
+      fields: [],
+      locked: "This step has no editable filter: the High/Medium bar is also applied to the endpoints the host-exposure step returns unfiltered, so moving it here would widen what is collected without moving what counts as an exposure."
+    },
+    {
+      stepId: "FRAMEWORKS_LIST",
+      // Declared with no fields rather than left out of this list entirely: an absent spec
+      // renders as the generic "no spec" fallback, which reads as an oversight, and someone
+      // will eventually "fix" it. Its only variable is a boolean, and the panel's controls
+      // are list/enum — a third field kind bought for one flag that changes nothing about
+      // what is collected is not worth the machinery.
+      fields: [],
+      locked: "This step's only filter picks whether disabled frameworks appear in the Settings picker. It does not decide what posture is collected \u2014 the framework selection does \u2014 so there is nothing here worth tuning per tenant."
+    },
+    {
+      // Matches every generated category step (ISSUES_CAT_wct-id-3, …) so the family shares
+      // one lock reason instead of falling through to the generic "no spec" text. Same shape
+      // as the posture family just below, and locked for the same kind of reason: the id is
+      // not a filter to tune, it is what the step's rows ARE — every row it returns is stamped
+      // with the category in its own name.
+      stepId: "ISSUES_CAT_",
+      prefix: true,
+      fields: [],
+      locked: "This step takes no editable variable: its category is not a filter to tune \u2014 it is what the step's rows are, and every row it collects is stamped with it. Choose categories in Settings (issue_categories) instead."
+    },
+    {
+      // Matches every generated posture step (COMPLIANCE_POSTURE_wf-id-275, …) so the family
+      // shares one lock reason instead of falling through to the generic "no spec" text.
+      stepId: "COMPLIANCE_POSTURE_",
+      prefix: true,
+      fields: [],
+      locked: "This step takes no editable variable: its `id` is not a filter \u2014 it selects WHICH framework is fetched, so editing it here would make a step whose name says one framework report another. Choose frameworks in Settings instead."
+    }
+  ];
+  var SPEC_BY_STEP = {};
+  for (const spec of STEP_VAR_SPECS) SPEC_BY_STEP[spec.stepId] = spec;
+  function varSpecFor(stepId) {
+    const exact = SPEC_BY_STEP[stepId];
+    if (exact) return exact;
+    for (const spec of STEP_VAR_SPECS) {
+      if (spec.prefix && stepId.indexOf(spec.stepId) === 0) return spec;
+    }
+    return null;
+  }
+  function isEditableStep(stepId) {
+    const spec = varSpecFor(stepId);
+    return !!spec && spec.fields.length > 0;
+  }
+  function readPath(obj, path) {
+    let cur = obj;
+    for (const key of path.split(".")) {
+      if (!cur || typeof cur !== "object") return void 0;
+      cur = cur[key];
+    }
+    return cur;
+  }
+  function writePath(obj, path, value) {
+    const keys = path.split(".");
+    let cur = obj;
+    for (let i = 0; i < keys.length - 1; i++) {
+      const key = keys[i];
+      const next = cur[key];
+      if (!next || typeof next !== "object" || Array.isArray(next)) cur[key] = {};
+      cur = cur[keys[i]];
+    }
+    cur[keys[keys.length - 1]] = value;
+  }
+  function cleanValue(v) {
+    return String(v != null ? v : "").trim().slice(0, MAX_VALUE_LEN);
+  }
+  function cleanList(v) {
+    if (!Array.isArray(v)) return [];
+    const out = [];
+    for (const raw of v) {
+      const s = cleanValue(raw);
+      if (s && out.indexOf(s) < 0) out.push(s);
+      if (out.length >= MAX_LIST_VALUES) break;
+    }
+    return out;
+  }
+  function cleanStepVars(stepId, raw) {
+    const spec = varSpecFor(stepId);
+    if (!spec || !raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    const out = {};
+    let touched2 = false;
+    for (const field of spec.fields) {
+      const value = readPath(raw, field.path);
+      if (value === void 0 || value === null) continue;
+      if (field.kind === "list") {
+        const list2 = cleanList(value);
+        writePath(out, field.path, list2);
+        touched2 = true;
+      } else {
+        const s = cleanValue(value).toUpperCase();
+        if (!s) continue;
+        if (field.options && field.options.indexOf(s) < 0) continue;
+        writePath(out, field.path, s);
+        touched2 = true;
+      }
+    }
+    return touched2 ? out : null;
+  }
+  function validateStepVars(stepId, vars) {
+    const spec = varSpecFor(stepId);
+    if (!spec) return [`${stepId} does not take editable variables.`];
+    if (!vars) return [];
+    const errors = [];
+    for (const field of spec.fields) {
+      const value = readPath(vars, field.path);
+      if (value === void 0) continue;
+      if (field.kind === "list") {
+        const list2 = Array.isArray(value) ? value : [];
+        if (field.required && !list2.length) {
+          errors.push(
+            `${field.label} cannot be empty \u2014 an empty filter asks Wiz for everything, which is not what this step normalizes.`
+          );
+        }
+        if (list2.length >= MAX_LIST_VALUES) {
+          errors.push(`${field.label} is capped at ${MAX_LIST_VALUES} values.`);
+        }
+      }
+    }
+    return errors;
+  }
+  function effectiveStepVars(stepId, base, override) {
+    const clean2 = cleanStepVars(stepId, override);
+    if (!clean2) return base;
+    const spec = varSpecFor(stepId);
+    const merged = JSON.parse(JSON.stringify(base != null ? base : {}));
+    for (const field of spec ? spec.fields : []) {
+      const value = readPath(clean2, field.path);
+      if (value === void 0) continue;
+      writePath(merged, field.path, value);
+    }
+    return merged;
+  }
+  function changedPaths(stepId, base, override) {
+    const clean2 = cleanStepVars(stepId, override);
+    if (!clean2) return [];
+    const spec = varSpecFor(stepId);
+    const out = [];
+    for (const field of spec ? spec.fields : []) {
+      const next = readPath(clean2, field.path);
+      if (next === void 0) continue;
+      if (JSON.stringify(next) !== JSON.stringify(readPath(base, field.path))) out.push(field.path);
+    }
+    return out;
+  }
+
+  // src/domain/settingsLogic.ts
+  function clampDepth(v) {
+    return clampInt(v, DEPTH_DEFAULT, DEPTH_MIN, DEPTH_MAX);
+  }
+  function getProjectView(settings) {
+    const v = settings["project_view"];
+    return typeof v === "string" ? v.trim() : "";
+  }
+  function withProjectView(settings, id) {
+    return {
+      ...settings,
+      project_view: typeof id === "string" ? id.trim() : "",
+      domain_view: ""
+    };
+  }
+  function getDomainView(settings) {
+    const v = settings["domain_view"];
+    return typeof v === "string" ? v.trim() : "";
+  }
+  function withDomainView(settings, domain) {
+    return {
+      ...settings,
+      domain_view: typeof domain === "string" ? domain.trim() : "",
+      project_view: ""
+    };
+  }
+  function getDefaultDepth(settings) {
+    var _a5;
+    return clampDepth((_a5 = settings["default_depth"]) != null ? _a5 : DEPTH_DEFAULT);
+  }
+  function withDefaultDepth(settings, depth) {
+    return { ...settings, default_depth: clampDepth(depth) };
+  }
+  function clampMaxNodes(v) {
+    return clampInt(v, MAX_NODES_DEFAULT, MAX_NODES_FLOOR, MAX_NODES_CEILING);
+  }
+  function getMaxNodes(settings) {
+    var _a5;
+    return clampMaxNodes((_a5 = settings["max_nodes"]) != null ? _a5 : MAX_NODES_DEFAULT);
+  }
+  function withMaxNodes(settings, maxNodes) {
+    return { ...settings, max_nodes: clampMaxNodes(maxNodes) };
+  }
+  function getAutoExpand(settings) {
+    return settings["auto_expand"] !== false;
+  }
+  function withAutoExpand(settings, on) {
+    return { ...settings, auto_expand: on === true };
+  }
+  function getAarsRule(settings) {
+    const raw = settings["aars_rule"];
+    if (!raw || typeof raw !== "object") {
+      return { version: 0, rule: cleanAarsRule(DEFAULT_AARS_RULE) };
+    }
+    const stored = raw;
+    const version = Number(stored["version"]);
+    return {
+      version: Number.isFinite(version) && version > 0 ? Math.round(version) : 0,
+      rule: cleanAarsRule(stored["rule"])
+    };
+  }
+  function withAarsRule(settings, rule) {
+    const current = getAarsRule(settings);
+    return {
+      ...settings,
+      aars_rule: { version: current.version + 1, rule: cleanAarsRule(rule) }
+    };
+  }
+  function getScoredRuleVersion(settings) {
+    const v = Number(settings["aars_scored_version"]);
+    return Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
+  }
+  function withScoredRuleVersion(settings, version) {
+    const v = Number(version);
+    return {
+      ...settings,
+      aars_scored_version: Number.isFinite(v) && v > 0 ? Math.round(v) : 0
+    };
+  }
+  function getProblemRule(settings) {
+    const raw = settings["problem_rule"];
+    if (!raw || typeof raw !== "object") {
+      return { version: 0, rule: cleanProblemRule(DEFAULT_PROBLEM_RULE) };
+    }
+    const stored = raw;
+    const version = Number(stored["version"]);
+    return {
+      version: Number.isFinite(version) && version > 0 ? Math.round(version) : 0,
+      // cleanProblemRule on every read IS the migration mechanism, exactly as cleanAarsRule
+      // is above: a rule blob written by an older schema is repaired on the way OUT rather
+      // than migrated once on the way in, so there is no separate migration step to forget
+      // to run when a field is added to ProblemRule later.
+      rule: cleanProblemRule(stored["rule"])
+    };
+  }
+  function withProblemRule(settings, rule) {
+    const current = getProblemRule(settings);
+    return {
+      ...settings,
+      problem_rule: { version: current.version + 1, rule: cleanProblemRule(rule) }
+    };
+  }
+  function getDecidedRuleVersion(settings) {
+    const v = Number(settings["problem_decided_version"]);
+    return Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
+  }
+  function withDecidedRuleVersion(settings, version) {
+    const v = Number(version);
+    return {
+      ...settings,
+      problem_decided_version: Number.isFinite(v) && v > 0 ? Math.round(v) : 0
+    };
+  }
+  function getPostureRule(settings) {
+    const raw = settings["posture_rule"];
+    if (!raw || typeof raw !== "object") {
+      return { version: 0, rule: cleanPostureRule(DEFAULT_POSTURE_RULE) };
+    }
+    const stored = raw;
+    const version = Number(stored["version"]);
+    return {
+      version: Number.isFinite(version) && version > 0 ? Math.round(version) : 0,
+      // cleanPostureRule on every read IS the migration mechanism — see getProblemRule's
+      // identical comment for why.
+      rule: cleanPostureRule(stored["rule"])
+    };
+  }
+  function withPostureRule(settings, rule) {
+    const current = getPostureRule(settings);
+    return {
+      ...settings,
+      posture_rule: { version: current.version + 1, rule: cleanPostureRule(rule) }
+    };
+  }
+  function getComputedPostureVersion(settings) {
+    const v = Number(settings["posture_computed_version"]);
+    return Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
+  }
+  function withComputedPostureVersion(settings, version) {
+    const v = Number(version);
+    return {
+      ...settings,
+      posture_computed_version: Number.isFinite(v) && v > 0 ? Math.round(v) : 0
+    };
+  }
+  function getRankRule(settings) {
+    const raw = settings["rank_rule"];
+    if (!raw || typeof raw !== "object") {
+      return { version: 0, rule: cleanRankRule(DEFAULT_RANK_RULE) };
+    }
+    const stored = raw;
+    const version = Number(stored["version"]);
+    return {
+      version: Number.isFinite(version) && version > 0 ? Math.round(version) : 0,
+      // cleanRankRule on every read IS the migration mechanism — see getProblemRule's
+      // identical comment for why. It matters more here than there: a rule persisted before
+      // the four-term blend carries `timeShare` and no `shares`, and cleanRankRule is what
+      // reads it as the two-term case so it scores identically rather than reading three
+      // absent shares as zeroes.
+      rule: cleanRankRule(stored["rule"])
+    };
+  }
+  function withRankRule(settings, rule) {
+    const current = getRankRule(settings);
+    return {
+      ...settings,
+      rank_rule: {
+        version: current.version + 1,
+        rule: cleanRankRule(rule)
+      }
+    };
+  }
+  function getRankLeadsSort(settings) {
+    return settings["rank_leads_sort"] === true;
+  }
+  function withRankLeadsSort(settings, on) {
+    return { ...settings, rank_leads_sort: on === true };
+  }
+  function getSyncDerivationVersion(settings) {
+    const v = Number(settings["last_sync_derivation_version"]);
+    return Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
+  }
+  function withSyncDerivationVersion(settings, version) {
+    const v = Number(version);
+    return {
+      ...settings,
+      last_sync_derivation_version: Number.isFinite(v) && v > 0 ? Math.round(v) : 0
+    };
+  }
+  function derivationIsStale(settings, current) {
+    return getSyncDerivationVersion(settings) < current;
+  }
+  var CONFIG_RULES_TTL_MS = 30 * 864e5;
+  function getConfigRulesSyncedAt(settings) {
+    const v = Number(settings["config_rules_synced_at"]);
+    return Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
+  }
+  function withConfigRulesSyncedAt(settings, at) {
+    const v = Number(at);
+    return {
+      ...settings,
+      config_rules_synced_at: Number.isFinite(v) && v > 0 ? Math.round(v) : 0
+    };
+  }
+  function configRulesAreFresh(settings, hasRows, now) {
+    if (!hasRows) return false;
+    const at = getConfigRulesSyncedAt(settings);
+    if (!at) return false;
+    return now - at < CONFIG_RULES_TTL_MS;
+  }
+  function getScanVars(settings) {
+    const raw = settings["scan_vars"];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+    const out = {};
+    for (const [stepId, value] of Object.entries(raw)) {
+      const clean2 = cleanStepVars(stepId, value);
+      if (clean2) out[stepId] = clean2;
+    }
+    return out;
+  }
+  function getSkippedSteps(settings) {
+    const raw = settings["last_skipped_steps"];
+    if (!Array.isArray(raw)) return [];
+    return raw.map((v) => String(v != null ? v : "")).filter(Boolean);
+  }
+  function withSkippedSteps(settings, steps) {
+    const list2 = Array.isArray(steps) ? steps.map((v) => String(v != null ? v : "")).filter(Boolean) : [];
+    return { ...settings, last_skipped_steps: list2 };
+  }
+  function getTruncatedSteps(settings) {
+    const raw = settings["last_truncated_steps"];
+    if (!Array.isArray(raw)) return [];
+    return raw.map((v) => String(v != null ? v : "")).filter(Boolean);
+  }
+  function withTruncatedSteps(settings, steps) {
+    const list2 = Array.isArray(steps) ? steps.map((v) => String(v != null ? v : "")).filter(Boolean) : [];
+    return { ...settings, last_truncated_steps: list2 };
+  }
+  function getStepRows(settings) {
+    const raw = settings["last_step_rows"];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+    const out = {};
+    for (const [k, v] of Object.entries(raw)) {
+      const n = Number(v);
+      if (k && Number.isFinite(n)) out[k] = n;
+    }
+    return out;
+  }
+  function withStepRows(settings, rows) {
+    return { ...settings, last_step_rows: getStepRows({ last_step_rows: rows }) };
+  }
+  function getPostureBaseline(settings) {
+    const raw = settings["posture_baseline"];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    const snap = raw;
+    return Array.isArray(snap["measures"]) ? snap : null;
+  }
+  function withPostureBaseline(settings, snapshot) {
+    return { ...settings, posture_baseline: snapshot != null ? snapshot : null };
+  }
+  function getSkipReasons(settings) {
+    const raw = settings["last_skip_reasons"];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+    const out = {};
+    for (const [k, v] of Object.entries(raw)) {
+      if (k && typeof v === "string" && v) out[k] = v;
+    }
+    return out;
+  }
+  function withSkipReasons(settings, reasons) {
+    return { ...settings, last_skip_reasons: getSkipReasons({ last_skip_reasons: reasons }) };
+  }
+  var DEFAULT_FRAMEWORK_IDS = [
+    "wf-id-275",
+    // OWASP Top 10 For Agentic Applications 2026
+    "wf-id-201",
+    // OWASP LLM Security Top 10
+    "wf-id-214",
+    // 5Rs - Wiz for Data Security
+    "wf-id-106"
+    // OWASP ML Security Top 10
+  ];
+  function getSelectedFrameworks(settings) {
+    const raw = settings["selected_frameworks"];
+    if (!Array.isArray(raw)) return DEFAULT_FRAMEWORK_IDS.slice();
+    return raw.map((v) => String(v != null ? v : "")).filter(Boolean);
+  }
+  function resolveDefaultFrameworks(catalogue) {
+    var _a5;
+    const wanted = ["AGENTIC", "LLM", "5R", "ML"];
+    const picked = [];
+    for (const want of wanted) {
+      for (const f of catalogue) {
+        const n = String((_a5 = f.name) != null ? _a5 : "").toUpperCase();
+        const hit = want === "5R" ? /\b5\s?RS?\b/.test(n) : want === "ML" ? n.includes("MACHINE LEARNING") || /\bML\b/.test(n) : want === "LLM" ? n.includes("LLM") : n.includes("AGENTIC");
+        if (hit && picked.indexOf(f.id) === -1) {
+          picked.push(f.id);
+          break;
+        }
+      }
+    }
+    return picked.length ? picked : DEFAULT_FRAMEWORK_IDS.slice();
+  }
+  function withSelectedFrameworks(settings, ids) {
+    const list2 = Array.isArray(ids) ? ids.map((v) => String(v != null ? v : "").trim()).filter(Boolean) : [];
+    const seen = {};
+    const deduped = list2.filter((id) => seen[id] ? false : seen[id] = true);
+    return { ...settings, selected_frameworks: deduped };
+  }
+  function getIssueCategories(settings) {
+    const raw = settings["issue_categories"];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      return DEFAULT_CATEGORY_IDS.slice();
+    }
+    return cleanCategoryIds(raw["ids"]);
+  }
+  function getIssueCategoriesVersion(settings) {
+    const raw = settings["issue_categories"];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return 0;
+    const v = Number(raw["version"]);
+    return Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
+  }
+  function withIssueCategories(settings, ids) {
+    return {
+      ...settings,
+      issue_categories: {
+        version: getIssueCategoriesVersion(settings) + 1,
+        ids: cleanCategoryIds(ids)
+      }
+    };
+  }
+  function getSyncScope(settings) {
+    return cleanSyncScope(settings["sync_scope"]);
+  }
+  function withSyncScope(settings, v) {
+    return { ...settings, sync_scope: cleanSyncScope(v) };
+  }
+  function withScanVars(settings, stepId, vars) {
+    const current = getScanVars(settings);
+    const clean2 = cleanStepVars(stepId, vars);
+    const next = { ...current };
+    if (clean2) next[stepId] = clean2;
+    else delete next[stepId];
+    return { ...settings, scan_vars: next };
+  }
+  function coercePinList(v) {
+    if (!Array.isArray(v)) return [];
+    const out = [];
+    for (const raw of v) {
+      const s = String(raw != null ? raw : "").trim();
+      if (s && out.indexOf(s) === -1) out.push(s);
+    }
+    return out;
+  }
+  function coercePins(raw) {
+    const rec4 = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+    const inList = coercePinList(rec4["in"]);
+    const outList = coercePinList(rec4["out"]);
+    const outSet = new Set(outList);
+    return { in: inList.filter((id) => !outSet.has(id)), out: outList };
+  }
+  function getFiveRsPins(settings) {
+    return coercePins(settings["five_rs_policy_pins"]);
+  }
+  function withFiveRsPins(settings, pins) {
+    return { ...settings, five_rs_policy_pins: coercePins(pins) };
+  }
+  function cleanFiveRsPins(pins, knownPolicyIds) {
+    const known = new Set(knownPolicyIds);
+    const base = coercePins(pins);
+    return {
+      in: base.in.filter((id) => known.has(id)),
+      out: base.out.filter((id) => known.has(id))
+    };
+  }
+
+  // src/domain/complianceTrend.ts
+  var COMPLIANCE_POSTURE_COLUMN = "compliance_posture_json";
+  var COMPLIANCE_POSTURE_MAX_CHARS = 45e3;
+  var LANDSCAPE_KEY = "__landscape";
+  var STATE_KEYS2 = ["scored", "noResources", "noPolicies", "unknown"];
+  function subcategoryCount(tree) {
+    return STATE_KEYS2.reduce((sum, k) => sum + (tree.stateCounts[k] || 0), 0);
+  }
+  function censusCompliancePosture(trees) {
+    const frameworks = {};
+    const scoredPcts = [];
+    for (const tree of trees) {
+      const scored = tree.state === "scored" && tree.posturePct !== null;
+      if (scored) scoredPcts.push(tree.posturePct);
+      frameworks[tree.frameworkId] = {
+        pct: scored ? tree.posturePct : null,
+        scored: tree.stateCounts.scored || 0,
+        subcategories: subcategoryCount(tree)
+      };
+    }
+    return {
+      avg: scoredPcts.length ? Math.round(scoredPcts.reduce((sum, p) => sum + p, 0) / scoredPcts.length) : null,
+      scoredFrameworks: scoredPcts.length,
+      frameworks
+    };
+  }
+  function encodeCompliancePosture(census) {
+    const json = JSON.stringify(census);
+    return json.length > COMPLIANCE_POSTURE_MAX_CHARS ? null : json;
+  }
+  function cellPct(v) {
+    if (v === null || v === void 0 || v === "") return null;
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < 0 || n > 100) return null;
+    return Math.round(n);
+  }
+  function cellCount2(v) {
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
+  }
+  function parseCensus(v) {
+    if (typeof v !== "string" || !v) return null;
+    let parsed;
+    try {
+      parsed = JSON.parse(v);
+    } catch {
+      return null;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const raw = parsed;
+    const rawFrameworks = raw["frameworks"];
+    if (!rawFrameworks || typeof rawFrameworks !== "object" || Array.isArray(rawFrameworks)) {
+      return null;
+    }
+    const frameworks = {};
+    for (const id of Object.keys(rawFrameworks)) {
+      const entry = rawFrameworks[id];
+      if (!entry || typeof entry !== "object") continue;
+      const e = entry;
+      frameworks[id] = {
+        pct: cellPct(e["pct"]),
+        scored: cellCount2(e["scored"]),
+        subcategories: cellCount2(e["subcategories"])
+      };
+    }
+    return {
+      avg: cellPct(raw["avg"]),
+      scoredFrameworks: cellCount2(raw["scoredFrameworks"]),
+      frameworks
+    };
+  }
+  function compliancePostureTrendFromHistory(rows, limit = 90) {
+    var _a5;
+    const points = [];
+    for (const r of rows) {
+      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
+      const census = parseCensus(r[COMPLIANCE_POSTURE_COLUMN]);
+      if (!census) continue;
+      const at = String(r["finished_at"] || r["started_at"] || "");
+      if (!at) continue;
+      const counts = { [LANDSCAPE_KEY]: census.avg };
+      let scored = 0;
+      let subcategories = 0;
+      for (const id of Object.keys(census.frameworks)) {
+        const entry = census.frameworks[id];
+        counts[id] = entry.pct;
+        scored += entry.scored;
+        subcategories += entry.subcategories;
+      }
+      const coverage = {
+        [LANDSCAPE_KEY]: { scored, subcategories, scoredFrameworks: census.scoredFrameworks }
+      };
+      for (const id of Object.keys(census.frameworks)) {
+        const entry = census.frameworks[id];
+        coverage[id] = { scored: entry.scored, subcategories: entry.subcategories };
+      }
+      points.push({ at, counts, coverage });
+    }
+    points.sort(cmpBy((p) => p.at));
+    return limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
+  }
+
+  // src/domain/graphProject.ts
+  var DEFAULT_PER_KIND_CAP = {
+    USER_ACCOUNT: 8,
+    BUCKET: 6,
+    // Same cap as BUCKET: the sensitive-data chain makes databases a real fan-out target for
+    // the first time — before it, no live query produced one at all.
+    DATABASE: 6,
+    DATABASE_SERVER: 6,
+    ACCESS_ROLE_BINDING: 5
+  };
+  var DEFAULT_KIND_CAP = 12;
+  function nodeOrder(a, b) {
+    var _a5, _b, _c, _d;
+    const sev = severityRank(a.severity) - severityRank(b.severity);
+    if (sev !== 0) return sev;
+    const issues2 = ((_a5 = b.openIssues) != null ? _a5 : 0) - ((_b = a.openIssues) != null ? _b : 0);
+    if (issues2 !== 0) return issues2;
+    const findings = ((_c = b.openFindings) != null ? _c : 0) - ((_d = a.openFindings) != null ? _d : 0);
+    if (findings !== 0) return findings;
+    return cmp(a.name, b.name);
+  }
+  function passesFilters(node2, f) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j;
+    if (!f) return true;
+    if (isRiskKind(node2.kind) && !((_a5 = f.kinds) == null ? void 0 : _a5.some(isRiskKind))) return true;
+    if (((_b = f.severities) == null ? void 0 : _b.length) && !f.severities.includes((_c = node2.severity) != null ? _c : "")) return false;
+    if (((_d = f.kinds) == null ? void 0 : _d.length) && !f.kinds.includes(node2.kind)) return false;
+    if (((_e = f.clouds) == null ? void 0 : _e.length) && !f.clouds.includes((_f = node2.cloudPlatform) != null ? _f : "")) return false;
+    if ((_g = f.projects) == null ? void 0 : _g.length) {
+      const names = ((_h = node2.projects) != null ? _h : []).map((p) => p.name);
+      if (!names.some((n) => f.projects.includes(n))) return false;
+    }
+    if (((_i = f.domains) == null ? void 0 : _i.length) && !f.domains.includes((_j = node2.domain) != null ? _j : "")) return false;
+    return true;
+  }
+  function projectGraph(doc, opts) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j;
+    const byId = indexBy(doc.nodes, (n) => n.id);
+    const adjacency2 = /* @__PURE__ */ new Map();
+    const sortedEdges = [...doc.edges].sort(cmpBy((e) => e.id));
+    for (const edge2 of sortedEdges) {
+      if (!byId.has(edge2.src) || !byId.has(edge2.dst)) continue;
+      if (!adjacency2.has(edge2.src)) adjacency2.set(edge2.src, []);
+      if (!adjacency2.has(edge2.dst)) adjacency2.set(edge2.dst, []);
+      adjacency2.get(edge2.src).push({ edge: edge2, otherId: edge2.dst });
+      adjacency2.get(edge2.dst).push({ edge: edge2, otherId: edge2.src });
+    }
+    const maxNodes = (_a5 = opts.maxNodes) != null ? _a5 : MAX_NODES_DEFAULT;
+    const maxEdges = (_b = opts.maxEdges) != null ? _b : MAX_EDGES_DEFAULT;
+    const expand = new Set((_c = opts.expandIds) != null ? _c : []);
+    let capped = false;
+    const shown = /* @__PURE__ */ new Set();
+    const summaries = [];
+    const summaryNodes = [];
+    const summaryEdges = [];
+    const queue = [];
+    const atNodeBudget = () => shown.size + summaryNodes.length >= maxNodes;
+    const orderedSeeds = opts.seedIds.map((id) => byId.get(id)).filter((n) => !!n && (!opts.filterSeeds || passesFilters(n, opts.filters))).sort(nodeOrder);
+    const seedWave = Math.max(1, Math.floor(maxNodes * SEED_WAVE_RATIO));
+    let seedCursor = 0;
+    function admitSeedWave() {
+      let admitted = 0;
+      while (admitted < seedWave && seedCursor < orderedSeeds.length) {
+        const seed = orderedSeeds[seedCursor];
+        if (shown.has(seed.id)) {
+          seedCursor++;
+          continue;
+        }
+        if (atNodeBudget()) return;
+        shown.add(seed.id);
+        queue.push({ id: seed.id, depth: 0 });
+        seedCursor++;
+        admitted++;
+      }
+    }
+    do {
+      admitSeedWave();
+      while (queue.length) {
+        const { id, depth } = queue.shift();
+        if (depth >= opts.depth && !expand.has(id)) continue;
+        const groups = /* @__PURE__ */ new Map();
+        for (const { otherId } of (_d = adjacency2.get(id)) != null ? _d : []) {
+          if (shown.has(otherId)) continue;
+          const other = byId.get(otherId);
+          if (!passesFilters(other, opts.filters)) continue;
+          if (!groups.has(other.kind)) groups.set(other.kind, []);
+          const group = groups.get(other.kind);
+          if (!group.some((n) => n.id === otherId)) group.push(other);
+        }
+        for (const kind of [...groups.keys()].sort()) {
+          const members = groups.get(kind).sort(nodeOrder);
+          const cap = expand.has(id) ? Infinity : (_g = (_f = (_e = opts.perKindCap) == null ? void 0 : _e[kind]) != null ? _f : DEFAULT_PER_KIND_CAP[kind]) != null ? _g : DEFAULT_KIND_CAP;
+          const overflow = members.length > cap;
+          const kept = overflow ? members.slice(0, Math.max(1, cap - 1)) : members;
+          for (const member of kept) {
+            if (atNodeBudget()) {
+              capped = true;
+              break;
+            }
+            shown.add(member.id);
+            queue.push({
+              id: member.id,
+              depth: expand.has(id) ? Math.max(depth + 1, opts.depth) : depth + 1
+            });
+          }
+          const hidden = members.filter((m) => !shown.has(m.id));
+          if (hidden.length) {
+            if (!overflow) {
+              capped = true;
+              continue;
+            }
+            if (atNodeBudget() || summaryEdges.length >= maxEdges) {
+              capped = true;
+              continue;
+            }
+            const sumId = `sum|${id}|${kind}`;
+            summaries.push({
+              id: sumId,
+              of: kind,
+              count: hidden.length,
+              parentId: id,
+              memberIds: hidden.map((m) => m.id)
+            });
+            summaryNodes.push({
+              id: sumId,
+              kind: "SUMMARY",
+              name: `+${hidden.length} more`,
+              summaryOf: kind,
+              summaryCount: hidden.length,
+              memberIds: hidden.map((m) => m.id)
+            });
+            const viaEdge = (_i = ((_h = adjacency2.get(id)) != null ? _h : []).find(
+              (a) => a.otherId === hidden[0].id
+            )) == null ? void 0 : _i.edge;
+            summaryEdges.push({
+              id: `${id}|SUMMARY|${sumId}`,
+              src: id,
+              dst: sumId,
+              type: (_j = viaEdge == null ? void 0 : viaEdge.type) != null ? _j : "USES"
+            });
+          }
+        }
+      }
+    } while (seedCursor < orderedSeeds.length && !atNodeBudget());
+    if (seedCursor < orderedSeeds.length) capped = true;
+    const inducedBudget = Math.max(0, maxEdges - summaryEdges.length);
+    const edges2 = [];
+    const seenEdge = /* @__PURE__ */ new Set();
+    for (const edge2 of sortedEdges) {
+      if (!shown.has(edge2.src) || !shown.has(edge2.dst)) continue;
+      if (seenEdge.has(edge2.id)) continue;
+      seenEdge.add(edge2.id);
+      if (edges2.length >= inducedBudget) {
+        capped = true;
+        break;
+      }
+      edges2.push(edge2);
+    }
+    const nodes = doc.nodes.filter((n) => shown.has(n.id));
+    return {
+      nodes: [...nodes, ...summaryNodes],
+      edges: [...edges2, ...summaryEdges],
+      summaries,
+      counts: {
+        totalNodes: doc.nodes.length,
+        shownNodes: nodes.length,
+        totalEdges: doc.edges.length,
+        shownEdges: edges2.length,
+        capped
+      }
+    };
+  }
+
+  // src/domain/graphLayout.ts
+  var LAYOUT_MODES = ["lanes", "rows", "grid", "organic", "radial"];
+  var DEFAULT_LAYOUT = "grid";
+  var GROUP_KEYS = ["asset", "combo", "project", "cloud", "kind", "severity", "domain"];
+  var SORT_KEYS = ["smart", "severity", "issues", "name"];
+  var GROUP_NONE = "__none__";
+  var LANE_OF = {
+    ISSUE: 0,
+    EXCESSIVE_ACCESS_FINDING: 0,
+    IDENTITY_ACCESS_FINDING: 0,
+    LATERAL_MOVEMENT_FINDING: 0,
+    EXCESSIVE_PRIVILEGE: 0,
+    MISSING_GUARDRAIL: 0,
+    INTERNET_EXPOSURE: 0,
+    AI_AGENT: 1,
+    AI_MODEL: 1,
+    AI_GUARDRAIL: 1,
+    AI_PIPELINE: 1,
+    AI_DATASET: 1,
+    MCP_SERVER: 1,
+    AI_AGENT_REGISTRY: 1,
+    AI_DEPLOYMENT: 1,
+    AI_EXTENSION: 1,
+    AI_GATEWAY: 1,
+    AI_SERVICE: 1,
+    AI_SKILL: 1,
+    AI_SKILL_TEMPLATE: 1,
+    AI_TOOL: 1,
+    SERVICE_ACCOUNT: 2,
+    USER_ACCOUNT: 2,
+    ACCESS_ROLE: 2,
+    ACCESS_ROLE_BINDING: 2,
+    IAM_BINDING: 2,
+    ACCESS_ROLE_PERMISSION: 2,
+    BUCKET: 3,
+    DATABASE: 3,
+    DATABASE_SERVER: 3,
+    SENSITIVE_DATA: 3,
+    // The bands ARE the path, read left to right, and the data-exposure chain ends here:
+    // agent (1) → identity (2) → classified store (3) → what was found in it (4). Filing data
+    // findings with the other evidence in band 0 would make the graph's most important edge
+    // its longest, running back across the whole canvas from the store it describes.
+    DATA_FINDING: 4,
+    VIRTUAL_MACHINE: 5,
+    SERVERLESS: 5,
+    CONTAINER_IMAGE: 5,
+    REPOSITORY: 5,
+    // Beside the compute that serves it. An endpoint is the far edge of the landscape, but it is
+    // inventory rather than evidence, so it belongs in the infrastructure band and not in the
+    // risk band where INTERNET_EXPOSURE sits.
+    ENDPOINT: 5
+  };
+  var LANE_COUNT = 6;
+  function laneOf(kind, summaryOf) {
+    var _a5, _b;
+    if (kind === "SUMMARY" && summaryOf) return (_a5 = LANE_OF[summaryOf]) != null ? _a5 : 2;
+    return (_b = LANE_OF[kind]) != null ? _b : 2;
+  }
+  var BARYCENTER_SWEEPS = 3;
+  var ROW_COL_STEP = 260;
+  var ROW_BAND_GAP = 150;
+  var ROW_CLUSTER_GAP = 140;
+  var LANE_CLUSTER_GAP = 48;
+  var ROW_SHELF_GAP = 200;
+  var LANE_SHELF_GAP = 200;
+  var VIEWPORT_ASPECT = 1.9;
+  var CELL_W = 240;
+  var CELL_H = 84;
+  var GROUP_PAD = 24;
+  var HEADER_H = 30;
+  var BLOCK_GAP_X = 48;
+  var BLOCK_GAP_Y = 64;
+  var MAX_SHELF_W = 1600;
+  var MAX_CLUSTER_ROWS = 16;
+  var CLUSTER_GAP_X = 32;
+  var CLUSTER_GAP_Y = 40;
+  function cmpName(a, b) {
+    return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+  }
+  function cmpId(a, b) {
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  }
+  function comparator(sort) {
+    if (sort === "severity") {
+      return (a, b) => severityRank(a.severity) - severityRank(b.severity) || cmpName(a, b) || cmpId(a, b);
+    }
+    if (sort === "issues") {
+      return (a, b) => {
+        var _a5, _b;
+        return ((_a5 = b.openIssues) != null ? _a5 : 0) - ((_b = a.openIssues) != null ? _b : 0) || cmpName(a, b) || cmpId(a, b);
+      };
+    }
+    if (sort === "name") {
+      return (a, b) => cmpName(a, b) || cmpId(a, b);
+    }
+    return (a, b) => nodeOrder(a, b) || cmpId(a, b);
+  }
+  function parentIndex(p) {
+    const byId = new Map(p.nodes.map((n) => [n.id, n]));
+    const parentOf = /* @__PURE__ */ new Map();
+    for (const e of [...p.edges].sort((a, b) => a.id < b.id ? -1 : 1)) {
+      const dst = byId.get(e.dst);
+      const src = byId.get(e.src);
+      if (!dst || !src || !isRiskKind(dst.kind) || parentOf.has(dst.id)) continue;
+      parentOf.set(dst.id, src);
+    }
+    for (const s of p.summaries) {
+      const parent = byId.get(s.parentId);
+      if (parent) parentOf.set(s.id, parent);
+    }
+    return parentOf;
+  }
+  function adjacency(p) {
+    const adj = /* @__PURE__ */ new Map();
+    for (const e of [...p.edges].sort((a, b) => a.id < b.id ? -1 : 1)) {
+      if (!adj.has(e.src)) adj.set(e.src, []);
+      if (!adj.has(e.dst)) adj.set(e.dst, []);
+      adj.get(e.src).push(e.dst);
+      adj.get(e.dst).push(e.src);
+    }
+    return adj;
+  }
+  function hopDepth(p) {
+    var _a5, _b, _c;
+    const { hubs } = assignToHubs(p, parentIndex(p));
+    const root = (_b = (_a5 = hubs[0]) != null ? _a5 : p.nodes[0]) != null ? _b : null;
+    const depth = /* @__PURE__ */ new Map();
+    if (!root) return { depth, root: null, max: 0 };
+    const adj = adjacency(p);
+    depth.set(root.id, 0);
+    const queue = [root.id];
+    let max = 0;
+    for (let head = 0; head < queue.length; head++) {
+      const id = queue[head];
+      const d = depth.get(id) + 1;
+      for (const next of (_c = adj.get(id)) != null ? _c : []) {
+        if (depth.has(next)) continue;
+        depth.set(next, d);
+        max = Math.max(max, d);
+        queue.push(next);
+      }
+    }
+    const orphanRing = max + 1;
+    let used = max;
+    for (const n of p.nodes) {
+      if (depth.has(n.id)) continue;
+      depth.set(n.id, orphanRing);
+      used = orphanRing;
+    }
+    return { depth, root, max: used };
+  }
+  function componentRoots(p) {
+    const parent = /* @__PURE__ */ new Map();
+    for (const n of p.nodes) parent.set(n.id, n.id);
+    const find = (x) => {
+      let root = x;
+      while (parent.get(root) !== root) root = parent.get(root);
+      while (parent.get(x) !== root) {
+        const next = parent.get(x);
+        parent.set(x, root);
+        x = next;
+      }
+      return root;
+    };
+    for (const e of [...p.edges].sort((a, b) => a.id < b.id ? -1 : 1)) {
+      if (!parent.has(e.src) || !parent.has(e.dst)) continue;
+      const a = find(e.src);
+      const b = find(e.dst);
+      if (a !== b) parent.set(a, b);
+    }
+    const roots = /* @__PURE__ */ new Map();
+    for (const n of p.nodes) roots.set(n.id, find(n.id));
+    return roots;
+  }
+  function clusterRanks(p) {
+    var _a5, _b, _c, _d, _e, _f, _g;
+    const { hubOf } = assignToHubs(p, parentIndex(p));
+    const roots = componentRoots(p);
+    const degree = /* @__PURE__ */ new Map();
+    for (const e of p.edges) {
+      degree.set(e.src, ((_a5 = degree.get(e.src)) != null ? _a5 : 0) + 1);
+      degree.set(e.dst, ((_b = degree.get(e.dst)) != null ? _b : 0) + 1);
+    }
+    const keyOf = /* @__PURE__ */ new Map();
+    for (const node2 of p.nodes) {
+      keyOf.set(node2.id, (_c = hubOf.get(node2.id)) != null ? _c : "cc:" + roots.get(node2.id));
+    }
+    const sharedEdges = (key) => {
+      var _a6, _b2;
+      const out = /* @__PURE__ */ new Map();
+      for (const e of [...p.edges].sort((a, b) => a.id < b.id ? -1 : 1)) {
+        const a = key(e.src);
+        const b = key(e.dst);
+        if (!a || !b || a === b) continue;
+        if (!out.has(a)) out.set(a, /* @__PURE__ */ new Map());
+        if (!out.has(b)) out.set(b, /* @__PURE__ */ new Map());
+        out.get(a).set(b, ((_a6 = out.get(a).get(b)) != null ? _a6 : 0) + 1);
+        out.get(b).set(a, ((_b2 = out.get(b).get(a)) != null ? _b2 : 0) + 1);
+      }
+      return out;
+    };
+    const merged = new Map([...keyOf.values()].map((k) => [k, k]));
+    const resolve = (k) => {
+      let root = k;
+      while (merged.get(root) !== root) root = merged.get(root);
+      return root;
+    };
+    const groupBy2 = (key) => {
+      const out = /* @__PURE__ */ new Map();
+      for (const node2 of p.nodes) {
+        const k = key(node2.id);
+        if (!out.has(k)) out.set(k, []);
+        out.get(k).push(node2);
+      }
+      return out;
+    };
+    const initial = groupBy2((id) => keyOf.get(id));
+    const initialShared = sharedEdges((id) => keyOf.get(id));
+    for (const key of [...initial.keys()].sort()) {
+      const list2 = initial.get(key);
+      if (list2.length !== 1 || !((_d = degree.get(list2[0].id)) != null ? _d : 0)) continue;
+      let best = 0;
+      let target = "";
+      for (const [other, weight] of [...(_e = initialShared.get(key)) != null ? _e : /* @__PURE__ */ new Map()].sort()) {
+        if (resolve(other) === resolve(key) || weight <= best) continue;
+        best = weight;
+        target = other;
+      }
+      if (target) merged.set(resolve(key), resolve(target));
+    }
+    const finalKey = (id) => resolve(keyOf.get(id));
+    const members = groupBy2(finalKey);
+    const shared = sharedEdges(finalKey);
+    const worst = (key) => {
+      var _a6;
+      let rank = SEVERITY_ORDER.length;
+      for (const n of (_a6 = members.get(key)) != null ? _a6 : []) rank = Math.min(rank, severityRank(n.severity));
+      return rank;
+    };
+    const keys = [...members.keys()].filter((k) => members.get(k).length > 1).sort((a, b) => worst(a) - worst(b) || members.get(b).length - members.get(a).length || (a < b ? -1 : a > b ? 1 : 0));
+    const chain = [];
+    const unplaced = new Set(keys);
+    while (unplaced.size) {
+      let pick2 = "";
+      let anchor = chain.length - 1;
+      let best = 0;
+      for (const k of keys) {
+        if (!unplaced.has(k)) continue;
+        const links = shared.get(k);
+        if (!links) continue;
+        for (let i = 0; i < chain.length; i++) {
+          const weight = (_f = links.get(chain[i])) != null ? _f : 0;
+          if (weight > best) {
+            best = weight;
+            pick2 = k;
+            anchor = i;
+          }
+        }
+      }
+      if (!pick2) {
+        pick2 = keys.find((k) => unplaced.has(k));
+        anchor = chain.length - 1;
+      }
+      chain.splice(anchor + 1, 0, pick2);
+      unplaced.delete(pick2);
+    }
+    const rankOfKey = new Map(chain.map((k, i) => [k, i]));
+    const tail = chain.length;
+    const ranks = /* @__PURE__ */ new Map();
+    for (const node2 of p.nodes) {
+      ranks.set(node2.id, (_g = rankOfKey.get(finalKey(node2.id))) != null ? _g : tail);
+    }
+    return ranks;
+  }
+  function packLanes(lanes, rankOf, step, gap2, bandSpan, shelfGap, pad, horizontal) {
+    var _a5, _b, _c, _d, _e;
+    const pos = /* @__PURE__ */ new Map();
+    const shelfOf = /* @__PURE__ */ new Map();
+    if (!rankOf) {
+      const widest = Math.max(1, ...lanes.map((l) => l.length));
+      for (const lane of lanes) {
+        const offset = (widest - lane.length) * step / 2;
+        lane.forEach((id, i) => {
+          pos.set(id, offset + i * step);
+          shelfOf.set(id, 0);
+        });
+      }
+      return { pos, shelfOf, extent: (widest - 1) * step, shelves: 1 };
+    }
+    const slots = /* @__PURE__ */ new Map();
+    for (const lane of lanes) {
+      const perRank = /* @__PURE__ */ new Map();
+      for (const id of lane) {
+        const r = (_a5 = rankOf.get(id)) != null ? _a5 : 0;
+        perRank.set(r, ((_b = perRank.get(r)) != null ? _b : 0) + 1);
+      }
+      for (const [r, count2] of perRank) slots.set(r, Math.max((_c = slots.get(r)) != null ? _c : 0, count2));
+    }
+    const ranks = [...slots.keys()].sort((a, b) => a - b);
+    if (!ranks.length) return { pos, shelfOf, extent: 0, shelves: 1 };
+    const runLength = ranks.reduce((acc, r) => acc + slots.get(r) * step + gap2, 0) - gap2;
+    let best = null;
+    let bestFit = 0;
+    let cumulative = 0;
+    for (let i = 0; i < ranks.length; i++) {
+      cumulative += slots.get(ranks[i]) * step + (i ? gap2 : 0);
+      const plan = wrapRun(ranks, slots, step, gap2, cumulative);
+      const along = plan.longest + pad;
+      const across = (plan.shelves - 1) * (bandSpan + shelfGap) + bandSpan + pad;
+      const fit = horizontal ? Math.min(VIEWPORT_ASPECT / along, 1 / across) : Math.min(VIEWPORT_ASPECT / across, 1 / along);
+      if (fit > bestFit * (1 + 1e-9)) {
+        bestFit = fit;
+        best = plan;
+      }
+    }
+    const { start, shelfOfRank } = best;
+    const shelf = best.shelves - 1;
+    let extent = 0;
+    for (const lane of lanes) {
+      let i = 0;
+      while (i < lane.length) {
+        const r = (_d = rankOf.get(lane[i])) != null ? _d : 0;
+        let j = i;
+        while (j < lane.length && ((_e = rankOf.get(lane[j])) != null ? _e : 0) === r) j++;
+        const offset = start.get(r) + (slots.get(r) - (j - i)) * step / 2;
+        for (let k = i; k < j; k++) {
+          const at = offset + (k - i) * step;
+          pos.set(lane[k], at);
+          shelfOf.set(lane[k], shelfOfRank.get(r));
+          extent = Math.max(extent, at);
+        }
+        i = j;
+      }
+    }
+    return { pos, shelfOf, extent, shelves: shelf + 1 };
+  }
+  function wrapRun(ranks, slots, step, gap2, target) {
+    const start = /* @__PURE__ */ new Map();
+    const shelfOfRank = /* @__PURE__ */ new Map();
+    let shelf = 0;
+    let cursor = 0;
+    let longest = 0;
+    for (const r of ranks) {
+      const length = slots.get(r) * step;
+      if (cursor > 0 && cursor + length > target) {
+        shelf++;
+        cursor = 0;
+      }
+      shelfOfRank.set(r, shelf);
+      start.set(r, cursor);
+      cursor += length + gap2;
+      longest = Math.max(longest, cursor - gap2);
+    }
+    return { start, shelfOfRank, shelves: shelf + 1, longest };
+  }
+  function layoutGraph(p, opts = {}) {
+    var _a5, _b;
+    const laid = ((_a5 = opts.groupBy) != null ? _a5 : []).length ? layoutGrouped(p, opts) : layoutWhole(p, opts, (_b = opts.mode) != null ? _b : DEFAULT_LAYOUT);
+    const clusters = clusterHulls(p, laid);
+    return clusters.length ? { ...laid, clusters } : laid;
+  }
+  function layoutWhole(p, opts, mode) {
+    if (mode === "radial") return layoutRadial(p, opts);
+    if (mode === "organic") return layoutOrganic(p, opts);
+    if (mode === "grid") return layoutGrid(p, opts);
+    return layoutLanes(p, opts, mode !== "lanes");
+  }
+  function layoutLanes(p, opts, horizontal) {
+    var _a5, _b, _c, _d, _e, _f;
+    const laneGap = (_a5 = opts.laneGap) != null ? _a5 : 280;
+    const rowGap = (_b = opts.rowGap) != null ? _b : 84;
+    const margin = (_c = opts.margin) != null ? _c : 120;
+    const sort = (_d = opts.sort) != null ? _d : "smart";
+    const lanes = Array.from({ length: LANE_COUNT }, () => []);
+    const laneIndex = /* @__PURE__ */ new Map();
+    for (const node2 of p.nodes) {
+      const lane = laneOf(node2.kind, node2.summaryOf);
+      laneIndex.set(node2.id, lane);
+      lanes[lane].push(node2.id);
+    }
+    if (sort === "smart") {
+      const neighbors = /* @__PURE__ */ new Map();
+      for (const edge2 of p.edges) {
+        if (!neighbors.has(edge2.src)) neighbors.set(edge2.src, []);
+        if (!neighbors.has(edge2.dst)) neighbors.set(edge2.dst, []);
+        neighbors.get(edge2.src).push(edge2.dst);
+        neighbors.get(edge2.dst).push(edge2.src);
+      }
+      const rowOf = /* @__PURE__ */ new Map();
+      const refreshRows = () => {
+        for (const lane of lanes) lane.forEach((id, i) => rowOf.set(id, i));
+      };
+      refreshRows();
+      for (let sweep = 0; sweep < BARYCENTER_SWEEPS; sweep++) {
+        for (const lane of lanes) {
+          if (lane.length < 2) continue;
+          const score = /* @__PURE__ */ new Map();
+          for (const id of lane) {
+            const others = ((_e = neighbors.get(id)) != null ? _e : []).filter(
+              (n) => laneIndex.get(n) !== laneIndex.get(id) && rowOf.has(n)
+            );
+            score.set(
+              id,
+              others.length ? others.reduce((acc, n) => {
+                var _a6;
+                return acc + ((_a6 = rowOf.get(n)) != null ? _a6 : 0);
+              }, 0) / others.length : (_f = rowOf.get(id)) != null ? _f : 0
+            );
+          }
+          lane.sort((a, b) => {
+            var _a6, _b2, _c2, _d2;
+            const d = ((_a6 = score.get(a)) != null ? _a6 : 0) - ((_b2 = score.get(b)) != null ? _b2 : 0);
+            if (d !== 0) return d;
+            return ((_c2 = rowOf.get(a)) != null ? _c2 : 0) - ((_d2 = rowOf.get(b)) != null ? _d2 : 0);
+          });
+          refreshRows();
+        }
+      }
+    } else {
+      const byId = new Map(p.nodes.map((n) => [n.id, n]));
+      const cmp2 = comparator(sort);
+      for (const lane of lanes) {
+        lane.sort((a, b) => cmp2(byId.get(a), byId.get(b)));
+      }
+    }
+    const rankOf = sort === "smart" ? clusterRanks(p) : null;
+    if (rankOf) {
+      for (const lane of lanes) {
+        lane.sort((a, b) => {
+          var _a6, _b2;
+          return ((_a6 = rankOf.get(a)) != null ? _a6 : 0) - ((_b2 = rankOf.get(b)) != null ? _b2 : 0);
+        });
+      }
+    }
+    const step = horizontal ? ROW_COL_STEP : rowGap;
+    const gap2 = horizontal ? ROW_CLUSTER_GAP : LANE_CLUSTER_GAP;
+    const bandGap = horizontal ? ROW_BAND_GAP : laneGap;
+    const occupied = lanes.map((lane, i) => lane.length ? i : -1).filter((i) => i >= 0);
+    const slotOfBand = (i) => opts.compactBands ? occupied.indexOf(i) : i;
+    const bandCount = opts.compactBands ? Math.max(occupied.length, 1) : LANE_COUNT;
+    const bandSpan = (bandCount - 1) * bandGap;
+    const shelfPitch = bandSpan + (horizontal ? ROW_SHELF_GAP : LANE_SHELF_GAP);
+    const { pos, shelfOf, extent, shelves } = packLanes(
+      lanes,
+      rankOf,
+      step,
+      rankOf ? gap2 : 0,
+      bandSpan,
+      horizontal ? ROW_SHELF_GAP : LANE_SHELF_GAP,
+      margin * 2,
+      horizontal
+    );
+    const nodes = [];
+    for (let shelf = 0; shelf < shelves; shelf++) {
+      lanes.forEach((lane, laneIdx) => {
+        for (const id of lane) {
+          if (shelfOf.get(id) !== shelf) continue;
+          const along = margin + pos.get(id);
+          const across = margin + shelf * shelfPitch + slotOfBand(laneIdx) * bandGap;
+          nodes.push({
+            id,
+            lane: laneIdx,
+            cluster: rankOf == null ? void 0 : rankOf.get(id),
+            shelf: shelves > 1 ? shelf : void 0,
+            x: horizontal ? along : across,
+            y: horizontal ? across : along
+          });
+        }
+      });
+    }
+    const alongSize = margin * 2 + extent;
+    const acrossSize = margin * 2 + (shelves - 1) * shelfPitch + bandSpan;
+    return horizontal ? {
+      nodes,
+      width: alongSize,
+      height: acrossSize,
+      laneGap: ROW_BAND_GAP,
+      rowGap: ROW_COL_STEP,
+      mode: "rows"
+    } : {
+      nodes,
+      width: acrossSize,
+      height: alongSize,
+      laneGap,
+      rowGap,
+      mode: "lanes"
+    };
+  }
+  function groupKeyOf(node2, groupBy2, parentOf) {
+    if ((node2.kind === "SUMMARY" || isRiskKind(node2.kind)) && groupBy2 !== "kind") {
+      const own = ownGroupKey(node2, groupBy2);
+      if (own !== GROUP_NONE) return own;
+      const parent = parentOf.get(node2.id);
+      return parent ? groupKeyOf(parent, groupBy2, parentOf) : GROUP_NONE;
+    }
+    return ownGroupKey(node2, groupBy2);
+  }
+  function ownGroupKey(node2, groupBy2) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h;
+    switch (groupBy2) {
+      case "combo": {
+        const groups = [...(_a5 = node2.comboGroups) != null ? _a5 : []].sort();
+        return (_b = groups[0]) != null ? _b : GROUP_NONE;
+      }
+      case "project": {
+        const names = ((_c = node2.projects) != null ? _c : []).map((p) => p.name).sort();
+        return (_d = names[0]) != null ? _d : GROUP_NONE;
+      }
+      case "cloud":
+        return (_e = node2.cloudPlatform) != null ? _e : GROUP_NONE;
+      case "kind":
+        return node2.kind === "SUMMARY" ? (_f = node2.summaryOf) != null ? _f : "SUMMARY" : node2.kind;
+      case "severity":
+        return (_g = node2.severity) != null ? _g : GROUP_NONE;
+      case "domain":
+        return (_h = node2.domain) != null ? _h : GROUP_NONE;
+      case "asset":
+        return GROUP_NONE;
+    }
+  }
+  function groupLabel(key, groupBy2) {
+    var _a5, _b;
+    if (key === GROUP_NONE) return "Ungrouped";
+    if (groupBy2 === "combo") return (_b = (_a5 = comboGroupById(key)) == null ? void 0 : _a5.shortLabel) != null ? _b : key;
+    return key;
+  }
+  function orderGroups(keys, groupBy2, members) {
+    const canonical = (key) => {
+      if (groupBy2 === "severity") return SEVERITY_ORDER.indexOf(key);
+      if (groupBy2 === "kind") return NODE_KINDS.indexOf(key);
+      if (groupBy2 === "combo") return REGISTER_GROUPS.findIndex((g) => g.id === key);
+      return -1;
+    };
+    const worstSeverity2 = (key) => {
+      var _a5;
+      let worst = SEVERITY_ORDER.length;
+      for (const n of (_a5 = members.get(key)) != null ? _a5 : []) worst = Math.min(worst, severityRank(n.severity));
+      return worst;
+    };
+    return [...keys].sort((a, b) => {
+      if (a === GROUP_NONE) return b === GROUP_NONE ? 0 : 1;
+      if (b === GROUP_NONE) return -1;
+      const ca = canonical(a);
+      const cb = canonical(b);
+      if (ca !== -1 || cb !== -1) {
+        if (ca === -1) return 1;
+        if (cb === -1) return -1;
+        return ca - cb;
+      }
+      return worstSeverity2(a) - worstSeverity2(b) || (a < b ? -1 : a > b ? 1 : 0);
+    });
+  }
+  var RING_CAP = 8;
+  var RING_RX = 300;
+  var RING_RY = 150;
+  function round2(v) {
+    return Math.round(v * 100) / 100;
+  }
+  function packBlocks(specs, wrapW, origin, gap2 = { x: BLOCK_GAP_X, y: BLOCK_GAP_Y }) {
+    const at = [];
+    let shelfX = origin;
+    let shelfY = origin;
+    let shelfH = 0;
+    let maxX = 0;
+    for (const spec of specs) {
+      if (shelfX > origin && shelfX + spec.width > origin + wrapW) {
+        shelfY += shelfH + gap2.y;
+        shelfX = origin;
+        shelfH = 0;
+      }
+      at.push({ spec, x: shelfX, y: shelfY });
+      shelfX += spec.width + gap2.x;
+      shelfH = Math.max(shelfH, spec.height);
+      maxX = Math.max(maxX, at[at.length - 1].x + spec.width);
+    }
+    return { at, width: maxX, height: shelfY + shelfH };
+  }
+  function shelfWidth(specs, floor) {
+    const area = specs.reduce(
+      (acc, s) => acc + (s.width + BLOCK_GAP_X) * (s.height + BLOCK_GAP_Y),
+      0
+    );
+    return Math.max(floor, Math.ceil(Math.sqrt(area * 1.8)));
+  }
+  function nestBlock(key, label, children) {
+    const inset = HEADER_H + GROUP_PAD;
+    const packed = packBlocks(children, shelfWidth(children, 900), inset);
+    const cells = [];
+    const subs = [];
+    for (const place of packed.at) {
+      for (const c of place.spec.cells) {
+        cells.push({ id: c.id, x: place.x + c.x, y: place.y + c.y });
+      }
+      subs.push({
+        key: place.spec.key,
+        label: place.spec.label,
+        count: place.spec.cells.length,
+        x: place.x,
+        y: place.y,
+        width: place.spec.width,
+        height: place.spec.height
+      });
+    }
+    return {
+      key,
+      label,
+      cells,
+      subs,
+      width: packed.width + GROUP_PAD,
+      height: packed.height + GROUP_PAD
+    };
+  }
+  function subProjection(p, list2) {
+    const ids = new Set(list2.map((n) => n.id));
+    return {
+      nodes: list2,
+      edges: p.edges.filter((e) => ids.has(e.src) && ids.has(e.dst)),
+      summaries: p.summaries.filter((s) => ids.has(s.id)),
+      counts: p.counts
+    };
+  }
+  function blockOf(key, label, layout) {
+    const pts = layout.nodes;
+    const minX = Math.min(...pts.map((n) => n.x));
+    const minY = Math.min(...pts.map((n) => n.y));
+    const maxX = Math.max(...pts.map((n) => n.x));
+    const maxY = Math.max(...pts.map((n) => n.y));
+    const originX = GROUP_PAD + CELL_W / 2;
+    const originY = HEADER_H + GROUP_PAD + CELL_H / 2;
+    return {
+      key,
+      label,
+      width: GROUP_PAD * 2 + CELL_W + (maxX - minX),
+      height: HEADER_H + GROUP_PAD * 2 + CELL_H + (maxY - minY),
+      cells: pts.map((n) => ({
+        id: n.id,
+        x: round2(originX + n.x - minX),
+        y: round2(originY + n.y - minY)
+      }))
+    };
+  }
+  function blockFor(mode, key, label, list2, p, opts, hub) {
+    var _a5;
+    if (!list2.length) return gridBlock(key, label, list2);
+    if (mode === "grid") {
+      if (((_a5 = opts.sort) != null ? _a5 : "smart") !== "smart") return gridBlock(key, label, list2);
+      const packed = packClusters(list2, componentRoots(p), { columns: 4, width: 4 * CELL_W });
+      return {
+        key,
+        label,
+        width: GROUP_PAD * 2 + packed.width,
+        height: HEADER_H + GROUP_PAD * 2 + packed.height,
+        cells: packed.cells.map((c) => ({
+          id: c.id,
+          x: round2(GROUP_PAD + c.x),
+          y: round2(HEADER_H + GROUP_PAD + c.y)
+        }))
+      };
+    }
+    if (mode === "radial") {
+      const centre = hub != null ? hub : list2[0];
+      return radialBlock(key, label, centre, list2.filter((n) => n.id !== centre.id));
+    }
+    const sub = subProjection(p, list2);
+    const inner = { ...opts, margin: 0, groupBy: [], compactBands: true };
+    return blockOf(key, label, layoutWhole(sub, inner, mode));
+  }
+  function gridColumns(n) {
+    return Math.max(1, Math.min(n, Math.round(Math.sqrt(VIEWPORT_ASPECT * CELL_H * n / CELL_W))));
+  }
+  function gridBlock(key, label, list2, opts = {}) {
+    var _a5;
+    const cols = (_a5 = opts.columns) != null ? _a5 : Math.min(4, Math.max(1, Math.ceil(Math.sqrt(list2.length))));
+    const rows = Math.ceil(list2.length / cols);
+    const pad = opts.chrome === false ? 0 : GROUP_PAD;
+    const header = opts.chrome === false ? 0 : HEADER_H;
+    return {
+      key,
+      label,
+      width: pad * 2 + cols * CELL_W,
+      height: header + pad * 2 + rows * CELL_H,
+      cells: list2.map((node2, i) => ({
+        id: node2.id,
+        x: pad + i % cols * CELL_W + CELL_W / 2,
+        y: header + pad + Math.floor(i / cols) * CELL_H + CELL_H / 2
+      }))
+    };
+  }
+  function packClusters(sorted, roots, limit = {}) {
+    var _a5, _b;
+    if (!sorted.length) return { cells: [], width: 0, height: 0 };
+    const runs = /* @__PURE__ */ new Map();
+    for (const node2 of sorted) {
+      const root = (_a5 = roots.get(node2.id)) != null ? _a5 : node2.id;
+      if (!runs.has(root)) runs.set(root, []);
+      runs.get(root).push(node2);
+    }
+    const members = [];
+    const lone = [];
+    for (const [root, list2] of runs) {
+      if (list2.length < 2) lone.push(...list2);
+      else members.push([root, list2]);
+    }
+    if (lone.length) members.push(["", lone]);
+    const shaped = (rows) => members.map(([root, list2]) => {
+      var _a6;
+      return gridBlock(
+        root,
+        "",
+        list2,
+        {
+          columns: Math.max(1, Math.min((_a6 = limit.columns) != null ? _a6 : Infinity, Math.ceil(list2.length / rows))),
+          chrome: false
+        }
+      );
+    });
+    let best = null;
+    let bestFit = 0;
+    const deepest = Math.max(...members.map(([, list2]) => list2.length));
+    for (let rows = 1; rows <= Math.min(deepest, MAX_CLUSTER_ROWS); rows++) {
+      const specs = shaped(rows);
+      const widths = [];
+      let run2 = 0;
+      for (const spec of specs) {
+        run2 += spec.width + CLUSTER_GAP_X;
+        const width = run2 - CLUSTER_GAP_X;
+        if (!limit.width || width <= limit.width) widths.push(width);
+      }
+      if (!widths.length) widths.push((_b = limit.width) != null ? _b : specs[0].width);
+      for (const width of widths) {
+        const packed = packBlocks(specs, width, 0, { x: CLUSTER_GAP_X, y: CLUSTER_GAP_Y });
+        const fit = Math.min(VIEWPORT_ASPECT / packed.width, 1 / packed.height);
+        if (fit > bestFit * (1 + 1e-9)) {
+          bestFit = fit;
+          best = packed;
+        }
+      }
+    }
+    const cells = [];
+    for (const place of best.at) {
+      for (const c of place.spec.cells) {
+        cells.push({ id: c.id, x: round2(place.x + c.x), y: round2(place.y + c.y) });
+      }
+    }
+    return { cells, width: best.width, height: best.height };
+  }
+  function radialBlock(key, label, hub, satellites) {
+    const rings = [];
+    for (let i = 0, ring = 1; i < satellites.length; ring++) {
+      rings.push(satellites.slice(i, i + RING_CAP * ring));
+      i += RING_CAP * ring;
+    }
+    const n = rings.length;
+    const halfW = RING_RX * n + CELL_W / 2;
+    const halfH = RING_RY * n + CELL_H / 2;
+    const width = GROUP_PAD * 2 + halfW * 2;
+    const height = HEADER_H + GROUP_PAD * 2 + halfH * 2;
+    const cx = width / 2;
+    const cy = HEADER_H + GROUP_PAD + halfH;
+    const cells = [{ id: hub.id, x: cx, y: cy }];
+    rings.forEach((ringNodes, ri) => {
+      const rx = RING_RX * (ri + 1);
+      const ry = RING_RY * (ri + 1);
+      const step = Math.PI * 2 / ringNodes.length;
+      ringNodes.forEach((node2, k) => {
+        const a = -Math.PI / 2 + k * step;
+        cells.push({
+          id: node2.id,
+          x: round2(cx + rx * Math.cos(a)),
+          y: round2(cy + ry * Math.sin(a))
+        });
+      });
+    });
+    return { key, label, width, height, cells };
+  }
+  function assignToHubs(p, parentOf) {
+    var _a5;
+    const cmp2 = (a, b) => nodeOrder(a, b) || cmpId(a, b);
+    let hubs = p.nodes.filter((n) => n.kind === "AI_AGENT");
+    if (!hubs.length) {
+      hubs = p.nodes.filter((n) => AI_ASSET_KINDS.includes(n.kind));
+    }
+    hubs = [...hubs].sort(cmp2);
+    const adj = adjacency(p);
+    const hubOf = /* @__PURE__ */ new Map();
+    const queue = [];
+    for (const h of hubs) {
+      hubOf.set(h.id, h.id);
+      queue.push(h.id);
+    }
+    while (queue.length) {
+      const id = queue.shift();
+      for (const next of (_a5 = adj.get(id)) != null ? _a5 : []) {
+        if (hubOf.has(next)) continue;
+        hubOf.set(next, hubOf.get(id));
+        queue.push(next);
+      }
+    }
+    for (const [childId, parent] of parentOf) {
+      const h = hubOf.get(parent.id);
+      if (h) hubOf.set(childId, h);
+    }
+    return { hubOf, hubs };
+  }
+  function layoutGrouped(p, opts) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h;
+    const margin = (_a5 = opts.margin) != null ? _a5 : 120;
+    const levels = (_b = opts.groupBy) != null ? _b : [];
+    const groupBy2 = levels[0];
+    const second = (_c = levels[1]) != null ? _c : null;
+    const inner = groupBy2 === "asset" || second === "asset" || second === groupBy2 ? null : second;
+    const sort = (_d = opts.sort) != null ? _d : "smart";
+    const mode = (_e = opts.mode) != null ? _e : DEFAULT_LAYOUT;
+    const parentOf = parentIndex(p);
+    const cmp2 = memberOrder(p, sort);
+    const block = (key, label, list2, hub) => blockFor(mode, key, label, [...list2].sort(cmp2), p, opts, hub);
+    const specs = [];
+    if (groupBy2 === "asset") {
+      const { hubOf, hubs } = assignToHubs(p, parentOf);
+      const members = new Map(hubs.map((h) => [h.id, []]));
+      const strays = [];
+      for (const node2 of p.nodes) {
+        const key = hubOf.get(node2.id);
+        if (key) members.get(key).push(node2);
+        else strays.push(node2);
+      }
+      for (const hub of hubs) specs.push(block(hub.id, hub.name, members.get(hub.id), hub));
+      if (strays.length) specs.push(block(GROUP_NONE, "Ungrouped", strays));
+    } else {
+      const members = /* @__PURE__ */ new Map();
+      for (const node2 of p.nodes) {
+        const key = groupKeyOf(node2, groupBy2, parentOf);
+        if (!members.has(key)) members.set(key, []);
+        members.get(key).push(node2);
+      }
+      for (const key of orderGroups([...members.keys()], groupBy2, members)) {
+        const list2 = members.get(key);
+        const label = groupLabel(key, groupBy2);
+        if (!inner) {
+          specs.push(block(key, label, list2));
+          continue;
+        }
+        const subs = /* @__PURE__ */ new Map();
+        for (const node2 of list2) {
+          const k2 = groupKeyOf(node2, inner, parentOf);
+          if (!subs.has(k2)) subs.set(k2, []);
+          subs.get(k2).push(node2);
+        }
+        const children = orderGroups([...subs.keys()], inner, subs).map((k2) => block(k2, groupLabel(k2, inner), subs.get(k2)));
+        specs.push(nestBlock(key, label, children));
+      }
+    }
+    const packed = packBlocks(specs, shelfWidth(specs, MAX_SHELF_W), margin);
+    const nodes = [];
+    const groups = [];
+    for (const { spec, x: gx, y: gy } of packed.at) {
+      const parentIdx = groups.length;
+      groups.push({
+        id: `${groupBy2}:${spec.key}`,
+        key: spec.key,
+        label: spec.label,
+        x: gx,
+        y: gy,
+        width: spec.width,
+        height: spec.height,
+        count: spec.cells.length,
+        by: groupBy2,
+        depth: 0
+      });
+      for (const sub of (_f = spec.subs) != null ? _f : []) {
+        groups.push({
+          id: `${groupBy2}:${spec.key}/${inner}:${sub.key}`,
+          key: sub.key,
+          label: sub.label,
+          x: gx + sub.x,
+          y: gy + sub.y,
+          width: sub.width,
+          height: sub.height,
+          count: sub.count,
+          by: inner,
+          depth: 1,
+          parent: parentIdx
+        });
+      }
+      for (const c of spec.cells) {
+        const px = gx + c.x;
+        const py = gy + c.y;
+        let lane = parentIdx;
+        for (let i = 0; i < ((_h = (_g = spec.subs) == null ? void 0 : _g.length) != null ? _h : 0); i++) {
+          const sub = spec.subs[i];
+          if (c.x >= sub.x && c.x <= sub.x + sub.width && c.y >= sub.y && c.y <= sub.y + sub.height) {
+            lane = parentIdx + 1 + i;
+            break;
+          }
+        }
+        nodes.push({ id: c.id, lane, x: px, y: py });
+      }
+    }
+    return {
+      nodes,
+      width: packed.width + margin,
+      height: packed.height + margin,
+      laneGap: CELL_W,
+      rowGap: CELL_H,
+      // The ARRANGEMENT, which is what `mode` means everywhere now — a grouped layout used to
+      // report "grouped" and swallow the arrangement with it. `groups` being present is what says
+      // this picture is grouped, and the renderer reads it that way.
+      mode,
+      groups
+    };
+  }
+  function layoutGrid(p, opts) {
+    var _a5, _b;
+    const margin = (_a5 = opts.margin) != null ? _a5 : 120;
+    const sort = (_b = opts.sort) != null ? _b : "smart";
+    const cmp2 = memberOrder(p, sort);
+    const sorted = [...p.nodes].sort(cmp2);
+    const packed = sort === "smart" ? packClusters(sorted, componentRoots(p)) : gridBlock("", "", sorted, { columns: gridColumns(sorted.length), chrome: false });
+    const rows = [...new Set(packed.cells.map((c) => c.y))].sort((a, b) => a - b);
+    return {
+      nodes: packed.cells.map((c) => ({
+        id: c.id,
+        x: round2(margin + c.x),
+        y: round2(margin + c.y),
+        lane: rows.indexOf(c.y)
+      })),
+      width: round2(margin * 2 + packed.width),
+      height: round2(margin * 2 + packed.height),
+      laneGap: CELL_W,
+      rowGap: CELL_H,
+      mode: "grid"
+    };
+  }
+  var FREE_W = CELL_W;
+  var FREE_H = CELL_H;
+  var RING_STEP = 220;
+  var FR_PAIR_BUDGET = 6e3;
+  var FR_MIN_STEPS = 30;
+  var FR_MAX_STEPS = 120;
+  var FR_GRAVITY = 0.06;
+  var FR_COHESION = 0.1;
+  var SEPARATE_PASSES = 24;
+  function layoutRadial(p, opts) {
+    var _a5, _b, _c, _d;
+    const margin = (_a5 = opts.margin) != null ? _a5 : 120;
+    const cmp2 = memberOrder(p, (_b = opts.sort) != null ? _b : "smart");
+    const { depth, max } = hopDepth(p);
+    const rings = Array.from({ length: max + 1 }, () => []);
+    for (const node2 of p.nodes) rings[(_c = depth.get(node2.id)) != null ? _c : 0].push(node2);
+    for (const ring of rings) ring.sort(cmp2);
+    const fits = (count2) => count2 < 2 ? 0 : FREE_W / (2 * Math.sin(Math.PI / count2));
+    const radii = [];
+    let prev = 0;
+    for (let d = 0; d < rings.length; d++) {
+      if (d === 0) {
+        prev = fits(rings[0].length);
+        radii.push(round2(prev));
+        continue;
+      }
+      prev = Math.max(prev + RING_STEP, fits(rings[d].length));
+      radii.push(round2(prev));
+    }
+    const outer = (_d = radii[radii.length - 1]) != null ? _d : 0;
+    const half = outer + FREE_W / 2;
+    const cx = round2(margin + half);
+    const cy = round2(margin + outer + FREE_H / 2);
+    const nodes = [];
+    rings.forEach((ring, d) => {
+      if (!ring.length) return;
+      if (d === 0 && ring.length === 1) {
+        nodes.push({ id: ring[0].id, x: cx, y: cy, lane: 0 });
+        return;
+      }
+      const r = radii[d];
+      const step = Math.PI * 2 / ring.length;
+      ring.forEach((node2, k) => {
+        const a = -Math.PI / 2 + k * step;
+        nodes.push({
+          id: node2.id,
+          x: round2(cx + r * Math.cos(a)),
+          y: round2(cy + r * Math.sin(a)),
+          lane: d
+        });
+      });
+    });
+    return {
+      nodes,
+      width: round2(cx + half + margin),
+      height: round2(cy + outer + FREE_H / 2 + margin),
+      // Reported for the renderer's edge routing and keyboard steps, not used for placement here.
+      laneGap: RING_STEP,
+      rowGap: FREE_H,
+      mode: "radial"
+    };
+  }
+  function layoutOrganic(p, opts) {
+    var _a5, _b;
+    const margin = (_a5 = opts.margin) != null ? _a5 : 120;
+    const n = p.nodes.length;
+    const seed = layoutRadial(p, { ...opts, margin: 0 });
+    const component = componentRoots(p);
+    const at = new Map(seed.nodes.map((s) => [s.id, { x: s.x, y: s.y }]));
+    const lane = new Map(seed.nodes.map((s) => [s.id, s.lane]));
+    const ids = p.nodes.map((node2) => node2.id).filter((id) => at.has(id));
+    if (ids.length > 1) {
+      const area = Math.max(seed.width, 1) * Math.max(seed.height, 1);
+      const k = Math.sqrt(area / ids.length);
+      const cx = seed.width / 2;
+      const cy = seed.height / 2;
+      const steps = Math.min(FR_MAX_STEPS, Math.max(FR_MIN_STEPS, Math.round(FR_PAIR_BUDGET / n)));
+      const disp = new Map(ids.map((id) => [id, { x: 0, y: 0 }]));
+      const springs = p.edges.filter((e) => at.has(e.src) && at.has(e.dst) && e.src !== e.dst).map((e) => [e.src, e.dst]);
+      for (let step = 0; step < steps; step++) {
+        const temp = k / 10 * (1 - step / steps);
+        for (const d of disp.values()) {
+          d.x = 0;
+          d.y = 0;
+        }
+        for (let i = 0; i < ids.length; i++) {
+          const a = at.get(ids[i]);
+          const da = disp.get(ids[i]);
+          for (let j = i + 1; j < ids.length; j++) {
+            const b = at.get(ids[j]);
+            let dx = a.x - b.x;
+            let dy = a.y - b.y;
+            let dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < 0.01) {
+              dx = i - j || 1;
+              dy = 1;
+              dist = Math.sqrt(dx * dx + dy * dy);
+            }
+            const force = k * k / dist;
+            const ux = dx / dist * force;
+            const uy = dy / dist * force;
+            da.x += ux;
+            da.y += uy;
+            const db = disp.get(ids[j]);
+            db.x -= ux;
+            db.y -= uy;
+          }
+        }
+        for (const [src, dst] of springs) {
+          const a = at.get(src);
+          const b = at.get(dst);
+          const dx = a.x - b.x;
+          const dy = a.y - b.y;
+          const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 0.01);
+          const force = dist * dist / k;
+          const ux = dx / dist * force;
+          const uy = dy / dist * force;
+          disp.get(src).x -= ux;
+          disp.get(src).y -= uy;
+          disp.get(dst).x += ux;
+          disp.get(dst).y += uy;
+        }
+        const hub = /* @__PURE__ */ new Map();
+        for (const id of ids) {
+          const key = component.get(id);
+          const acc = (_b = hub.get(key)) != null ? _b : { x: 0, y: 0, n: 0 };
+          const a = at.get(id);
+          acc.x += a.x;
+          acc.y += a.y;
+          acc.n += 1;
+          hub.set(key, acc);
+        }
+        for (const id of ids) {
+          const a = at.get(id);
+          const d = disp.get(id);
+          const own = hub.get(component.get(id));
+          d.x += (own.x / own.n - a.x) * FR_COHESION * k;
+          d.y += (own.y / own.n - a.y) * FR_COHESION * k;
+          d.x += (cx - a.x) * FR_GRAVITY * k;
+          d.y += (cy - a.y) * FR_GRAVITY * k;
+          const len = Math.sqrt(d.x * d.x + d.y * d.y);
+          if (len < 0.01) continue;
+          const travel = Math.min(len, temp);
+          a.x += d.x / len * travel;
+          a.y += d.y / len * travel;
+        }
+      }
+    }
+    separate(ids, at);
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const id of ids) {
+      const a = at.get(id);
+      minX = Math.min(minX, a.x);
+      minY = Math.min(minY, a.y);
+      maxX = Math.max(maxX, a.x);
+      maxY = Math.max(maxY, a.y);
+    }
+    if (!ids.length) {
+      minX = 0;
+      minY = 0;
+      maxX = 0;
+      maxY = 0;
+    }
+    const offX = margin + FREE_W / 2 - minX;
+    const offY = margin + FREE_H / 2 - minY;
+    return {
+      nodes: ids.map((id) => {
+        var _a6;
+        return {
+          id,
+          x: round2(at.get(id).x + offX),
+          y: round2(at.get(id).y + offY),
+          lane: (_a6 = lane.get(id)) != null ? _a6 : 0
+        };
+      }),
+      width: round2(maxX - minX + FREE_W + margin * 2),
+      height: round2(maxY - minY + FREE_H + margin * 2),
+      laneGap: RING_STEP,
+      rowGap: FREE_H,
+      mode: "organic"
+    };
+  }
+  function separate(ids, at) {
+    for (let pass = 0; pass < SEPARATE_PASSES; pass++) {
+      let moved = false;
+      for (let i = 0; i < ids.length; i++) {
+        const a = at.get(ids[i]);
+        for (let j = i + 1; j < ids.length; j++) {
+          const b = at.get(ids[j]);
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const overlapX = FREE_W - Math.abs(dx);
+          const overlapY = FREE_H - Math.abs(dy);
+          if (overlapX <= 0 || overlapY <= 0) continue;
+          moved = true;
+          if (overlapX / FREE_W < overlapY / FREE_H) {
+            const push = overlapX / 2 * (dx < 0 ? -1 : 1);
+            a.x -= push;
+            b.x += push;
+          } else {
+            const push = overlapY / 2 * (dy < 0 ? -1 : 1);
+            a.y -= push;
+            b.y += push;
+          }
+        }
+      }
+      if (!moved) return;
+    }
+  }
+  var CLUSTER_PAD = 12;
+  function clusterHulls(p, laid) {
+    var _a5, _b, _c, _d;
+    if (laid.nodes.length < 2) return [];
+    const roots = componentRoots(p);
+    const boxes = (_a5 = laid.groups) != null ? _a5 : [];
+    const nested = boxes.some((g) => g.depth === 1);
+    const leaves = boxes.map((g, i) => ({ g, i })).filter(({ g }) => nested ? g.depth === 1 : g.depth === 0);
+    const boxOf = (n) => {
+      for (const { g, i } of leaves) {
+        if (n.x >= g.x && n.x <= g.x + g.width && n.y >= g.y && n.y <= g.y + g.height) return i;
+      }
+      return -1;
+    };
+    const buckets = /* @__PURE__ */ new Map();
+    const perBox = /* @__PURE__ */ new Map();
+    for (const n of laid.nodes) {
+      const group = boxOf(n);
+      const key = ((_b = roots.get(n.id)) != null ? _b : n.id) + "|" + group;
+      if (!buckets.has(key)) buckets.set(key, { members: [], group });
+      buckets.get(key).members.push(n);
+      perBox.set(group, ((_c = perBox.get(group)) != null ? _c : 0) + 1);
+    }
+    const out = [];
+    const candidates = [...buckets.keys()].sort((a, b) => buckets.get(b).members.length - buckets.get(a).members.length || (a < b ? -1 : 1));
+    for (const key of candidates) {
+      const { members, group } = buckets.get(key);
+      if (members.length < 2) continue;
+      if (members.length === ((_d = perBox.get(group)) != null ? _d : 0)) continue;
+      const hull = convexHull(members.flatMap((n) => [
+        [n.x - NODE_HALF_W, n.y - NODE_HALF_H],
+        [n.x + NODE_HALF_W, n.y - NODE_HALF_H],
+        [n.x + NODE_HALF_W, n.y + NODE_HALF_H],
+        [n.x - NODE_HALF_W, n.y + NODE_HALF_H]
+      ]));
+      if (hull.length < 3) continue;
+      const mine = new Set(members.map((n) => n.id));
+      const claimsAnother = laid.nodes.some((n) => !mine.has(n.id) && boxOf(n) === group && inPolygon(n.x, n.y, hull));
+      if (claimsAnother) continue;
+      if (out.some((c) => !convexDisjoint(hull, c.points))) continue;
+      out.push({
+        points: hull.map(([x, y]) => [round2(x), round2(y)]),
+        count: members.length,
+        ...group === -1 ? {} : { group }
+      });
+    }
+    return out.sort((a, b) => a.points[0][0] - b.points[0][0] || a.points[0][1] - b.points[0][1]);
+  }
+  function convexDisjoint(a, b) {
+    for (const poly of [a, b]) {
+      for (let i = 0; i < poly.length; i++) {
+        const [x1, y1] = poly[i];
+        const [x2, y2] = poly[(i + 1) % poly.length];
+        const nx = -(y2 - y1);
+        const ny = x2 - x1;
+        let aMin = Infinity;
+        let aMax = -Infinity;
+        let bMin = Infinity;
+        let bMax = -Infinity;
+        for (const [x, y] of a) {
+          const d = x * nx + y * ny;
+          aMin = Math.min(aMin, d);
+          aMax = Math.max(aMax, d);
+        }
+        for (const [x, y] of b) {
+          const d = x * nx + y * ny;
+          bMin = Math.min(bMin, d);
+          bMax = Math.max(bMax, d);
+        }
+        if (aMax <= bMin || bMax <= aMin) return true;
+      }
+    }
+    return false;
+  }
+  var NODE_HALF_W = 196 / 2 + CLUSTER_PAD;
+  var NODE_HALF_H = 56 / 2 + CLUSTER_PAD;
+  function convexHull(pts) {
+    const sorted = [...pts].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    if (sorted.length < 3) return sorted;
+    const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    const half = (list2) => {
+      const chain = [];
+      for (const pt of list2) {
+        while (chain.length >= 2 && cross(chain[chain.length - 2], chain[chain.length - 1], pt) <= 0) {
+          chain.pop();
+        }
+        chain.push(pt);
+      }
+      return chain;
+    };
+    const lower = half(sorted);
+    const upper = half([...sorted].reverse());
+    return lower.slice(0, -1).concat(upper.slice(0, -1));
+  }
+  function inPolygon(x, y, poly) {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const [xi, yi] = poly[i];
+      const [xj, yj] = poly[j];
+      if (yi > y !== yj > y && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+  }
+  function memberOrder(p, sort) {
+    const cmp2 = comparator(sort);
+    return sort === "smart" ? byComponent(p, cmp2) : cmp2;
+  }
+  function byComponent(p, cmp2) {
+    const roots = componentRoots(p);
+    const rank = /* @__PURE__ */ new Map();
+    [...p.nodes].sort(cmp2).forEach((n) => {
+      var _a5;
+      const root = (_a5 = roots.get(n.id)) != null ? _a5 : n.id;
+      if (!rank.has(root)) rank.set(root, rank.size);
+    });
+    const of = (n) => {
+      var _a5, _b;
+      return (_b = rank.get((_a5 = roots.get(n.id)) != null ? _a5 : n.id)) != null ? _b : rank.size;
+    };
+    return (a, b) => of(a) - of(b) || cmp2(a, b);
+  }
+
+  // src/domain/graphApiParams.ts
+  function toList(v) {
+    const raw = Array.isArray(v) ? v : typeof v === "string" ? v.split(",") : [];
+    const out = [];
+    for (const item of raw) {
+      const s = String(item != null ? item : "").trim();
+      if (s && out.indexOf(s) < 0) out.push(s);
+    }
+    return out;
+  }
+  function comboAssetIds(issues2, groupId) {
+    const out = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const issue2 of issues2) {
+      if (!isUnresolvedIssue(issue2) || !issue2.comboGroup) continue;
+      if (groupId && issue2.comboGroup !== groupId) continue;
+      if (issue2.assetId && !seen.has(issue2.assetId)) {
+        seen.add(issue2.assetId);
+        out.push(issue2.assetId);
+      }
+    }
+    return out;
+  }
+  function pick(v, allowed, fallback) {
+    const s = typeof v === "string" ? v.toLowerCase() : "";
+    return allowed.includes(s) ? s : fallback;
+  }
+  function pickList(v) {
+    const raw = typeof v === "string" ? v.split(",") : [];
+    const out = [];
+    for (const part of raw) {
+      const s = part.trim().toLowerCase();
+      if (!GROUP_KEYS.includes(s)) continue;
+      const key = s;
+      if (out.includes(key)) continue;
+      if (key === "asset" && out.length) continue;
+      out.push(key);
+      if (key === "asset" || out.length === 2) break;
+    }
+    return out;
+  }
+  function resolveLayoutParams(p) {
+    const legacyGrouped = typeof p["layout"] === "string" && p["layout"].toLowerCase() === "grouped";
+    const asked = pickList(p["groupBy"]);
+    const groupBy2 = legacyGrouped && !asked.length ? ["combo"] : asked;
+    return {
+      mode: legacyGrouped ? groupBy2[0] === "asset" ? "radial" : "grid" : pick(p["layout"], LAYOUT_MODES, DEFAULT_LAYOUT),
+      groupBy: groupBy2,
+      // `sort=aars` IS AN OLD LINK too, and it maps to `issues` rather than falling through
+      // to `smart`. The two are the closest honest pair: the score's own ordering was driven
+      // almost entirely by its issue pillar (tau-b 0.863 — ai/AARS_SCORING_ASSESSMENT.md §3,
+      // pinned by test/scoreOrdinality.test.ts), so a reader who asked for "worst score
+      // first" gets the ordering they were actually looking at. Falling back to `smart`
+      // would silently answer a different question and give no sign it had.
+      sort: pick(
+        typeof p["sort"] === "string" && p["sort"].toLowerCase() === "aars" ? "issues" : p["sort"],
+        SORT_KEYS,
+        "smart"
+      )
+    };
+  }
+  function resolveGraphParams(p, ctx) {
+    var _a5;
+    const seed = typeof p["seed"] === "string" ? p["seed"] : "";
+    const seedKind = typeof p["seedKind"] === "string" ? p["seedKind"] : "";
+    let seedIds;
+    if (seedKind === "scored" || seedKind === "issues") {
+      const withIssues = [];
+      const seen = {};
+      for (const issue2 of ctx.issues) {
+        if (!issue2.assetId || seen[issue2.assetId]) continue;
+        seen[issue2.assetId] = true;
+        withIssues.push(issue2.assetId);
+      }
+      seedIds = withIssues;
+    } else if (seed && (seedKind === "combo" || comboGroupById(seed))) {
+      seedIds = comboAssetIds(ctx.issues, seed);
+    } else if (seed && seedKind === "domain") {
+      seedIds = ((_a5 = ctx.nodes) != null ? _a5 : []).filter((n) => n.domain === seed).map((n) => n.id);
+    } else if (seed) {
+      seedIds = [seed];
+    } else {
+      seedIds = comboAssetIds(ctx.issues);
+    }
+    const filters = {
+      severities: toList(p["severities"]),
+      kinds: toList(p["kinds"]),
+      projects: toList(p["projects"]),
+      clouds: toList(p["clouds"]),
+      domains: toList(p["domains"])
+    };
+    const hasFilters = filters.severities.length || filters.kinds.length || filters.projects.length || filters.clouds.length || filters.domains.length;
+    const rawDepth = p["depth"];
+    const rawMaxNodes = p["maxNodes"];
+    const maxNodes = clampMaxNodes(
+      rawMaxNodes == null || rawMaxNodes === "" ? ctx.maxNodes : rawMaxNodes
+    );
+    return {
+      seedIds,
+      depth: clampDepth(rawDepth == null || rawDepth === "" ? ctx.defaultDepth : rawDepth),
+      expandIds: toList(p["expand"]),
+      filters: hasFilters ? filters : void 0,
+      maxNodes,
+      maxEdges: Math.round(maxNodes * EDGE_BUDGET_RATIO),
+      ...seedKind === "scored" || seedKind === "issues" ? { filterSeeds: true } : {}
+    };
+  }
+  function graphCacheParams(p) {
+    const sorted = (v) => toList(v).sort();
+    return {
+      seed: typeof p["seed"] === "string" ? p["seed"] : "",
+      seedKind: typeof p["seedKind"] === "string" ? p["seedKind"] : "",
+      depth: p["depth"] == null || p["depth"] === "" ? "" : String(p["depth"]),
+      maxNodes: p["maxNodes"] == null ? "" : String(p["maxNodes"]),
+      expand: sorted(p["expand"]),
+      severities: sorted(p["severities"]),
+      kinds: sorted(p["kinds"]),
+      projects: sorted(p["projects"]),
+      clouds: sorted(p["clouds"]),
+      domains: sorted(p["domains"]),
+      view: resolveLayoutParams(p)
+    };
+  }
+
+  // src/domain/prunePlan.ts
+  function inProject(projects, projectId) {
+    if (!projectId) return false;
+    return (projects != null ? projects : []).some((p) => p.id === projectId);
+  }
+  function attributed(a) {
+    var _a5;
+    return ((_a5 = a.projects) != null ? _a5 : []).length > 0;
+  }
+  function planPrune(assets, edges2, projectId) {
+    if (!projectId || !projectId.trim()) {
+      throw new Error("Pruning needs a project to keep. Naming none would empty the register.");
+    }
+    const id = projectId.trim();
+    const known = /* @__PURE__ */ new Set();
+    const unattributed2 = /* @__PURE__ */ new Set();
+    const direct = /* @__PURE__ */ new Set();
+    for (const a of assets) {
+      known.add(a.id);
+      if (!attributed(a)) unattributed2.add(a.id);
+      if (inProject(a.projects, id)) direct.add(a.id);
+    }
+    const attached = /* @__PURE__ */ new Set();
+    for (const e of edges2) {
+      if (direct.has(e.src) && unattributed2.has(e.dst) && known.has(e.dst)) attached.add(e.dst);
+      if (direct.has(e.dst) && unattributed2.has(e.src) && known.has(e.src)) attached.add(e.src);
+    }
+    const keep = new Set(direct);
+    for (const attachedId of attached) keep.add(attachedId);
+    let droppedAttributed = 0;
+    let droppedOrphan = 0;
+    for (const a of assets) {
+      if (keep.has(a.id)) continue;
+      if (attributed(a)) droppedAttributed += 1;
+      else droppedOrphan += 1;
+    }
+    return {
+      keep,
+      census: {
+        total: assets.length,
+        direct: direct.size,
+        attached: attached.size,
+        droppedAttributed,
+        droppedOrphan,
+        keep: keep.size
+      }
+    };
+  }
+
+  // src/domain/graphScope.ts
+  function unattributed(n) {
+    var _a5;
+    return ((_a5 = n.projects) != null ? _a5 : []).length === 0;
+  }
+  function scopeGraphDoc(doc, projectId) {
+    if (!projectId) return doc;
+    return scopeBy(doc, (n) => inProject(n.projects, projectId), unattributed);
+  }
+  function scopeGraphDocToDomain(doc, domain) {
+    if (!domain) return doc;
+    return scopeBy(doc, (n) => n.domain === domain, (n) => !n.domain);
+  }
+  function scopeBy(doc, anchored, ridesAlong) {
+    var _a5;
+    const keep = /* @__PURE__ */ new Set();
+    const open = [];
+    for (const n of doc.nodes) {
+      if (anchored(n)) {
+        keep.add(n.id);
+        open.push(n.id);
+      }
+    }
+    const byId = new Map(doc.nodes.map((n) => [n.id, n]));
+    const adjacency2 = /* @__PURE__ */ new Map();
+    const link = (from, to) => {
+      const seen = adjacency2.get(from);
+      if (seen) seen.push(to);
+      else adjacency2.set(from, [to]);
+    };
+    for (const e of doc.edges) {
+      link(e.src, e.dst);
+      link(e.dst, e.src);
+    }
+    while (open.length) {
+      for (const nextId of (_a5 = adjacency2.get(open.pop())) != null ? _a5 : []) {
+        if (keep.has(nextId)) continue;
+        const next = byId.get(nextId);
+        if (!next || !ridesAlong(next)) continue;
+        keep.add(nextId);
+        open.push(nextId);
+      }
+    }
+    const nodes = doc.nodes.filter((n) => keep.has(n.id));
+    const edges2 = doc.edges.filter((e) => keep.has(e.src) && keep.has(e.dst));
+    return { nodes, edges: edges2, syncedAt: doc.syncedAt };
+  }
+
+  // src/domain/graphQuery.ts
+  function kindsOf(node2) {
+    return Array.isArray(node2.kind) ? node2.kind : [node2.kind];
+  }
+  var KIND_SEP = "-";
+  function kindKey(node2) {
+    return kindsOf(node2).join(KIND_SEP);
+  }
+  function isGroup(step) {
+    return step.op !== void 0;
+  }
+  var DEFAULT_QUERY = { kind: "AI_AGENT" };
+  var QUERY_ROW_MAX = 2e3;
+  var QUERY_SCAN_MAX = 1e5;
+  var MAX_QUERY_NODES = 12;
+  var MAX_QUERY_DEPTH = 6;
+  var MAX_HOPS = 3;
+  var IDENTITY_KINDS = [
+    "SERVICE_ACCOUNT",
+    "USER_ACCOUNT",
+    "ACCESS_ROLE",
+    "ACCESS_ROLE_BINDING",
+    "ACCESS_KEY"
+  ];
+  function orNull(v) {
+    if (v === void 0 || v === null || v === "") return null;
+    if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") return v;
+    return String(v);
+  }
+  function humanDiscoveryMethod(raw) {
+    const body = raw.replace(/^Method/, "");
+    const spaced = body.replace(/([a-z0-9])([A-Z])/g, "$1 $2").trim();
+    return spaced || raw;
+  }
+  var QUERY_FIELDS = [
+    { key: "name", label: "Name", type: "text", get: (n) => n.name },
+    { key: "kind", label: "Kind", type: "choice", get: (n) => n.kind },
+    {
+      key: "publisher",
+      label: "Publisher",
+      type: "text",
+      kinds: AI_ASSET_KINDS,
+      get: (n) => orNull(n.publisher)
+    },
+    {
+      key: "discoveredBy",
+      label: "Discovered by",
+      type: "choice",
+      multi: true,
+      kinds: AI_ASSET_KINDS,
+      get: (n) => {
+        var _a5;
+        const m = (_a5 = n.discoveryMethods) != null ? _a5 : [];
+        return m.length ? m.map(humanDiscoveryMethod).join(", ") : null;
+      }
+    },
+    {
+      key: "displayName",
+      label: "Display name",
+      type: "text",
+      kinds: IDENTITY_KINDS,
+      get: (n) => orNull(n.displayName)
+    },
+    { key: "email", label: "Email", type: "text", kinds: IDENTITY_KINDS, get: (n) => orNull(n.email) },
+    {
+      // Three states, not two. Absent means the identity steps never carried a dormancy read;
+      // rendering that as "No" would assert the opposite of what is known.
+      key: "inactive",
+      label: "Inactive for the last 90 days",
+      type: "boolean",
+      kinds: IDENTITY_KINDS,
+      get: (n) => n.inactive === void 0 ? null : n.inactive
+    },
+    {
+      key: "identityPurpose",
+      label: "Purpose",
+      type: "choice",
+      kinds: IDENTITY_KINDS,
+      get: (n) => orNull(n.identityPurpose)
+    },
+    { key: "cloud", label: "Cloud", type: "choice", get: (n) => orNull(n.cloudPlatform) },
+    { key: "region", label: "Region", type: "choice", get: (n) => orNull(n.region) },
+    // The cloud tags, rendered `key: value` and joined like any other list cell so the table and
+    // the column chooser need to know nothing about them. They were synced and shown on the asset
+    // sheet long before this — `tags_json` round-trips through the ledger — but with no entry here
+    // you could read a tag and not ask about it, which is the gap this closes.
+    //
+    // `pairs` rather than `choice` because the value space is the landscape's, not the schema's: a
+    // real tenant has thousands of distinct `key: value` strings, far past VALUE_CARDINALITY_MAX,
+    // so `fieldValuesFor` offers no list and the builder asks for a key and a value instead.
+    {
+      key: "tags",
+      label: "Tags",
+      type: "pairs",
+      multi: true,
+      get: (n) => {
+        var _a5;
+        return orNull(((_a5 = n.tags) != null ? _a5 : []).map((t) => t.value ? `${t.key}: ${t.value}` : t.key).join(", "));
+      }
+    },
+    // The business domain, off the resource's own Wiz/Domain tag — and `choice` where `tags`
+    // above is `pairs`, for exactly the reason stated there. A tenant has tens of domains, not
+    // thousands of key/value strings, so this one stays inside VALUE_CARDINALITY_MAX and
+    // `fieldValuesFor` can offer a real picker rather than two free-text boxes. Asking through
+    // `tags` still works and still means the same thing — this is the shorthand for the one
+    // tag key the app names, not a second source of truth.
+    { key: "domain", label: "Domain", type: "choice", get: (n) => orNull(n.domain) },
+    { key: "status", label: "Status", type: "choice", get: (n) => orNull(n.status) },
+    { key: "severity", label: "Issue severity", type: "choice", get: (n) => orNull(n.severity) },
+    // The two counts that replaced the score, the percentile and the level here. A query is
+    // a question about the landscape, and these are answerable from what Wiz reported;
+    // "findings score above 70" was answerable only from a model this app was still
+    // calibrating, which is why it now lives on the workbench and nowhere else.
+    {
+      key: "openIssues",
+      label: "Open issues",
+      type: "number",
+      numeric: true,
+      get: (n) => {
+        var _a5;
+        return (_a5 = n.openIssues) != null ? _a5 : 0;
+      }
+    },
+    {
+      key: "openFindings",
+      label: "Cloud findings",
+      type: "number",
+      numeric: true,
+      get: (n) => {
+        var _a5;
+        return (_a5 = n.openFindings) != null ? _a5 : 0;
+      }
+    },
+    {
+      key: "projects",
+      label: "Projects",
+      type: "choice",
+      multi: true,
+      get: (n) => {
+        var _a5;
+        const names = ((_a5 = n.projects) != null ? _a5 : []).map((p) => p.name).filter(Boolean);
+        return names.length ? names.join(", ") : null;
+      }
+    },
+    {
+      key: "guardrail",
+      label: "Guardrail",
+      type: "choice",
+      kinds: AI_ASSET_KINDS,
+      get: (n) => n.guardrailMissing === void 0 ? null : n.guardrailMissing ? "missing" : "present"
+    },
+    {
+      key: "combos",
+      label: "Toxic combinations",
+      type: "number",
+      numeric: true,
+      get: (n) => {
+        var _a5;
+        const g = (_a5 = n.comboGroups) != null ? _a5 : [];
+        return g.length ? g.length : null;
+      }
+    },
+    {
+      // The combination patterns BY NAME, where `combos` only ever counted them. "Show me the
+      // members of the privileged managed-agent pattern" is the question the register is built
+      // around, and a count cannot answer it.
+      key: "comboGroup",
+      label: "Toxic combination",
+      type: "choice",
+      multi: true,
+      get: (n) => {
+        var _a5;
+        const g = (_a5 = n.comboGroups) != null ? _a5 : [];
+        return g.length ? g.join(", ") : null;
+      }
+    },
+    {
+      // Read through the SAME predicate the canvas draws from. Reading only
+      // `isAccessibleFromInternet` — which is what this did — disagreed with the graph on a node
+      // that is open to all internet but not flagged accessible: the table said no while an
+      // INTERNET_EXPOSURE node hung off it two panes away. One reading, one answer.
+      key: "internet",
+      label: "Internet reachable",
+      type: "boolean",
+      get: (n) => conditionState(n, "INTERNET_EXPOSURE")
+    },
+    {
+      key: "sensitiveAccess",
+      label: "Reaches classified data",
+      type: "boolean",
+      get: (n) => n.hasAccessToSensitiveData === void 0 ? null : n.hasAccessToSensitiveData
+    },
+    {
+      // HOLDS classified data, which is a different claim from reaching it — a bucket holds, an
+      // agent reaches. The pair is what makes the data-exposure path readable from either end.
+      key: "sensitiveData",
+      label: "Holds classified data",
+      type: "boolean",
+      get: (n) => n.hasSensitiveData === void 0 ? null : n.hasSensitiveData
+    },
+    {
+      // Kept apart rather than folded into one "privileged" flag: ADMIN is the stronger claim,
+      // and `withExcessivePrivilegeNodes` names its stub differently for it. EXCESSIVE_PRIVILEGE
+      // is their disjunction, so anyone wanting that reads the risk condition instead.
+      key: "highPriv",
+      label: "High privileges",
+      type: "boolean",
+      get: (n) => n.hasHighPrivileges === void 0 ? null : n.hasHighPrivileges
+    },
+    {
+      key: "adminPriv",
+      label: "Admin privileges",
+      type: "boolean",
+      get: (n) => n.hasAdminPrivileges === void 0 ? null : n.hasAdminPrivileges
+    }
+  ];
+  var FIELD_BY_KEY = new Map(QUERY_FIELDS.map((f) => [f.key, f]));
+  function ev(kind, steps) {
+    return steps ? { kind, show: false, steps } : { kind, show: false };
+  }
+  var WITNESSES = [
+    {
+      // The four-hop chain, which is why "one hop of evidence" was never an option: the data end
+      // sits at RUNS_AS → ALLOWS_ACCESS_TO → BUCKET → HAS_DATA_FINDING. Same shape as the
+      // `reaches-classified` shortcut, carried one hop further to the findings — the shortcut stops
+      // at the bucket because that is where its table column wants to stop, and a canvas does not.
+      key: "sensitiveAccess",
+      when: ["true"],
+      steps: [
+        {
+          edge: "RUNS_AS",
+          optional: true,
+          node: ev("SERVICE_ACCOUNT", [{
+            edge: "ALLOWS_ACCESS_TO",
+            optional: true,
+            node: ev(["BUCKET", "DATABASE"], [
+              { edge: "HAS_DATA_FINDING", optional: true, node: ev("DATA_FINDING") }
+            ])
+          }])
+        },
+        { edge: "HAS_ACCESS_TO_SENSITIVE_DATA", optional: true, node: ev("SENSITIVE_DATA") }
+      ]
+    },
+    {
+      // Holding it rather than reaching it — the other end of the same chain, read from the store.
+      key: "sensitiveData",
+      when: ["true"],
+      steps: [
+        { edge: "HAS_DATA_FINDING", optional: true, node: ev("DATA_FINDING") },
+        { edge: "HAS_SENSITIVE_DATA", optional: true, node: ev("SENSITIVE_DATA") }
+      ]
+    },
+    {
+      key: "internet",
+      when: ["true"],
+      steps: [{ edge: "EXPOSED_TO_INTERNET", optional: true, node: ev("INTERNET_EXPOSURE") }]
+    },
+    {
+      // A choice field, not a boolean: "missing" is the affirmative here and "present" is the
+      // absence of a finding, so only one of its two values arms anything.
+      //
+      // `viaAbsence` because the edge is a NEGATED `PROTECTED_BY` — enrich's own words — and every
+      // ordinary step skips negated edges on purpose. This witness is the one thing that wants it:
+      // the stub is only reachable by the edge that says the guardrail is not there. Without the
+      // flag this row armed correctly and then drew nothing, which is how it was caught.
+      key: "guardrail",
+      when: ["missing"],
+      steps: [{
+        edge: "PROTECTED_BY",
+        optional: true,
+        viaAbsence: true,
+        node: ev("MISSING_GUARDRAIL")
+      }]
+    },
+    ...["highPriv", "adminPriv"].map((key) => ({
+      // Both flags are witnessed by one stub — `conditionState` reads EXCESSIVE_PRIVILEGE as their
+      // disjunction — and `HAS_FINDING` is the second spelling: enrich suppresses its own stub on
+      // an asset already carrying Wiz's real EXCESSIVE_ACCESS_FINDING.
+      //
+      // The two land on different nodes rather than being alternatives for the same one:
+      // `HAS_FINDING` runs identity → finding, so it fires when the filter is on a SERVICE_ACCOUNT,
+      // while the stub is what an AI asset carries. Both listed, so either end of the same claim
+      // draws its evidence.
+      key,
+      when: ["true"],
+      steps: [
+        { edge: "HAS_EXCESSIVE_PRIVILEGE", optional: true, node: ev("EXCESSIVE_PRIVILEGE") },
+        { edge: "HAS_FINDING", optional: true, node: ev("EXCESSIVE_ACCESS_FINDING") }
+      ]
+    }))
+  ];
+  var WITNESS_BY_KEY = new Map(WITNESSES.map((w) => [w.key, w]));
+  var WITNESS_FANOUT_CAP = 6;
+  function witnessFor(node2) {
+    var _a5;
+    const steps = [];
+    for (const f of (_a5 = node2.where) != null ? _a5 : []) {
+      if (f.negate) continue;
+      const w = WITNESS_BY_KEY.get(f.key);
+      if (!w) continue;
+      if (!f.values.some((v) => w.when.includes(String(v).toLowerCase()))) continue;
+      steps.push(...w.steps);
+    }
+    return steps.length ? { kind: "ANY", show: false, steps } : null;
+  }
+  function fieldsForKind(kind) {
+    const kinds = Array.isArray(kind) ? kind : [kind];
+    return QUERY_FIELDS.filter((f) => {
+      if (!f.kinds) return true;
+      return kinds.every((k) => k !== "ANY" && f.kinds.includes(k));
+    });
+  }
+  function defaultFieldsForKind(kind) {
+    const kinds = Array.isArray(kind) ? kind : [kind];
+    const all = (family) => kinds.every((k) => k !== "ANY" && family.includes(k));
+    if (all(AI_ASSET_KINDS)) return ["name", "publisher", "discoveredBy"];
+    if (all(IDENTITY_KINDS)) return ["name", "displayName", "inactive"];
+    return ["name", "kind", "cloud"];
+  }
+  var QueryError = class extends Error {
+  };
+  function fail(msg) {
+    throw new QueryError(msg);
+  }
+  var KIND_SET = new Set(NODE_KINDS);
+  var EDGE_SET = new Set(EDGE_TYPES);
+  function validateQueryWithWarnings(raw) {
+    const counter = { nodes: 0, retired: [] };
+    const query = readNode(raw, 1, counter);
+    const retired = counter.retired.filter((k, i, all) => all.indexOf(k) === i);
+    return { query, retired };
+  }
+  var RETIRED_FIELDS = /* @__PURE__ */ new Set([
+    "aars",
+    "aarsPercentile",
+    "aarsSeverity",
+    "postureTier",
+    "problemOutcome"
+  ]);
+  function readKinds(raw) {
+    const list2 = Array.isArray(raw) ? raw : [raw];
+    if (!list2.length) fail("node names no kind");
+    const out = [];
+    for (const one of list2) {
+      if (typeof one !== "string" || one !== "ANY" && !KIND_SET.has(one)) {
+        fail(`unknown node kind: ${String(one)}`);
+      }
+      if (!out.includes(one)) out.push(one);
+    }
+    if (out.includes("ANY")) return "ANY";
+    return out.length === 1 ? out[0] : out;
+  }
+  function readNode(raw, depth, counter) {
+    if (!raw || typeof raw !== "object") fail("query node must be an object");
+    if (depth > MAX_QUERY_DEPTH) fail(`query nests deeper than ${MAX_QUERY_DEPTH} levels`);
+    if (++counter.nodes > MAX_QUERY_NODES) fail(`query has more than ${MAX_QUERY_NODES} nodes`);
+    const r = raw;
+    const node2 = { kind: readKinds(r["kind"]) };
+    if (r["show"] === false) node2.show = false;
+    const where = r["where"];
+    if (where !== void 0) {
+      if (!Array.isArray(where)) fail("where must be an array");
+      const filters = [];
+      for (const f of where) {
+        if (!f || typeof f !== "object") fail("filter must be an object");
+        const key = f["key"];
+        const values = f["values"];
+        if (typeof key !== "string") fail(`unknown filter field: ${String(key)}`);
+        if (RETIRED_FIELDS.has(key)) {
+          counter.retired.push(key);
+          continue;
+        }
+        if (key !== "id" && !FIELD_BY_KEY.has(key)) {
+          fail(`unknown filter field: ${String(key)}`);
+        }
+        if (!Array.isArray(values) || !values.length) fail(`filter ${key} has no values`);
+        const op = f["op"];
+        if (op !== void 0 && op !== "eq" && op !== "contains") {
+          fail(`unknown filter operator: ${String(op)}`);
+        }
+        const all = f["all"];
+        const negate = f["negate"];
+        if (all !== void 0 && typeof all !== "boolean") {
+          fail(`filter ${key}: all must be a boolean`);
+        }
+        if (negate !== void 0 && typeof negate !== "boolean") {
+          fail(`filter ${key}: negate must be a boolean`);
+        }
+        const filter = { key, values: values.map((v) => String(v)) };
+        if (op === "contains") filter.op = "contains";
+        if (all === true) filter.all = true;
+        if (negate === true) filter.negate = true;
+        filters.push(filter);
+      }
+      if (filters.length) node2.where = filters;
+    }
+    const steps = r["steps"];
+    if (steps !== void 0) {
+      if (!Array.isArray(steps)) fail("steps must be an array");
+      const out = [];
+      for (const s of steps) out.push(readStep(s, depth + 1, counter));
+      if (out.length) node2.steps = out;
+    }
+    return node2;
+  }
+  function readStep(raw, depth, counter) {
+    var _a5;
+    if (!raw || typeof raw !== "object") fail("step must be an object");
+    const r = raw;
+    if (r["op"] !== void 0) return readGroup(r, depth, counter);
+    const edge2 = r["edge"];
+    if (typeof edge2 !== "string" || edge2 !== "ANY" && !EDGE_SET.has(edge2)) {
+      fail(`unknown relationship: ${String(edge2)}`);
+    }
+    const step = { edge: edge2, node: readNode(r["node"], depth, counter) };
+    if (r["reverse"] === true) step.reverse = true;
+    if (r["negate"] === true) step.negate = true;
+    if (r["optional"] === true) step.optional = true;
+    if (edge2 === "ANY") {
+      const hops = Number(r["hops"]);
+      step.hops = Number.isFinite(hops) ? Math.min(MAX_HOPS, Math.max(1, Math.round(hops))) : 1;
+    }
+    if (step.negate && ((_a5 = step.node.steps) == null ? void 0 : _a5.length)) {
+      fail("a negated relationship cannot carry further steps \u2014 there is nothing to walk from");
+    }
+    if (step.negate && step.optional) fail("a relationship cannot be both negated and optional");
+    return step;
+  }
+  function readGroup(r, depth, counter) {
+    const op = r["op"];
+    if (op !== "and" && op !== "or") fail(`unknown group operator: ${String(op)}`);
+    if (depth > MAX_QUERY_DEPTH) fail(`query nests deeper than ${MAX_QUERY_DEPTH} levels`);
+    const steps = r["steps"];
+    if (!Array.isArray(steps) || !steps.length) {
+      fail(`an ${op.toUpperCase()} group needs at least one branch`);
+    }
+    const group = { op, steps: steps.map((s) => readStep(s, depth + 1, counter)) };
+    if (r["optional"] === true) group.optional = true;
+    return group;
+  }
+  var VALUE_CARDINALITY_MAX = 40;
+  function queryVocabulary(doc) {
+    var _a5;
+    const byId = new Map(doc.nodes.map((n) => [n.id, n]));
+    const kindCounts = /* @__PURE__ */ new Map();
+    for (const n of doc.nodes) kindCounts.set(n.kind, ((_a5 = kindCounts.get(n.kind)) != null ? _a5 : 0) + 1);
+    const stepsFrom = {};
+    const seen = /* @__PURE__ */ new Map();
+    const note = (from, edge2, reverse, to) => {
+      var _a6;
+      const key = `${from}|${edge2}|${reverse ? "r" : "f"}|${to}`;
+      const hit = seen.get(key);
+      if (hit) {
+        hit.count += 1;
+        return;
+      }
+      const entry = { edge: edge2, reverse, kind: to, count: 1 };
+      seen.set(key, entry);
+      ((_a6 = stepsFrom[from]) != null ? _a6 : stepsFrom[from] = []).push(entry);
+    };
+    for (const e of doc.edges) {
+      if (e.negated) continue;
+      const src = byId.get(e.src);
+      const dst = byId.get(e.dst);
+      if (!src || !dst) continue;
+      note(src.kind, e.type, false, dst.kind);
+      note(dst.kind, e.type, true, src.kind);
+    }
+    for (const list2 of Object.values(stepsFrom)) {
+      list2.sort((a, b) => b.count - a.count || cmp(a.reverse, b.reverse) || cmp(a.edge, b.edge) || cmp(a.kind, b.kind));
+    }
+    const kinds = NODE_KINDS.filter((k) => kindCounts.has(k)).map((kind) => {
+      var _a6;
+      return { kind, count: (_a6 = kindCounts.get(kind)) != null ? _a6 : 0 };
+    });
+    const base = { kinds, stepsFrom, valuesFor: {}, fieldsFor: {}, shortcuts: [] };
+    const shortcuts = [];
+    for (const shortcut of QUERY_SHORTCUTS) {
+      const answerable = shortcut.kinds.filter((k) => shortcutsFor(k, base).some((s) => s.id === shortcut.id));
+      if (answerable.length) shortcuts.push({ ...shortcut, kinds: answerable });
+    }
+    return { ...base, shortcuts };
+  }
+  function fieldValuesFor(doc, kind) {
+    var _a5;
+    const nodes = kind === "ANY" ? doc.nodes : doc.nodes.filter((n) => n.kind === kind);
+    const perField = [];
+    for (const spec of QUERY_FIELDS) {
+      if (spec.type !== "choice" && spec.type !== "boolean") continue;
+      if (spec.kinds && (kind === "ANY" || !spec.kinds.includes(kind))) continue;
+      if (spec.key === "kind") continue;
+      const counts = /* @__PURE__ */ new Map();
+      let overflow = false;
+      for (const node2 of nodes) {
+        const raw = spec.get(node2);
+        const parts = raw === null ? ["unknown"] : spec.type === "choice" ? String(raw).split(", ") : [String(raw)];
+        for (const part of parts) {
+          if (!part) continue;
+          if (!counts.has(part) && counts.size >= VALUE_CARDINALITY_MAX) {
+            overflow = true;
+            continue;
+          }
+          counts.set(part, ((_a5 = counts.get(part)) != null ? _a5 : 0) + 1);
+        }
+      }
+      if (overflow || !counts.size) continue;
+      perField.push({
+        key: spec.key,
+        values: [...counts.entries()].map(([value, count2]) => ({ value, count: count2 })).sort((a, b) => b.count - a.count || cmp(a.value, b.value))
+      });
+    }
+    return perField;
+  }
+  var QUERY_SHORTCUTS = [
+    {
+      id: "no-guardrail",
+      label: "Has no guardrail",
+      phrase: "Wiz reports the guardrail missing",
+      blurb: "Reads the asset's own guardrail flag, which is what the canvas draws its MISSING_GUARDRAIL stub from \u2014 so the two always agree.\n\nDeliberately not the \u201CNOT protected by a guardrail\u201D traversal, which answers a wider question: it counts every asset with no guardrail relationship in the graph, including ones Wiz reports as protected without naming the guardrail. Add a NOT on a PROTECTED_BY step if that wider question is the one you want.",
+      helpId: "missing-guardrail",
+      kinds: AI_ASSET_KINDS,
+      steps: [],
+      filters: [{ path: [], key: "guardrail", values: ["missing"] }]
+    },
+    {
+      id: "runs-as-privileged",
+      label: "Runs as a privileged identity",
+      phrase: "its service account holds high privileges",
+      blurb: "Reads the identity's own privilege flag rather than walking to the EXCESSIVE_PRIVILEGE stub, which is suppressed wherever a real access finding exists \u2014 walking to it would quietly answer with the leftovers. Admin privilege is the stronger claim and has its own field.",
+      helpId: "excessive-privilege",
+      kinds: AI_ASSET_KINDS,
+      steps: [{ edge: "RUNS_AS", node: { kind: "SERVICE_ACCOUNT" } }],
+      filters: [{ path: [0], key: "highPriv", values: ["true"] }]
+    },
+    {
+      id: "runs-as-dormant",
+      label: "Runs as a dormant identity",
+      phrase: "its service account has been idle 90 days",
+      blurb: "An identity nobody has used in ninety days, still able to act on the asset's behalf. The dormancy is a field Wiz reports, not something derived here.",
+      helpId: "agentic-identity",
+      kinds: AI_ASSET_KINDS,
+      steps: [{ edge: "RUNS_AS", node: { kind: "SERVICE_ACCOUNT" } }],
+      filters: [{ path: [0], key: "inactive", values: ["true"] }]
+    },
+    {
+      id: "reaches-classified",
+      label: "Reaches classified data",
+      phrase: "through its identity, to a bucket",
+      blurb: "The real path \u2014 asset to identity to bucket \u2014 with the identity hidden, so the table reads asset beside data. Deliberately NOT the SENSITIVE_DATA stub, which graphEnrich suppresses exactly where this chain exists: walking to the stub would return only the assets whose path could not be traced.",
+      helpId: "sensitive-data",
+      kinds: AI_ASSET_KINDS,
+      steps: [{
+        edge: "RUNS_AS",
+        node: {
+          kind: "SERVICE_ACCOUNT",
+          show: false,
+          steps: [{ edge: "ALLOWS_ACCESS_TO", node: { kind: "BUCKET" } }]
+        }
+      }]
+    },
+    {
+      id: "internet-reachable",
+      label: "Reachable from the internet",
+      phrase: "an exposure path reaches it",
+      blurb: "Assets carrying an internet exposure node. Exposure is inherited from the compute underneath, so this is the topology answer rather than a flag read off the asset.",
+      helpId: "internet-exposure",
+      kinds: AI_ASSET_KINDS,
+      steps: [{ edge: "EXPOSED_TO_INTERNET", node: { kind: "INTERNET_EXPOSURE" } }]
+    },
+    {
+      id: "dormant-human-access",
+      label: "A dormant person can reach it",
+      phrase: "a human account, idle 90 days, still has access",
+      blurb: "Human access read backwards: the accounts that ALLOW_ACCESS_TO this asset, narrowed to the ones nobody has signed into in ninety days. Standing access that no longer has a person behind it.",
+      kinds: AI_ASSET_KINDS,
+      steps: [{ edge: "ALLOWS_ACCESS_TO", reverse: true, node: { kind: "USER_ACCOUNT" } }],
+      filters: [{ path: [0], key: "inactive", values: ["true"] }]
+    }
+  ];
+  function shortcutsFor(kind, vocab) {
+    const from = kindsOf({ kind }).filter((k) => k !== "ANY");
+    if (!from.length) return [];
+    const present2 = from.filter((k) => vocab.kinds.some((v) => v.kind === k));
+    if (!present2.length) return [];
+    return QUERY_SHORTCUTS.filter((s) => present2.some((k) => s.kinds.includes(k) && s.steps.every((step) => reachable(k, step, vocab))));
+  }
+  function reachable(from, step, vocab) {
+    var _a5;
+    if (isGroup(step)) return step.steps.every((s) => reachable(from, s, vocab));
+    if (step.negate) return true;
+    if (step.edge === "ANY") return true;
+    const targets = kindsOf(step.node);
+    const from2 = (_a5 = vocab.stepsFrom[from]) != null ? _a5 : [];
+    return targets.some((target) => {
+      var _a6;
+      const hit = from2.some((e) => e.edge === step.edge && e.reverse === !!step.reverse && e.kind === target);
+      if (!hit) return false;
+      if (target === "ANY") return true;
+      return ((_a6 = step.node.steps) != null ? _a6 : []).every((s) => reachable(target, s, vocab));
+    });
+  }
+  function queryColumnGroups(query, selected) {
+    var _a5;
+    const groups = [];
+    for (const slot of bindingSlots(query)) {
+      const node2 = slot.node;
+      if (node2.show === false) continue;
+      const index = groups.length;
+      const offered = fieldsForKind(node2.kind);
+      const offeredKeys = new Set(offered.map((f) => f.key));
+      const picked = ((_a5 = selected == null ? void 0 : selected[index]) != null ? _a5 : []).filter((k) => offeredKeys.has(k));
+      const keys = picked.length ? picked : defaultFieldsForKind(node2.kind).filter((k) => offeredKeys.has(k));
+      groups.push({
+        index,
+        // `kindKey`, not `node.kind`: the builder row derives its own identity the same way, and
+        // graphQueryWalk.test.js compares the two by value across the wire. A one-kind node
+        // answers the bare kind, so no existing payload moves.
+        kind: kindKey(node2),
+        label: kindsOf(node2).map((k) => k === "ANY" ? "Any node" : k).join(" or "),
+        fields: keys.map((k) => {
+          const f = FIELD_BY_KEY.get(k);
+          return { key: f.key, label: f.label, numeric: f.numeric };
+        }),
+        available: offered.map((f) => ({ key: f.key, label: f.label })),
+        // Only when the group IS an alternative. Most queries have no OR in them, and stamping
+        // every column group with two undefined keys would put them in the wire payload and in
+        // the golden snapshot, where they read as a fact about the group rather than an absence.
+        ...slot.altOf === void 0 ? {} : { altOf: slot.altOf, altIndex: slot.altIndex }
+      });
+    }
+    return groups;
+  }
+  function bindingSlots(node2, path = "", alt) {
+    var _a5;
+    const out = [{ node: node2, altOf: alt == null ? void 0 : alt.of, altIndex: alt == null ? void 0 : alt.index }];
+    ((_a5 = node2.steps) != null ? _a5 : []).forEach((step, i) => out.push(...stepSlots(step, path + "." + i, alt)));
+    return out;
+  }
+  function stepSlots(step, path, alt) {
+    if (isGroup(step)) {
+      const out = [];
+      step.steps.forEach((child, i) => {
+        const inner = step.op === "or" ? { of: path, index: i } : alt;
+        out.push(...stepSlots(child, path + "." + i, inner));
+      });
+      return out;
+    }
+    if (step.negate) return [];
+    return bindingSlots(step.node, path, alt);
+  }
+  function buildAdjacency(doc) {
+    const byId = new Map(doc.nodes.map((n) => [n.id, n]));
+    const out = /* @__PURE__ */ new Map();
+    const inn = /* @__PURE__ */ new Map();
+    for (const e of doc.edges) {
+      if (!byId.has(e.src) || !byId.has(e.dst)) continue;
+      pushInto(out, e.src, e);
+      pushInto(inn, e.dst, e);
+    }
+    return { byId, out, in: inn };
+  }
+  function fieldValue(node2, key) {
+    if (key === "id") return node2.id;
+    const spec = FIELD_BY_KEY.get(key);
+    return spec ? spec.get(node2) : null;
+  }
+  function matchesFilter(node2, f) {
+    const v = fieldValue(node2, f.key);
+    const hit = (x) => {
+      if (v === null) {
+        return x === "unknown" || x === "";
+      }
+      const s = String(v).toLowerCase();
+      const want = String(x).toLowerCase();
+      if (f.op !== "contains" && fieldIsPairs(f.key)) return matchesTag(node2, want);
+      if (f.op === "contains") {
+        return s.indexOf(want) !== -1;
+      }
+      if (want === s) return true;
+      return s.split(", ").includes(want);
+    };
+    const held = f.all ? f.values.every(hit) : f.values.some(hit);
+    return f.negate ? !held : held;
+  }
+  function fieldIsPairs(key) {
+    var _a5;
+    return ((_a5 = FIELD_BY_KEY.get(key)) == null ? void 0 : _a5.type) === "pairs";
+  }
+  function matchesTag(node2, want) {
+    var _a5;
+    const at = want.indexOf(":");
+    const wantKey = (at === -1 ? want : want.slice(0, at)).trim();
+    const wantValue = at === -1 ? null : want.slice(at + 1).trim();
+    return ((_a5 = node2.tags) != null ? _a5 : []).some((t) => {
+      var _a6;
+      if (String(t.key).toLowerCase() !== wantKey) return false;
+      return wantValue === null || String((_a6 = t.value) != null ? _a6 : "").toLowerCase() === wantValue;
+    });
+  }
+  function matchesNode(node2, q) {
+    var _a5;
+    const kinds = kindsOf(q);
+    if (!kinds.includes("ANY") && !kinds.includes(node2.kind)) return false;
+    for (const f of (_a5 = q.where) != null ? _a5 : []) {
+      if (!matchesFilter(node2, f)) return false;
+    }
+    return true;
+  }
+  function stepTargets(from, step, adj) {
+    var _a5;
+    if (step.edge === "ANY") return anyHopTargets(from, step, adj);
+    const edges2 = (_a5 = step.reverse ? adj.in.get(from.id) : adj.out.get(from.id)) != null ? _a5 : [];
+    const seen = /* @__PURE__ */ new Set();
+    const hits = [];
+    for (const e of edges2) {
+      if (e.type !== step.edge) continue;
+      if (Boolean(e.negated) !== Boolean(step.viaAbsence)) continue;
+      const other = adj.byId.get(step.reverse ? e.src : e.dst);
+      if (!other || seen.has(other.id)) continue;
+      if (!matchesNode(other, step.node)) continue;
+      seen.add(other.id);
+      hits.push({ node: other, edges: [e] });
+    }
+    return hits;
+  }
+  function anyHopTargets(from, step, adj) {
+    var _a5, _b, _c;
+    const limit = Math.min(MAX_HOPS, Math.max(1, (_a5 = step.hops) != null ? _a5 : 1));
+    const prev = /* @__PURE__ */ new Map();
+    const seen = /* @__PURE__ */ new Set([from.id]);
+    let frontier = [from.id];
+    const hits = [];
+    for (let depth = 0; depth < limit && frontier.length; depth++) {
+      const next = [];
+      for (const id of frontier) {
+        const touching = [...(_b = adj.out.get(id)) != null ? _b : [], ...(_c = adj.in.get(id)) != null ? _c : []];
+        for (const e of touching) {
+          if (e.negated) continue;
+          const otherId = e.src === id ? e.dst : e.src;
+          if (seen.has(otherId)) continue;
+          seen.add(otherId);
+          prev.set(otherId, { via: e, from: id });
+          next.push(otherId);
+          const other = adj.byId.get(otherId);
+          if (other && matchesNode(other, step.node)) {
+            hits.push({ node: other, edges: pathEdges(otherId, from.id, prev) });
+          }
+        }
+      }
+      frontier = next;
+    }
+    return hits;
+  }
+  function pathEdges(toId, rootId, prev) {
+    const edges2 = [];
+    let cursor = toId;
+    while (cursor !== rootId) {
+      const hop = prev.get(cursor);
+      if (!hop) break;
+      edges2.push(hop.via);
+      cursor = hop.from;
+    }
+    return edges2.reverse();
+  }
+  function solutions(q, node2, adj, scan) {
+    var _a5;
+    let acc = [{ slots: [node2], edges: [] }];
+    for (const step of (_a5 = q.steps) != null ? _a5 : []) {
+      const sub = solveStep(step, node2, adj, scan);
+      if (sub === null) return [];
+      acc = crossProduct(acc, sub, scan);
+      if (scan.truncated) return [];
+    }
+    return acc;
+  }
+  function crossProduct(left, right, scan) {
+    const out = [];
+    for (const a of left) {
+      for (const b of right) {
+        if (++scan.scanned > scan.max) {
+          scan.truncated = true;
+          return out;
+        }
+        out.push({ slots: a.slots.concat(b.slots), edges: a.edges.concat(b.edges) });
+      }
+    }
+    return out;
+  }
+  function nullSolution(width) {
+    return { slots: new Array(width).fill(null), edges: [] };
+  }
+  function solveStep(step, from, adj, scan) {
+    if (isGroup(step)) return solveGroup(step, from, adj, scan);
+    const targets = stepTargets(from, step, adj);
+    if (step.negate) {
+      return targets.length ? null : [{ slots: [], edges: [] }];
+    }
+    const out = [];
+    for (const t of targets) {
+      for (const sub of solutions(step.node, t.node, adj, scan)) {
+        out.push({ slots: sub.slots, edges: t.edges.concat(sub.edges) });
+      }
+      if (scan.truncated) break;
+    }
+    if (out.length) return out;
+    return step.optional ? [nullSolution(stepSlots(step, "").length)] : null;
+  }
+  function solveGroup(group, from, adj, scan) {
+    const widths = group.steps.map((s) => stepSlots(s, "").length);
+    if (group.op === "and") {
+      let acc = [{ slots: [], edges: [] }];
+      for (const child of group.steps) {
+        const sub = solveStep(child, from, adj, scan);
+        if (sub === null) {
+          return group.optional ? [nullSolution(total(widths))] : null;
+        }
+        acc = crossProduct(acc, sub, scan);
+        if (scan.truncated) return [];
+      }
+      return acc;
+    }
+    const bound = [];
+    const empty = [];
+    for (let i = 0; i < group.steps.length; i++) {
+      if (scan.truncated) break;
+      const sub = solveStep(group.steps[i], from, adj, scan);
+      if (sub === null) continue;
+      const before = total(widths.slice(0, i));
+      const after = total(widths.slice(i + 1));
+      for (const s of sub) {
+        const solution = {
+          slots: new Array(before).fill(null).concat(s.slots, new Array(after).fill(null)),
+          edges: s.edges
+        };
+        (s.slots.some((n) => n !== null) ? bound : empty).push(solution);
+      }
+    }
+    if (bound.length) return bound;
+    if (empty.length) return [empty[0]];
+    return group.optional ? [nullSolution(total(widths))] : null;
+  }
+  function total(ns) {
+    let sum = 0;
+    for (const n of ns) sum += n;
+    return sum;
+  }
+  function runQuery(doc, query, opts = {}) {
+    var _a5, _b;
+    const rowMax = (_a5 = opts.rowMax) != null ? _a5 : QUERY_ROW_MAX;
+    const scan = { scanned: 0, max: (_b = opts.scanMax) != null ? _b : QUERY_SCAN_MAX, truncated: false };
+    const adj = buildAdjacency(doc);
+    const groups = queryColumnGroups(query, opts.columns);
+    const slots = bindingSlots(query);
+    const shownMask = slots.map((slot) => slot.node.show !== false);
+    const witnessOf = slots.map((slot) => witnessFor(slot.node));
+    const anyWitness = witnessOf.some(Boolean);
+    const groupFields = groups.map((g) => g.fields.map((f) => f.key));
+    const roots = doc.nodes.filter((n) => matchesNode(n, query)).sort((a, b) => {
+      var _a6, _b2;
+      return severityRank(a.severity) - severityRank(b.severity) || ((_a6 = b.aars) != null ? _a6 : -1) - ((_b2 = a.aars) != null ? _b2 : -1) || cmp(a.name, b.name);
+    });
+    const rows = [];
+    const nodeIds = /* @__PURE__ */ new Set();
+    const edgeIds = /* @__PURE__ */ new Set();
+    const witnessNodeIds = /* @__PURE__ */ new Set();
+    const witnessEdgeIds = /* @__PURE__ */ new Set();
+    const paths = [];
+    let total2 = 0;
+    for (const root of roots) {
+      for (const sol of solutions(query, root, adj, scan)) {
+        total2 += 1;
+        if (rows.length < rowMax) {
+          rows.push({ cells: toCells(sol.slots, shownMask, groupFields) });
+          const mine = [];
+          const mineAdd = (id) => {
+            if (!mine.includes(id)) mine.push(id);
+          };
+          for (const n of sol.slots) if (n) {
+            nodeIds.add(n.id);
+            mineAdd(n.id);
+          }
+          for (const e of sol.edges) {
+            edgeIds.add(e.id);
+            nodeIds.add(e.src);
+            nodeIds.add(e.dst);
+            mineAdd(e.src);
+            mineAdd(e.dst);
+          }
+          if (anyWitness) {
+            sol.slots.forEach((bound, i) => {
+              const witness = witnessOf[i];
+              if (!bound || !witness) return;
+              let taken = 0;
+              for (const found of solutions(witness, bound, adj, scan)) {
+                if (taken++ >= WITNESS_FANOUT_CAP) break;
+                for (const n of found.slots) {
+                  if (!n || n.id === bound.id) continue;
+                  witnessNodeIds.add(n.id);
+                  mineAdd(n.id);
+                }
+                for (const e of found.edges) {
+                  witnessEdgeIds.add(e.id);
+                  for (const end of [e.src, e.dst]) {
+                    if (end !== bound.id) witnessNodeIds.add(end);
+                    mineAdd(end);
+                  }
+                }
+              }
+            });
+          }
+          paths.push(mine);
+        }
+      }
+      if (scan.truncated) break;
+    }
+    return {
+      rows,
+      groups,
+      total: total2,
+      capped: total2 > rows.length,
+      truncated: scan.truncated,
+      nodeIds: [...nodeIds],
+      edgeIds: [...edgeIds],
+      witnessNodeIds: [...witnessNodeIds],
+      witnessEdgeIds: [...witnessEdgeIds],
+      paths
+    };
+  }
+  function toCells(slots, shownMask, groupFields) {
+    var _a5;
+    const cells = [];
+    for (let i = 0; i < slots.length; i++) {
+      if (!shownMask[i]) continue;
+      const node2 = slots[i];
+      const keys = (_a5 = groupFields[cells.length]) != null ? _a5 : [];
+      if (!node2) {
+        cells.push(null);
+        continue;
+      }
+      const fields = {};
+      for (const key of keys) fields[key] = fieldValue(node2, key);
+      cells.push({ id: node2.id, kind: node2.kind, name: node2.name, fields });
+    }
+    return cells;
+  }
+
+  // src/domain/domainTag.ts
+  var DEFAULT_DOMAIN_TAG_KEY = "Wiz/Domain";
+  function domainOfTags(tags, key = DEFAULT_DOMAIN_TAG_KEY) {
+    var _a5;
+    const want = key.trim().toLowerCase();
+    if (!want || !tags) return null;
+    for (const t of tags) {
+      if (!t || String(t.key).trim().toLowerCase() !== want) continue;
+      const value = String((_a5 = t.value) != null ? _a5 : "").trim();
+      if (value) return value;
+    }
+    return null;
+  }
+  function resolveDomainTagKey(configured) {
+    const k = (configured != null ? configured : "").trim();
+    return k || DEFAULT_DOMAIN_TAG_KEY;
+  }
+  function domainCoverage(nodes, key) {
+    let tagged = 0;
+    for (const n of nodes) if (n.domain) tagged += 1;
+    return { key, tagged, total: nodes.length };
+  }
+
   // src/domain/graphEnrich.ts
   function worstSeverity(severities) {
     let worst;
@@ -8154,36 +11014,1861 @@ var Server = (() => {
     });
   }
 
-  // src/domain/identityHygiene.ts
-  var HYGIENE_SUBJECT = "USER_ACCOUNT";
-  var MATCHERS = [
-    // "multi-factor authentication (MFA)" and bare "MFA enabled" both appear in the catalogue.
-    { kind: "MFA", test: /multi-factor|\bMFA\b/i },
-    // "should not be inactive for more than 90 days" and "should have recent login activity".
-    // Deliberately NOT a bare /inactive/ — "Uninstalled Connected App should not be inactive"
-    // is a SERVICE_ACCOUNT rule about an app, and the subject guard below already excludes it,
-    // but the phrase is specific enough not to lean on that alone.
-    { kind: "DORMANT", test: /inactive for more than|recent login activity/i }
-  ];
-  function hygieneKindOf(rule) {
-    if (rule.subjectEntityType !== HYGIENE_SUBJECT) return null;
-    for (const m of MATCHERS) {
-      if (m.test.test(rule.name)) return m.kind;
+  // src/domain/severity.ts
+  function normalizeSeverity(sev) {
+    if (typeof sev !== "string") return "UNKNOWN";
+    const s = sev.toUpperCase().trim();
+    if (s === "INFORMATIONAL" || s === "INFO") return "INFO";
+    return SEVERITY_ORDER.includes(s) ? s : "UNKNOWN";
+  }
+  function countBySeverity2(records) {
+    var _a5;
+    if (!records.length || !records.some((r) => "severity" in r)) return {};
+    const counts = {};
+    for (const rec4 of records) {
+      const sev = normalizeSeverity(rec4["severity"]);
+      counts[sev] = ((_a5 = counts[sev]) != null ? _a5 : 0) + 1;
     }
+    return counts;
+  }
+
+  // src/domain/comboDigest.ts
+  var DUE_SOON_DAYS = 7;
+  var DAY_MS3 = 864e5;
+  var carriesCondition = conditionState;
+  function mixOf(issues2, field) {
+    return countBySeverity2(issues2.map((i) => ({ severity: i[field] })));
+  }
+  function daysUntil(dueAt, nowMs) {
+    const t = Date.parse(dueAt || "");
+    if (Number.isNaN(t)) return null;
+    return Math.round((t - nowMs) / DAY_MS3);
+  }
+  function slaTally(issues2, nowMs) {
+    const out = { pastDue: 0, dueSoon: 0, noDueDate: 0 };
+    for (const issue2 of issues2) {
+      const days = daysUntil(issue2.dueAt, nowMs);
+      if (days === null) out.noDueDate += 1;
+      else if (days < 0) out.pastDue += 1;
+      else if (days <= DUE_SOON_DAYS) out.dueSoon += 1;
+    }
+    return out;
+  }
+  function emptyConditions() {
+    const out = {};
+    for (const key of CONDITION_KEYS) {
+      out[key] = { required: false, carried: 0, unknown: 0, total: 0 };
+    }
+    return out;
+  }
+  function reRatedCount(issues2) {
+    return issues2.filter((i) => i.nativeSeverity !== i.adjustedSeverity).length;
+  }
+  function comboDigest(issues2, assets, nowIso2) {
+    const nowMs = Date.parse(nowIso2);
+    const byAsset = new Map(assets.map((a) => [a.id, a]));
+    const open = issues2.filter(isUnresolvedIssue);
+    const summaries = comboSummary(issues2);
+    const groups = summaries.map((summary) => {
+      const group = summary.group;
+      const assetIds = summary.assetIds;
+      const rows = open.filter((i) => registerBucketId(i) === group.id);
+      const conditions = emptyConditions();
+      const declared = new Set(group.conditions);
+      for (const key of CONDITION_KEYS) conditions[key].required = declared.has(key);
+      for (const id of assetIds) {
+        const asset = byAsset.get(id);
+        if (!asset) continue;
+        for (const key of CONDITION_KEYS) {
+          const tally = conditions[key];
+          tally.total += 1;
+          const carried = carriesCondition(asset, key);
+          if (carried === null) tally.unknown += 1;
+          else if (carried) tally.carried += 1;
+        }
+      }
+      const sla2 = slaTally(rows, nowMs);
+      return {
+        id: group.id,
+        count: summary.count,
+        assetCount: assetIds.length,
+        conditions,
+        nativeMix: mixOf(rows, "nativeSeverity"),
+        adjustedMix: mixOf(rows, "adjustedSeverity"),
+        reRated: reRatedCount(rows),
+        pastDue: sla2.pastDue,
+        dueSoon: sla2.dueSoon,
+        noDueDate: sla2.noDueDate
+      };
+    });
+    const affected = /* @__PURE__ */ new Set();
+    for (const s of summaries) for (const id of s.assetIds) affected.add(id);
+    const sla = slaTally(open, nowMs);
+    const modelled = new Set(COMBO_GROUPS.map((g) => g.id));
+    return {
+      totals: {
+        totalOpen: open.length,
+        assetsAffected: affected.size,
+        // Four modelled patterns is still four: Other is a residual bucket, not a pattern,
+        // so counting it would render "5 of 5 patterns active" — a claim the rule set
+        // does not make.
+        patternsActive: groups.filter((g) => g.count > 0 && modelled.has(g.id)).length,
+        patternsTotal: COMBO_GROUPS.length,
+        unclassified: groups.filter((g) => !modelled.has(g.id)).reduce((n, g) => n + g.count, 0),
+        inProgress: open.filter((i) => i.status === "IN_PROGRESS").length,
+        nativeMix: mixOf(open, "nativeSeverity"),
+        adjustedMix: mixOf(open, "adjustedSeverity"),
+        reRated: reRatedCount(open),
+        pastDue: sla.pastDue,
+        dueSoon: sla.dueSoon,
+        noDueDate: sla.noDueDate
+      },
+      groups
+    };
+  }
+
+  // src/domain/backlogMovement.ts
+  var MOVEMENT_MIN_GAP_DAYS = 7;
+  var MOVEMENT_DAY_MS = 864e5;
+  var DELTA_KEYS = ["new", "resolved", "reopened", "carried", "skippedNarrowedScope"];
+  function round1(n) {
+    return Math.round(n * 10) / 10;
+  }
+  function deltasOf(cell2) {
+    const counts = parseCounts(cell2, DELTA_KEYS, true);
+    if (!counts) return null;
+    const out = {};
+    for (const k of DELTA_KEYS) {
+      const n = counts[k];
+      if (n === null) return null;
+      out[k] = n;
+    }
+    return out;
+  }
+  function stepsOf(history) {
+    var _a5, _b;
+    const out = [];
+    for (const r of history) {
+      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
+      const at = String(r["finished_at"] || r["started_at"] || "");
+      const atMs = parseTs(at);
+      if (!at || atMs === null) continue;
+      out.push({
+        at,
+        atMs,
+        scope: String((_b = r["register_scope"]) != null ? _b : ""),
+        deltas: deltasOf(r["ledger_json"])
+      });
+    }
+    out.sort((a, b) => a.atMs - b.atMs);
+    return out;
+  }
+  function stepBack(open, d) {
+    return open - d.new - d.reopened + d.resolved;
+  }
+  function directionOf(open, prevOpen) {
+    if (open > prevOpen) return "up";
+    if (open < prevOpen) return "down";
+    return "flat";
+  }
+  function stepRefusal(newer, older) {
+    if (newer.deltas === null || older.deltas === null) return "noLedger";
+    if (newer.deltas.skippedNarrowedScope > 0) return "rescoped";
+    if (!newer.scope || !older.scope || newer.scope !== older.scope) return "rescoped";
     return null;
   }
-  function resolveHygieneRules(catalogue) {
-    const byId = {};
-    const ids = [];
-    const shortIds = [];
-    for (const rule of catalogue) {
-      const kind = hygieneKindOf(rule);
-      if (!kind || !rule.id) continue;
-      byId[rule.id] = kind;
-      ids.push(rule.id);
-      if (rule.shortId) shortIds.push(rule.shortId);
+  function backlogMovement(history, opts) {
+    const minGapDays = opts.minGapDays === void 0 ? MOVEMENT_MIN_GAP_DAYS : opts.minGapDays;
+    const anchor = Number.isFinite(opts.openNow) && opts.openNow >= 0 ? Math.floor(opts.openNow) : null;
+    const steps = anchor === null ? [] : stepsOf(history);
+    const n = steps.length;
+    const spanDays2 = n >= 2 ? round1((steps[n - 1].atMs - steps[0].atMs) / MOVEMENT_DAY_MS) : null;
+    const none = (previous2, week) => ({ previous: null, week: null, reasons: { previous: previous2, week }, spanDays: spanDays2 });
+    if (n === 0) return none("noSync", "tooClose");
+    if (n === 1) return none("oneSync", "tooClose");
+    const latest = steps[n - 1];
+    const openNow = anchor;
+    let previous = null;
+    let previousReason = null;
+    const priorStep = steps[n - 2];
+    const priorRefusal = stepRefusal(latest, priorStep);
+    if (priorRefusal !== null) {
+      previousReason = priorRefusal;
+    } else {
+      const prevOpen = stepBack(openNow, latest.deltas);
+      previous = {
+        since: priorStep.at,
+        until: latest.at,
+        gapDays: round1((latest.atMs - priorStep.atMs) / MOVEMENT_DAY_MS),
+        deltas: { ...latest.deltas },
+        open: openNow,
+        prevOpen,
+        direction: directionOf(openNow, prevOpen)
+      };
     }
-    return { byId, ids, shortIds };
+    let target = -1;
+    for (let i = n - 2; i >= 0; i -= 1) {
+      if ((latest.atMs - steps[i].atMs) / MOVEMENT_DAY_MS >= minGapDays) {
+        target = i;
+        break;
+      }
+    }
+    if (target < 0) {
+      return {
+        previous,
+        week: null,
+        reasons: { previous: previousReason, week: "tooClose" },
+        spanDays: spanDays2
+      };
+    }
+    const sum = {
+      new: 0,
+      resolved: 0,
+      reopened: 0,
+      carried: 0,
+      skippedNarrowedScope: 0
+    };
+    let open = openNow;
+    for (let k = n - 1; k > target; k -= 1) {
+      const refusal = stepRefusal(steps[k], steps[k - 1]);
+      if (refusal !== null) {
+        return {
+          previous,
+          week: null,
+          reasons: { previous: previousReason, week: refusal },
+          spanDays: spanDays2
+        };
+      }
+      const d = steps[k].deltas;
+      for (const key of DELTA_KEYS) sum[key] += d[key];
+      open = stepBack(open, d);
+    }
+    const older = steps[target];
+    return {
+      previous,
+      week: {
+        since: older.at,
+        until: latest.at,
+        gapDays: round1((latest.atMs - older.atMs) / MOVEMENT_DAY_MS),
+        deltas: sum,
+        open: openNow,
+        prevOpen: open,
+        direction: directionOf(openNow, open)
+      },
+      reasons: { previous: previousReason, week: null },
+      spanDays: spanDays2
+    };
+  }
+
+  // src/domain/issueSurvival.ts
+  var CROSSING_EPSILON = 1e-9;
+  var DAY_MS4 = 864e5;
+  function kmCurve(events, times) {
+    const curve = [];
+    let s = 1;
+    for (const t of [...new Set(events)].sort((a, b) => a - b)) {
+      const atRisk = times.filter((x) => x >= t).length;
+      if (atRisk === 0) continue;
+      const d = events.filter((x) => x === t).length;
+      s *= 1 - d / atRisk;
+      curve.push({ t, s, atRisk, events: d });
+    }
+    return curve;
+  }
+  function kmQuantileFromCurve(curve, q) {
+    const threshold = 1 - q;
+    for (const p of curve) if (p.s <= threshold + CROSSING_EPSILON) return p.t;
+    return null;
+  }
+  function kmMedianFromCurve(curve) {
+    return kmQuantileFromCurve(curve, 0.5);
+  }
+  function kaplanMeier(observations) {
+    const events = [];
+    const times = [];
+    let censored = 0;
+    for (const o of observations) {
+      if (!Number.isFinite(o.t)) continue;
+      times.push(o.t);
+      if (o.event) events.push(o.t);
+      else censored += 1;
+    }
+    let longest = null;
+    for (const t of times) if (longest === null || t > longest) longest = t;
+    if (!events.length) {
+      return {
+        curve: [],
+        median: null,
+        medianLowerBound: longest,
+        p90: null,
+        events: 0,
+        censored,
+        total: times.length
+      };
+    }
+    const curve = kmCurve(events, times);
+    const median = kmMedianFromCurve(curve);
+    return {
+      curve,
+      median,
+      medianLowerBound: median === null ? longest : null,
+      p90: kmQuantileFromCurve(curve, 0.9),
+      events: events.length,
+      censored,
+      total: times.length
+    };
+  }
+  function spanDays(fromIso, toIsoValue) {
+    const from = parseTs(fromIso);
+    const to = parseTs(toIsoValue);
+    if (from === null || to === null) return null;
+    const days = (to - from) / DAY_MS4;
+    if (!Number.isFinite(days) || days < 0) return null;
+    return days;
+  }
+  function ledgerObservations(ledger) {
+    const obs = [];
+    let returnedExcluded = 0;
+    let unmeasurable = 0;
+    for (const row of ledger) {
+      const episode = row ? row.episode : void 0;
+      if (typeof episode !== "number" || !Number.isFinite(episode)) {
+        unmeasurable += 1;
+        continue;
+      }
+      if (episode > 1) {
+        returnedExcluded += 1;
+        continue;
+      }
+      const gone = row.disappearedAt;
+      if (gone !== null && gone !== void 0) {
+        const t2 = spanDays(row.firstSeenAt, gone);
+        if (t2 === null) unmeasurable += 1;
+        else obs.push({ t: t2, event: true });
+        continue;
+      }
+      const t = spanDays(row.firstSeenAt, row.lastSeenAt);
+      if (t === null) unmeasurable += 1;
+      else obs.push({ t, event: false });
+    }
+    return { obs, returnedExcluded, unmeasurable };
+  }
+  function issueHalfLife(ledger) {
+    const { obs, returnedExcluded, unmeasurable } = ledgerObservations(ledger);
+    let latest = null;
+    for (const row of ledger) {
+      if (!row) continue;
+      for (const value of [row.lastSeenAt, row.disappearedAt]) {
+        const ts = parseTs(value);
+        if (ts !== null && (latest === null || ts > latest)) latest = ts;
+      }
+    }
+    return {
+      ...kaplanMeier(obs),
+      returnedExcluded,
+      unmeasurable,
+      asOf: toIso(latest)
+    };
+  }
+
+  // src/domain/reach.ts
+  var READ_TIME_EDGE_TYPES = [
+    "HAS_ISSUE",
+    "HAS_SENSITIVE_DATA",
+    "HAS_ACCESS_TO_SENSITIVE_DATA",
+    "EXPOSED_TO_INTERNET",
+    "HAS_EXCESSIVE_PRIVILEGE",
+    "HAS_DATA_FINDING"
+  ];
+  function isDecidedRow(row) {
+    return !!row.problemOutcome && !!row.problemInput && OUTCOME_VALUES.includes(row.problemOutcome);
+  }
+  function isEnriched(edgeTouched, a) {
+    var _a5, _b, _c, _d, _e, _f, _g;
+    if (edgeTouched.has(a.id)) return true;
+    const ev2 = a.exposureEvidence;
+    if (ev2 && (((_b = (_a5 = ev2.hostIds) == null ? void 0 : _a5.length) != null ? _b : 0) > 0 || ((_d = (_c = ev2.endpointIds) == null ? void 0 : _c.length) != null ? _d : 0) > 0)) return true;
+    return ((_g = (_f = (_e = a.humanAccess) == null ? void 0 : _e.identityIds) == null ? void 0 : _f.length) != null ? _g : 0) > 0;
+  }
+  function estateReach(input) {
+    var _a5;
+    const { assets, issues: issues2, findings, edges: edges2 } = input;
+    const unresolvedIssues = issues2.filter(isUnresolvedIssue);
+    const openFindings = findings.filter(isOpenGap);
+    const issueAssetIds = new Set(unresolvedIssues.map((i) => i.assetId));
+    const findingResourceIds = new Set(openFindings.map((f) => f.resourceId));
+    const edgeTouched = /* @__PURE__ */ new Set();
+    for (const e of edges2) {
+      edgeTouched.add(e.src);
+      edgeTouched.add(e.dst);
+    }
+    const hasSignal = (a) => issueAssetIds.has(a.id) || findingResourceIds.has(a.id) || CONDITION_KEYS.some((k) => conditionHolds(a, k));
+    const byKind = /* @__PURE__ */ new Map();
+    for (const a of assets) {
+      const slot = (_a5 = byKind.get(a.kind)) != null ? _a5 : { total: 0, signal: 0 };
+      slot.total += 1;
+      if (hasSignal(a)) slot.signal += 1;
+      byKind.set(a.kind, slot);
+    }
+    const kinds = [...byKind.entries()].sort((a, b) => b[1].total - a[1].total).map(([kind, s]) => ({
+      kind,
+      total: s.total,
+      signal: s.signal,
+      ai: AI_ASSET_KINDS.includes(kind)
+    }));
+    const aiAssets = assets.filter((a) => AI_ASSET_KINDS.includes(a.kind));
+    const stages = [
+      // 1. IN REGISTER. Denominator: every row on ai_assets (assets.length). Covered: the
+      // AI-kinded subset (AI_ASSET_KINDS membership on ai_assets.kind) — the same number
+      // registerScopeDiagnostic prints as "in AI_ASSET_KINDS". Everything past this stage is
+      // scoped to that covered count, which is why it becomes every later stage's total.
+      { key: "register", label: "In register", covered: aiAssets.length, total: assets.length },
+      // 2. OBSERVED. Denominator: the AI-kinded population stage 1 established. Covered: AI
+      // assets where hasSignal() holds — ai_issues.status (unresolved), ai_findings.result /
+      // .status (open gap), or ai_assets' four condition columns (sensitive_data,
+      // sensitive_access, high_priv, admin_priv, guardrail_missing, internet /
+      // exposure_evidence_json) via conditionHolds. An asset with none of these contributes
+      // nothing any scoring model can read — "carrying any signal" in
+      // registerScopeDiagnostic's own words.
+      {
+        key: "observed",
+        label: "Observed",
+        covered: aiAssets.filter(hasSignal).length,
+        total: aiAssets.length
+      },
+      // 3. ENRICHED. Denominator: the AI-kinded population. Covered: AI assets a graph
+      // traversal actually reached — participates in a row of ai_edges (src or dst), or
+      // carries folded exposure evidence (ai_assets.exposure_evidence_json) or human-access
+      // evidence (ai_assets.human_access_json). An asset with none of these was never walked
+      // by anything past the mandatory inventory query.
+      {
+        key: "enriched",
+        label: "Enriched",
+        covered: aiAssets.filter((a) => isEnriched(edgeTouched, a)).length,
+        total: aiAssets.length
+      },
+      // 4. DECIDED. Denominator: the AI-kinded population. Covered: AI assets carrying a
+      // problem verdict (ai_assets.worst_open_problem, folded from the Phase 4 tree onto the
+      // asset by graphEnrich.withProblemVerdicts). An asset without one sits in the register
+      // unrouted: no cascade row matched it because nothing was known about it.
+      //
+      // A PERSISTED AARS SCORE DOES NOT COUNT, and this stage used to accept one. That made it
+      // a tautology: `enrichGraphDoc` scores every AI-kinded node unconditionally, so
+      // `typeof a.aars === "number"` is true for the whole population and the stage reported
+      // 100% by construction on every tenant. It did so most loudly on the tenant it mattered
+      // for — a green 100% Decided printed directly under a 0% Enriched, which is exactly the
+      // false-green this file's header says it exists to refuse. A score of 0 on an asset with
+      // no issue, no finding, no edge and no evidence is the ABSENCE of a conclusion; counting
+      // it as one is counting the scorer having run.
+      {
+        key: "decided",
+        label: "Decided",
+        covered: aiAssets.filter((a) => a.worstOpenProblem !== void 0).length,
+        total: aiAssets.length
+      }
+    ];
+    const seenTypes = new Set(edges2.map((e) => e.type));
+    const populated = EDGE_TYPES.filter((t) => seenTypes.has(t));
+    const unseen = EDGE_TYPES.filter((t) => !seenTypes.has(t));
+    const synthetic = unseen.filter((t) => READ_TIME_EDGE_TYPES.includes(t));
+    const dead = unseen.filter((t) => !READ_TIME_EDGE_TYPES.includes(t));
+    const decidedRows = [...issues2, ...findings].filter(isDecidedRow);
+    const decided = decidedRows.map((r) => ({
+      outcome: r.problemOutcome,
+      vector: r.problemInput.vector,
+      unknowns: r.problemInput.unknowns
+    }));
+    const td = treeDiscrimination(decided);
+    const n = decided.length;
+    const axisKnown = (rate) => n > 0 ? 1 - rate : 0;
+    const axes = {
+      exploitation: axisKnown(td.unknownRate.exploitation),
+      impact: axisKnown(td.unknownRate.impact),
+      exposure: axisKnown(td.unknownRate.exposure),
+      mission: axisKnown(td.unknownRate.mission)
+    };
+    return {
+      stages,
+      kinds,
+      edges: { populated, dead, synthetic, declared: EDGE_TYPES.length },
+      axes,
+      axesPopulation: n,
+      impactTagged: {
+        covered: aiAssets.filter((a) => !!a.businessImpact).length,
+        total: aiAssets.length
+      }
+    };
+  }
+
+  // ../gas_shared/domain/sha1.ts
+  function utf8Bytes(s) {
+    const out = [];
+    for (let i = 0; i < s.length; i++) {
+      let c = s.charCodeAt(i);
+      if (c < 128) {
+        out.push(c);
+      } else if (c < 2048) {
+        out.push(192 | c >> 6, 128 | c & 63);
+      } else if (c >= 55296 && c <= 56319 && i + 1 < s.length) {
+        const c2 = s.charCodeAt(++i);
+        const cp = 65536 + (c - 55296 << 10) + (c2 - 56320);
+        out.push(
+          240 | cp >> 18,
+          128 | cp >> 12 & 63,
+          128 | cp >> 6 & 63,
+          128 | cp & 63
+        );
+      } else {
+        out.push(224 | c >> 12, 128 | c >> 6 & 63, 128 | c & 63);
+      }
+    }
+    return out;
+  }
+  function rotl(n, b) {
+    return (n << b | n >>> 32 - b) >>> 0;
+  }
+  function sha1Hex(input) {
+    const bytes = utf8Bytes(input);
+    const bitLen = bytes.length * 8;
+    bytes.push(128);
+    while (bytes.length % 64 !== 56) bytes.push(0);
+    const hi = Math.floor(bitLen / 4294967296);
+    bytes.push(hi >>> 24 & 255, hi >>> 16 & 255, hi >>> 8 & 255, hi & 255);
+    bytes.push(bitLen >>> 24 & 255, bitLen >>> 16 & 255, bitLen >>> 8 & 255, bitLen & 255);
+    let h0 = 1732584193, h1 = 4023233417, h2 = 2562383102, h3 = 271733878, h4 = 3285377520;
+    const w = new Array(80);
+    for (let block = 0; block < bytes.length; block += 64) {
+      for (let i = 0; i < 16; i++) {
+        w[i] = (bytes[block + i * 4] << 24 | bytes[block + i * 4 + 1] << 16 | bytes[block + i * 4 + 2] << 8 | bytes[block + i * 4 + 3]) >>> 0;
+      }
+      for (let i = 16; i < 80; i++) {
+        w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+      }
+      let a = h0, b = h1, c = h2, d = h3, e = h4;
+      for (let i = 0; i < 80; i++) {
+        let f, k;
+        if (i < 20) {
+          f = b & c | ~b & d;
+          k = 1518500249;
+        } else if (i < 40) {
+          f = b ^ c ^ d;
+          k = 1859775393;
+        } else if (i < 60) {
+          f = b & c | b & d | c & d;
+          k = 2400959708;
+        } else {
+          f = b ^ c ^ d;
+          k = 3395469782;
+        }
+        const t = rotl(a, 5) + f + e + k + w[i] >>> 0;
+        e = d;
+        d = c;
+        c = rotl(b, 30);
+        b = a;
+        a = t;
+      }
+      h0 = h0 + a >>> 0;
+      h1 = h1 + b >>> 0;
+      h2 = h2 + c >>> 0;
+      h3 = h3 + d >>> 0;
+      h4 = h4 + e >>> 0;
+    }
+    return [h0, h1, h2, h3, h4].map((x) => x.toString(16).padStart(8, "0")).join("");
+  }
+
+  // ../gas_shared/server/buildInfo.ts
+  var BUILD_ID = true ? "3c4c1c544609" : "dev";
+  function buildInfo() {
+    return { id: BUILD_ID };
+  }
+
+  // src/server/serverCache.ts
+  var VERSION_PROP = "DATA_VERSION";
+  var WIZ_VERSION_PROP = "WIZ_DATA_VERSION";
+  var KEY_PREFIX = `wsk.${BUILD_ID}`;
+  var CHUNK_CHARS = 9e4;
+  var DEFAULT_TTL_SEC = 21600;
+  var dataVersionMemo;
+  var wizDataVersionMemo;
+  var configStampMemo;
+  function __resetMemosForTest() {
+    dataVersionMemo = void 0;
+    wizDataVersionMemo = void 0;
+    configStampMemo = void 0;
+  }
+  function dataVersion() {
+    var _a5;
+    if (dataVersionMemo === void 0) dataVersionMemo = (_a5 = getProp(VERSION_PROP)) != null ? _a5 : "0";
+    return dataVersionMemo;
+  }
+  function nextVersion(prev) {
+    const now = String(Date.now());
+    const [prevMs, prevN] = String(prev != null ? prev : "").split(".");
+    return prevMs === now ? `${now}.${(Number(prevN) || 0) + 1}` : `${now}.0`;
+  }
+  function bumpDataVersion() {
+    setProp(VERSION_PROP, nextVersion(getProp(VERSION_PROP)));
+    __resetMemosForTest();
+  }
+  function wizDataVersion() {
+    var _a5;
+    if (wizDataVersionMemo === void 0) wizDataVersionMemo = (_a5 = getProp(WIZ_VERSION_PROP)) != null ? _a5 : "0";
+    return wizDataVersionMemo;
+  }
+  function bumpWizDataVersion() {
+    setProp(WIZ_VERSION_PROP, nextVersion(getProp(WIZ_VERSION_PROP)));
+    __resetMemosForTest();
+  }
+  function paramsHash(params) {
+    return sha1Hex(JSON.stringify(params != null ? params : null)).slice(0, 12);
+  }
+  function cacheKey(name, params, version) {
+    return `${KEY_PREFIX}:${version}:${name}:${paramsHash(params)}`;
+  }
+  function configStamp() {
+    var _a5;
+    if (configStampMemo === void 0) {
+      configStampMemo = sha1Hex(`${domainTagKey()}\0${(_a5 = getProp(PROP_KEYS.wizProjectIdV2)) != null ? _a5 : ""}`).slice(0, 8);
+    }
+    return configStampMemo;
+  }
+  function currentStamp(version) {
+    return `${KEY_PREFIX}:${version != null ? version : dataVersion()}.${configStamp()}`;
+  }
+  function splitChunks(s, size = CHUNK_CHARS) {
+    const out = [];
+    for (let i = 0; i < s.length; i += size) out.push(s.slice(i, i + size));
+    return out.length ? out : [""];
+  }
+  function cachePutJson(key, value, ttlSec = DEFAULT_TTL_SEC, chunkChars = CHUNK_CHARS) {
+    const json = JSON.stringify(value);
+    const gz = Utilities.gzip(Utilities.newBlob(json, "application/json"));
+    const packed = Utilities.base64Encode(gz.getBytes());
+    const chunks = splitChunks(packed, chunkChars);
+    const entries = { [`${key}:m`]: String(chunks.length) };
+    chunks.forEach((c, i) => {
+      entries[`${key}:${i}`] = c;
+    });
+    CacheService.getScriptCache().putAll(entries, ttlSec);
+  }
+  function cacheGetJson(key) {
+    const cache = CacheService.getScriptCache();
+    const meta = cache.get(`${key}:m`);
+    if (!meta) return void 0;
+    const n = Number(meta);
+    if (!Number.isInteger(n) || n < 1) return void 0;
+    const names = [];
+    for (let i = 0; i < n; i++) names.push(`${key}:${i}`);
+    const got = cache.getAll(names);
+    let packed = "";
+    for (const name of names) {
+      const chunk = got[name];
+      if (chunk === void 0 || chunk === null) return void 0;
+      packed += chunk;
+    }
+    const bytes = Utilities.base64Decode(packed);
+    const json = Utilities.ungzip(
+      Utilities.newBlob(bytes, "application/x-gzip")
+    ).getDataAsString("UTF-8");
+    return JSON.parse(json);
+  }
+  function cached(name, params, compute, ttlSec = DEFAULT_TTL_SEC, version) {
+    let key = null;
+    try {
+      key = cacheKey(name, params, `${version != null ? version : dataVersion()}.${configStamp()}`);
+      const hit = cacheGetJson(key);
+      if (hit !== void 0) return hit;
+    } catch (e) {
+      console.warn(`Cache read failed for ${name}: ${e}`);
+      key = null;
+    }
+    const value = compute();
+    if (key) {
+      try {
+        cachePutJson(key, value, ttlSec);
+      } catch (e) {
+        console.warn(`Cache write failed for ${name}: ${e}`);
+      }
+    }
+    return value;
+  }
+
+  // src/server/sheetsDb.ts
+  var TABS = {
+    assets: "ai_assets",
+    edges: "ai_edges",
+    issues: "ai_issues",
+    findings: "ai_findings",
+    dataFindings: "ai_data_findings",
+    frameworks: "ai_frameworks",
+    frameworkPosture: "ai_framework_posture",
+    frameworkPolicies: "ai_framework_policies",
+    configRules: "ai_config_rules",
+    identityFindings: "ai_identity_findings",
+    issueExploitation: "ai_issue_exploitation",
+    issueLedger: "ai_issue_ledger",
+    syncHistory: "sync_history",
+    settings: "settings",
+    jobs: "jobs",
+    meta: "meta"
+  };
+  var TAB_HEADERS = {
+    [TABS.assets]: [
+      "id",
+      "kind",
+      "name",
+      "native_type",
+      "cloud",
+      "region",
+      "status",
+      "account_id",
+      "account_name",
+      "projects_json",
+      "first_seen",
+      "last_seen",
+      "internet",
+      "open_internet",
+      "sensitive_data",
+      "sensitive_access",
+      "high_priv",
+      "admin_priv",
+      "guardrail_missing",
+      "severity",
+      "aars",
+      "aars_severity",
+      "aars_pillars_json",
+      "aars_input_json",
+      "combo_groups",
+      "tags_json",
+      "technology_categories",
+      "identity_purpose",
+      "issue_analytics_json",
+      // DSPM classification on a datastore row. Appended, so an existing ledger picks them
+      // up on the next sync with no migration (see the note on ai_issues below).
+      "data_finding_count",
+      "data_findings_json",
+      // Network exposure. The first two are the dynamic scanner's verdicts and belong to
+      // ENDPOINT rows; the third is the join `withExposureEvidence` folds onto an AI asset,
+      // and is what lets the Inventory and the combos matrix — which read this tab directly
+      // and never see the graph document — agree with the graph about what is exposed.
+      // Appended for the same no-migration reason.
+      "exposure_level",
+      "port_validation",
+      "exposure_evidence_json",
+      // Human identity access. The first two belong to identity rows (Wiz's dormancy read from
+      // cloud audit events); the third is the join `withHumanAccess` folds onto an AI asset, so
+      // the register and the Scans figure can total reach without reading edges. Appended.
+      "inactive",
+      "inactive_timeframe",
+      "human_access_json",
+      // Identity display fields (the human title and address an operator gave the account) and
+      // the two AI-asset provenance fields the Security Graph's default columns read. All four
+      // come out of the graph entity's properties bag. Appended for the usual no-migration
+      // reason: ensureHeaders adds declared-but-missing headers to the right of whatever a tab
+      // already has, and every read maps by header NAME.
+      "display_name",
+      "email",
+      "publisher",
+      "discovery_methods",
+      // Worst business-impact tier across the asset's own projects (HBI/MBI/LBI), folded by
+      // enrichGraphDoc from `projects[].businessImpact` — the signal ai/AARS_ASSESSMENT.md §7
+      // named as dropped at the sheet boundary. Appended, for the usual no-migration reason:
+      // ensureHeaders adds declared-but-missing headers to the right of whatever a tab
+      // already has, and every read maps by header NAME, so an existing ledger picks this up
+      // on its next sync with no migration.
+      "business_impact",
+      // Phase 6: the Asset Posture Tier (posture.ts, postureRule.ts) — a capability envelope
+      // against a containment, folded BESIDE the AARS score above by graphEnrich.withPostureTiers,
+      // never blended into it. Appended, same no-migration contract as every block above.
+      "posture_tier",
+      "posture_input_json",
+      "worst_open_problem",
+      // Which AARS rule version produced this row's score. Per-asset rather than one global
+      // marker because a rescore can now be scoped to a project, which leaves the register
+      // holding scores from two rules at once — and `counts from two versions are not on the
+      // same scale` is a rule this ledger already enforces on sync_history's distribution.
+      // Appended, same no-migration contract as every block above: a row written before this
+      // existed reads back undefined, which means "unknown", not "the current rule".
+      "aars_rule_version"
+    ],
+    [TABS.edges]: ["id", "src", "dst", "type", "negated", "access_type"],
+    [TABS.issues]: [
+      "id",
+      "rule_id",
+      "rule_name",
+      "combo_group",
+      "native_severity",
+      "adjusted_severity",
+      "status",
+      "asset_id",
+      "asset_name",
+      "region",
+      "account",
+      "projects_json",
+      "frameworks_json",
+      "justification",
+      "created_at",
+      "due_at",
+      "resolution_recommendation",
+      "remediation",
+      // issuesV2 lifecycle and context. Appended, never inserted: ensureHeaders adds
+      // declared-but-missing headers to the right of whatever a tab already has and every
+      // read maps by header NAME, so a ledger written before this change picks these up on
+      // the next sync with no migration and no re-run of setup().
+      "issue_type",
+      "updated_at",
+      "resolved_at",
+      "resolution_reason",
+      "resolved_by",
+      "assignee",
+      "environments",
+      "validated_exploitable",
+      "business_impact",
+      "entity_status",
+      "subscription_id",
+      "ignore_note",
+      "ignore_expired_at",
+      "ticket_urls",
+      "ai_verdict",
+      "ai_recommended_severity",
+      // Phase 4: the Problem/Decision-Vector verdict (problem.ts, problemRule.ts). Appended,
+      // never inserted — same no-migration contract as every block above: ensureHeaders adds
+      // declared-but-missing headers to the right, and every read maps by header NAME.
+      //
+      // Deliberately NO `problem_points` column. The whole argument for a decision tree over
+      // a score is that its output is an ACTION (one of four queues), not a number — and a
+      // points column sitting next to it would be too tempting a sort comparator to leave
+      // alone. Add one and within a week something sorts the register by it, ranks ACT rows
+      // against each other by "how ACT" they are, and the tree has quietly grown the score it
+      // was built to replace. If a number is ever genuinely needed, it belongs in a rule's own
+      // preview surface, never on the row.
+      "problem_outcome",
+      "problem_input_json",
+      "problem_rule_version",
+      // Which AI assets this issue actually describes, and how they were reached. Appended,
+      // same no-migration contract. NOT a replacement for asset_id, which keeps naming the
+      // entity Wiz raised the issue on so the drill-down still matches the console — see
+      // IssueRow.attributedAssetIds for the measurement that made this necessary.
+      "attributed_asset_ids",
+      "attribution_hop",
+      // WHICH RISK CATEGORIES THIS ROW WAS COLLECTED UNDER. Appended, same no-migration
+      // contract as every block above — and declared here rather than only written, because
+      // writeGrid projects a row onto the DECLARED headers and silently discards the rest: an
+      // undeclared column is written every sync and read back as a default, forever.
+      //
+      // Comma-joined, matching `environments` and `attributed_asset_ids`; the `_json` suffix
+      // is reserved for structures. A row written before this column reads back as the AI
+      // category, which is the only scope those syncs ever ran.
+      "categories",
+      // THE ISSUE'S OWN PROJECT ATTRIBUTION, as objects. Appended, same no-migration contract —
+      // and declared here for the same `writeGrid` reason the block above states.
+      //
+      // `projects_json` beside it holds NAMES and must keep doing so (the facets and the asset
+      // table read them); this holds `{id, name, isFolder, businessImpact}`, because only the
+      // id can decide project membership — a name is not unique across the tenant and carries
+      // no ancestry. The project view needs that: an issue raised on a VM or an identity has no
+      // asset row to hang off, so scoping by the asset alone made every one of them vanish.
+      //
+      // An EMPTY CELL reads back as undefined, never as an empty array. A row written before
+      // this column has unknown refs; a live sync writing `[]` is saying Wiz attributed the
+      // issue to nothing. The project view must be able to tell those apart.
+      "project_refs_json",
+      // WHERE THE ROW SITS RELATIVE TO THE AI ESTATE — DIRECT / ADJACENT / UNLINKED, the edge
+      // type the hop came through, and the AI assets it reached. Appended, same no-migration
+      // contract, and declared here for the same `writeGrid` reason the two blocks above state:
+      // an undeclared column is projected away on every write and read back as a default.
+      //
+      // The ids are comma-joined, matching `attributed_asset_ids` and `environments`; the
+      // `_json` suffix stays reserved for structures. An empty `ai_adjacency` cell reads back as
+      // UNDEFINED and never as "UNLINKED" — no pass ran over that row, which is a different
+      // claim from having looked and found no link, and the ranker prices the two differently.
+      "ai_adjacency",
+      "adjacency_via",
+      "adjacent_asset_ids",
+      // THE EXPLOITATION READING, folded from the vulnerability findings that name this issue
+      // (ai_issue_exploitation holds the evidence). Appended, same no-migration contract, and
+      // declared here for the same `writeGrid` reason the three blocks above state.
+      //
+      // ALL THREE EMPTY IS THE FOURTH STATE and the one that matters: no evidence pass ran over
+      // this row — VULN_FINDINGS was refused, or the row predates the step. `rank.exploitationOf`
+      // prices an absent tier as null (the term leaves the blend) and `"none"` as a measurement
+      // that scores, so a reader defaulting the blank to "none" would score every register that
+      // never ran the step as one where nothing is exploited. `epss_peak` is empty rather than 0
+      // for the same reason one column over: 0 is a computed EPSS, blank is no EPSS.
+      "exploitation_tier",
+      "epss_peak",
+      "exploitation_findings"
+    ],
+    [TABS.findings]: [
+      "id",
+      "resource_id",
+      "rule_short_id",
+      "severity",
+      "remediation",
+      "framework_codes",
+      // The Cloud Configuration register. Appended, never inserted — same contract as the
+      // ai_issues block above: ensureHeaders adds declared-but-missing headers to the right
+      // and every read maps by header NAME, so a ledger written before this change picks
+      // them up on the next sync with no migration and no re-run of setup().
+      //
+      // Rows written by the previous version carry neither `result` nor `status`. That is
+      // why isOpenGap (domain/config.ts) treats an absent field as permissive: those rows
+      // were already filtered to FAIL + OPEN at ingest, and demanding the columns would
+      // read every one of them as "not a gap".
+      "name",
+      "status",
+      "result",
+      "deleted",
+      "first_seen_at",
+      "analyzed_at",
+      // The control. rule_description / remediation_instructions / opa_policy repeat
+      // verbatim across every finding of the same rule — sixteen identical Rego documents
+      // for one Bedrock rule in the sample tenant. Denormalized on purpose: the register
+      // reads them per row, the sync rewrites this tab wholesale, and a rules tab would buy
+      // a join to save a few hundred cells on a register the framework filter already
+      // bounds to the AI landscape.
+      "rule_id",
+      "rule_graph_id",
+      "rule_name",
+      "rule_description",
+      "remediation_instructions",
+      "opa_policy",
+      "risks_json",
+      "threats_json",
+      "resource_name",
+      "resource_type",
+      "resource_status",
+      "target_external_id",
+      "source",
+      "subscription_id",
+      "subscription_name",
+      "cloud_provider",
+      "projects_json",
+      "business_impact",
+      "ignore_rule_ids_json",
+      "iac_finding_ids_json",
+      // Phase 4: the Problem/Decision-Vector verdict. Same three columns as ai_issues above,
+      // same no-migration contract, and the same deliberate absence of a `problem_points`
+      // column — see that block's comment for why. Gated on `isOpenGap` rather than
+      // `isUnresolvedIssue` (graphEnrich.withProblemVerdicts).
+      "problem_outcome",
+      "problem_input_json",
+      "problem_rule_version"
+    ],
+    // DSPM findings, kept apart from the compliance findings above on purpose: that tab
+    // prices AARS pillar B and counts as `complianceGaps`, and a classification finding
+    // folded into it would inflate both.
+    [TABS.dataFindings]: ["id", "resource_id", "name", "severity"],
+    // ---- compliance framework posture (securityFramework/complianceAnalytics) ----
+    //
+    // Three tabs rather than one, because the posture tree has two genuinely different
+    // grains and a many-to-many edge between them.
+    //
+    // `ai_frameworks` is the catalogue: what the tenant has, so Settings can offer a picker
+    // instead of asking an operator to type "wf-id-275".
+    //
+    // No `selected` column. Selection is THIS APP's decision and lives in `settings`; a
+    // column here could only ever be a stale copy of it, written by a sync that has no
+    // reason to know. The API model folds the two together at read time instead.
+    [TABS.frameworks]: ["id", "name", "description", "builtin", "enabled", "policy_types"],
+    // `ai_framework_posture` is the TREE, flattened with a `level` discriminator
+    // (framework | category | subcategory) rather than split across three tabs. One read
+    // path, one wholesale rewrite, and the page rebuilds the hierarchy from external ids.
+    //
+    // `posture_pct` is stored EXACTLY as Wiz sent it and is never recomputed: it is their
+    // number, and a second locally-derived percentage sitting beside it would be two
+    // answers to one question. `empty_posture_reason` (NO_RESOURCES / NO_POLICIES) is what
+    // keeps a null posture from being read as a confident 0 — see compliancePosture.ts.
+    // The 5Rs AI-scoped posture (fiveRsPosture.ts) does not break this rule: it is derived
+    // at read time from PolicyScope's own counts and shipped as a separate payload field,
+    // never written back over this column.
+    [TABS.frameworkPosture]: [
+      "framework_id",
+      "level",
+      "category_external_id",
+      "subcategory_external_id",
+      "node_id",
+      "title",
+      "description",
+      "posture_pct",
+      "pass_count",
+      "fail_count",
+      "pass_subcategory_count",
+      "fail_subcategory_count",
+      "empty_posture_reason",
+      "assessment_scope",
+      "mapping_rationale",
+      "tags_json"
+    ],
+    // `ai_framework_policies` is the many-to-many EDGE, one row per
+    // (framework, subcategory, policy). The same control maps to several subcategories —
+    // one prompt-injection control lands under ASI01, ASI02 and ASI10 — so the mapping IS
+    // the row. Keying by policy id alone would lose it, which is exactly the join this
+    // feature exists to harvest: it is what lets a failing finding be labelled with the
+    // framework codes AARS pillar B already knows how to price.
+    [TABS.frameworkPolicies]: [
+      "framework_id",
+      "category_external_id",
+      "subcategory_external_id",
+      "policy_id",
+      "policy_kind",
+      "short_id",
+      "name",
+      "severity",
+      "enabled",
+      "builtin",
+      "pass_count",
+      "fail_count",
+      "assessed_count",
+      "rejected_count",
+      "no_resource_to_assess",
+      "target_native_type",
+      "subject_entity_type",
+      "cloud_provider",
+      "has_auto_remediation"
+    ],
+    // ---- the rule catalogue + identity hygiene (cloudConfigurationRules) ----
+    //
+    // `ai_config_rules` is Wiz's VOCABULARY, not this tenant's posture — the only tab here
+    // whose contents do not describe the landscape. It is what turns an opaque `SUB-082` in the
+    // AARS cascade into "Vertex AI Metadata Store should be encrypted with a customer-managed
+    // key", and what the identity-hygiene matchers resolve MFA and dormancy rules against
+    // instead of hardcoding ids that differ per cloud. ~3,858 rows, refreshed monthly rather
+    // than daily; see the CONFIG_RULES gate in syncJobs.
+    [TABS.configRules]: ["id", "short_id", "name", "subject_entity_type", "external_refs"],
+    // `ai_identity_findings` is separate from `ai_findings` for the reason `ai_data_findings`
+    // is: that tab prices AARS pillar B through buildAarsHintsFromFindings, which keys hints by
+    // resourceId — and a USER_ACCOUNT IS a row in ai_assets, put there by the identity-access
+    // traversal. Folding a person's missing MFA in there would give a human being an AI Asset
+    // Risk Score.
+    [TABS.identityFindings]: [
+      "id",
+      "resource_id",
+      "resource_name",
+      "rule_id",
+      "rule_short_id",
+      "rule_name",
+      "severity",
+      "status",
+      "result",
+      "first_seen_at",
+      "analyzed_at",
+      "remediation",
+      "hygiene"
+    ],
+    // Exploitation evidence, one row per ISSUE rather than per finding. The findings themselves
+    // are not stored: 7,368 of them fold to at most a few thousand rows here, they describe assets
+    // `ai_assets` does not hold (AARS_LIVE_MEASUREMENTS.md §6.4), and the OS-vulnerability register
+    // already owns that population. This tab is the fold and its audit trail.
+    //
+    // `has_kev` / `has_exploit` / `epss_peak` are TRI-STATE and an empty cell means UNMEASURED —
+    // Wiz answers null for a signal it never evaluated. The reader must not read a blank as false
+    // or as zero; `tier: "unknown"` is what an all-null row says out loud.
+    //
+    // The three derived columns also ride on `ai_issues` (`exploitation_tier`, `epss_peak`,
+    // `exploitation_findings`) so the ranker needs no join. Two homes for one fact, the same split
+    // `projects_json` / `project_refs_json` already carries: this tab is the evidence, those
+    // columns are the reading, and only this one can say WHICH findings it was folded from.
+    [TABS.issueExploitation]: [
+      "issue_id",
+      "tier",
+      "has_kev",
+      "has_exploit",
+      "epss_peak",
+      "finding_count",
+      "sample_finding_ids",
+      "observed_at"
+    ],
+    // THE ISSUE LIFECYCLE LEDGER — the one tab here that is never a snapshot.
+    //
+    // Every other data tab above is rewritten wholesale from what the last sync saw, which is
+    // correct for a register that describes today and useless for one that has to say when a
+    // row LEFT. `ai_issues` is filtered to OPEN/IN_PROGRESS, so a remediated issue simply
+    // vanishes from it on the next sync with nothing recording that it was ever there.
+    //
+    // "Never overwritten" is a claim about the CONTENT, not about the write call: `syncStore`
+    // reconciles the stored rows with this sync's register and writes the whole reconciled grid
+    // back, which is a full rewrite of the ledger FROM ITS OWN PRIOR CONTENT and never a
+    // replacement of it by the current snapshot. Nothing may write this tab from `ai_issues`
+    // alone — that is exactly the erasure the tab exists to prevent.
+    //
+    // `disappeared_at` IS NOT A RESOLUTION DATE. It is the timestamp of the sync that first
+    // failed to see the row: an upper bound whose error is the sync interval. `resolution_src`
+    // carries the provenance in the same row so a surface cannot render the date without the
+    // word that qualifies it — "gone by", never "resolved". See domain/issueLedger.ts.
+    //
+    // `register_scope` is the scope the sync that last SAW the row applied; `categories` is the
+    // union of every category that has ever matched it. Two different facts — which questions
+    // were asked, and which ones answered — and only the first can explain an absence.
+    //
+    // Comma-joined for `categories`, matching `environments` and `attributed_asset_ids` on
+    // ai_issues; the `_json` suffix stays reserved for structures. An empty `exploitation_tier`
+    // or `ai_adjacency` cell reads back as UNDEFINED and never as "none"/"UNLINKED": the fold
+    // did not reach the row on the sync that last saw it, which the ranker prices differently
+    // from a measurement.
+    [TABS.issueLedger]: [
+      "issue_id",
+      "first_seen_sync",
+      "first_seen_at",
+      "last_seen_sync",
+      "last_seen_at",
+      "disappeared_at",
+      "resolution_src",
+      "last_status",
+      "categories",
+      "rule_id",
+      "created_at",
+      "due_at",
+      "ai_adjacency",
+      "exploitation_tier",
+      "epss_peak",
+      "register_scope",
+      "episode"
+    ],
+    [TABS.syncHistory]: [
+      "sync_id",
+      "started_at",
+      "finished_at",
+      "status",
+      "mode",
+      "node_count",
+      "edge_count",
+      "issue_count",
+      "api_calls",
+      "snapshot_ref",
+      "error",
+      "aars_severity_json",
+      "aars_rule_version",
+      // Phase 4: the outcome distribution this sync produced, and which problem_rule version
+      // produced it — the problem-outcome analogue of the two columns just above, feeding
+      // aarsTrend.ts's second series. Appended, same no-migration contract.
+      "problem_outcome_json",
+      "problem_rule_version",
+      // BOTH distributions again, one level down: `{projectId: {aars, outcome}}`, an entry per
+      // project holding an asset. One cell rather than a tab, because a sync writes one row and
+      // the map is bounded by the project count, not the landscape — see PROJECT_TOTALS_COLUMN
+      // in aarsTrend.ts for the shape and for why an absent entry is never read as a zero.
+      // Appended, same no-migration contract: rows without it have no scoped series, which the
+      // trend reports rather than fabricates.
+      "project_totals_json",
+      // The count trend's two new series. `issue_count` above is the third and has been
+      // written since the first sync this ledger ever recorded, which is why the issues line
+      // has full history and these two start empty — appended under the same no-migration,
+      // no-backfill contract as everything above them. A row written before these existed
+      // carries NO value, and the reader plots a gap rather than a zero: see
+      // CountTrendPoint in aarsTrend.ts for why that distinction is load-bearing.
+      "finding_count",
+      "posture_fail_count",
+      // The posture distribution this sync produced, and which posture rule produced it. It
+      // carries the SCOPE SPLIT, not just tiers: an asset can lack a tier because nobody
+      // measured it (a coverage gap) or because the lattice does not describe its kind (not a
+      // gap at all), and a bare tier count cannot tell those apart.
+      "posture_tier_json",
+      "posture_rule_version",
+      // Which NORMALIZER produced the readings above, as opposed to which RULE priced them. A
+      // rule version moves when an operator edits a model; this moves when a code change alters
+      // what a stored fact MEANS, which only a full sync can repair. The trend marks the break
+      // here so a step is never read as movement.
+      "derivation_version",
+      // THE SCOPE THIS SYNC APPLIED — the sorted category signature, not the one settings hold
+      // now. The two differ across a settings change, and a total counted under six categories
+      // is not comparable with one counted under one; stamping today's list onto yesterday's
+      // row would erase exactly the discontinuity the trend has to mark. Same argument as
+      // `derivation_version` above it, one axis over: that records what a fact MEANS, this
+      // records which population was asked. Empty on a row written before the column, which
+      // reads as "unknown" and never as "a different scope".
+      "register_scope",
+      // THE ADJACENCY CENSUS THIS SYNC MEASURED — `{DIRECT, ADJACENT, UNLINKED, edgesKnown}`,
+      // mirroring `aars_severity_json` and `problem_outcome_json` one row up. Appended, same
+      // no-migration contract; absent on a row written before the column, which reads as "no
+      // adjacency pass" and never as an all-UNLINKED register.
+      //
+      // `edgesKnown` travels INSIDE the object rather than as its own column because the three
+      // counts are unreadable without it: 68 asset edges on the reference tenant means UNLINKED
+      // is mostly "not traversed". Splitting them into two columns is how a later reader ends up
+      // plotting the counts alone.
+      "adjacency_json",
+      // THE EXPLOITATION CENSUS THIS SYNC MEASURED — the five tiers, plus the two counts that say
+      // what the fold could NOT use (`unjoined`, `droppedNotInRegister`) and the number of findings
+      // it read. Appended, same no-migration contract.
+      //
+      // NULL, NOT A ZEROED CENSUS, when no evidence pass ran. VULN_FINDINGS is optional; a tenant
+      // that refuses it has no reading here, and "no issue carries exploitation evidence" is a very
+      // different claim from "we never asked". The two counts travel INSIDE the object for the
+      // reason `edgesKnown` does one row up: the tier counts are unreadable without them, and split
+      // into their own columns a later reader plots the tiers alone.
+      "exploitation_json",
+      // WHAT THE LIFECYCLE LEDGER DID ON THIS SYNC — `{new, resolved, reopened, carried,
+      // skippedNarrowedScope}` (domain/issueLedger.IssueLedgerDeltas). Appended, same
+      // no-migration contract as every column above.
+      //
+      // TRANSITION COUNTS, not a census of the tab: a row present on both syncs is counted by
+      // none of the five, so these numbers do not sum to the ledger's size and a reader must not
+      // try to make them. `skippedNarrowedScope` is the one to watch — a non-zero there says the
+      // category scope moved and that this sync deliberately resolved nothing by absence, which
+      // is what keeps a re-scoping from being read as a remediation programme.
+      //
+      // Rides here rather than on its own tab because it is one object per sync, exactly like
+      // `adjacency_json` and `exploitation_json` above it, and because `bootstrap.latestSync`
+      // ships the whole history row — so the client gets it with no new endpoint.
+      "ledger_json",
+      // OPEN ISSUES PER RISK CATEGORY at this sync — `{[categoryId]: openIssues}`, counted once
+      // per category a row carries. The scope-over-time series: `register_scope` beside it says
+      // WHICH questions this sync asked, and this says what each one answered.
+      //
+      // THE COUNTS DO NOT SUM TO `issue_count`, and that is a property of the register rather
+      // than a defect: an issue sits in roughly five categories on the reference tenant
+      // (AARS_LIVE_MEASUREMENTS.md §6.1), arrives once per selected category it matches, and is
+      // counted under each. A reader adding them up is measuring the overlap, not the register.
+      //
+      // A KEY ABSENT FROM THE OBJECT IS NOT A ZERO. A sync run under a narrower scope never
+      // collected the categories it was not asked for, so it has no number for them — the
+      // trend plots the gap (aarsTrend.ts CATEGORY_SPEC, `absentKeyIsNull`) rather than drawing
+      // a category that sat at zero until the day it was selected.
+      "category_counts_json",
+      // Issues carrying a KEV-tier exploitation reading at this sync — the one exploitation
+      // figure that earns a scalar column of its own, because it is the tier every surface
+      // leads with.
+      //
+      // NULL, NOT ZERO, when no evidence pass ran, exactly as `exploitation_json` beside it is
+      // null: VULN_FINDINGS is optional, and "no issue is on the KEV catalogue" is a very
+      // different claim from "we never asked". Derived from the same fold that writes that
+      // census, so the two can never disagree about one sync.
+      "kev_linked_count",
+      // EVERY FRAMEWORK'S COMPLIANCE POSTURE AT THIS SYNC — `{avg, scoredFrameworks,
+      // frameworks: {id: {pct, scored, subcategories}}}` (domain/complianceTrend.ts). The one
+      // record of a framework percentage over time: the `framework_posture` tab is overwritten
+      // wholesale on every commit, so it holds today's reading and nothing else, and
+      // `posture_fail_count` beside it counts failing POLICIES, which is a different quantity
+      // on a different scale.
+      //
+      // ONE CELL, NOT A COLUMN PER FRAMEWORK. Which frameworks are collected is a tenant
+      // setting that moves, and a column per framework would want a migration every time an
+      // operator selected one. Appended under the same no-migration contract as everything
+      // above it; absent on a row written before the column, which the trend reads as "no
+      // point" and never as a landscape scoring zero.
+      //
+      // THE COVERAGE TRAVELS INSIDE, for the reason `edgesKnown` rides inside `adjacency_json`
+      // above: a framework percentage is a share of the subcategories Wiz SCORED, so a line
+      // that rises because scoring narrowed is indistinguishable from one that rises because
+      // the landscape improved — unless `scored`/`subcategories` arrive on the same point.
+      // Split into their own columns, a later reader plots the percentage alone.
+      "compliance_posture_json"
+    ],
+    [TABS.settings]: ["key", "value_json"],
+    [TABS.jobs]: [
+      "job_id",
+      "kind",
+      "phase",
+      "sync_id",
+      "step_index",
+      "cursor",
+      "page",
+      "nodes_so_far",
+      "total_count",
+      "part_refs_json",
+      "params_json",
+      "error",
+      "started_at",
+      "updated_at"
+    ],
+    [TABS.meta]: ["version"]
+  };
+  var spreadsheetCache = null;
+  function ledgerSpreadsheet() {
+    if (spreadsheetCache === null) {
+      spreadsheetCache = SpreadsheetApp.openById(requireProp(PROP_KEYS.ledgerSpreadsheetId));
+    }
+    return spreadsheetCache;
+  }
+  function sheet(tab) {
+    const sh = ledgerSpreadsheet().getSheetByName(tab);
+    if (!sh) throw new Error(`Missing tab ${tab} \u2014 run setup().`);
+    return sh;
+  }
+  function ensureTabs(ss) {
+    ss.setSpreadsheetTimeZone("Etc/UTC");
+    for (const [tab, headers] of Object.entries(TAB_HEADERS)) {
+      let sh = ss.getSheetByName(tab);
+      if (!sh) {
+        sh = ss.insertSheet(tab);
+        sh.getRange(1, 1, sh.getMaxRows(), sh.getMaxColumns()).setNumberFormat("@");
+        sh.getRange(1, 1, 1, headers.length).setValues([headers]);
+        sh.setFrozenRows(1);
+      } else {
+        ensureHeaders(sh, tab);
+      }
+    }
+    const dflt = ss.getSheetByName("Sheet1");
+    if (dflt && ss.getSheets().length > 1) ss.deleteSheet(dflt);
+  }
+  function fromCell(v) {
+    if (v === "" || v === null || v === void 0) return null;
+    if (v instanceof Date) return toIso(v.getTime());
+    return v;
+  }
+  function toCell(v) {
+    if (v === null || v === void 0) return "";
+    return v;
+  }
+  var READ_BLOCK_CELLS = 2e5;
+  function readGrid(sh, tab, lastRow, lastCol) {
+    const out = [];
+    let block = Math.max(1, Math.floor(READ_BLOCK_CELLS / Math.max(1, lastCol)));
+    let row = 1;
+    while (row <= lastRow) {
+      const take = Math.min(block, lastRow - row + 1);
+      try {
+        for (const values of sh.getRange(row, 1, take, lastCol).getValues()) out.push(values);
+        row += take;
+      } catch (e) {
+        if (take <= 1) {
+          throw new Error(
+            `Reading ${tab} stopped at row ${row} of ${lastRow} (${lastCol} columns): ${e instanceof Error ? e.message : String(e)}`
+          );
+        }
+        block = Math.floor(take / 2);
+      }
+    }
+    return out;
+  }
+  function mapRows(headers, rows) {
+    const out = [];
+    for (const values of rows) {
+      const row = {};
+      let empty = true;
+      for (let j = 0; j < headers.length; j++) {
+        const h = headers[j];
+        if (!h) continue;
+        const v = fromCell(values[j]);
+        row[h] = v;
+        if (v !== null) empty = false;
+      }
+      if (!empty) out.push(row);
+    }
+    return out;
+  }
+  function readAll(tab) {
+    const sh = sheet(tab);
+    const lastRow = sh.getLastRow();
+    const lastCol = sh.getLastColumn();
+    if (lastRow < 2 || lastCol < 1) return [];
+    const values = readGrid(sh, tab, lastRow, lastCol);
+    return mapRows(values[0].map(String), values.slice(1));
+  }
+  function readTail(tab, n) {
+    const sh = sheet(tab);
+    const lastRow = sh.getLastRow();
+    const lastCol = sh.getLastColumn();
+    if (lastRow < 2 || lastCol < 1) return [];
+    const headers = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
+    const first = Math.max(2, lastRow - Math.max(1, n) + 1);
+    const values = sh.getRange(first, 1, lastRow - first + 1, lastCol).getValues();
+    return mapRows(headers, values);
+  }
+  function ensureHeaders(sh, tab) {
+    var _a5, _b;
+    const width = Math.max(sh.getLastColumn(), 1);
+    const raw = sh.getRange(1, 1, 1, width).getValues()[0].map(String);
+    let lastNamed = -1;
+    for (let i = 0; i < raw.length; i++) if (raw[i]) lastNamed = i;
+    for (let i = 0; i < lastNamed; i++) {
+      if (raw[i]) continue;
+      throw new Error(
+        `Tab "${tab}" has a blank header at column ${i + 1}, between named columns ("${(_a5 = raw.slice(0, i).filter(Boolean).pop()) != null ? _a5 : "?"}" and "${raw[lastNamed]}"). Every read and write maps columns by header name, so a gap silently misfiles every value after it. Name the column or delete it, then retry \u2014 no data was written.`
+      );
+    }
+    const existing = raw.slice(0, lastNamed + 1);
+    const missing = ((_b = TAB_HEADERS[tab]) != null ? _b : []).filter((h) => !existing.includes(h));
+    if (missing.length) {
+      sh.getRange(1, existing.length + 1, 1, missing.length).setValues([missing]);
+    }
+    return [...existing, ...missing];
+  }
+  function writeGrid(sh, headers, startRow, rows) {
+    if (!rows.length) return;
+    const grid = rows.map((r) => headers.map((h) => toCell(r[h])));
+    const range = sh.getRange(startRow, 1, grid.length, headers.length);
+    range.setNumberFormat("@");
+    range.setValues(grid);
+  }
+  function overwrite(tab, rows) {
+    const sh = sheet(tab);
+    const headers = ensureHeaders(sh, tab);
+    const lastRow = sh.getLastRow();
+    if (lastRow > 1) sh.getRange(2, 1, lastRow - 1, headers.length).clearContent();
+    writeGrid(sh, headers, 2, rows);
+  }
+  function appendRows(tab, rows) {
+    if (!rows.length) return;
+    const sh = sheet(tab);
+    writeGrid(sh, ensureHeaders(sh, tab), sh.getLastRow() + 1, rows);
+  }
+  function dataRowCount(tab) {
+    return Math.max(0, sheet(tab).getLastRow() - 1);
+  }
+  var TRIM_BUFFER_ROWS = 1e3;
+  function trimSurplusRows(tab, bufferRows = TRIM_BUFFER_ROWS) {
+    const sh = sheet(tab);
+    const keep = Math.max(sh.getLastRow(), 1) + Math.max(0, bufferRows);
+    const surplus = sh.getMaxRows() - keep;
+    if (surplus <= 0) return 0;
+    sh.deleteRows(keep + 1, surplus);
+    return surplus;
+  }
+  function updateWhere(tab, keyColumn, keyValue, patch) {
+    const sh = sheet(tab);
+    if (sh.getLastRow() < 2) return false;
+    const headers = ensureHeaders(sh, tab);
+    const lastRow = sh.getLastRow();
+    const lastCol = headers.length;
+    const values = readGrid(sh, tab, lastRow, lastCol);
+    const keyIdx = headers.indexOf(keyColumn);
+    if (keyIdx < 0) return false;
+    for (let i = 1; i < values.length; i++) {
+      if (fromCell(values[i][keyIdx]) === keyValue) {
+        const rowVals = values[i].slice();
+        for (const [k, v] of Object.entries(patch)) {
+          const idx = headers.indexOf(k);
+          if (idx >= 0) rowVals[idx] = toCell(v);
+        }
+        sh.getRange(i + 1, 1, 1, lastCol).setValues([rowVals]);
+        return true;
+      }
+    }
+    return false;
+  }
+  function gridSize(tab) {
+    const sh = sheet(tab);
+    return { rows: sh.getMaxRows(), cols: sh.getMaxColumns() };
+  }
+  function cellCount3() {
+    return ledgerSpreadsheet().getSheets().reduce((acc, sh) => acc + sh.getMaxRows() * sh.getMaxColumns(), 0);
+  }
+
+  // src/server/settingsStore.ts
+  var settingsMemo;
+  function loadSettings() {
+    if (settingsMemo !== void 0) return settingsMemo;
+    const out = {};
+    for (const row of readAll(TABS.settings)) {
+      const key = row["key"];
+      const raw = row["value_json"];
+      if (typeof key !== "string" || !key) continue;
+      if (typeof raw !== "string" || raw === "") {
+        out[key] = null;
+        continue;
+      }
+      try {
+        out[key] = JSON.parse(raw);
+      } catch {
+        console.warn(`Unreadable settings value for ${key}; ignoring`);
+      }
+    }
+    settingsMemo = out;
+    return out;
+  }
+  function saveSettings(settings) {
+    overwrite(
+      TABS.settings,
+      Object.entries(settings).map(([key, value]) => ({
+        key,
+        value_json: JSON.stringify(value != null ? value : null)
+      }))
+    );
+    settingsMemo = settings;
+    bumpDataVersion();
+  }
+  var getProjectView2 = () => getProjectView(loadSettings());
+  function setProjectView(id) {
+    const settings = loadSettings();
+    const next = withProjectView(settings, id);
+    if (next["project_view"] === getProjectView(settings) && next["domain_view"] === getDomainView(settings)) return;
+    saveSettings(next);
+  }
+  var getDomainView2 = () => getDomainView(loadSettings());
+  function setDomainView(domain) {
+    const settings = loadSettings();
+    const next = withDomainView(settings, domain);
+    if (next["domain_view"] === getDomainView(settings) && next["project_view"] === getProjectView(settings)) return;
+    saveSettings(next);
+  }
+  var getDefaultDepth2 = () => getDefaultDepth(loadSettings());
+  var getMaxNodes2 = () => getMaxNodes(loadSettings());
+  var getAutoExpand2 = () => getAutoExpand(loadSettings());
+  function setDefaultDepth(depth) {
+    saveSettings(withDefaultDepth(loadSettings(), depth));
+  }
+  function setMaxNodes(maxNodes) {
+    saveSettings(withMaxNodes(loadSettings(), maxNodes));
+  }
+  function setAutoExpand(on) {
+    saveSettings(withAutoExpand(loadSettings(), on));
+  }
+  var getAarsRule2 = () => getAarsRule(loadSettings());
+  function setAarsRule(rule) {
+    const settings = loadSettings();
+    const before = getAarsRule(settings);
+    const scoresWereCurrent = getScoredRuleVersion(settings) === before.version;
+    let next = withAarsRule(settings, rule);
+    const stored = getAarsRule(next);
+    if (scoresWereCurrent && scoringEqual(before.rule, stored.rule)) {
+      next = withScoredRuleVersion(next, stored.version);
+    }
+    saveSettings(next);
+    return stored;
+  }
+  var getProblemRule2 = () => getProblemRule(loadSettings());
+  function setProblemRule(rule) {
+    const settings = loadSettings();
+    const before = getProblemRule(settings);
+    const verdictsWereCurrent = getDecidedRuleVersion(settings) === before.version;
+    let next = withProblemRule(settings, rule);
+    const stored = getProblemRule(next);
+    if (verdictsWereCurrent && decisionEqual(before.rule, stored.rule)) {
+      next = withDecidedRuleVersion(next, stored.version);
+    }
+    saveSettings(next);
+    return stored;
+  }
+  var getPostureRule2 = () => getPostureRule(loadSettings());
+  function setPostureRule(rule) {
+    const settings = loadSettings();
+    const before = getPostureRule(settings);
+    const tiersWereCurrent = getComputedPostureVersion(settings) === before.version;
+    let next = withPostureRule(settings, rule);
+    const stored = getPostureRule(next);
+    if (tiersWereCurrent && tierEqual(before.rule, stored.rule)) {
+      next = withComputedPostureVersion(next, stored.version);
+    }
+    saveSettings(next);
+    return stored;
+  }
+  var getRankRule2 = () => getRankRule(loadSettings());
+  function setRankRule(rule) {
+    saveSettings(withRankRule(loadSettings(), rule));
+    return getRankRule2();
+  }
+  var getRankLeadsSort2 = () => getRankLeadsSort(loadSettings());
+  function setRankLeadsSort(on) {
+    saveSettings(withRankLeadsSort(loadSettings(), on));
+    return getRankLeadsSort2();
+  }
+  var getSkippedSteps2 = () => getSkippedSteps(loadSettings());
+  function setSkippedSteps(steps) {
+    const settings = loadSettings();
+    const next = withSkippedSteps(settings, steps);
+    const before = getSkippedSteps(settings).join(" ");
+    if (getSkippedSteps(next).join(" ") === before) return;
+    saveSettings(next);
+  }
+  var getTruncatedSteps2 = () => getTruncatedSteps(loadSettings());
+  function setTruncatedSteps(steps) {
+    const settings = loadSettings();
+    const next = withTruncatedSteps(settings, steps);
+    const before = getTruncatedSteps(settings).join(" ");
+    if (getTruncatedSteps(next).join(" ") === before) return;
+    saveSettings(next);
+  }
+  var getStepRows2 = () => getStepRows(loadSettings());
+  function setStepRows(rows) {
+    const settings = loadSettings();
+    const next = withStepRows(settings, rows);
+    const key = (r) => Object.keys(r).sort().map((k) => `${k}=${r[k]}`).join(" ");
+    if (key(getStepRows(next)) === key(getStepRows(settings))) return;
+    saveSettings(next);
+  }
+  var getPostureBaseline2 = () => getPostureBaseline(loadSettings());
+  function setPostureBaseline(snapshot) {
+    saveSettings(withPostureBaseline(loadSettings(), snapshot));
+  }
+  var getSkipReasons2 = () => getSkipReasons(loadSettings());
+  function setSkipReasons(reasons) {
+    const settings = loadSettings();
+    const next = withSkipReasons(settings, reasons);
+    const key = (r) => Object.keys(r).sort().map((k) => `${k}=${r[k]}`).join("\0");
+    if (key(getSkipReasons(next)) === key(getSkipReasons(settings))) return;
+    saveSettings(next);
+  }
+  function getSelectedFrameworks2(catalogue) {
+    const settings = loadSettings();
+    if (Array.isArray(settings["selected_frameworks"])) {
+      return getSelectedFrameworks(settings);
+    }
+    const rows = catalogue ? catalogue() : [];
+    return rows.length ? resolveDefaultFrameworks(rows) : getSelectedFrameworks(settings);
+  }
+  function setSelectedFrameworks(ids) {
+    saveSettings(withSelectedFrameworks(loadSettings(), ids));
+    return getSelectedFrameworks2();
+  }
+  var getIssueCategories2 = () => getIssueCategories(loadSettings());
+  function setIssueCategories(ids) {
+    saveSettings(withIssueCategories(loadSettings(), ids));
+    return getIssueCategories2();
+  }
+  var getSyncScope2 = () => getSyncScope(loadSettings());
+  function setSyncScope(v) {
+    saveSettings(withSyncScope(loadSettings(), v));
+    return getSyncScope2();
+  }
+  var getFiveRsPins2 = () => getFiveRsPins(loadSettings());
+  function setFiveRsPins(pins) {
+    const settings = loadSettings();
+    const next = withFiveRsPins(settings, pins);
+    const key = (p) => `${p.in.join(" ")}|${p.out.join(" ")}`;
+    if (key(getFiveRsPins(next)) === key(getFiveRsPins(settings))) {
+      return getFiveRsPins(settings);
+    }
+    saveSettings(next);
+    return getFiveRsPins2();
+  }
+  var getScanVars2 = () => getScanVars(loadSettings());
+  function setScanVars(stepId, vars) {
+    saveSettings(withScanVars(loadSettings(), stepId, vars));
+    return getScanVars2();
+  }
+  var getScoredRuleVersion2 = () => getScoredRuleVersion(loadSettings());
+  function setScoredRuleVersion(version) {
+    const settings = loadSettings();
+    const next = withScoredRuleVersion(settings, version);
+    if (getScoredRuleVersion(next) === getScoredRuleVersion(settings)) return;
+    saveSettings(next);
+  }
+  var getDecidedRuleVersion2 = () => getDecidedRuleVersion(loadSettings());
+  function setDecidedRuleVersion(version) {
+    const settings = loadSettings();
+    const next = withDecidedRuleVersion(settings, version);
+    if (getDecidedRuleVersion(next) === getDecidedRuleVersion(settings)) return;
+    saveSettings(next);
+  }
+  var getComputedPostureVersion2 = () => getComputedPostureVersion(loadSettings());
+  function setComputedPostureVersion(version) {
+    const settings = loadSettings();
+    const next = withComputedPostureVersion(settings, version);
+    if (getComputedPostureVersion(next) === getComputedPostureVersion(settings)) return;
+    saveSettings(next);
+  }
+  var getSyncDerivationVersion2 = () => getSyncDerivationVersion(loadSettings());
+  var derivationIsStale2 = () => derivationIsStale(loadSettings(), DERIVATION_VERSION);
+  function setSyncDerivationVersion(version) {
+    const settings = loadSettings();
+    const next = withSyncDerivationVersion(settings, version);
+    if (getSyncDerivationVersion(next) === getSyncDerivationVersion(settings)) return;
+    saveSettings(next);
+  }
+  function configRulesAreFresh2(hasRows, now) {
+    return configRulesAreFresh(loadSettings(), hasRows, now);
+  }
+  function setConfigRulesSyncedAt(at) {
+    saveSettings(withConfigRulesSyncedAt(loadSettings(), at));
+  }
+
+  // src/server/props.ts
+  var PROP_KEYS = {
+    wizApiToken: "WIZ_API_TOKEN",
+    wizClientId: "WIZ_CLIENT_ID",
+    wizClientSecret: "WIZ_CLIENT_SECRET",
+    wizAuthUrl: "WIZ_AUTH_URL",
+    wizApiUrl: "WIZ_API_URL",
+    wizProjectIdV2: "WIZ_PROJECT_ID_V2",
+    ledgerSpreadsheetId: "LEDGER_SPREADSHEET_ID",
+    archiveFolderId: "ARCHIVE_FOLDER_ID",
+    // Who may open the web app, on top of the deployment's own "anyone within <domain>" fence.
+    // Comma/semicolon/whitespace-separated addresses; see server/access.ts. Unset means nobody —
+    // the guard fails closed, and the owner is allowed by identity rather than by this list.
+    allowedUsers: "ALLOWED_USERS",
+    // Who may EDIT that list. Owner-only to change; see the admin-tier note in access.ts.
+    // Unset means owner-only, like its sibling. Admins are allowed into the app by being admins,
+    // not by also appearing in ALLOWED_USERS.
+    allowedAdmins: "ALLOWED_ADMINS",
+    // The /exec URL of the hub launcher (gas_hub), pasted from its Deploy > Manage deployments,
+    // or set from Settings > System. A PROPERTY RATHER THAN CODE for the platform's reason, not
+    // a preference: `ScriptApp.getService().getUrl()` answers for this deployment only and there
+    // is no API that hands one script project another's web-app URL, so somebody has to paste
+    // it. Unset (or blank) is legal and means the header simply carries no hub button — see
+    // server/hubUrl.ts, which owns the shape of the value and refuses anything that is neither a
+    // script.google.com URL nor a loopback dev-harness one.
+    urlHub: "URL_HUB",
+    // Optional comma-separated override of the AI resource-type enum values to
+    // query (e.g. "AI_AGENT,AI_MODEL") for tenants whose schema names differ.
+    wizAiResourceTypes: "WIZ_AI_RESOURCE_TYPES",
+    // The DERIVED resolution, written by resolveAiResourceTypes — never by an operator.
+    // Deliberately a different key from the override above: one is an instruction and the
+    // other is a memo, and conflating them would let a cached answer masquerade as a
+    // configured one (and survive the operator clearing the override).
+    wizAiResourceTypesResolved: "WIZ_AI_RESOURCE_TYPES_RESOLVED",
+    // Optional override of the resource tag key naming the owning business domain.
+    // Defaults to `Wiz/Domain` (domain/domainTag.ts) and is matched case-insensitively, so
+    // this only needs setting by a tenant that spells the key differently rather than
+    // merely differently-cased. Mirrors WIZ_SUPPORT_GROUP_TAG_KEY in the OS-vulns tool.
+    wizDomainTagKey: "WIZ_DOMAIN_TAG_KEY",
+    // The warm schedule setup() last installed, as a signature string. A ClockTrigger exposes
+    // its handler and nothing else, so this is the ONLY way to tell a correctly-scheduled set
+    // from one an older deployment left behind. Written by setup(), read by setup().
+    warmTriggerSchedule: "WARM_TRIGGER_SCHEDULE"
+  };
+  var DEFAULT_WIZ_AUTH_URL = "https://auth.app.wiz.io/oauth/token";
+  function getProp(key) {
+    return PropertiesService.getScriptProperties().getProperty(key);
+  }
+  function requireProp(key) {
+    const v = getProp(key);
+    if (!v) {
+      throw new Error(`Missing Script Property ${key} \u2014 run setup() or set it in Project Settings > Script Properties.`);
+    }
+    return v;
+  }
+  function setProp(key, value) {
+    PropertiesService.getScriptProperties().setProperty(key, value);
+  }
+  function deleteProp(key) {
+    PropertiesService.getScriptProperties().deleteProperty(key);
+  }
+  function projectScope() {
+    return resolveProjectScope(
+      getSyncScope2(),
+      getProp(PROP_KEYS.wizProjectIdV2)
+    );
+  }
+  function domainTagKey() {
+    return resolveDomainTagKey(getProp(PROP_KEYS.wizDomainTagKey));
+  }
+  function resolveWizAuthMode(token, clientId, clientSecret) {
+    if (token && token.trim()) return "token";
+    if (clientId && clientSecret) return "oauth";
+    return null;
+  }
+  function hasWizCredentials() {
+    return Boolean(getProp(PROP_KEYS.wizApiUrl)) && resolveWizAuthMode(
+      getProp(PROP_KEYS.wizApiToken),
+      getProp(PROP_KEYS.wizClientId),
+      getProp(PROP_KEYS.wizClientSecret)
+    ) !== null;
+  }
+
+  // src/server/archiveStore.ts
+  var SUBFOLDERS = ["syncs", "snapshots", "readmodels"];
+  var rootFolderMemo;
+  var subfolderMemo = /* @__PURE__ */ new Map();
+  var syncFolderMemo = /* @__PURE__ */ new Map();
+  function forgetFolders() {
+    rootFolderMemo = void 0;
+    subfolderMemo.clear();
+    syncFolderMemo.clear();
+  }
+  function rootFolder() {
+    if (!rootFolderMemo) {
+      rootFolderMemo = DriveApp.getFolderById(requireProp(PROP_KEYS.archiveFolderId));
+    }
+    return rootFolderMemo;
+  }
+  function childFolder(parent, name) {
+    const it = parent.getFoldersByName(name);
+    return it.hasNext() ? it.next() : parent.createFolder(name);
+  }
+  function subfolder(name) {
+    const hit = subfolderMemo.get(name);
+    if (hit) return hit;
+    const folder = childFolder(rootFolder(), name);
+    subfolderMemo.set(name, folder);
+    return folder;
+  }
+  function ensureFolders(rootId) {
+    forgetFolders();
+    const root = rootId ? DriveApp.getFolderById(rootId) : rootFolder();
+    for (const name of SUBFOLDERS) childFolder(root, name);
+    forgetFolders();
+    return root.getId();
+  }
+  function safeName(id) {
+    return id.replace(/[^0-9A-Za-z._-]/g, "") || "sync";
+  }
+  function writeGzJson(folder, name, payload) {
+    const json = JSON.stringify(payload);
+    const blob = Utilities.gzip(Utilities.newBlob(json, "application/json"), name);
+    const existing = folder.getFilesByName(name);
+    while (existing.hasNext()) existing.next().setTrashed(true);
+    return folder.createFile(blob);
+  }
+  function readGzJsonNamed(folder, name) {
+    const it = subfolder(folder).getFilesByName(name);
+    if (!it.hasNext()) return null;
+    return parseGzBlob(it.next().getBlob());
+  }
+  function listNames(folder) {
+    const out = [];
+    const it = subfolder(folder).getFiles();
+    while (it.hasNext()) out.push(it.next().getName());
+    return out;
+  }
+  function trashNamed(folder, name) {
+    const it = subfolder(folder).getFilesByName(name);
+    while (it.hasNext()) it.next().setTrashed(true);
+  }
+  function trashReadModels() {
+    for (const name of listNames("readmodels")) trashNamed("readmodels", name);
+  }
+  function readGzJsonFile(fileId) {
+    try {
+      const file = DriveApp.getFileById(fileId);
+      return parseGzBlob(file.getBlob());
+    } catch (e) {
+      console.warn(`Unreadable Drive file ${fileId}: ${e}`);
+      return null;
+    }
+  }
+  function parseGzBlob(blob) {
+    try {
+      const bytes = blob.getBytes();
+      const isGzip = bytes.length > 2 && (bytes[0] & 255) === 31 && (bytes[1] & 255) === 139;
+      const text = isGzip ? Utilities.ungzip(blob).getDataAsString("UTF-8") : blob.getDataAsString("UTF-8");
+      return JSON.parse(text);
+    } catch (e) {
+      console.warn(`Failed to parse archive blob: ${e}`);
+      return null;
+    }
+  }
+  function syncFolder(syncId) {
+    const key = safeName(syncId);
+    const hit = syncFolderMemo.get(key);
+    if (hit) return hit;
+    const folder = childFolder(subfolder("syncs"), key);
+    syncFolderMemo.set(key, folder);
+    return folder;
+  }
+  function writeSyncPage(syncId, stepIndex, pageNumber, payload) {
+    const name = `step-${stepIndex}-page-${String(pageNumber).padStart(4, "0")}.json.gz`;
+    return writeGzJson(syncFolder(syncId), name, payload).getId();
+  }
+  var SNAPSHOT_NAME = "graph-snapshot.json.gz";
+  function writeGraphSnapshot(doc) {
+    return writeGzJson(subfolder("snapshots"), SNAPSHOT_NAME, doc).getId();
+  }
+  function readGraphSnapshot() {
+    const files = subfolder("snapshots").getFilesByName(SNAPSHOT_NAME);
+    if (!files.hasNext()) return null;
+    const parsed = parseGzBlob(files.next().getBlob());
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const doc = parsed;
+    return Array.isArray(doc.nodes) && Array.isArray(doc.edges) ? doc : null;
+  }
+  function trashGraphSnapshot() {
+    const files = subfolder("snapshots").getFilesByName(SNAPSHOT_NAME);
+    while (files.hasNext()) files.next().setTrashed(true);
+  }
+  function archiveBytes() {
+    let total2 = 0;
+    for (const name of SUBFOLDERS) {
+      const walk = (folder) => {
+        const files = folder.getFiles();
+        while (files.hasNext()) total2 += files.next().getSize();
+        const folders = folder.getFolders();
+        while (folders.hasNext()) walk(folders.next());
+      };
+      walk(subfolder(name));
+    }
+    return total2;
   }
 
   // src/server/jobsStore.ts
@@ -8275,666 +12960,967 @@ var Server = (() => {
     }
   }
 
-  // src/domain/aarsTrend.ts
-  var PROJECT_TOTALS_COLUMN = "project_totals_json";
-  var PROJECT_TOTALS_MAX_CHARS = 45e3;
-  function countProjectTotals(nodes, decided) {
-    var _a5, _b, _c, _d;
-    const totals = {};
-    const projectsByAsset = /* @__PURE__ */ new Map();
-    function entry(projectId) {
-      let t = totals[projectId];
-      if (!t) {
-        const aars = {};
-        for (const sev of AARS_SEVERITY_ORDER) aars[sev] = 0;
-        const outcome = {};
-        for (const o of OUTCOME_VALUES) outcome[o] = 0;
-        t = { aars, outcome, counts: { issues: 0, findings: 0 } };
-        totals[projectId] = t;
-      }
-      return t;
-    }
-    for (const n of nodes) {
-      const projects = (_a5 = n.projects) != null ? _a5 : [];
-      if (!projects.length) continue;
-      projectsByAsset.set(n.id, projects);
-      const sev = normalizeAarsSeverity(n.aarsSeverity);
-      for (const p of projects) {
-        const t = entry(p.id);
-        if (sev) t.aars[sev] += 1;
-      }
-    }
-    for (const r of decided) {
-      const isFinding = r.assetId === void 0 && r.resourceId !== void 0;
-      const assetId = (_c = (_b = r.assetId) != null ? _b : r.resourceId) != null ? _c : "";
-      const projects = (_d = projectsByAsset.get(assetId)) != null ? _d : [];
-      for (const p of projects) {
-        const counts = entry(p.id).counts;
-        if (counts) counts[isFinding ? "findings" : "issues"] += 1;
-      }
-      const outcome = r.problemOutcome;
-      if (!outcome || !OUTCOME_VALUES.includes(outcome)) continue;
-      for (const p of projects) entry(p.id).outcome[outcome] += 1;
-    }
-    return totals;
+  // src/server/access.ts
+  var access_exports = {};
+  __export(access_exports, {
+    PRODUCT: () => PRODUCT,
+    __resetMemosForTest: () => __resetMemosForTest2,
+    accountChooserUrl: () => accountChooserUrl,
+    assertAllowed: () => assertAllowed,
+    canEditAdmins: () => canEditAdmins,
+    canEditUsers: () => canEditUsers,
+    check: () => check,
+    contactMailto: () => contactMailto,
+    currentAdmins: () => currentAdmins,
+    currentUsers: () => currentUsers,
+    decide: () => decide,
+    deniedHtml: () => deniedHtml,
+    deniedPage: () => deniedPage,
+    denyResult: () => denyResult,
+    isOwner: () => isOwner,
+    ownerDomain: () => ownerDomain,
+    ownerEmail: () => ownerEmail,
+    parseAllowlist: () => parseAllowlist,
+    serviceUrl: () => serviceUrl
+  });
+
+  // src/server/pageShell.ts
+  var MARK_COMPACT_VIEWBOX = "12.2 8.4 52.7 74";
+  var MARK_COMPACT_RATIO = 52.7 / 74;
+  var MARK_ORBIT = "M47.64 80.58A32.1 32.1 0 0 1 17.83 52.04M19.82 36.92A32.1 32.1 0 0 1 54.21 16.76";
+  var MARK_ORBIT_WIDTH = 2.41;
+  var MARK_NODES = [[17.22, 44.33, 4.41], [45.96, 16.55, 7.56]];
+  var MARK_SHIELD = "M48.56 29.88C52.79 34.78 58.69 37.87 64.33 37.81C64.44 45.48 63.64 48.51 62.11 51.96C61.32 54.62 56.36 61.55 48.56 64.18C40.76 61.55 35.8 54.62 35.01 51.96C33.48 48.51 32.68 45.48 32.79 37.81C38.43 37.87 44.33 34.78 48.56 29.88Z";
+  var MARK_CHECK = "M42.3 48.81 46.19 52.7 54.89 43.99";
+  var MARK_CHECK_WIDTH = 3.04;
+  function brandMarkSvg(height) {
+    const width = Math.round(height * MARK_COMPACT_RATIO * 100) / 100;
+    const nodes = MARK_NODES.map(
+      (n) => '<circle cx="' + n[0] + '" cy="' + n[1] + '" r="' + n[2] + '" fill="#0a0a0a"/>'
+    ).join("");
+    return [
+      '<svg class="brand-mark" viewBox="' + MARK_COMPACT_VIEWBOX + '"',
+      ' width="' + width + '" height="' + height + '" focusable="false" aria-hidden="true">',
+      '<path d="' + MARK_ORBIT + '" fill="none" stroke="#0a0a0a" stroke-width="' + MARK_ORBIT_WIDTH,
+      '" stroke-linecap="round"/>',
+      nodes,
+      '<path d="' + MARK_SHIELD + '" fill="#0a0a0a"/>',
+      '<path d="' + MARK_CHECK + '" fill="none" stroke="#ffffff" stroke-width="' + MARK_CHECK_WIDTH,
+      '" stroke-linecap="round" stroke-linejoin="round"/>',
+      "</svg>"
+    ].join("");
   }
-  function encodeProjectTotals(totals) {
-    const json = JSON.stringify(totals);
-    return json.length > PROJECT_TOTALS_MAX_CHARS ? null : json;
+  function escapeHtml(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
-  function countAarsSeverities(nodes) {
-    const counts = {};
-    for (const sev of AARS_SEVERITY_ORDER) counts[sev] = 0;
-    for (const n of nodes) {
-      const sev = normalizeAarsSeverity(n.aarsSeverity);
-      if (sev) counts[sev] += 1;
-    }
-    return counts;
+  function primaryAction(href, label) {
+    return '<a class="btn" target="_top" href="' + escapeHtml(href) + '">' + escapeHtml(label) + "</a>";
   }
-  function countsFromObject(parsed, keys, absentKeyIsNull = false) {
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    const raw = parsed;
-    const counts = {};
-    for (const k of keys) {
-      if (absentKeyIsNull && !Object.prototype.hasOwnProperty.call(raw, k)) {
-        counts[k] = null;
-        continue;
-      }
-      const n = Number(raw[k]);
-      counts[k] = Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
-    }
-    return counts;
+  function secondaryAction(href, label) {
+    return '<a class="alt" target="_top" href="' + escapeHtml(href) + '">' + escapeHtml(label) + "</a>";
   }
-  function parseCounts(v, keys, absentKeyIsNull = false) {
-    if (typeof v !== "string" || !v) return null;
-    try {
-      return countsFromObject(JSON.parse(v), keys, absentKeyIsNull);
-    } catch {
-      return null;
-    }
+  function cardPage(spec) {
+    const body = spec.paragraphs.map((p) => "<p>" + p + "</p>").join("");
+    const actions = spec.actions ? '<div class="actions">' + spec.actions + "</div>" : "";
+    return [
+      '<!DOCTYPE html><html><head><meta charset="utf-8">',
+      // Every link on these pages has to break out of the HtmlService sandbox iframe; the app's
+      // own index.html carries the same base tag for the same reason.
+      '<base target="_top">',
+      '<meta name="viewport" content="width=device-width, initial-scale=1">',
+      "<title>" + escapeHtml(spec.title) + "</title><style>",
+      "*{box-sizing:border-box}",
+      // --surface / --ink, and the same --font stack tokens.css:254 carries.
+      "body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;",
+      "background:#f8f8fa;color:#171717;",
+      "font-family:-apple-system,BlinkMacSystemFont,Inter,'Segoe UI',Roboto,'Helvetica Neue',sans-serif}",
+      // --page on --hairline at --radius-xl.
+      ".card{max-width:32rem;margin:24px;padding:32px;background:#ffffff;border:1px solid #e6e6e9;",
+      "border-radius:14px;box-shadow:0 1px 2px rgba(10,10,10,.06)}",
+      ".lockup{display:flex;align-items:center;gap:8px;margin:0 0 16px}",
+      // Mirrors .appbar-name in base.css (600 / --fs-lead 16px / -0.02em / --ink) so the
+      // wordmark is the same object here as in the header, not a near-miss of it.
+      ".lockup span{font-weight:600;font-size:1rem;letter-spacing:-0.02em;color:#171717;",
+      "white-space:nowrap}",
+      ".brand-mark{display:block;flex:0 0 auto}",
+      "h1{font-size:20px;line-height:1.3;margin:0 0 12px;font-weight:650}",
+      // --text-2, the same alpha the app's prose carries.
+      "p{margin:0 0 8px;font-size:14px;line-height:1.6;color:rgba(0,0,0,.65)}",
+      ".actions{margin-top:24px;display:flex;align-items:center;gap:20px;flex-wrap:wrap}",
+      // Graphite, not the accent: DESIGN.md keeps the accent for data, focus and links, and
+      // fills the one committing action with --graphite / --on-graphite.
+      ".btn{display:inline-flex;align-items:center;min-height:36px;padding:6px 14px;",
+      "border-radius:8px;background:#0a0a0a;color:#fafafa;font-size:14px;font-weight:500;",
+      "text-decoration:none}",
+      ".btn:hover{background:#27272a}",
+      // --accent. gas_ai's accent is the crimson, NOT the sibling tool's Signal Blue — these
+      // pages are the product's front door and must read as this product.
+      "a{color:#be123c}",
+      // Never remove: CLAUDE.md names the focus-ring rules load-bearing, and these pages are
+      // reachable by keyboard only.
+      "a:focus-visible{outline:2px solid #be123c;outline-offset:2px;border-radius:4px}",
+      '</style></head><body><main class="card">',
+      // The same lockup as the app header — mark then wordmark — so the door and the room
+      // behind it are recognisably one product.
+      '<div class="lockup">' + brandMarkSvg(22) + "<span>" + escapeHtml(spec.eyebrow) + "</span></div>",
+      "<h1>" + escapeHtml(spec.heading) + "</h1>",
+      body,
+      actions,
+      "</main></body></html>"
+    ].join("");
   }
-  function parseAnnotations(v, keys) {
-    const out = {};
-    let raw = {};
-    if (typeof v === "string" && v) {
-      try {
-        const parsed = JSON.parse(v);
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-          raw = parsed;
-        }
-      } catch {
-        raw = {};
-      }
-    }
-    for (const k of keys) {
-      const n = Number(raw[k]);
-      out[k] = Object.prototype.hasOwnProperty.call(raw, k) && Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+
+  // src/server/access.ts
+  var PRODUCT = "Wiz SIDEKICK AI";
+  var DENIAL_MESSAGE = {
+    anonymous: "This app can't identify your Google account. It only recognizes accounts signed in to the same Google Workspace domain as the app.",
+    "not-listed": "Your account isn't on this app's access list."
+  };
+  function parseAllowlist(raw) {
+    if (!raw) return [];
+    const seen = {};
+    const out = [];
+    for (const part of raw.split(/[,;\s]+/)) {
+      const email = part.trim().toLowerCase();
+      if (!email || seen[email]) continue;
+      seen[email] = true;
+      out.push(email);
     }
     return out;
   }
-  function parseProjectCounts(v, projectId, spec) {
-    if (typeof v !== "string" || !v) return null;
-    let parsed;
+  function decide(active, owner, raw, adminsRaw) {
+    const email = (active || "").trim();
+    const key = email.toLowerCase();
+    if (!key) return { allowed: false, email: "", reason: "anonymous" };
+    const ownerKey = (owner || "").trim().toLowerCase();
+    if (ownerKey && ownerKey === key) return { allowed: true, email, reason: "owner" };
+    if (parseAllowlist(adminsRaw != null ? adminsRaw : null).indexOf(key) >= 0) {
+      return { allowed: true, email, reason: "admin" };
+    }
+    return parseAllowlist(raw).indexOf(key) >= 0 ? { allowed: true, email, reason: "listed" } : { allowed: false, email, reason: "not-listed" };
+  }
+  var memo;
+  function check() {
+    if (memo === void 0) {
+      memo = decide(
+        Session.getActiveUser().getEmail(),
+        Session.getEffectiveUser().getEmail(),
+        getProp(PROP_KEYS.allowedUsers),
+        getProp(PROP_KEYS.allowedAdmins)
+      );
+    }
+    return memo;
+  }
+  function __resetMemosForTest2() {
+    memo = void 0;
+  }
+  function logDenial(op, d) {
+    console.log(JSON.stringify({ access: "denied", op, reason: d.reason, email: d.email }));
+  }
+  function denyResult(op) {
+    const d = check();
+    if (d.allowed) return null;
+    logDenial(op, d);
+    const env = {
+      ok: false,
+      error: DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"],
+      errorKind: "forbidden"
+    };
+    const who = ownerEmail().trim();
+    if (who) {
+      env.contact = who;
+      env.contactUrl = contactMailto(who);
+    }
+    return env;
+  }
+  function assertAllowed(op) {
+    const d = check();
+    if (d.allowed) return;
+    logDenial(op, d);
+    throw new Error(DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"]);
+  }
+  function contactMailto(email) {
+    return "mailto:" + email.trim() + "?subject=" + encodeURIComponent("Access to " + PRODUCT);
+  }
+  function deniedHtml(d, switchUrl, contact) {
+    const detail = d.email ? "You're signed in as <strong>" + escapeHtml(d.email) + "</strong>." : "This app can't see which Google account you're signed in as, which happens when the account isn't in the same Google Workspace domain as the app.";
+    const who = (contact || "").trim();
+    const ask = who ? 'If you think you should have access, contact <a href="' + escapeHtml(contactMailto(who)) + '">' + escapeHtml(who) + "</a>." : (
+      // No owner address resolved — never render "contact:" with nothing after it.
+      "If you think you should have access, ask whoever runs this dashboard to add you."
+    );
+    return cardPage({
+      title: PRODUCT,
+      eyebrow: PRODUCT,
+      heading: "You don't have access to this app.",
+      paragraphs: [detail, ask],
+      actions: switchUrl ? secondaryAction(switchUrl, "Switch Google account") : ""
+    });
+  }
+  function deniedPage() {
+    const d = check();
+    if (d.allowed) return null;
+    logDenial("doGet", d);
+    return HtmlService.createHtmlOutput(deniedHtml(d, accountChooserUrl(), ownerEmail())).setTitle(PRODUCT).addMetaTag("viewport", "width=device-width, initial-scale=1");
+  }
+  function serviceUrl() {
     try {
-      parsed = JSON.parse(v);
-    } catch {
+      return ScriptApp.getService().getUrl() || null;
+    } catch (_e) {
       return null;
     }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    const entry = parsed[projectId];
-    if (!entry || typeof entry !== "object") return null;
-    return countsFromObject(
-      entry[spec.projectKey],
-      spec.keys,
-      spec.absentKeyIsNull
-    );
   }
-  function readTrend(rows, spec, limit, projectId) {
-    var _a5;
-    const points = [];
-    if (!spec.keys.length) return points;
-    for (const r of rows) {
-      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
-      const counts = projectId ? parseProjectCounts(r[PROJECT_TOTALS_COLUMN], projectId, spec) : parseCounts(r[spec.countsColumn], spec.keys, spec.absentKeyIsNull);
-      if (!counts) continue;
-      if (spec.keys.every((k) => counts[k] === null)) continue;
-      const at = String(r["finished_at"] || r["started_at"] || "");
-      if (!at) continue;
-      const v = Number(r[spec.versionColumn]);
-      const ruleVersion = Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
-      const point = { at, counts, ruleVersion };
-      if (spec.annotationKeys && spec.annotationKeys.length) {
-        point.annotations = parseAnnotations(r[spec.countsColumn], spec.annotationKeys);
-      }
-      points.push(point);
+  function accountChooserUrl() {
+    const url = serviceUrl();
+    return url ? "https://accounts.google.com/AccountChooser?continue=" + encodeURIComponent(url) : null;
+  }
+  function ownerEmail() {
+    return Session.getEffectiveUser().getEmail() || "";
+  }
+  function isOwner() {
+    return check().reason === "owner";
+  }
+  function canEditUsers() {
+    const r = check().reason;
+    return r === "owner" || r === "admin";
+  }
+  function canEditAdmins() {
+    return isOwner();
+  }
+  function currentUsers() {
+    return parseAllowlist(getProp(PROP_KEYS.allowedUsers));
+  }
+  function currentAdmins() {
+    return parseAllowlist(getProp(PROP_KEYS.allowedAdmins));
+  }
+  function ownerDomain() {
+    const at = ownerEmail().lastIndexOf("@");
+    return at >= 0 ? ownerEmail().slice(at + 1).toLowerCase() : "";
+  }
+
+  // src/server/hubUrl.ts
+  var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
+  var LOCAL_PREFIXES = [
+    ["http:", "", "localhost:"].join("/"),
+    ["http:", "", "127.0.0.1:"].join("/")
+  ];
+  var HUB_URL_REJECTED = "The hub URL must start with " + SCRIPT_PREFIX + " (the hub's deployed /exec URL) or " + LOCAL_PREFIXES[0] + "<port>/ (a hub running under npm run dev).";
+  function normalizeHubUrl(raw) {
+    if (typeof raw !== "string") throw new Error(HUB_URL_REJECTED);
+    const url = raw.trim();
+    if (!url) return "";
+    const legal = url.indexOf(SCRIPT_PREFIX) === 0 || LOCAL_PREFIXES.some((prefix) => url.indexOf(prefix) === 0);
+    if (!legal) throw new Error(HUB_URL_REJECTED);
+    return url;
+  }
+  function readHubUrl() {
+    try {
+      return normalizeHubUrl(getProp(PROP_KEYS.urlHub) || "");
+    } catch (_e) {
+      return "";
     }
-    points.sort(cmpBy((p) => p.at));
-    return limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
   }
-  function trendFromHistory(rows, spec, limit = 90, projectId = "") {
-    return readTrend(rows, spec, limit, projectId);
+  function writeHubUrl(next) {
+    const url = normalizeHubUrl(next);
+    setProp(PROP_KEYS.urlHub, url);
+    return url;
   }
-  function sparseTrendFromHistory(rows, spec, limit = 90, projectId = "") {
-    return readTrend(rows, spec, limit, projectId);
-  }
-  var COUNT_KEYS = ["issues", "findings", "postureFails"];
-  function cellCount2(v) {
-    if (v === null || v === void 0 || v === "") return null;
-    const n = Number(v);
-    return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
-  }
-  function projectCountEntry(cell2, projectId) {
-    let parsed = cell2;
-    if (typeof cell2 === "string") {
-      if (!cell2) return null;
-      try {
-        parsed = JSON.parse(cell2);
-      } catch {
-        return null;
-      }
+
+  // src/server/readModelStore.ts
+  var FOLDER = "readmodels";
+  var ENVELOPE_V = 1;
+  var MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
+  var warming = false;
+  var touched = null;
+  function duringWarm(fn) {
+    warming = true;
+    touched = /* @__PURE__ */ new Set();
+    try {
+      return fn();
+    } finally {
+      warming = false;
+      touched = null;
     }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    const entry = parsed[projectId];
-    if (!entry || typeof entry !== "object") return null;
-    const counts = entry["counts"];
-    if (!counts || typeof counts !== "object") return null;
-    const issues2 = cellCount2(counts["issues"]);
-    const findings = cellCount2(counts["findings"]);
-    return issues2 === null || findings === null ? null : { issues: issues2, findings };
   }
-  function countTrendFromHistory(rows, limit = 90, projectId = "") {
-    var _a5;
-    const points = [];
-    for (const r of rows) {
-      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
-      const at = String(r["finished_at"] || r["started_at"] || "");
-      if (!at) continue;
-      let counts;
-      if (projectId) {
-        const scoped = projectCountEntry(r[PROJECT_TOTALS_COLUMN], projectId);
-        counts = {
-          issues: scoped ? scoped.issues : null,
-          findings: scoped ? scoped.findings : null,
-          postureFails: null
-        };
-      } else {
-        counts = {
-          issues: cellCount2(r["issue_count"]),
-          findings: cellCount2(r["finding_count"]),
-          postureFails: cellCount2(r["posture_fail_count"])
-        };
-      }
-      if (COUNT_KEYS.every((k) => counts[k] === null)) continue;
-      points.push({ at, counts });
+  var disabled = false;
+  function readModelFileName(name, params) {
+    return `rm-${name}-${paramsHash(params)}.json.gz`;
+  }
+  function l2Read(name, params, version) {
+    if (disabled) return { hit: false, why: "absent" };
+    try {
+      const raw = readGzJsonNamed(FOLDER, readModelFileName(name, params));
+      if (!raw || typeof raw !== "object") return { hit: false, why: "absent" };
+      const env = raw;
+      if (env.v !== ENVELOPE_V || env.name !== name) return { hit: false, why: "stale" };
+      if (env.stamp !== currentStamp(version)) return { hit: false, why: "stale" };
+      if (typeof env.writtenAtMs !== "number") return { hit: false, why: "stale" };
+      if (Date.now() - env.writtenAtMs > MAX_AGE_MS) return { hit: false, why: "stale" };
+      return { hit: true, value: env.value };
+    } catch (e) {
+      disabled = true;
+      console.warn(`Durable read-model read failed (${name}) \u2014 L2 disabled for this run: ${e}`);
+      return { hit: false, why: "absent" };
     }
-    points.sort(cmpBy((p) => p.at));
-    return limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
   }
-  var ADJACENCY_KEYS = ["DIRECT", "ADJACENT", "UNLINKED"];
-  var ADJACENCY_SPEC = {
-    keys: ADJACENCY_KEYS,
-    countsColumn: "adjacency_json",
-    versionColumn: "derivation_version",
-    projectKey: "adjacency",
-    annotationKeys: ["edgesKnown"]
+  function l2Write(name, params, version, value) {
+    if (disabled) return;
+    try {
+      const env = {
+        v: ENVELOPE_V,
+        stamp: currentStamp(version),
+        name,
+        hash: paramsHash(params),
+        writtenAtMs: Date.now(),
+        value
+      };
+      writeGzJson(subfolder(FOLDER), readModelFileName(name, params), env);
+    } catch (e) {
+      disabled = true;
+      console.warn(`Durable read-model write failed (${name}) \u2014 L2 disabled for this run: ${e}`);
+    }
+  }
+  function durablyCached(name, params, compute, ttlSec, version) {
+    if (warming && touched) touched.add(readModelFileName(name, params));
+    return cached(name, params, () => {
+      const hit = l2Read(name, params, version);
+      if (hit.hit) return hit.value;
+      const value = compute();
+      if (warming) l2Write(name, params, version, value);
+      return value;
+    }, ttlSec, version);
+  }
+  function sweepReadModels() {
+    if (disabled || !touched) return 0;
+    const keep = touched;
+    let trashed = 0;
+    try {
+      for (const name of listNames(FOLDER)) {
+        if (!keep.has(name)) {
+          trashNamed(FOLDER, name);
+          trashed += 1;
+        }
+      }
+    } catch (e) {
+      console.warn(`Durable read-model sweep failed: ${e}`);
+    }
+    return trashed;
+  }
+
+  // src/server/wizQueriesAi.ts
+  var PAGE_SIZE = 100;
+  var PAGE_SIZE_FALLBACK = 50;
+  var PAGE_SIZE_WIDE = 500;
+  var PAGE_SIZE_TRAVERSAL = 250;
+  var MAX_PAGES = 1e3;
+  var IDENTITY_FIELDS = [
+    "id",
+    "name",
+    "type"
+  ];
+  var CLOUD_RESOURCE_FIELDS = [
+    "nativeType",
+    "cloudPlatform",
+    "region",
+    "status",
+    "firstSeen",
+    "lastSeen",
+    "externalId",
+    "isAccessibleFromInternet",
+    "isOpenToAllInternet",
+    "hasSensitiveData",
+    "hasAccessToSensitiveData",
+    "hasAdminPrivileges",
+    "hasHighPrivileges",
+    "technology { id name categories { id name } }",
+    "cloudAccount { id name externalId cloudProvider }",
+    // `isFolder` rides along for the project switcher. A Wiz project is either a folder or a
+    // leaf, and an asset carries its WHOLE ancestor chain — the captured inventory shows one
+    // agent listing CE-DPCP-PORTAL (folder) -> VALUE-CHAIN (folder) -> provisioning-CE-DPCP-PORTAL
+    // (leaf). That is what lets a switcher offer a business unit and have it mean the subtree,
+    // and what lets the picker draw the two apart the way the Wiz console does.
+    "projects { id name isFolder riskProfile { businessImpact } }",
+    "tags { key value }"
+  ];
+  function indented(fields, spaces) {
+    const pad = new Array(spaces + 1).join(" ");
+    return fields.map((f) => pad + f + "\n").join("");
+  }
+  var RESOURCE_FIELDS = indented(IDENTITY_FIELDS, 6) + indented(CLOUD_RESOURCE_FIELDS, 6);
+  var ENTITY_FIELDS = indented(IDENTITY_FIELDS, 8) + "        properties\n";
+  var AI_RESOURCE_TYPE_CANDIDATES = [
+    "AI_AGENT",
+    "AI_AGENT_REGISTRY",
+    "AI_DATASET",
+    "AI_DEPLOYMENT",
+    "AI_EXTENSION",
+    "AI_GATEWAY",
+    "AI_GUARDRAIL",
+    "AI_MODEL",
+    "AI_PIPELINE",
+    "AI_SERVICE",
+    "AI_SKILL",
+    "AI_SKILL_TEMPLATE",
+    "AI_TOOL",
+    "MCP_SERVER"
+  ];
+  function aiFlavored(values) {
+    return values.filter((v) => {
+      const tokens = v.toUpperCase().split(/[\s_]+/);
+      return tokens.includes("AI") || tokens.includes("MCP") || tokens.includes("GENAI") || tokens.includes("LLM");
+    });
+  }
+  function chooseAiResourceTypes(enumValues, override) {
+    if (override && override.length) return { types: override, source: "override", aiLooking: [] };
+    if (!enumValues) {
+      return { types: [...AI_RESOURCE_TYPE_CANDIDATES], source: "candidates", aiLooking: [] };
+    }
+    const present2 = new Set(enumValues);
+    const aiLooking = aiFlavored(enumValues);
+    const intersection = AI_RESOURCE_TYPE_CANDIDATES.filter((t) => present2.has(t));
+    if (intersection.length) return { types: intersection, source: "intersection", aiLooking };
+    if (aiLooking.length) return { types: aiLooking, source: "ai-tokens", aiLooking };
+    return { types: [], source: "none", aiLooking };
+  }
+  function isInvalidEnumValueError(message) {
+    if (/failed to parse object type/i.test(message)) return true;
+    return /HTTP 400/.test(message) && /cannot represent value/i.test(message);
+  }
+  var Q_AI_INVENTORY = "query SidekickAiInventory($first: Int, $after: String, $filterBy: CloudResourceV2Filters) {\n  cloudResourcesV2(first: $first, after: $after, filterBy: $filterBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n" + RESOURCE_FIELDS + "    }\n  }\n}\n";
+  function cloudResourceProjectFilter(scope) {
+    return scope && scope.length ? { idV2: { equals: [...scope] } } : null;
+  }
+  function aiInventoryVariables(types, scope = null) {
+    const filterBy = { type: { equals: [...types] } };
+    const project = cloudResourceProjectFilter(scope);
+    if (project) filterBy["project"] = project;
+    return { filterBy };
+  }
+  var Q_AGENTS_NO_GUARDRAIL = graphSearchVarQuery("SidekickAiAgentsWithoutGuardrail");
+  var Q_AGENT_RUNS_AS = graphSearchVarQuery("SidekickAiAgentRunsAs");
+  var Q_SA_EXCESSIVE_ACCESS = graphSearchVarQuery("SidekickAiAgentSaExcessiveAccess");
+  var Q_AGENT_SENSITIVE_DATA_ACCESS = graphSearchVarQuery("SidekickAiAgentSensitiveDataAccess");
+  function agentPathVariables(spec, scope) {
+    return {
+      query: toGraphEntityQuery(spec),
+      projectId: scope && scope.length ? scope[0] : null
+    };
+  }
+  var noGuardrailVariables = (types, scope) => agentPathVariables(noGuardrailSpec(guardrailRoots(types)), scope);
+  var agentRunsAsVariables = (types, scope) => agentPathVariables(agentRunsAsSpec(types), scope);
+  var saExcessiveAccessVariables = (types, scope) => agentPathVariables(saExcessiveAccessSpec(types), scope);
+  var sensitiveDataAccessVariables = (types, scope) => agentPathVariables(sensitiveDataAccessSpec(types), scope);
+  function graphSearchVarQuery(name) {
+    return "query " + name + "($quick: Boolean, $first: Int, $after: String, $query: GraphEntityQueryInput, $projectId: String) {\n  graphSearch(\n    quick: $quick\n    first: $first\n    after: $after\n    query: $query\n    projectId: $projectId\n  ) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      entities {\n" + ENTITY_FIELDS + "      }\n    }\n  }\n}\n";
+  }
+  var Q_IDENTITY_ACCESS = graphSearchVarQuery("SidekickAiIdentitiesWithAssetAccess");
+  function identityAccessVariables(types, scope) {
+    return {
+      query: toGraphEntityQuery(identityAccessSpec(types)),
+      projectId: scope && scope.length ? scope[0] : null
+    };
+  }
+  var Q_LINEAGE = graphSearchVarQuery("SidekickAiLineage");
+  function lineageVariables(types, scope) {
+    return {
+      query: toGraphEntityQuery(lineageSpec(lineageRoots(types))),
+      projectId: scope && scope.length ? scope[0] : null
+    };
+  }
+  var Q_AGENT_EXPANSION = "query SidekickAiAgentExpansion($quick: Boolean, $first: Int, $after: String, $query: GraphEntityQueryInput, $projectId: String) {\n  graphSearch(\n    quick: $quick\n    first: $first\n    after: $after\n    query: $query\n    projectId: $projectId\n  ) {\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      entities {\n" + ENTITY_FIELDS + "      }\n    }\n  }\n}\n";
+  var Q_AI_EXPOSURE = "query SidekickAiExposure($query: GraphEntityQueryInput, $controlId: ID, $projectId: String, $first: Int, $after: String, $fetchTotalCount: Boolean = false, $quick: Boolean = true, $fetchPublicExposurePaths: Boolean = false, $fetchInternalExposurePaths: Boolean = false, $fetchIssueAnalytics: Boolean = false, $fetchThreatAnalytics: Boolean = false, $fetchLateralMovement: Boolean = false, $fetchCodeSource: Boolean = false, $fetchKubernetes: Boolean = false, $fetchCost: Boolean = false, $issueId: ID) {\n  graphSearch(\n    query: $query\n    controlId: $controlId\n    projectId: $projectId\n    first: $first\n    after: $after\n    quick: $quick\n    issueId: $issueId\n  ) {\n    totalCount @include(if: $fetchTotalCount)\n    maxCountReached @include(if: $fetchTotalCount)\n    pageInfo { endCursor hasNextPage }\n    nodes {\n      entities {\n        providerUniqueId\n        deletedAt\n        isRestricted\n        ...PathGraphEntityFragment\n        userMetadata { isInWatchlist isIgnored note }\n        technologies { id icon }\n        cost(\n          filterBy: {timestamp: {inLast: {amount: 30, unit: DurationFilterValueUnitDays}}}\n        ) @include(if: $fetchCost) {\n          amortized\n          blended\n          unblended\n          netAmortized\n          netUnblended\n          currencyCode\n        }\n        costImpact @include(if: $fetchCost) { monthly }\n        publicExposures(first: 10) @include(if: $fetchPublicExposurePaths) {\n          nodes { ...NetworkExposureFragment }\n        }\n        otherSubscriptionExposures(first: 10) @include(if: $fetchInternalExposurePaths) {\n          nodes { ...NetworkExposureFragment }\n        }\n        otherVnetExposures(first: 10) @include(if: $fetchInternalExposurePaths) {\n          nodes { ...NetworkExposureFragment }\n        }\n        lateralMovementPaths(first: 10) @include(if: $fetchLateralMovement) {\n          nodes {\n            id\n            pathEntities { entity { providerUniqueId ...PathGraphEntityFragment } }\n          }\n        }\n        codeSourcePath(first: 10) @include(if: $fetchCodeSource) {\n          totalCount\n          nodes {\n            id\n            pathEntities { providerUniqueId ...PathGraphEntityFragment }\n          }\n        }\n        kubernetesPaths(first: 10) @include(if: $fetchKubernetes) {\n          nodes { id path { providerUniqueId ...PathGraphEntityFragment } }\n        }\n      }\n      aggregateCount\n    }\n  }\n}\n\nfragment PathGraphEntityFragment on GraphEntity {\n  providerUniqueId\n  id\n  name\n  type\n  properties\n  typedProperties { ... on GEAiAgent { description } }\n  issueAnalytics: issues(\n    filterBy: {status: [IN_PROGRESS, OPEN], type: [TOXIC_COMBINATION, CLOUD_CONFIGURATION]}\n  ) @include(if: $fetchIssueAnalytics) {\n    highSeverityCount\n    criticalSeverityCount\n  }\n  threatAnalytics: issues(\n    filterBy: {status: [IN_PROGRESS, OPEN], type: [THREAT_DETECTION], createdAt: {inLast: {amount: 7, unit: DurationFilterValueUnitDays}}}\n  ) @include(if: $fetchThreatAnalytics) {\n    highSeverityCount\n    criticalSeverityCount\n  }\n}\n\nfragment NetworkExposureFragment on NetworkExposure {\n  id\n  portRange\n  sourceIpRange\n  destinationIpRange\n  path { providerUniqueId ...PathGraphEntityFragment }\n  applicationEndpoints { providerUniqueId ...PathGraphEntityFragment }\n}\n";
+  var EXPOSURE_FETCH_FLAGS = {
+    fetchTotalCount: false,
+    fetchPublicExposurePaths: true,
+    fetchInternalExposurePaths: false,
+    fetchIssueAnalytics: false,
+    fetchThreatAnalytics: false,
+    fetchLateralMovement: true,
+    fetchCodeSource: true,
+    fetchKubernetes: false,
+    fetchCost: false
   };
-  function adjacencyTrendFromHistory(rows, limit = 90, projectId = "") {
-    return trendFromHistory(rows, ADJACENCY_SPEC, limit, projectId);
+  function hostExposureVariables(types, scope) {
+    return {
+      ...EXPOSURE_FETCH_FLAGS,
+      query: toGraphEntityQuery(hostExposureSpec(types)),
+      projectId: scope && scope.length ? scope[0] : null
+    };
   }
-  var EXPLOITATION_KEYS = ["kev", "exploit", "epss", "none", "unknown"];
-  var EXPLOITATION_SPEC = {
-    keys: EXPLOITATION_KEYS,
-    countsColumn: "exploitation_json",
-    versionColumn: "derivation_version",
-    projectKey: "exploitation",
-    annotationKeys: ["findings", "unjoined", "droppedNotInRegister"]
+  function endpointExposureVariables(types, scope) {
+    return {
+      ...EXPOSURE_FETCH_FLAGS,
+      query: toGraphEntityQuery(endpointExposureSpec(types)),
+      projectId: scope && scope.length ? scope[0] : null
+    };
+  }
+  var Q_ISSUES = "query SidekickAiIssues($first: Int, $after: String, $filterBy: IssueFilters, $orderBy: IssueOrder) {\n  issuesV2(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      type\n      severity\n      status\n      createdAt\n      updatedAt\n      dueAt\n      resolvedAt\n      resolutionReason\n      resolutionNote\n      rejectionExpiredAt\n      validatedAsExploitable\n      environments\n      assignee { id name primaryEmail }\n      resolvedBy { user { id name email } serviceAccount { id name type } }\n      notes { id text }\n      serviceTickets { id externalId name url }\n      applicationServices { id displayName }\n      aiRemediationAnalysis { verdict recommendedSeverity }\n      projects { id name slug riskProfile { businessImpact } }\n      entitySnapshot {\n        id\n        type\n        status\n        name\n        cloudPlatform\n        region\n        subscriptionName\n        subscriptionId\n        subscriptionExternalId\n        nativeType\n        externalId\n        tags\n        kubernetesClusterName\n        kubernetesNamespaceName\n        resourceGroupId\n      }\n      sourceRules {\n        ... on Control {\n          id\n          name\n          description\n          severity\n          risks\n          threats\n          resolutionRecommendation\n        }\n        ... on CloudConfigurationRule {\n          id\n          name\n          description\n          risks\n          threats\n          control { resolutionRecommendation severity }\n        }\n        ... on CloudEventRule {\n          id\n          name\n          description\n          risks\n          threats\n        }\n      }\n    }\n  }\n}\n";
+  function aiIssuesVariables(scope, categoryIds) {
+    const filterBy = {
+      status: ["OPEN", "IN_PROGRESS"],
+      // ONE STEP PER CATEGORY, so this is a one-element list on every step the battery runs —
+      // never the whole selection at once. The response says nothing about which category a
+      // row matched (Issue has no category field), so a filter naming six of them returns rows
+      // that cannot be stamped, and an unstamped row is what turns "AI issues" into "issues"
+      // with nothing on the page to catch it. Absent means the default, which is what this
+      // register collected before the list was a setting.
+      frameworkCategory: categoryIds && categoryIds.length ? [...categoryIds] : [RISK_CATEGORY_ID]
+    };
+    if (scope && scope.length) filterBy["project"] = scope;
+    return { filterBy, orderBy: { field: "SEVERITY_EXPLOITABLE", direction: "DESC" } };
+  }
+  var Q_CONFIG_FINDINGS = "query SidekickAiConfigFindings($first: Int, $after: String, $filterBy: ConfigurationFindingFilters, $orderBy: ConfigurationFindingOrder) {\n  configurationFindings(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      name\n      deleted\n      analyzedAt\n      firstSeenAt\n      severity\n      result\n      status\n      remediation\n      source\n      targetExternalId\n      ignoreRules { id tags { key value } }\n      subscription {\n        id\n        name\n        externalId\n        cloudProvider\n        sourceDeployments { id name status }\n      }\n      resource {\n        id\n        name\n        type\n        status\n        projects { id name riskProfile { businessImpact } }\n      }\n      sourceMappedIacFindings { id name }\n      rule {\n        id\n        shortId\n        graphId\n        name\n        description\n        remediationInstructions\n        risks\n        threats\n        tags { key value }\n        opaPolicy\n      }\n    }\n  }\n}\n";
+  function aiConfigFindingsVariables(scope) {
+    const filterBy = {
+      status: ["OPEN", "RESOLVED"],
+      frameworkCategory: [RISK_CATEGORY_ID]
+    };
+    if (scope && scope.length) filterBy["resource"] = { projectId: scope };
+    return { filterBy, orderBy: { field: "SEVERITY", direction: "DESC" } };
+  }
+  var VULNERABLE_ASSET_MEMBERS = [
+    "VulnerableAssetBase",
+    "VulnerableAssetVirtualMachine",
+    "VulnerableAssetServerless",
+    "VulnerableAssetContainerImage",
+    "VulnerableAssetContainer",
+    "VulnerableAssetRepositoryBranch",
+    "VulnerableAssetIde",
+    "VulnerableAssetEndpoint",
+    "VulnerableAssetPaaSResource",
+    "VulnerableAssetVirtualMachineImage",
+    "VulnerableAssetCommon",
+    "VulnerableAssetDevice"
+  ];
+  var VULNERABLE_ASSET_SELECTION = "      vulnerableAsset {\n" + VULNERABLE_ASSET_MEMBERS.map((m) => `        ... on ${m} { id type name }
+`).join("") + "        ... on VulnerableAssetNetworkAddress { __typename }\n      }\n";
+  var RELATED_ISSUE_SELECTION = "      relatedIssues { id }\n";
+  var Q_VULN_FINDINGS = "query SidekickAiVulnFindings($first: Int, $after: String, $filterBy: VulnerabilityFindingFilters) {\n  vulnerabilityFindings(first: $first, after: $after, filterBy: $filterBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      name\n      status\n      severity\n      hasExploit\n      hasCisaKevExploit\n      epssProbability\n      epssPercentile\n      epssSeverity\n      firstDetectedAt\n      resolvedAt\n" + RELATED_ISSUE_SELECTION + VULNERABLE_ASSET_SELECTION + "    }\n  }\n}\n";
+  function aiVulnFindingsVariables(scope, categoryIds) {
+    const filterBy = {
+      // OPEN only. `IN_PROGRESS` is an ISSUE state; this root's statuses are the finding's own,
+      // and the funnel §6.4 counted was OPEN.
+      status: ["OPEN"],
+      hasRelatedIssue: true,
+      relatedIssueFrameworkCategory: {
+        equalsAny: categoryIds && categoryIds.length ? [...categoryIds] : [RISK_CATEGORY_ID]
+      }
+    };
+    if (scope && scope.length) filterBy["projectIdV2"] = { equals: [...scope] };
+    return { filterBy };
+  }
+  var Q_AI_PROPERTIES = "query SidekickAiAssetProperties($first: Int, $after: String, $filterBy: CloudResourceV2Filters) {\n  cloudResourcesV2(first: $first, after: $after, filterBy: $filterBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n" + indented(IDENTITY_FIELDS, 6) + "      graphEntity { properties }\n    }\n  }\n}\n";
+  function aiPropertiesVariables(types, scope = null) {
+    const filterBy = { type: { equals: [...types] } };
+    const project = cloudResourceProjectFilter(scope);
+    if (project) filterBy["project"] = project;
+    return { filterBy };
+  }
+  var Q_PRINCIPALS = "query SidekickAiPrincipals($first: Int, $after: String, $filterBy: CloudResourceV2Filters, $orderBy: CloudResourceOrder) {\n  cloudResourcesV2(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      name\n      type\n      nativeType\n      hasSensitiveData\n      hasAccessToSensitiveData\n      hasAdminPrivileges\n      hasHighPrivileges\n      technology { id name categories { id name } }\n      cloudAccount { id name externalId cloudProvider }\n      projects { id name riskProfile { businessImpact } }\n      graphEntity { properties }\n      issueAnalytics {\n        issueCount\n        informationalSeverityCount\n        lowSeverityCount\n        mediumSeverityCount\n        highSeverityCount\n        criticalSeverityCount\n      }\n    }\n  }\n}\n";
+  function aiPrincipalsVariables(scope) {
+    const filterBy = {
+      type: { equals: ["SERVICE_ACCOUNT", "ACCESS_KEY"] },
+      identityPurpose: { equals: ["AGENTIC"] }
+    };
+    const project = cloudResourceProjectFilter(scope);
+    if (project) filterBy["project"] = project;
+    return { filterBy, orderBy: { field: "RELATED_ISSUE_SEVERITY", direction: "DESC" } };
+  }
+  var Q_CONFIG_RULES = "query SidekickAiConfigRules($first: Int, $after: String, $filterBy: CloudConfigurationRuleFilters) {\n  cloudConfigurationRules(first: $first, after: $after, filterBy: $filterBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      name\n      shortId\n      subjectEntityType\n      externalReferences { id name }\n    }\n  }\n}\n";
+  function aiConfigRulesVariables() {
+    return { filterBy: { hasFindings: true } };
+  }
+  function aiIdentityHygieneVariables(ruleIds, scope) {
+    const filterBy = {
+      status: ["OPEN"],
+      rule: [...ruleIds]
+    };
+    if (scope && scope.length) filterBy["resource"] = { projectId: scope };
+    return { filterBy, orderBy: { field: "SEVERITY", direction: "DESC" } };
+  }
+  var Q_EFFECTIVE_ACCESS = "query SidekickAiEffectiveAccess($first: Int, $after: String, $filterBy: EntityEffectiveAccessFilters) {\n  entityEffectiveAccessEntries(first: $first, after: $after, filterBy: $filterBy) {\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      grantedEntity: grantedEntityV2 { id name type }\n      accessibleResource: accessibleResourceV2 { id name type }\n      accessTypes\n      permissions\n      paths {\n        accessTypes\n        permissions\n        principalPolicies { policy { id name type } }\n        resourcePolicies { policy { id name type } }\n      }\n    }\n  }\n}\n";
+  function effectiveAccessVariables(types, scope) {
+    return { filterBy: effectiveAccessFilter(types, scope) };
+  }
+  var Q_SECURITY_FRAMEWORKS = "query SidekickAiSecurityFrameworks($first: Int, $after: String, $filterBy: SecurityFrameworkFilters) {\n  securityFrameworks(first: $first, after: $after, filterBy: $filterBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      name\n      description\n      builtin\n      enabled\n      policyTypes\n    }\n  }\n}\n";
+  function aiSecurityFrameworksVariables() {
+    return { filterBy: { enabled: true } };
+  }
+  var Q_COMPLIANCE_POSTURE = "query SidekickAiCompliancePosture($id: ID!, $analyticsSelection: SecurityFrameworkComplianceAnalyticsSelection, $orderBy: SecurityFrameworkSelectionOrder) {\n  securityFramework(id: $id) {\n    id\n    name\n    description\n    builtin\n    enabled\n    complianceAnalytics(selection: $analyticsSelection, orderBy: $orderBy) {\n      passSubCategoryCount\n      failSubCategoryCount\n      averageCompliancePosture\n      emptyPostureReason\n      categoryAnalytics {\n        category { id name description externalId }\n        passCount\n        failCount\n        passSubCategoryCount\n        failSubCategoryCount\n        averageCompliancePosture\n        emptyPostureReason\n        subCategoryAnalytics {\n          passCount\n          failCount\n          compliancePosture\n          emptyPostureReason\n          subCategory {\n            id\n            title\n            description\n            externalId\n            assessmentScope\n            mappingRationale\n            tags { key value }\n          }\n          policyAnalytics {\n            failCount\n            passCount\n            rejectedCount\n            assessedCount\n            noResourceToAsses\n            control {\n              id\n              name\n              description\n              enabled\n              builtin\n              severity\n              scopeQuery\n            }\n            cloudConfigurationRule {\n              id\n              name\n              description\n              shortId\n              enabled\n              builtin\n              severity\n              targetNativeType\n              subjectEntityType\n              hasAutoRemediation\n              cloudProvider\n            }\n            hostConfigurationRule {\n              id\n              name\n              shortName\n              description\n              enabled\n              builtin\n              severity\n            }\n          }\n        }\n      }\n    }\n  }\n}\n";
+  function aiCompliancePostureVariables(scope) {
+    const analyticsSelection = {};
+    if (scope && scope.length) analyticsSelection["projectId"] = scope;
+    return { analyticsSelection };
+  }
+
+  // src/server/wizClientAi.ts
+  var WizQueryError = class extends Error {
   };
-  function exploitationTrendFromHistory(rows, limit = 90, projectId = "") {
-    return trendFromHistory(rows, EXPLOITATION_SPEC, limit, projectId);
-  }
-  var CATEGORY_COUNTS_COLUMN = "category_counts_json";
-  var CATEGORY_SPEC = {
-    keys: [],
-    countsColumn: CATEGORY_COUNTS_COLUMN,
-    versionColumn: "derivation_version",
-    projectKey: "categories",
-    absentKeyIsNull: true
-  };
-  function categorySpecFor(categoryIds) {
-    return { ...CATEGORY_SPEC, keys: [...categoryIds] };
-  }
-  function categoryTrendFromHistory(rows, categoryIds, limit = 90) {
-    return sparseTrendFromHistory(rows, categorySpecFor(categoryIds), limit);
-  }
-  function countIssueCategories(issues2) {
+  var TOKEN_CACHE_KEY = "wiz_ai_token";
+  function getToken(forceRefresh = false) {
     var _a5, _b;
-    const counts = {};
-    for (const issue2 of issues2) {
-      const seen = [];
-      for (const c of (_a5 = issue2.categories) != null ? _a5 : []) {
-        if (!c || seen.indexOf(c) >= 0) continue;
-        seen.push(c);
-        counts[c] = ((_b = counts[c]) != null ? _b : 0) + 1;
-      }
+    const staticToken = getProp(PROP_KEYS.wizApiToken);
+    if (staticToken && staticToken.trim()) return staticToken.trim();
+    const cache = CacheService.getScriptCache();
+    if (!forceRefresh) {
+      const cached2 = cache.get(TOKEN_CACHE_KEY);
+      if (cached2) return cached2;
     }
-    return counts;
-  }
-  var LEDGER_KEYS = ["new", "resolved", "reopened"];
-  var LEDGER_SPEC = {
-    keys: LEDGER_KEYS,
-    countsColumn: "ledger_json",
-    versionColumn: "derivation_version",
-    projectKey: "ledger"
-  };
-  function ledgerTrendFromHistory(rows, limit = 90, projectId = "") {
-    return trendFromHistory(rows, LEDGER_SPEC, limit, projectId);
-  }
-  var NET_CAPACITY_BAND_PCT = 2;
-  var MIN_COMPARABLE_SYNCS = 2;
-  function verdictOf(netPct) {
-    if (netPct === null || Math.abs(netPct) <= NET_CAPACITY_BAND_PCT) return "keeping-up";
-    return netPct > 0 ? "gaining" : "falling-behind";
-  }
-  function capacityFromLedgerDeltas(rows, limit = 90) {
-    var _a5, _b, _c;
-    const raw = [];
-    for (const r of rows) {
-      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
-      const counts = parseCounts(r["ledger_json"], [
-        "new",
-        "resolved",
-        "reopened",
-        "carried",
-        "skippedNarrowedScope"
-      ]);
-      if (!counts) continue;
-      const at = String(r["finished_at"] || r["started_at"] || "");
-      if (!at) continue;
-      const c = counts;
-      const n = (k) => {
-        var _a6;
-        return Number((_a6 = c[k]) != null ? _a6 : 0);
-      };
-      raw.push({
-        syncId: String((_b = r["sync_id"]) != null ? _b : ""),
-        at,
-        // "" is UNKNOWN, never "the same scope as the row beside it" — see case 2 above.
-        scope: String((_c = r["register_scope"]) != null ? _c : ""),
-        opened: n("new") + n("reopened"),
-        closed: n("resolved"),
-        openAtStart: n("carried") + n("resolved"),
-        skipped: n("skippedNarrowedScope")
-      });
-    }
-    raw.sort(cmpBy((p) => p.at));
-    const points = [];
-    let comparableCount = 0;
-    const rates = [];
-    const netPcts = [];
-    for (let i = 0; i < raw.length; i++) {
-      const cur = raw[i];
-      const prev = i > 0 ? raw[i - 1] : null;
-      const comparable = Boolean(
-        prev && cur.skipped === 0 && cur.scope !== "" && prev.scope !== "" && cur.scope === prev.scope
-      );
-      const netPct = cur.openAtStart > 0 ? (cur.closed - cur.opened) / cur.openAtStart * 100 : null;
-      if (comparable) {
-        comparableCount += 1;
-        if (cur.openAtStart > 0) {
-          rates.push(cur.closed / cur.openAtStart * 100);
-          netPcts.push(netPct != null ? netPct : 0);
-        }
-      }
-      points.push({
-        syncId: cur.syncId,
-        at: cur.at,
-        opened: cur.opened,
-        closed: cur.closed,
-        net: cur.closed - cur.opened,
-        comparable,
-        verdict: comparable ? verdictOf(netPct) : null
-      });
-    }
-    const enough = rates.length >= MIN_COMPARABLE_SYNCS;
-    const mean2 = (xs) => xs.reduce((a, x) => a + x, 0) / xs.length;
-    const trimmed = limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
-    return {
-      points: trimmed,
-      overall: {
-        mmcr: enough ? mean2(rates) : null,
-        verdict: enough ? verdictOf(mean2(netPcts)) : null,
-        syncs: points.length,
-        comparable: comparableCount
-      }
-    };
-  }
-  function labelCategories(ids) {
-    return ids.map((id) => {
-      const known = CANDIDATE_CATEGORIES.filter((c) => c.id === id)[0];
-      return { id, name: known ? known.name : id };
+    const authUrl = (_a5 = getProp(PROP_KEYS.wizAuthUrl)) != null ? _a5 : DEFAULT_WIZ_AUTH_URL;
+    const response = UrlFetchApp.fetch(authUrl, {
+      method: "post",
+      contentType: "application/x-www-form-urlencoded",
+      payload: {
+        grant_type: "client_credentials",
+        audience: "wiz-api",
+        client_id: requireProp(PROP_KEYS.wizClientId),
+        client_secret: requireProp(PROP_KEYS.wizClientSecret)
+      },
+      muteHttpExceptions: true
     });
-  }
-  function postureTrendFromHistory(rows, categoryIds, limit = 90) {
-    return {
-      adjacency: adjacencyTrendFromHistory(rows, limit),
-      exploitation: exploitationTrendFromHistory(rows, limit),
-      categories: labelCategories(categoryIds),
-      categoryPoints: categoryTrendFromHistory(rows, categoryIds, limit),
-      ledger: ledgerTrendFromHistory(rows, limit),
-      capacity: capacityFromLedgerDeltas(rows, limit)
-    };
-  }
-
-  // src/domain/compliancePosture.ts
-  var POSTURE_BANDS = {
-    strong: { min: 90, label: "Strong" },
-    fair: { min: 70, label: "Work to do" },
-    poor: { min: 50, label: "Falling short" },
-    weak: { min: 0, label: "Materially failing" }
-  };
-  function postureBandOf(posturePct2) {
-    if (posturePct2 === null || posturePct2 === void 0) return null;
-    if (posturePct2 >= POSTURE_BANDS.strong.min) return "strong";
-    if (posturePct2 >= POSTURE_BANDS.fair.min) return "fair";
-    if (posturePct2 >= POSTURE_BANDS.poor.min) return "poor";
-    return "weak";
-  }
-  function postureState(posturePct2, emptyPostureReason) {
-    const reason = String(emptyPostureReason != null ? emptyPostureReason : "").trim().toUpperCase();
-    if (reason === "NO_RESOURCES") return "noResources";
-    if (reason === "NO_POLICIES") return "noPolicies";
-    if (reason) return "unknown";
-    return posturePct2 === null ? "unknown" : "scored";
-  }
-  function titleRepeatsExternalId(externalId, title) {
-    const id = String(externalId != null ? externalId : "").trim();
-    const t = String(title != null ? title : "").trim();
-    if (!id || !t) return false;
-    if (!(t.toUpperCase().indexOf(id.toUpperCase()) === 0)) return false;
-    const next = t.charAt(id.length);
-    return next === "" || next === " " || next === "	";
-  }
-  function severityRank2(s) {
-    const i = SEVERITY_ORDER.indexOf(s);
-    return i === -1 ? SEVERITY_ORDER.length : i;
-  }
-  function worstOf(a, b) {
-    if (a === null) return b;
-    if (b === null) return a;
-    return severityRank2(b) < severityRank2(a) ? b : a;
-  }
-  function worstFailingSeverityOf(policies) {
-    let worst = null;
-    for (const p of policies) if (p.failCount > 0) worst = worstOf(worst, p.severity);
-    return worst;
-  }
-  function emptyStateCounts() {
-    return { scored: 0, noResources: 0, noPolicies: 0, unknown: 0 };
-  }
-  function isAssessedPolicy(p) {
-    return p.assessedCount > 0 || p.passCount > 0 || p.failCount > 0 || p.rejectedCount > 0;
-  }
-  function toNode(row, externalId) {
-    return {
-      frameworkId: row.frameworkId,
-      externalId,
-      // Suppressed when the title already opens with it, so an OWASP LLM row reads
-      // "1 LLM01:2025 Prompt Injection" rather than "11 LLM01:2025 Prompt Injection".
-      showExternalId: !titleRepeatsExternalId(externalId, row.title),
-      title: row.title,
-      description: row.description,
-      posturePct: row.posturePct,
-      state: postureState(row.posturePct, row.emptyPostureReason),
-      // Read off the state, not off the number: a row carrying both a percentage and an
-      // emptyPostureReason is one postureState declines to score, and banding the number it
-      // just disowned would put a colour back on a row that has no posture.
-      postureBand: postureState(row.posturePct, row.emptyPostureReason) === "scored" ? postureBandOf(row.posturePct) : null,
-      passCount: row.passCount,
-      failCount: row.failCount,
-      emptyPostureReason: row.emptyPostureReason
-    };
-  }
-  function buildFrameworkTree(frameworkId, posture, policies, frameworks = []) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
-    const rows = posture.filter((p) => p.frameworkId === frameworkId);
-    if (!rows.length) return null;
-    const frameworkRow = rows.find((p) => p.level === "framework");
-    const catalogue = frameworks.find((f) => f.id === frameworkId);
-    const policiesBySub = /* @__PURE__ */ new Map();
-    for (const p of policies) {
-      if (p.frameworkId !== frameworkId) continue;
-      const list2 = (_a5 = policiesBySub.get(p.subcategoryExternalId)) != null ? _a5 : [];
-      list2.push(p);
-      policiesBySub.set(p.subcategoryExternalId, list2);
-    }
-    const stateCounts = emptyStateCounts();
-    const unassessedIds = /* @__PURE__ */ new Set();
-    const subsByCategory = /* @__PURE__ */ new Map();
-    for (const row of rows) {
-      if (row.level !== "subcategory") continue;
-      const externalId = (_b = row.subcategoryExternalId) != null ? _b : "";
-      const raw = (_c = policiesBySub.get(externalId)) != null ? _c : [];
-      const seen = /* @__PURE__ */ new Set();
-      const deduped = raw.filter((p) => {
-        if (seen.has(p.policyId)) return false;
-        seen.add(p.policyId);
-        return true;
-      });
-      deduped.sort(
-        (a, b) => severityRank2(a.severity) - severityRank2(b.severity) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
+    if (response.getResponseCode() !== 200) {
+      throw new WizQueryError(
+        `Wiz token request failed (${response.getResponseCode()}): ` + response.getContentText().slice(0, 500)
       );
-      const assessed = [];
-      for (const p of deduped) {
-        if (isAssessedPolicy(p)) assessed.push(p);
-        else unassessedIds.add(p.policyId);
+    }
+    const body = JSON.parse(response.getContentText());
+    const token = body["access_token"];
+    if (typeof token !== "string" || !token) {
+      throw new WizQueryError("Wiz token response carried no access_token.");
+    }
+    const expiresIn = Number((_b = body["expires_in"]) != null ? _b : 3600);
+    const ttl = Math.max(60, Math.min(Math.trunc(expiresIn) - 300, 21600));
+    cache.put(TOKEN_CACHE_KEY, token, ttl);
+    return token;
+  }
+  function gqlPost(query, variables) {
+    const apiUrl = requireProp(PROP_KEYS.wizApiUrl);
+    let token = getToken();
+    let lastError = "";
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const response = UrlFetchApp.fetch(apiUrl, {
+        method: "post",
+        contentType: "application/json",
+        headers: { Authorization: `Bearer ${token}` },
+        payload: JSON.stringify({ query, variables }),
+        muteHttpExceptions: true
+      });
+      const code = response.getResponseCode();
+      if (code === 401 && attempt === 0 && !getProp(PROP_KEYS.wizApiToken)) {
+        token = getToken(true);
+        continue;
       }
-      const node2 = {
-        ...toNode(row, externalId),
-        assessmentScope: row.assessmentScope,
-        mappingRationale: row.mappingRationale,
-        policies: assessed,
-        failingPolicyCount: assessed.filter((p) => p.failCount > 0).length,
-        unassessedPolicyCount: deduped.length - assessed.length,
-        // From the LISTED policies, so the tint on this row and the rules the row expands to
-        // show can never name different severities.
-        worstFailingSeverity: worstFailingSeverityOf(assessed)
-      };
-      stateCounts[node2.state] += 1;
-      if (node2.state !== "scored") continue;
-      const key = (_d = row.categoryExternalId) != null ? _d : "";
-      const list2 = (_e = subsByCategory.get(key)) != null ? _e : [];
-      list2.push(node2);
-      subsByCategory.set(key, list2);
-    }
-    const categories = rows.filter((r) => r.level === "category").map((row) => {
-      var _a6, _b2;
-      const externalId = (_a6 = row.categoryExternalId) != null ? _a6 : "";
-      const subcategories = (_b2 = subsByCategory.get(externalId)) != null ? _b2 : [];
-      return {
-        ...toNode(row, externalId),
-        subcategories,
-        mirrorsCategory: subcategories.length === 1 && subcategories[0].externalId === externalId,
-        worstFailingSeverity: subcategories.reduce(
-          (worst, sub) => worstOf(worst, sub.worstFailingSeverity),
-          null
-        )
-      };
-    }).filter((cat) => cat.subcategories.length > 0);
-    const distinct = /* @__PURE__ */ new Map();
-    for (const cat of categories) {
-      for (const sub of cat.subcategories) {
-        for (const p of sub.policies) {
-          distinct.set(p.policyId, ((_f = distinct.get(p.policyId)) != null ? _f : false) || p.failCount > 0);
-        }
+      if (code === 429 || code >= 500) {
+        lastError = `HTTP ${code}`;
+        const ceiling = 1e3 * Math.pow(2, attempt);
+        Utilities.sleep(Math.floor(ceiling / 2 + Math.random() * (ceiling / 2)));
+        continue;
       }
+      if (code !== 200) {
+        const hint = code === 401 && getProp(PROP_KEYS.wizApiToken) ? " \u2014 WIZ_API_TOKEN was rejected; it may have expired. Refresh it, or set WIZ_CLIENT_ID/WIZ_CLIENT_SECRET for auto-refresh." : "";
+        throw new WizQueryError(
+          `Wiz query failed (HTTP ${code})${hint}: ${errorDigest(response.getContentText())}`
+        );
+      }
+      const body = JSON.parse(response.getContentText());
+      const data = body["data"];
+      if (!data) {
+        throw new WizQueryError(
+          `Wiz response carried no data: ${errorDigest(response.getContentText())}`
+        );
+      }
+      return data;
     }
-    const worstFailingSeverity = categories.reduce(
-      (worst, cat) => worstOf(worst, cat.worstFailingSeverity),
-      null
-    );
-    const frameworkState = postureState(
-      (_g = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _g : null,
-      (_h = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _h : null
-    );
-    return {
-      frameworkId,
-      name: (_j = (_i = frameworkRow == null ? void 0 : frameworkRow.title) != null ? _i : catalogue == null ? void 0 : catalogue.name) != null ? _j : frameworkId,
-      description: (_k = frameworkRow == null ? void 0 : frameworkRow.description) != null ? _k : catalogue == null ? void 0 : catalogue.description,
-      posturePct: (_l = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _l : null,
-      state: frameworkState,
-      // Same guard toNode applies one level down: only a row that actually scored gets a
-      // band, so an unscored framework's hero draws no bar rather than a failing-coloured one.
-      postureBand: frameworkState === "scored" ? postureBandOf((_m = frameworkRow == null ? void 0 : frameworkRow.posturePct) != null ? _m : null) : null,
-      emptyPostureReason: (_n = frameworkRow == null ? void 0 : frameworkRow.emptyPostureReason) != null ? _n : null,
-      passSubCategoryCount: (_o = frameworkRow == null ? void 0 : frameworkRow.passSubCategoryCount) != null ? _o : 0,
-      failSubCategoryCount: (_p = frameworkRow == null ? void 0 : frameworkRow.failSubCategoryCount) != null ? _p : 0,
-      categories,
-      stateCounts,
-      policyCount: distinct.size,
-      failingPolicyCount: [...distinct.values()].filter(Boolean).length,
-      // Only ids that appear NOWHERE in the listed tree. A control mapped under six
-      // subcategories and evaluated under one of them is a listed policy, not a dropped one,
-      // and counting it in both places would describe the same rule twice.
-      unassessedPolicyCount: [...unassessedIds].filter((id) => !distinct.has(id)).length,
-      worstFailingSeverity
-    };
+    throw new WizQueryError(`Wiz query failed after retries (${lastError}).`);
   }
-  function buildAllFrameworkTrees(posture, policies, frameworks = []) {
-    const ids = [];
-    for (const p of posture) if (ids.indexOf(p.frameworkId) === -1) ids.push(p.frameworkId);
-    const trees = ids.map((id) => buildFrameworkTree(id, posture, policies, frameworks)).filter((t) => t !== null);
-    trees.sort((a, b) => {
-      if (a.posturePct === null && b.posturePct === null) return a.name < b.name ? -1 : 1;
-      if (a.posturePct === null) return 1;
-      if (b.posturePct === null) return -1;
-      return a.posturePct - b.posturePct || (a.name < b.name ? -1 : 1);
-    });
-    return trees;
-  }
-  function complianceKpis(posture, policies = []) {
-    const frameworkRows = posture.filter((p) => p.level === "framework");
-    const scored = frameworkRows.filter(
-      (p) => postureState(p.posturePct, p.emptyPostureReason) === "scored"
-    );
-    const averagePosture = scored.length ? Math.round(scored.reduce((sum, p) => {
-      var _a5;
-      return sum + ((_a5 = p.posturePct) != null ? _a5 : 0);
-    }, 0) / scored.length) : null;
-    const failingSubcategories = posture.filter(
-      (p) => p.level === "subcategory" && p.failCount > 0
-    ).length;
-    const failing = /* @__PURE__ */ new Set();
-    for (const p of policies) if (p.failCount > 0) failing.add(p.policyId);
-    return {
-      frameworks: frameworkRows.length,
-      scoredFrameworks: scored.length,
-      averagePosture,
-      averagePostureBand: postureBandOf(averagePosture),
-      failingSubcategories,
-      failingPolicies: failing.size
-    };
-  }
-
-  // src/domain/complianceTrend.ts
-  var COMPLIANCE_POSTURE_COLUMN = "compliance_posture_json";
-  var COMPLIANCE_POSTURE_MAX_CHARS = 45e3;
-  var LANDSCAPE_KEY = "__landscape";
-  var STATE_KEYS = ["scored", "noResources", "noPolicies", "unknown"];
-  function subcategoryCount(tree) {
-    return STATE_KEYS.reduce((sum, k) => sum + (tree.stateCounts[k] || 0), 0);
-  }
-  function censusCompliancePosture(trees) {
-    const frameworks = {};
-    const scoredPcts = [];
-    for (const tree of trees) {
-      const scored = tree.state === "scored" && tree.posturePct !== null;
-      if (scored) scoredPcts.push(tree.posturePct);
-      frameworks[tree.frameworkId] = {
-        pct: scored ? tree.posturePct : null,
-        scored: tree.stateCounts.scored || 0,
-        subcategories: subcategoryCount(tree)
-      };
-    }
-    return {
-      avg: scoredPcts.length ? Math.round(scoredPcts.reduce((sum, p) => sum + p, 0) / scoredPcts.length) : null,
-      scoredFrameworks: scoredPcts.length,
-      frameworks
-    };
-  }
-  function encodeCompliancePosture(census) {
-    const json = JSON.stringify(census);
-    return json.length > COMPLIANCE_POSTURE_MAX_CHARS ? null : json;
-  }
-  function cellPct(v) {
-    if (v === null || v === void 0 || v === "") return null;
-    const n = Number(v);
-    if (!Number.isFinite(n) || n < 0 || n > 100) return null;
-    return Math.round(n);
-  }
-  function cellCount3(v) {
-    const n = Number(v);
-    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
-  }
-  function parseCensus(v) {
-    if (typeof v !== "string" || !v) return null;
-    let parsed;
+  function fetchEnumValues(enumName) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(enumName)) return null;
+    const q = 'query SidekickEnumProbe {\n  __type(name: "' + enumName + '") { enumValues { name } }\n}\n';
     try {
-      parsed = JSON.parse(v);
+      const data = gqlPost(q, {});
+      const t = data["__type"];
+      const values = t && t["enumValues"];
+      if (!Array.isArray(values)) return null;
+      return values.map((v) => String(v["name"])).filter(Boolean);
+    } catch (e) {
+      console.warn(`Enum probe for ${enumName} failed: ${e}`);
+      return null;
+    }
+  }
+  function fetchTypeShape(name) {
+    var _a5;
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return null;
+    const q = 'query SidekickTypeProbe {\n  __type(name: "' + name + '") {\n    kind\n    enumValues { name }\n    inputFields { name }\n  }\n}\n';
+    try {
+      const data = gqlPost(q, {});
+      const t = data["__type"];
+      if (!t) return null;
+      const names = (v) => Array.isArray(v) ? v.map((e) => String(e["name"])).filter(Boolean) : [];
+      return {
+        kind: String((_a5 = t["kind"]) != null ? _a5 : ""),
+        enumValues: names(t["enumValues"]),
+        inputFields: names(t["inputFields"])
+      };
+    } catch (e) {
+      console.warn(`Type probe for ${name} failed: ${e}`);
+      return null;
+    }
+  }
+  var AI_TYPES_CACHE_KEY = "wiz_ai_resource_types_v2";
+  var AI_TYPES_PROP_TTL_MS = 7 * 864e5;
+  function readStoredAiTypes(now) {
+    var _a5;
+    const raw = getProp(PROP_KEYS.wizAiResourceTypesResolved);
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed || !Array.isArray(parsed.types) || !parsed.types.length) return null;
+      if (!(now - Number(parsed.resolvedAt) < AI_TYPES_PROP_TTL_MS)) return null;
+      return { types: parsed.types, source: parsed.source, aiLooking: (_a5 = parsed.aiLooking) != null ? _a5 : [] };
     } catch {
       return null;
     }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    const raw = parsed;
-    const rawFrameworks = raw["frameworks"];
-    if (!rawFrameworks || typeof rawFrameworks !== "object" || Array.isArray(rawFrameworks)) {
-      return null;
+  }
+  function writeStoredAiTypes(chosen, now) {
+    try {
+      setProp(
+        PROP_KEYS.wizAiResourceTypesResolved,
+        JSON.stringify({ ...chosen, resolvedAt: now })
+      );
+    } catch {
     }
-    const frameworks = {};
-    for (const id of Object.keys(rawFrameworks)) {
-      const entry = rawFrameworks[id];
-      if (!entry || typeof entry !== "object") continue;
-      const e = entry;
-      frameworks[id] = {
-        pct: cellPct(e["pct"]),
-        scored: cellCount3(e["scored"]),
-        subcategories: cellCount3(e["subcategories"])
+  }
+  var PROBE_SENTINEL = "AI_SIDEKICK_NEGATIVE_CONTROL";
+  function probeOracleWorks(say) {
+    try {
+      fetchCloudResourcesPage({
+        query: Q_AI_INVENTORY,
+        first: 1,
+        extraVariables: aiInventoryVariables([PROBE_SENTINEL])
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (isInvalidEnumValueError(msg)) return true;
+      throw e;
+    }
+    say(
+      `  \u26A0 negative control (${PROBE_SENTINEL}) was ACCEPTED \u2014 this gateway does not reject unknown type values, so the per-candidate probe cannot tell which types this tenant really has. Every candidate below will read as accepted. Set WIZ_AI_RESOURCE_TYPES to the types you actually want queried.`
+    );
+    return false;
+  }
+  function probeCandidateTypes(candidates, say) {
+    const verified = probeOracleWorks(say);
+    const accepted = [];
+    for (const t of candidates) {
+      try {
+        fetchCloudResourcesPage({
+          query: Q_AI_INVENTORY,
+          first: 1,
+          extraVariables: aiInventoryVariables([t])
+        });
+        accepted.push(t);
+        say(`  ${t}: accepted${verified ? "" : " (unverified \u2014 see the warning above)"}`);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (isInvalidEnumValueError(msg)) {
+          say(`  ${t}: not in this tenant's schema`);
+          continue;
+        }
+        throw e;
+      }
+    }
+    return { accepted, verified };
+  }
+  function resolveAiResourceTypes(log) {
+    const say = log != null ? log : (() => void 0);
+    const overrideRaw = getProp(PROP_KEYS.wizAiResourceTypes);
+    const override = overrideRaw ? overrideRaw.split(",").map((s) => s.trim()).filter(Boolean) : null;
+    if (override && override.length) {
+      say(`AI resource types: WIZ_AI_RESOURCE_TYPES override \u2014 ${override.join(", ")}.`);
+      return { types: override, source: "override", aiLooking: [] };
+    }
+    const now = Date.now();
+    const cache = CacheService.getScriptCache();
+    if (!log) {
+      const hit = cache.get(AI_TYPES_CACHE_KEY);
+      if (hit) {
+        try {
+          return JSON.parse(hit);
+        } catch {
+        }
+      }
+      const stored = readStoredAiTypes(now);
+      if (stored) {
+        try {
+          cache.put(AI_TYPES_CACHE_KEY, JSON.stringify(stored), 21600);
+        } catch {
+        }
+        return stored;
+      }
+    }
+    let chosen;
+    const enumValues = fetchEnumValues("CloudResourceTypeFilter");
+    if (enumValues) {
+      const picked = chooseAiResourceTypes(enumValues, null);
+      say(
+        `CloudResourceTypeFilter has ${enumValues.length} members; AI-flavored: ${picked.aiLooking.join(", ") || "(none)"}.`
+      );
+      if (!picked.types.length) {
+        throw new WizQueryError(
+          `This tenant's CloudResourceTypeFilter enum has no recognizable AI resource types. Set the WIZ_AI_RESOURCE_TYPES Script Property (comma-separated enum values). AI-flavored members seen: ${picked.aiLooking.join(", ") || "(none)"}.`
+        );
+      }
+      chosen = picked;
+    } else {
+      say("Introspection unavailable \u2014 probing candidate types one by one:");
+      const { accepted, verified } = probeCandidateTypes(AI_RESOURCE_TYPE_CANDIDATES, say);
+      if (!accepted.length) {
+        throw new WizQueryError(
+          "None of the candidate AI resource types (" + AI_RESOURCE_TYPE_CANDIDATES.join(", ") + ") exist in this tenant's CloudResourceTypeFilter enum, and introspection is unavailable. Find the tenant's AI type names (Wiz docs \u2192 GraphQL schema, or the Wiz UI's inventory filter) and set the WIZ_AI_RESOURCE_TYPES Script Property."
+        );
+      }
+      chosen = {
+        types: accepted,
+        source: verified ? "probe" : "probe (unverified)",
+        aiLooking: []
       };
     }
+    say(`Inventory will query types (${chosen.source}): ${chosen.types.join(", ")}.`);
+    try {
+      cache.put(AI_TYPES_CACHE_KEY, JSON.stringify(chosen), 21600);
+    } catch {
+    }
+    writeStoredAiTypes(chosen, now);
+    return chosen;
+  }
+  var ERROR_BODY_MAX = 800;
+  function errorDigest(text) {
+    try {
+      const parsed = JSON.parse(text);
+      const errors = parsed["errors"];
+      if (Array.isArray(errors) && errors.length) {
+        const messages = errors.map((e) => {
+          var _a5;
+          return e && typeof e === "object" ? String((_a5 = e["message"]) != null ? _a5 : "") : "";
+        }).filter(Boolean);
+        if (messages.length) return messages.join(" | ").slice(0, ERROR_BODY_MAX);
+      }
+    } catch {
+    }
+    return String(text).slice(0, ERROR_BODY_MAX);
+  }
+  function readConnection(connection, field) {
+    var _a5, _b, _c;
+    if (!connection || typeof connection !== "object") {
+      throw new WizQueryError(`Wiz response carried no ${field} connection.`);
+    }
+    const pageInfo = (_a5 = connection["pageInfo"]) != null ? _a5 : {};
+    const rawTotal = connection["totalCount"];
     return {
-      avg: cellPct(raw["avg"]),
-      scoredFrameworks: cellCount3(raw["scoredFrameworks"]),
-      frameworks
+      rows: (_b = connection["nodes"]) != null ? _b : [],
+      hasNextPage: Boolean(pageInfo["hasNextPage"]),
+      endCursor: (_c = pageInfo["endCursor"]) != null ? _c : null,
+      totalCount: typeof rawTotal === "number" ? rawTotal : null
     };
   }
-  function compliancePostureTrendFromHistory(rows, limit = 90) {
+  function smallerPageCouldHelp(e) {
+    if (!(e instanceof WizQueryError)) return true;
+    const m = e.message;
+    if (/HTTP 4\d\d/.test(m)) return false;
+    if (/HTTP 429/.test(m)) return false;
+    if (/internal error has occurred/i.test(m)) return true;
+    if (/carried no data/.test(m)) return false;
+    if (/carried no .* connection/.test(m)) return false;
+    return true;
+  }
+  function isTenantRefusal(e) {
+    return e instanceof WizQueryError;
+  }
+  function fetchPage(field, o, extra) {
     var _a5;
-    const points = [];
-    for (const r of rows) {
-      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
-      const census = parseCensus(r[COMPLIANCE_POSTURE_COLUMN]);
-      if (!census) continue;
-      const at = String(r["finished_at"] || r["started_at"] || "");
-      if (!at) continue;
-      const counts = { [LANDSCAPE_KEY]: census.avg };
-      let scored = 0;
-      let subcategories = 0;
-      for (const id of Object.keys(census.frameworks)) {
-        const entry = census.frameworks[id];
-        counts[id] = entry.pct;
-        scored += entry.scored;
-        subcategories += entry.subcategories;
-      }
-      const coverage = {
-        [LANDSCAPE_KEY]: { scored, subcategories, scoredFrameworks: census.scoredFrameworks }
-      };
-      for (const id of Object.keys(census.frameworks)) {
-        const entry = census.frameworks[id];
-        coverage[id] = { scored: entry.scored, subcategories: entry.subcategories };
-      }
-      points.push({ at, counts, coverage });
+    const run2 = (first2) => {
+      var _a6, _b;
+      return readConnection(
+        gqlPost(o.query, {
+          ...extra != null ? extra : {},
+          first: first2,
+          after: (_a6 = o.cursor) != null ? _a6 : null,
+          ...(_b = o.extraVariables) != null ? _b : {}
+        })[field],
+        field
+      );
+    };
+    const first = (_a5 = o.first) != null ? _a5 : PAGE_SIZE;
+    try {
+      return run2(first);
+    } catch (e) {
+      if (!smallerPageCouldHelp(e)) throw e;
+      if (first <= PAGE_SIZE_FALLBACK) throw e;
+      return run2(PAGE_SIZE_FALLBACK);
     }
-    points.sort(cmpBy((p) => p.at));
-    return limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
+  }
+  function fetchCloudResourcesPage(o) {
+    return fetchPage("cloudResourcesV2", o);
+  }
+  function fetchConnectionPage(field, o) {
+    return fetchPage(field, o);
+  }
+  function fetchGraphSearchPage(o) {
+    return fetchPage("graphSearch", o, { quick: false });
+  }
+  function fetchSingleObject(field, o) {
+    var _a5;
+    const obj = gqlPost(o.query, { ...(_a5 = o.extraVariables) != null ? _a5 : {} })[field];
+    if (!obj || typeof obj !== "object") {
+      throw new WizQueryError(`Wiz response carried no ${field} object.`);
+    }
+    return { rows: [obj], hasNextPage: false, endCursor: null, totalCount: 1 };
+  }
+
+  // src/server/syncJobs.ts
+  var syncJobs_exports = {};
+  __export(syncJobs_exports, {
+    cancelRequested: () => cancelRequested,
+    cancelSync: () => cancelSync,
+    clearCancelFlag: () => clearCancelFlag,
+    continueJob: () => continueJob,
+    dailySync: () => dailySync,
+    describeSyncSteps: () => describeSyncSteps,
+    jobStatus: () => jobStatus,
+    startSync: () => startSync,
+    testStepVariables: () => testStepVariables
+  });
+
+  // src/domain/identityHygiene.ts
+  var HYGIENE_SUBJECT = "USER_ACCOUNT";
+  var MATCHERS = [
+    // "multi-factor authentication (MFA)" and bare "MFA enabled" both appear in the catalogue.
+    { kind: "MFA", test: /multi-factor|\bMFA\b/i },
+    // "should not be inactive for more than 90 days" and "should have recent login activity".
+    // Deliberately NOT a bare /inactive/ — "Uninstalled Connected App should not be inactive"
+    // is a SERVICE_ACCOUNT rule about an app, and the subject guard below already excludes it,
+    // but the phrase is specific enough not to lean on that alone.
+    { kind: "DORMANT", test: /inactive for more than|recent login activity/i }
+  ];
+  function hygieneKindOf(rule) {
+    if (rule.subjectEntityType !== HYGIENE_SUBJECT) return null;
+    for (const m of MATCHERS) {
+      if (m.test.test(rule.name)) return m.kind;
+    }
+    return null;
+  }
+  function resolveHygieneRules(catalogue) {
+    const byId = {};
+    const ids = [];
+    const shortIds = [];
+    for (const rule of catalogue) {
+      const kind = hygieneKindOf(rule);
+      if (!kind || !rule.id) continue;
+      byId[rule.id] = kind;
+      ids.push(rule.id);
+      if (rule.shortId) shortIds.push(rule.shortId);
+    }
+    return { byId, ids, shortIds };
   }
 
   // src/server/sampleData.ts
@@ -10687,180 +15673,6 @@ var Server = (() => {
     return out;
   }
 
-  // src/domain/complianceScope.ts
-  function severityRank3(s) {
-    const i = SEVERITY_ORDER.indexOf(s);
-    return i === -1 ? SEVERITY_ORDER.length : i;
-  }
-  function isAiFamily(family) {
-    return family === "OWASP_ASI" || family === "OWASP_LLM" || family === "OWASP_ML";
-  }
-  function scopeFiveRs(trees, findings, aiAssetIds2, pins) {
-    var _a5, _b, _c, _d;
-    const fiveRsTree = trees.find((t) => frameworkFamily(t.name) === "WIZ_5RS");
-    if (!fiveRsTree) {
-      return {
-        frameworkId: null,
-        frameworkName: "",
-        policies: [],
-        selected: 0,
-        total: 0
-      };
-    }
-    const mappedByPolicy = /* @__PURE__ */ new Map();
-    for (const tree of trees) {
-      if (tree === fiveRsTree) continue;
-      if (!isAiFamily(frameworkFamily(tree.name))) continue;
-      for (const category of tree.categories) {
-        for (const sub of category.subcategories) {
-          for (const p of sub.policies) {
-            const names = (_a5 = mappedByPolicy.get(p.policyId)) != null ? _a5 : /* @__PURE__ */ new Set();
-            names.add(tree.name);
-            mappedByPolicy.set(p.policyId, names);
-          }
-        }
-      }
-    }
-    const aiOpenFindings = findings.filter(
-      (f) => isOpenGap(f) && aiAssetIds2[f.resourceId] === true
-    );
-    const findingsByRuleId = /* @__PURE__ */ new Map();
-    const findingsByShortId = /* @__PURE__ */ new Map();
-    for (const f of aiOpenFindings) {
-      if (f.ruleId) pushInto(findingsByRuleId, f.ruleId, f);
-      if (f.ruleShortId) pushInto(findingsByShortId, f.ruleShortId, f);
-    }
-    const pinnedOut = new Set(pins.out);
-    const pinnedIn = new Set(pins.in);
-    const byPolicy = /* @__PURE__ */ new Map();
-    for (const category of fiveRsTree.categories) {
-      for (const sub of category.subcategories) {
-        for (const p of sub.policies) {
-          let acc = byPolicy.get(p.policyId);
-          if (!acc) {
-            acc = {
-              policyId: p.policyId,
-              shortId: p.shortId,
-              name: p.name,
-              policyKind: p.policyKind,
-              severity: p.severity,
-              categoryExternalId: category.externalId,
-              subcategoryExternalId: sub.externalId,
-              subcategoryTitle: sub.title,
-              failCount: 0,
-              passCount: 0,
-              // Sticky-false's INITIAL reading — see the PolicyScope.enabled doc comment.
-              enabled: p.enabled
-            };
-            byPolicy.set(p.policyId, acc);
-          }
-          if (p.failCount > acc.failCount) acc.failCount = p.failCount;
-          if (p.passCount > acc.passCount) acc.passCount = p.passCount;
-          if (p.enabled === false) acc.enabled = false;
-        }
-      }
-    }
-    const policies = [];
-    for (const acc of byPolicy.values()) {
-      const mappedBy = [...(_b = mappedByPolicy.get(acc.policyId)) != null ? _b : []].sort();
-      const crossMapped = mappedBy.length > 0;
-      const matched = /* @__PURE__ */ new Map();
-      for (const f of (_c = findingsByRuleId.get(acc.policyId)) != null ? _c : []) matched.set(f.id, f);
-      if (acc.shortId) {
-        for (const f of (_d = findingsByShortId.get(acc.shortId)) != null ? _d : []) matched.set(f.id, f);
-      }
-      const aiFindingCount = matched.size;
-      let selected;
-      let reason;
-      if (pinnedOut.has(acc.policyId)) {
-        selected = false;
-        reason = "pinnedOut";
-      } else if (pinnedIn.has(acc.policyId)) {
-        selected = true;
-        reason = "pinnedIn";
-      } else if (crossMapped) {
-        selected = true;
-        reason = "crossMapped";
-      } else if (aiFindingCount > 0) {
-        selected = true;
-        reason = "linkedFindings";
-      } else {
-        selected = false;
-        reason = "noAiLink";
-      }
-      policies.push({
-        policyId: acc.policyId,
-        shortId: acc.shortId,
-        name: acc.name,
-        policyKind: acc.policyKind,
-        severity: acc.severity,
-        categoryExternalId: acc.categoryExternalId,
-        subcategoryExternalId: acc.subcategoryExternalId,
-        subcategoryTitle: acc.subcategoryTitle,
-        selected,
-        reason,
-        mappedBy,
-        aiFindingCount,
-        failCount: acc.failCount,
-        passCount: acc.passCount,
-        enabled: acc.enabled
-      });
-    }
-    policies.sort((a, b) => (a.selected === b.selected ? 0 : a.selected ? 1 : -1) || severityRank3(a.severity) - severityRank3(b.severity) || b.failCount - a.failCount || cmp(a.name, b.name));
-    return {
-      frameworkId: fiveRsTree.frameworkId,
-      frameworkName: fiveRsTree.name,
-      policies,
-      selected: policies.filter((p) => p.selected).length,
-      total: policies.length
-    };
-  }
-  function unselectedPolicyIds(scope) {
-    return scope.policies.filter((p) => !p.selected).map((p) => p.policyId);
-  }
-  function withCountsFrom(scope, trees) {
-    var _a5;
-    if (scope.frameworkId === null) return scope;
-    const tree = trees.find((t) => t.frameworkId === scope.frameworkId);
-    if (!tree) {
-      return { ...scope, policies: [], selected: 0, total: 0 };
-    }
-    const counts = /* @__PURE__ */ new Map();
-    for (const category of tree.categories) {
-      for (const sub of category.subcategories) {
-        for (const p of sub.policies) {
-          const acc = (_a5 = counts.get(p.policyId)) != null ? _a5 : { passCount: 0, failCount: 0, enabled: p.enabled };
-          if (p.passCount > acc.passCount) acc.passCount = p.passCount;
-          if (p.failCount > acc.failCount) acc.failCount = p.failCount;
-          if (p.enabled === false) acc.enabled = false;
-          counts.set(p.policyId, acc);
-        }
-      }
-    }
-    const policies = scope.policies.filter((p) => counts.has(p.policyId)).map((p) => {
-      const c = counts.get(p.policyId);
-      return { ...p, passCount: c.passCount, failCount: c.failCount, enabled: c.enabled };
-    });
-    return {
-      ...scope,
-      policies,
-      selected: policies.filter((p) => p.selected).length,
-      total: policies.length
-    };
-  }
-  function dropUnselected(rows, scope) {
-    const dropped = new Set(unselectedPolicyIds(scope));
-    if (!dropped.size) return rows;
-    return rows.filter(
-      (pol) => pol.frameworkId !== scope.frameworkId || !dropped.has(pol.policyId)
-    );
-  }
-  function failingPolicyCount(scopedPolicies) {
-    const failing = /* @__PURE__ */ new Set();
-    for (const p of scopedPolicies) if (p.failCount > 0) failing.add(p.policyId);
-    return failing.size;
-  }
-
   // src/domain/issueLedger.ts
   function byIssueId(a, b) {
     return a.issueId < b.issueId ? -1 : a.issueId > b.issueId ? 1 : 0;
@@ -10960,55 +15772,6 @@ var Server = (() => {
       deltas.resolved += 1;
     }
     return { rows: order.map((id) => byId[id]).sort(byIssueId), deltas };
-  }
-
-  // src/domain/prunePlan.ts
-  function inProject(projects, projectId) {
-    if (!projectId) return false;
-    return (projects != null ? projects : []).some((p) => p.id === projectId);
-  }
-  function attributed(a) {
-    var _a5;
-    return ((_a5 = a.projects) != null ? _a5 : []).length > 0;
-  }
-  function planPrune(assets, edges2, projectId) {
-    if (!projectId || !projectId.trim()) {
-      throw new Error("Pruning needs a project to keep. Naming none would empty the register.");
-    }
-    const id = projectId.trim();
-    const known = /* @__PURE__ */ new Set();
-    const unattributed2 = /* @__PURE__ */ new Set();
-    const direct = /* @__PURE__ */ new Set();
-    for (const a of assets) {
-      known.add(a.id);
-      if (!attributed(a)) unattributed2.add(a.id);
-      if (inProject(a.projects, id)) direct.add(a.id);
-    }
-    const attached = /* @__PURE__ */ new Set();
-    for (const e of edges2) {
-      if (direct.has(e.src) && unattributed2.has(e.dst) && known.has(e.dst)) attached.add(e.dst);
-      if (direct.has(e.dst) && unattributed2.has(e.src) && known.has(e.src)) attached.add(e.src);
-    }
-    const keep = new Set(direct);
-    for (const attachedId of attached) keep.add(attachedId);
-    let droppedAttributed = 0;
-    let droppedOrphan = 0;
-    for (const a of assets) {
-      if (keep.has(a.id)) continue;
-      if (attributed(a)) droppedAttributed += 1;
-      else droppedOrphan += 1;
-    }
-    return {
-      keep,
-      census: {
-        total: assets.length,
-        direct: direct.size,
-        attached: attached.size,
-        droppedAttributed,
-        droppedOrphan,
-        keep: keep.size
-      }
-    };
   }
 
   // src/server/syncStore.ts
@@ -12454,7 +17217,7 @@ var Server = (() => {
       { tab: TABS.edges, before: edgeRows.length, after: keptEdges.length },
       { tab: TABS.assets, before: assetRows.length, after: keptAssets.length }
     ];
-    const cellsBefore = cellCount();
+    const cellsBefore = cellCount3();
     if (opts.dryRun) {
       const freed = tabs.reduce((acc, t) => acc + projectedCellsFreed(t.tab, t.after), 0);
       return {
@@ -12481,7 +17244,7 @@ var Server = (() => {
     for (const r of (_a5 = keptIssues == null ? void 0 : keptIssues.kept) != null ? _a5 : []) keptNodeIds.add(String((_b = r["id"]) != null ? _b : ""));
     pruneGraphSnapshot(keptNodeIds);
     commit();
-    return { projectId, dryRun: false, census, tabs, cellsBefore, cellsAfter: cellCount() };
+    return { projectId, dryRun: false, census, tabs, cellsBefore, cellsAfter: cellCount3() };
   }
 
   // src/server/warm.ts
@@ -12491,4918 +17254,1067 @@ var Server = (() => {
     warmReadModels: () => warmReadModels,
     warmReadModelsScheduled: () => warmReadModelsScheduled
   });
-
-  // src/server/api.ts
-  var api_exports = {};
-  __export(api_exports, {
-    ISSUES_CLIENT_ALL_MAX: () => ISSUES_CLIENT_ALL_MAX,
-    bootstrap: () => bootstrap,
-    cancelSync: () => cancelSync2,
-    expandAsset: () => expandAsset,
-    getAarsRule: () => getAarsRule3,
-    getAccess: () => getAccess,
-    getActions: () => getActions,
-    getAssetDetail: () => getAssetDetail,
-    getAssetOptions: () => getAssetOptions,
-    getAssets: () => getAssets,
-    getAssetsHead: () => getAssetsHead,
-    getChartsBundle: () => getChartsBundle,
-    getCombosDigest: () => getCombosDigest,
-    getCompliance: () => getCompliance,
-    getConfigFindingDetail: () => getConfigFindingDetail,
-    getConfigFindings: () => getConfigFindings,
-    getFiveRsScope: () => getFiveRsScope,
-    getGraph: () => getGraph,
-    getIssueDetail: () => getIssueDetail,
-    getIssues: () => getIssues,
-    getJobStatus: () => getJobStatus,
-    getPostureRule: () => getPostureRule3,
-    getProblemRule: () => getProblemRule3,
-    getProblems: () => getProblems,
-    getQueryVocabulary: () => getQueryVocabulary,
-    getRankEval: () => getRankEval,
-    getRankRule: () => getRankRule3,
-    getScanQueries: () => getScanQueries,
-    getScanStepDetail: () => getScanStepDetail,
-    getSettings: () => getSettings,
-    getSettingsImpact: () => getSettingsImpact,
-    getStorageStats: () => getStorageStats,
-    getSyncHistory: () => getSyncHistory,
-    getToxicCombos: () => getToxicCombos,
-    previewAarsRule: () => previewAarsRule,
-    previewPostureRule: () => previewPostureRule,
-    previewProblemRule: () => previewProblemRule,
-    previewPrune: () => previewPrune,
-    probeSyncStep: () => probeSyncStep,
-    pruneToProject: () => pruneToProject2,
-    recomputePostures: () => recomputePostures2,
-    recomputeProblems: () => recomputeProblems,
-    rescoreAars: () => rescoreAars,
-    resetData: () => resetData2,
-    runGraphQuery: () => runGraphQuery,
-    runSync: () => runSync,
-    saveAccess: () => saveAccess,
-    saveAdmins: () => saveAdmins,
-    saveHubUrl: () => saveHubUrl,
-    scoreAarsSample: () => scoreAarsSample,
-    setAarsRule: () => setAarsRule2,
-    setPostureRule: () => setPostureRule2,
-    setProblemRule: () => setProblemRule2,
-    setRankRule: () => setRankRule2,
-    setScanVars: () => setScanVars2,
-    setSelectedFrameworks: () => setSelectedFrameworks2,
-    setSettings: () => setSettings,
-    testScanVars: () => testScanVars
-  });
-
-  // src/domain/assetTable.ts
-  var ASSET_SORTS = [
-    "issues",
-    "findings",
-    "name",
-    "kind",
-    "cloud",
-    "region",
-    "severity",
-    "combos",
-    "domain"
+  var WARM_BUDGET_MS = 27e4;
+  var TARGETS = [
+    ["bootstrap", () => bootstrap({})],
+    ["assetsModel", () => getAssetsHead({})],
+    ["assetOptions", () => getAssetOptions({})],
+    ["problemsModel", () => getProblems({})],
+    ["configModel", () => getConfigFindings({})],
+    ["compliance", () => getCompliance({})],
+    ["toxicCombos", () => getToxicCombos({})],
+    ["issues", () => getIssues({})],
+    ["graph", () => getGraph({})],
+    ["queryVocabulary", () => getQueryVocabulary({})],
+    ["syncHistory", () => getSyncHistory({})],
+    ["storageStats", () => getStorageStats({})]
   ];
-  var DEFAULT_SORT_DIR = {
-    issues: "desc",
-    findings: "desc",
-    severity: "desc",
-    combos: "desc",
-    name: "asc",
-    kind: "asc",
-    cloud: "asc",
-    region: "asc",
-    domain: "asc"
-  };
-  var DEFAULT_PAGE_SIZE = 50;
-  var MAX_PAGE_SIZE = 500;
-  var CLIENT_ALL_MAX = 1500;
-  var FACET_KEYS = [
-    "severities",
-    "kinds",
-    "clouds",
-    "regions",
-    "projects",
-    "domains",
-    "flags"
-  ];
-  var ASSET_FLAGS = ["combo", "guardrail", "agentic", "datafindings"];
-  var SEV_RANK = {};
-  SEVERITY_ORDER.forEach((sev, i) => {
-    SEV_RANK[sev] = SEVERITY_ORDER.length - i;
-  });
-  function sevRank(v) {
-    var _a5;
-    return (_a5 = SEV_RANK[toStr(v).toUpperCase()]) != null ? _a5 : -1;
+  function warmReadModels(budgetMs = WARM_BUDGET_MS) {
+    return duringWarm(() => warmInner(budgetMs));
   }
-  function list(v) {
-    const raw = Array.isArray(v) ? v : toStr(v).split(",");
-    const out = [];
-    for (const item of raw) {
-      const s = toStr(item).trim();
-      if (s && out.indexOf(s) < 0) out.push(s);
-    }
-    return out;
-  }
-  function listWithLegacy(...sources) {
-    for (const src of sources) {
-      const parsed = list(src);
-      if (parsed.length) return parsed;
-    }
-    return [];
-  }
-  function keepValid(values, allowed) {
-    return values.map((v) => v.toUpperCase()).filter((v) => allowed.indexOf(v) >= 0);
-  }
-  function resolveAssetQuery(params) {
-    const sort = toStr(params["sort"]);
-    const resolvedSort = ASSET_SORTS.indexOf(sort) >= 0 ? sort : "issues";
-    const dir = toStr(params["dir"]).toLowerCase();
-    const page = Number(params["page"]);
-    const pageSize = Number(params["pageSize"]);
-    return {
-      q: toStr(params["q"]).trim().toLowerCase(),
-      severities: keepValid(
-        listWithLegacy(params["severities"], params["severity"]),
-        SEVERITY_ORDER
-      ),
-      kinds: listWithLegacy(params["kinds"], params["kind"]),
-      clouds: listWithLegacy(params["clouds"], params["cloud"]),
-      regions: listWithLegacy(params["regions"], params["region"]),
-      projects: listWithLegacy(params["projects"], params["project"]),
-      domains: listWithLegacy(params["domains"], params["domain"]),
-      flags: list(params["flags"]).map((v) => v.toLowerCase()).filter((v) => ASSET_FLAGS.indexOf(v) >= 0),
-      sort: resolvedSort,
-      dir: dir === "asc" || dir === "desc" ? dir : DEFAULT_SORT_DIR[resolvedSort],
-      page: Number.isFinite(page) ? Math.max(0, Math.floor(page)) : 0,
-      pageSize: Number.isFinite(pageSize) && pageSize >= 1 ? Math.min(Math.floor(pageSize), MAX_PAGE_SIZE) : DEFAULT_PAGE_SIZE
-    };
-  }
-  function hasAssetFlag(row, flag) {
-    if (flag === "combo") return toNum(row["combos"]) > 0;
-    if (flag === "guardrail") return row["guardrailMissing"] === true;
-    if (flag === "agentic") return row["agentic"] === true;
-    if (flag === "datafindings") return toNum(row["dataFindings"]) > 0;
-    return false;
-  }
-  function rowProjects(row) {
-    const v = row["projects"];
-    return Array.isArray(v) ? v.map((v2) => toStr(v2)).filter(Boolean) : [];
-  }
-  function matchesAssetQuery(row, q) {
-    if (q.q && !toStr(row["name"]).toLowerCase().includes(q.q)) return false;
-    if (q.kinds.length && q.kinds.indexOf(toStr(row["kind"])) < 0) return false;
-    if (q.clouds.length && q.clouds.indexOf(toStr(row["cloud"])) < 0) return false;
-    if (q.regions.length && q.regions.indexOf(toStr(row["region"])) < 0) return false;
-    if (q.severities.length && q.severities.indexOf(toStr(row["severity"])) < 0) return false;
-    if (q.domains.length && q.domains.indexOf(toStr(row["domain"])) < 0) return false;
-    if (q.projects.length) {
-      const mine = rowProjects(row);
-      if (!q.projects.some((p) => mine.indexOf(p) >= 0)) return false;
-    }
-    if (q.flags.length && !q.flags.every((f) => hasAssetFlag(row, f))) return false;
-    return true;
-  }
-  function filterAssetRows(rows, q) {
-    return rows.filter((r) => matchesAssetQuery(r, q));
-  }
-  var PRIMARY = {
-    name: (a, b) => toStr(a["name"]).localeCompare(toStr(b["name"])),
-    kind: (a, b) => toStr(a["kind"]).localeCompare(toStr(b["kind"])),
-    cloud: (a, b) => toStr(a["cloud"]).localeCompare(toStr(b["cloud"])),
-    region: (a, b) => toStr(a["region"]).localeCompare(toStr(b["region"])),
-    severity: (a, b) => sevRank(a["severity"]) - sevRank(b["severity"]),
-    combos: (a, b) => toNum(a["combos"]) - toNum(b["combos"]),
-    issues: (a, b) => toNum(a["openIssues"]) - toNum(b["openIssues"]),
-    findings: (a, b) => toNum(a["openFindings"]) - toNum(b["openFindings"]),
-    domain: (a, b) => toStr(a["domain"]).localeCompare(toStr(b["domain"]))
-  };
-  var byRiskDesc = (a, b) => sevRank(b["severity"]) - sevRank(a["severity"]) || toNum(b["openIssues"]) - toNum(a["openIssues"]) || toNum(b["openFindings"]) - toNum(a["openFindings"]) || toStr(a["name"]).localeCompare(toStr(b["name"])) || toStr(a["id"]).localeCompare(toStr(b["id"]));
-  function assetComparator(sort, dir) {
-    var _a5;
-    const primary = (_a5 = PRIMARY[sort]) != null ? _a5 : PRIMARY.issues;
-    const sign = dir === "desc" ? -1 : 1;
-    return (a, b) => sign * primary(a, b) || byRiskDesc(a, b);
-  }
-  var ASSET_COMPARATORS = ASSET_SORTS.reduce((acc, s) => {
-    acc[s] = assetComparator(s, DEFAULT_SORT_DIR[s]);
-    return acc;
-  }, {});
-  function sortAssetRows(rows, sort, dir) {
-    const resolved = ASSET_SORTS.indexOf(sort) >= 0 ? sort : "issues";
-    return [...rows].sort(assetComparator(resolved, dir != null ? dir : DEFAULT_SORT_DIR[resolved]));
-  }
-  function facetValues(key, row) {
-    if (key === "kinds") return [toStr(row["kind"])].filter(Boolean);
-    if (key === "clouds") return [toStr(row["cloud"])].filter(Boolean);
-    if (key === "regions") return [toStr(row["region"])].filter(Boolean);
-    if (key === "severities") return [toStr(row["severity"])].filter(Boolean);
-    if (key === "projects") return rowProjects(row);
-    if (key === "domains") return [toStr(row["domain"])].filter(Boolean);
-    return ASSET_FLAGS.filter((f) => hasAssetFlag(row, f));
-  }
-  function facetSorter(key) {
-    if (key === "severities") {
-      const order = SEVERITY_ORDER;
-      return (a, b) => order.indexOf(a.value) - order.indexOf(b.value);
-    }
-    if (key === "flags") {
-      const order = ASSET_FLAGS;
-      return (a, b) => order.indexOf(a.value) - order.indexOf(b.value);
-    }
-    return (a, b) => a.value.localeCompare(b.value);
-  }
-  function facetCounts(rows, q) {
-    var _a5;
-    const out = { matched: 0 };
-    for (const key of FACET_KEYS) {
-      const scope = key === "flags" ? q : { ...q, [key]: [] };
-      const counts = /* @__PURE__ */ new Map();
-      for (const row of rows) {
-        if (!matchesAssetQuery(row, scope)) continue;
-        for (const value of facetValues(key, row)) {
-          counts.set(value, ((_a5 = counts.get(value)) != null ? _a5 : 0) + 1);
-        }
+  function warmInner(budgetMs) {
+    const t0 = Date.now();
+    let warmed = 0;
+    let skipped = 0;
+    let failed = 0;
+    for (const [label, run2] of TARGETS) {
+      if (Date.now() - t0 >= budgetMs) {
+        skipped += 1;
+        continue;
       }
-      for (const value of q[key]) if (!counts.has(value)) counts.set(value, 0);
-      out[key] = Array.from(counts, ([value, count2]) => ({ value, count: count2 })).sort(facetSorter(key));
+      try {
+        run2();
+        warmed += 1;
+      } catch (e) {
+        failed += 1;
+        console.warn(`Cache warm (${label}) failed: ${e}`);
+      }
     }
-    out.matched = rows.reduce((n, row) => matchesAssetQuery(row, q) ? n + 1 : n, 0);
-    return out;
-  }
-  function pageOf(rows, page, pageSize) {
-    const size = Math.max(1, Math.floor(pageSize));
-    const pageCount = Math.max(1, Math.ceil(rows.length / size));
-    const clamped = Math.min(Math.max(Math.floor(page) || 0, 0), pageCount - 1);
-    return {
-      rows: rows.slice(clamped * size, (clamped + 1) * size),
-      page: clamped,
-      pageCount
-    };
-  }
-
-  // src/domain/problems.ts
-  var PROBLEMS_CLIENT_ALL_MAX = 1e3;
-  var EXPLOITATION_TIERS = ["kev", "exploit", "epss", "none", "unknown"];
-  var AI_ADJACENCIES = ["DIRECT", "ADJACENT", "UNLINKED"];
-  function rankInputsOf(row) {
-    var _a5, _b, _c;
-    const tier = String((_a5 = row.exploitationTier) != null ? _a5 : "").trim().toLowerCase();
-    const adjacency2 = String((_b = row.aiAdjacency) != null ? _b : "").trim().toUpperCase();
-    const peak = typeof row.epssPeak === "number" && Number.isFinite(row.epssPeak) ? row.epssPeak : void 0;
-    const count2 = typeof row.exploitationFindingCount === "number" && Number.isFinite(row.exploitationFindingCount) ? row.exploitationFindingCount : void 0;
-    const via = String((_c = row.adjacencyVia) != null ? _c : "").trim();
-    return {
-      exploitationTier: EXPLOITATION_TIERS.indexOf(tier) >= 0 ? tier : void 0,
-      epssPeak: peak,
-      exploitationFindingCount: count2,
-      aiAdjacency: AI_ADJACENCIES.indexOf(adjacency2) >= 0 ? adjacency2 : void 0,
-      adjacencyVia: via || void 0
-    };
-  }
-  function issueToProblemRow(issue2, node2) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i;
-    return {
-      id: issue2.id,
-      kind: "ISSUE",
-      title: issue2.ruleName,
-      assetId: issue2.assetId || null,
-      assetName: issue2.assetName,
-      domain: (_a5 = node2 == null ? void 0 : node2.domain) != null ? _a5 : null,
-      problemOutcome: (_b = issue2.problemOutcome) != null ? _b : "",
-      vector: (_d = (_c = issue2.problemInput) == null ? void 0 : _c.vector) != null ? _d : null,
-      unknowns: (_f = (_e = issue2.problemInput) == null ? void 0 : _e.unknowns) != null ? _f : [],
-      dueAt: (_g = issue2.dueAt) != null ? _g : null,
-      postureTier: (_h = node2 == null ? void 0 : node2.postureTier) != null ? _h : null,
-      postureState: node2 ? postureStateOf(node2) : null,
-      amplification: nodeAmplificationVector(node2),
-      severity: (_i = issue2.adjustedSeverity) != null ? _i : null,
-      ruleId: issue2.ruleId || void 0,
-      businessImpact: issue2.businessImpact,
-      // No IaC link and no ignore-rule list on an issue — see this field's own doc comment.
-      iac: false,
-      ignored: false,
-      firstSeenAt: issue2.createdAt,
-      ruleRemediation: issue2.resolutionRecommendation,
-      ...rankInputsOf(issue2)
-    };
-  }
-  function findingToProblemRow(finding, node2) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j;
-    return {
-      id: finding.id,
-      kind: "FINDING",
-      title: finding.ruleName || finding.ruleShortId || "",
-      assetId: node2 ? node2.id : null,
-      assetName: node2 ? node2.name : finding.resourceName || finding.resourceId,
-      domain: (_a5 = node2 == null ? void 0 : node2.domain) != null ? _a5 : null,
-      problemOutcome: (_b = finding.problemOutcome) != null ? _b : "",
-      vector: (_d = (_c = finding.problemInput) == null ? void 0 : _c.vector) != null ? _d : null,
-      unknowns: (_f = (_e = finding.problemInput) == null ? void 0 : _e.unknowns) != null ? _f : [],
-      // FindingRow carries no SLA deadline — Wiz's config-finding evaluations have no dueAt
-      // field, only issuesV2 does. Null, never a made-up date.
-      dueAt: null,
-      postureTier: (_g = node2 == null ? void 0 : node2.postureTier) != null ? _g : null,
-      postureState: node2 ? postureStateOf(node2) : null,
-      amplification: nodeAmplificationVector(node2),
-      severity: (_h = finding.severity) != null ? _h : null,
-      ruleId: finding.ruleId,
-      ruleShortId: finding.ruleShortId || void 0,
-      businessImpact: finding.businessImpact,
-      iac: ((_i = finding.iacFindingIds) != null ? _i : []).length > 0,
-      ignored: ((_j = finding.ignoreRuleIds) != null ? _j : []).length > 0,
-      firstSeenAt: finding.firstSeenAt,
-      ruleRemediation: finding.remediationInstructions,
-      // The same read as the issue arm, against a row type that carries none of these fields
-      // today. Deliberate: the fold is upstream of this projection and may reach findings
-      // later, and an arm that silently could not see them would be the harder bug of the two.
-      ...rankInputsOf(finding)
-    };
-  }
-  function buildProblemRows(issues2, findings, assetsById) {
-    const rows = [];
-    for (const issue2 of issues2) {
-      if (!isUnresolvedIssue(issue2)) continue;
-      rows.push(issueToProblemRow(issue2, assetsById.get(issue2.assetId)));
-    }
-    for (const finding of findings) {
-      if (!isOpenGap(finding)) continue;
-      rows.push(findingToProblemRow(finding, assetsById.get(finding.resourceId)));
-    }
-    return rows;
-  }
-  function withRankScores(rows, rule, nowIso2) {
-    return rows.map((row) => {
-      var _a5;
-      const result = rankOne(
-        {
-          id: row.id,
-          ruleId: row.ruleId,
-          ruleShortId: row.ruleShortId,
-          dueAt: (_a5 = row.dueAt) != null ? _a5 : void 0,
-          // THE BIRTH DATE, AND IT IS `firstSeenAt` ON BOTH ARMS. `FindingRow` carries no
-          // `createdAt` field at all — `findingToProblemRow` maps its `firstSeenAt` into this
-          // one, and `issueToProblemRow` maps the issue's own `createdAt` into the same place.
-          // One field, one meaning: when this row started being true. Read only by
-          // `timeSource: "dueAtElseAge"`, and only where there is no deadline.
-          createdAt: row.firstSeenAt,
-          exploitationTier: row.exploitationTier,
-          epssPeak: row.epssPeak,
-          exploitationFindingCount: row.exploitationFindingCount,
-          aiAdjacency: row.aiAdjacency,
-          adjacencyVia: row.adjacencyVia
-        },
-        rule,
-        nowIso2
+    const swept = skipped ? -1 : sweepReadModels();
+    const ms2 = Date.now() - t0;
+    if (skipped) {
+      console.warn(`Cache warm: ran out of budget after ${warmed} entries, ${skipped} left cold`);
+    } else {
+      console.log(
+        `Cache warm: ${warmed} entries in ${ms2}ms` + (failed ? `, ${failed} failed` : "") + (swept > 0 ? `, swept ${swept} stale durable file(s)` : "")
       );
-      return {
-        ...row,
-        rankScore: result.score,
-        rankTimed: result.timeComponent !== null,
-        rankTimeBasis: result.timeBasis,
-        rankReasons: result.reasons,
-        rankMeasured: result.measuredTerms,
-        rankExploitation: result.exploitationComponent,
-        rankAdjacency: result.adjacencyComponent
-      };
-    });
-  }
-  function slaRank(dueAt) {
-    const t = Date.parse(dueAt || "");
-    return Number.isNaN(t) ? Number.MAX_SAFE_INTEGER : t;
-  }
-  function severityRank4(sev) {
-    const i = SEVERITY_ORDER.indexOf(String(sev != null ? sev : ""));
-    return i < 0 ? SEVERITY_ORDER.length : i;
-  }
-  function compareProblems(a, b) {
-    const sev = severityRank4(a.severity) - severityRank4(b.severity);
-    if (sev !== 0) return sev;
-    const sla = slaRank(a.dueAt) - slaRank(b.dueAt);
-    if (sla !== 0) return sla;
-    const aSeen = a.firstSeenAt || "";
-    const bSeen = b.firstSeenAt || "";
-    if (aSeen !== bSeen) {
-      if (!aSeen) return 1;
-      if (!bSeen) return -1;
-      return aSeen < bSeen ? -1 : 1;
     }
-    return a.id.localeCompare(b.id);
+    return { warmed, skipped, failed, ms: ms2, swept };
   }
-  function compareProblemsBy(leadWithRank) {
-    if (!leadWithRank) return compareProblems;
-    return (a, b) => {
-      const ra = typeof a.rankScore === "number" && Number.isFinite(a.rankScore) ? a.rankScore : null;
-      const rb = typeof b.rankScore === "number" && Number.isFinite(b.rankScore) ? b.rankScore : null;
-      if (ra === null && rb !== null) return 1;
-      if (rb === null && ra !== null) return -1;
-      if (ra !== null && rb !== null && ra !== rb) return rb - ra;
-      return compareProblems(a, b);
-    };
-  }
-  function rankProblems(rows, leadWithRank = false) {
-    return [...rows].sort(compareProblemsBy(leadWithRank));
+  function warmReadModelsScheduled() {
+    const job = activeJob();
+    if (job) {
+      console.log(`Cache warm: skipped, ${job.kind} job ${job.job_id} is ${job.phase}`);
+      return null;
+    }
+    return warmReadModels();
   }
 
-  // src/domain/rankEval.ts
-  var DAY_MS2 = 864e5;
-  var RANDOM_DRAWS = 20;
-  var BOOTSTRAP_SAMPLES = 200;
-  var MIN_SYNCS_FOR_CI = 3;
-  var DEFAULT_EVAL_SEED = 1234567;
-  var NO_RATE = { point: null, lo: null, hi: null };
-  function frac(num2, den) {
-    return den > 0 ? num2 / den : null;
-  }
-  function emptyMatrix() {
-    return {
-      tp: 0,
-      fp: 0,
-      fn: 0,
-      tn: 0,
-      unknownHigh: 0,
-      unknownLow: 0,
-      labelled: 0,
-      unknown: 0,
-      total: 0,
-      resolved: 0,
-      open: 0,
-      atRisk: 0,
-      notAtRisk: 0,
-      coverage: NO_RATE,
-      efficiency: NO_RATE,
-      prevalence: null,
-      labelCoverage: null
-    };
-  }
-  function finalize(m) {
-    m.labelled = m.tp + m.fp + m.fn + m.tn;
-    m.unknown = m.unknownHigh + m.unknownLow;
-    m.total = m.labelled + m.unknown;
-    m.resolved = m.tp + m.fp;
-    m.open = m.fn + m.tn;
-    m.atRisk = m.tp + m.fn;
-    m.notAtRisk = m.fp + m.tn;
-    m.coverage = {
-      point: frac(m.tp, m.tp + m.fn),
-      lo: frac(m.tp, m.tp + m.fn + m.unknownHigh),
-      hi: frac(m.tp + m.unknownHigh, m.tp + m.unknownHigh + m.fn)
-    };
-    m.efficiency = {
-      point: frac(m.tp, m.tp + m.fp),
-      lo: frac(m.tp, m.tp + m.fp + m.unknownLow),
-      hi: frac(m.tp + m.unknownHigh, m.tp + m.unknownHigh + m.fp)
-    };
-    m.prevalence = frac(m.atRisk, m.labelled);
-    m.labelCoverage = frac(m.labelled, m.total);
-    return m;
-  }
-  var NET_CAPACITY_BAND = 0.02;
-  var MIN_NET_POINTS = 2;
-  function verdictOf2(netRate) {
-    if (Math.abs(netRate) <= NET_CAPACITY_BAND) return "keeping-up";
-    return netRate > 0 ? "gaining" : "falling-behind";
-  }
-  var SEVERITY_ONLY_NOTE = "Not measured: the lifecycle ledger freezes the rank inputs only, and Wiz's severity is not one of them. Ranking by severity would need a ledger column that does not exist yet.";
-  function ms(iso) {
-    if (!iso) return null;
-    const n = Date.parse(String(iso));
-    return Number.isFinite(n) ? n : null;
-  }
-  function rankInputOf(row) {
-    var _a5;
-    const out = { id: row.issueId, ruleId: row.ruleId };
-    if (row.dueAt) out.dueAt = row.dueAt;
-    if (row.createdAt) out.createdAt = row.createdAt;
-    if (row.aiAdjacency !== void 0) out.aiAdjacency = row.aiAdjacency;
-    if (row.exploitationTier !== void 0) {
-      out.exploitationTier = row.exploitationTier;
-      out.epssPeak = (_a5 = row.epssPeak) != null ? _a5 : null;
-    }
-    return out;
-  }
-  var UNDATED_SCORE = Number.MIN_SAFE_INTEGER;
-  function candidateScorer(rule) {
-    return (rows, atIso) => rows.map((r) => rankOne(rankInputOf(r), rule, atIso).score);
-  }
-  var dueAtScorer = (rows) => rows.map((r) => {
-    const due = ms(r.dueAt);
-    return due === null ? UNDATED_SCORE : -due;
-  });
-  function randomScorer(seed, draw) {
-    return (rows, _atIso, pointIndex) => {
-      const rng = mulberry32(seed + draw * 1000003 + pointIndex * 10007);
-      return rows.map(() => rng());
-    };
-  }
-  function orderOf(rows, scores) {
-    const idx = rows.map((_, i) => i);
-    idx.sort((a, b) => {
-      const d = scores[b] - scores[a];
-      if (d !== 0) return d < 0 ? -1 : 1;
-      const ia = rows[a].issueId;
-      const ib = rows[b].issueId;
-      return ia < ib ? -1 : ia > ib ? 1 : 0;
-    });
-    return idx;
-  }
-  function cleanKs(raw) {
-    const out = [];
-    for (const k of raw != null ? raw : []) {
-      const n = Math.floor(Number(k));
-      if (Number.isFinite(n) && n > 0 && out.indexOf(n) < 0) out.push(n);
-    }
-    return out.sort((a, b) => a - b);
-  }
-  function comparableWindows(syncs, ledger, horizonDays) {
-    var _a5, _b, _c, _d;
-    const ordered = (syncs != null ? syncs : []).filter((s) => s && s.syncId && ms(s.finishedAt) !== null).slice().sort((a, b) => ms(a.finishedAt) - ms(b.finishedAt));
-    const coverEnd = {};
-    for (const s of ordered) {
-      const scope = String((_a5 = s.registerScope) != null ? _a5 : "");
-      if (!scope) continue;
-      const at = ms(s.finishedAt);
-      if (coverEnd[scope] === void 0 || at > coverEnd[scope]) coverEnd[scope] = at;
-    }
-    const windows = [];
-    let scopeChanges = 0;
-    let unknownScopePairs = 0;
-    for (let i = 0; i < ordered.length - 1; i++) {
-      const sync = ordered[i];
-      const next = ordered[i + 1];
-      const scope = String((_b = sync.registerScope) != null ? _b : "");
-      const nextScope = String((_c = next.registerScope) != null ? _c : "");
-      if (!scope || !nextScope) {
-        unknownScopePairs += 1;
-        continue;
-      }
-      if (scope !== nextScope) {
-        scopeChanges += 1;
-        continue;
-      }
-      const atMs = ms(sync.finishedAt);
-      const horizonEndMs = atMs + horizonDays * DAY_MS2;
-      const covered = (_d = coverEnd[scope]) != null ? _d : null;
-      const rows = [];
-      const labels = [];
-      const arrivalsComplete = covered !== null && covered >= horizonEndMs;
-      let arrived = 0;
-      for (const row of ledger) {
-        const first = ms(row.firstSeenAt);
-        if (first === null) continue;
-        if (first > atMs) {
-          if (first <= horizonEndMs) arrived += 1;
-          continue;
-        }
-        const gone = ms(row.disappearedAt);
-        if (gone !== null && gone <= atMs) continue;
-        rows.push(row);
-        if (gone !== null && gone <= horizonEndMs) labels.push("resolved");
-        else if (covered !== null && covered >= horizonEndMs) labels.push("open");
-        else labels.push("unknown");
-      }
-      windows.push({
-        sync,
-        nextSyncId: next.syncId,
-        atMs,
-        horizonEndMs,
-        rows,
-        labels,
-        arrived: arrivalsComplete ? arrived : null
-      });
-    }
-    return { windows, scopeChanges, unknownScopePairs, ordered };
-  }
-  function pointFor(window, pointIndex, scorer, ks, prev) {
-    var _a5;
-    const { rows, labels } = window;
-    const scores = scorer(rows, window.sync.finishedAt, pointIndex);
-    const order = orderOf(rows, scores);
-    const counts = { resolved: 0, open: 0, unknown: 0 };
-    for (const l of labels) counts[l] += 1;
-    const precisionAtK = [];
-    let kAtRisk = null;
-    for (const k of ks) {
-      if (k > rows.length) {
-        precisionAtK.push({
-          k,
-          precision: null,
-          resolvedInTopK: 0,
-          labelledInTopK: 0,
-          unknownInTopK: 0,
-          applicable: false
-        });
-        continue;
-      }
-      kAtRisk = k;
-      let resolvedInTopK = 0;
-      let labelledInTopK = 0;
-      let unknownInTopK = 0;
-      for (let i = 0; i < k; i++) {
-        const label = labels[order[i]];
-        if (label === "unknown") unknownInTopK += 1;
-        else {
-          labelledInTopK += 1;
-          if (label === "resolved") resolvedInTopK += 1;
-        }
-      }
-      precisionAtK.push({
-        k,
-        precision: labelledInTopK > 0 ? resolvedInTopK / labelledInTopK : null,
-        resolvedInTopK,
-        labelledInTopK,
-        unknownInTopK,
-        applicable: true
-      });
-    }
-    const matrix = emptyMatrix();
-    if (kAtRisk !== null) {
-      const inTopK = new Array(rows.length).fill(false);
-      for (let i = 0; i < kAtRisk; i++) inTopK[order[i]] = true;
-      for (let i = 0; i < rows.length; i++) {
-        const label = labels[i];
-        if (label === "unknown") {
-          if (inTopK[i]) matrix.unknownHigh += 1;
-          else matrix.unknownLow += 1;
-        } else if (label === "resolved") {
-          if (inTopK[i]) matrix.tp += 1;
-          else matrix.fp += 1;
-        } else if (inTopK[i]) matrix.fn += 1;
-        else matrix.tn += 1;
-      }
-    }
-    finalize(matrix);
-    const byId = {};
-    for (let i = 0; i < rows.length; i++) byId[rows[i].issueId] = scores[i];
-    let tau = null;
-    let tauCommonIds = 0;
-    if (prev) {
-      const a = [];
-      const b = [];
-      for (const id of Object.keys(byId)) {
-        const before = prev.scores[id];
-        if (before === void 0) continue;
-        a.push(before);
-        b.push(byId[id]);
-      }
-      tauCommonIds = a.length;
-      if (a.length >= 2) tau = kendallTauB(a, b);
-    }
-    return {
-      point: {
-        syncId: window.sync.syncId,
-        at: window.sync.finishedAt,
-        horizonEndsAt: new Date(window.horizonEndMs).toISOString(),
-        nextSyncId: window.nextSyncId,
-        registerScope: String((_a5 = window.sync.registerScope) != null ? _a5 : ""),
-        population: rows.length,
-        labelled: counts.resolved + counts.open,
-        unknown: counts.unknown,
-        resolved: counts.resolved,
-        open: counts.open,
-        precisionAtK,
-        kAtRisk,
-        matrix,
-        tieRate: tieRate(scores.slice()),
-        effectiveCardinality: effectiveCardinality(scores.slice()),
-        tau,
-        tauCommonIds
-      },
-      scores: byId
-    };
-  }
-  function meanOf(values) {
-    const kept = values.filter((v) => v !== null && Number.isFinite(v));
-    return kept.length ? mean(kept) : null;
-  }
-  function basisFrom(key, label, note, points, ks, seed) {
-    const pooled = emptyMatrix();
-    for (const p of points) {
-      pooled.tp += p.matrix.tp;
-      pooled.fp += p.matrix.fp;
-      pooled.fn += p.matrix.fn;
-      pooled.tn += p.matrix.tn;
-      pooled.unknownHigh += p.matrix.unknownHigh;
-      pooled.unknownLow += p.matrix.unknownLow;
-    }
-    finalize(pooled);
-    const meanPrecisionAtK = ks.map((k) => {
-      const values = [];
-      for (const p of points) {
-        const cut = p.precisionAtK.find((c) => c.k === k);
-        if (cut && cut.precision !== null) values.push(cut.precision);
-      }
-      const ci = values.length >= MIN_SYNCS_FOR_CI ? bootstrapCI(values, (sample) => {
-        var _a5;
-        return (_a5 = mean(sample)) != null ? _a5 : 0;
-      }, BOOTSTRAP_SAMPLES, seed) : null;
-      return { k, mean: values.length ? mean(values) : null, n: values.length, ci };
-    });
-    return {
-      key,
-      label,
-      note,
-      points,
-      meanPrecisionAtK,
-      matrix: pooled,
-      meanTieRate: meanOf(points.map((p) => p.tieRate)),
-      meanEffectiveCardinality: meanOf(points.map((p) => p.effectiveCardinality)),
-      meanTau: meanOf(points.map((p) => p.tau)),
-      tauN: points.filter((p) => p.tau !== null).length
-    };
-  }
-  function pointsFor(windows, scorer, ks) {
-    const points = [];
-    let prev = null;
-    for (let i = 0; i < windows.length; i++) {
-      const { point, scores } = pointFor(windows[i], i, scorer, ks, prev);
-      points.push(point);
-      prev = { scores };
-    }
-    return points;
-  }
-  function averagePoints(perDraw) {
-    var _a5;
-    const first = (_a5 = perDraw[0]) != null ? _a5 : [];
-    return first.map((base, i) => {
-      const draws = perDraw.map((points) => points[i]);
-      const matrix = emptyMatrix();
-      matrix.tp = mean(draws.map((d) => d.matrix.tp));
-      matrix.fp = mean(draws.map((d) => d.matrix.fp));
-      matrix.fn = mean(draws.map((d) => d.matrix.fn));
-      matrix.tn = mean(draws.map((d) => d.matrix.tn));
-      matrix.unknownHigh = mean(draws.map((d) => d.matrix.unknownHigh));
-      matrix.unknownLow = mean(draws.map((d) => d.matrix.unknownLow));
-      finalize(matrix);
-      return {
-        ...base,
-        matrix,
-        precisionAtK: base.precisionAtK.map((cut, ci) => ({
-          k: cut.k,
-          applicable: cut.applicable,
-          precision: meanOf(draws.map((d) => d.precisionAtK[ci].precision)),
-          resolvedInTopK: mean(draws.map((d) => d.precisionAtK[ci].resolvedInTopK)),
-          labelledInTopK: mean(draws.map((d) => d.precisionAtK[ci].labelledInTopK)),
-          unknownInTopK: mean(draws.map((d) => d.precisionAtK[ci].unknownInTopK))
-        })),
-        tieRate: mean(draws.map((d) => d.tieRate)),
-        effectiveCardinality: mean(draws.map((d) => d.effectiveCardinality)),
-        tau: meanOf(draws.map((d) => d.tau))
-      };
-    });
-  }
-  function capacityFrom(windows, horizonDays) {
-    if (!windows.length) return null;
-    const points = [];
-    let sumResolved = 0;
-    let sumLabelled = 0;
-    let sumUnknown = 0;
-    const netRates = [];
-    for (const w of windows) {
-      let resolved = 0;
-      let open = 0;
-      let unknown = 0;
-      for (const l of w.labels) {
-        if (l === "resolved") resolved += 1;
-        else if (l === "open") open += 1;
-        else unknown += 1;
-      }
-      const labelled = resolved + open;
-      const population = labelled + unknown;
-      sumResolved += resolved;
-      sumLabelled += labelled;
-      sumUnknown += unknown;
-      const netRate = w.arrived !== null && population > 0 ? (resolved - w.arrived) / population : null;
-      if (netRate !== null) netRates.push(netRate);
-      points.push({
-        syncId: w.sync.syncId,
-        at: w.sync.finishedAt,
-        population,
-        resolved,
-        open,
-        unknown,
-        closeRate: {
-          point: frac(resolved, labelled),
-          lo: frac(resolved, labelled + unknown),
-          hi: frac(resolved + unknown, labelled + unknown)
-        },
-        arrived: w.arrived,
-        netRate,
-        verdict: netRate === null ? null : verdictOf2(netRate)
-      });
-    }
-    const closeRate = {
-      point: frac(sumResolved, sumLabelled),
-      lo: frac(sumResolved, sumLabelled + sumUnknown),
-      hi: frac(sumResolved + sumUnknown, sumLabelled + sumUnknown)
-    };
-    const closedPerHorizonMean = mean(points.map((p) => p.resolved));
-    const rounded = closedPerHorizonMean === null ? 0 : Math.round(closedPerHorizonMean);
-    const netMean = netRates.length >= MIN_NET_POINTS ? mean(netRates) : null;
-    return {
-      points,
-      closeRate,
-      oneInN: closeRate.point !== null && closeRate.point > 0 ? 1 / closeRate.point : null,
-      closedPerHorizonMean,
-      capacityK: rounded >= 1 ? rounded : null,
-      verdict: netMean === null ? null : verdictOf2(netMean),
-      netMeasuredPoints: netRates.length,
-      horizonDays
-    };
-  }
-  function evaluateRank(input) {
-    var _a5, _b, _c;
-    const ledger = ((_a5 = input == null ? void 0 : input.ledger) != null ? _a5 : []).filter((r) => r && r.issueId);
-    const horizonDays = Number.isFinite(input == null ? void 0 : input.horizonDays) && input.horizonDays > 0 ? input.horizonDays : 30;
-    const requestedKs = cleanKs(input == null ? void 0 : input.ks);
-    const seed = Number.isFinite(input == null ? void 0 : input.seed) ? Number(input.seed) : DEFAULT_EVAL_SEED;
-    const rule = (_b = input == null ? void 0 : input.rule) != null ? _b : DEFAULT_RANK_RULE;
-    const { windows, scopeChanges, unknownScopePairs, ordered } = comparableWindows((_c = input == null ? void 0 : input.syncs) != null ? _c : [], ledger, horizonDays);
-    const evaluated = {};
-    let labelledRows = 0;
-    let evaluatedRows = 0;
-    for (const w of windows) {
-      for (let i = 0; i < w.rows.length; i++) {
-        const id = w.rows[i].issueId;
-        const wasLabelled = evaluated[id];
-        if (wasLabelled === void 0) {
-          evaluatedRows += 1;
-          evaluated[id] = w.labels[i] !== "unknown";
-          if (evaluated[id]) labelledRows += 1;
-        } else if (!wasLabelled && w.labels[i] !== "unknown") {
-          evaluated[id] = true;
-          labelledRows += 1;
-        }
-      }
-    }
-    const capacity = capacityFrom(windows, horizonDays);
-    const capacityK = capacity ? capacity.capacityK : null;
-    const ks = capacityK === null ? requestedKs : cleanKs([...requestedKs, capacityK]);
-    const lastSync = ordered.length ? ordered[ordered.length - 1] : null;
-    const base = {
-      computed: false,
-      waitingFor: null,
-      horizonDays,
-      ks,
-      seed,
-      syncsAvailable: ordered.length,
-      comparablePairs: windows.length,
-      scopeChanges,
-      unknownScopePairs,
-      totalRows: ledger.length,
-      evaluatedRows,
-      labelledRows,
-      unknownRows: evaluatedRows - labelledRows,
-      lastSyncAt: lastSync ? lastSync.finishedAt : null,
-      capacity,
-      capacityK,
-      candidate: null,
-      baselines: { rankV1: null, dueAtOnly: null, random: null, severityOnly: null },
-      severityOnlyNote: SEVERITY_ONLY_NOTE
-    };
-    if (windows.length < 1) {
-      base.waitingFor = ordered.length < 2 ? `A label needs two committed syncs under one register scope; ${ordered.length} recorded so far.` : `No two consecutive syncs applied the same register scope, so nothing is comparable \u2014 ${scopeChanges} scope change(s) and ${unknownScopePairs} pair(s) with an unrecorded scope.`;
-      return base;
-    }
-    if (labelledRows < 1) {
-      base.waitingFor = `No row's outcome is known yet: the ${horizonDays}-day horizon on every comparable sync ends after the last sync that could have seen a row leave.`;
-      return base;
-    }
-    if (!ks.length) {
-      base.waitingFor = "No cut of the queue was asked for, so there is nothing to score at.";
-      return base;
-    }
-    const randomDraws = [];
-    for (let d = 0; d < RANDOM_DRAWS; d++) {
-      randomDraws.push(pointsFor(windows, randomScorer(seed, d), ks));
-    }
-    base.computed = true;
-    base.candidate = basisFrom(
-      "candidate",
-      "Candidate rule",
-      "The rule the register ranks by now.",
-      pointsFor(windows, candidateScorer(rule), ks),
-      ks,
-      seed
-    );
-    base.baselines.rankV1 = basisFrom(
-      "rankV1",
-      "Rank v1",
-      "The shipped default: the operator's rule weight and the overdue clock, half each.",
-      pointsFor(windows, candidateScorer(DEFAULT_RANK_RULE), ks),
-      ks,
-      seed
-    );
-    base.baselines.dueAtOnly = basisFrom(
-      "dueAtOnly",
-      "Due date only",
-      "Soonest deadline first, undated rows last.",
-      pointsFor(windows, dueAtScorer, ks),
-      ks,
-      seed
-    );
-    base.baselines.random = basisFrom(
-      "random",
-      "Random",
-      `Mean of ${RANDOM_DRAWS} seeded draws, re-drawn at every sync.`,
-      averagePoints(randomDraws),
-      ks,
-      seed
-    );
-    return base;
-  }
-
-  // src/domain/actions.ts
-  function actionKeyOf(row) {
-    var _a5, _b;
-    return `${row.kind}|${(_a5 = row.ruleId) != null ? _a5 : ""}|${(_b = row.ruleShortId) != null ? _b : ""}`;
-  }
-  var NO_SEVERITY = "";
-  function severityRank5(sev) {
-    const i = SEVERITY_ORDER.indexOf(sev);
-    return i < 0 ? SEVERITY_ORDER.length : i;
-  }
-  function candidatesFrom(pool) {
-    const groups = /* @__PURE__ */ new Map();
-    for (const row of pool) {
-      const key = actionKeyOf(row);
-      const bucket = groups.get(key);
-      if (bucket) bucket.push(row);
-      else groups.set(key, [row]);
-    }
-    return groups;
-  }
-  function scoreCandidate(key, rows) {
-    var _a5;
-    let worstRank = SEVERITY_ORDER.length;
-    const assetIds = /* @__PURE__ */ new Set();
-    for (const row of rows) {
-      const rank = severityRank5(String((_a5 = row.severity) != null ? _a5 : ""));
-      if (rank < worstRank) worstRank = rank;
-      if (row.assetId) assetIds.add(row.assetId);
-    }
-    return { key, rows, worstRank, assetCount: assetIds.size };
-  }
-  function compareCandidates(a, b) {
-    if (a.worstRank !== b.worstRank) return a.worstRank - b.worstRank;
-    if (a.rows.length !== b.rows.length) return b.rows.length - a.rows.length;
-    if (a.assetCount !== b.assetCount) return b.assetCount - a.assetCount;
-    return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
-  }
-  function buildActionRow(key, rows) {
-    var _a5, _b, _c;
-    const sorted = [...rows].sort((a, b) => a.id.localeCompare(b.id));
-    const first = sorted[0];
-    const assetIds = /* @__PURE__ */ new Set();
-    const severityMix = {};
-    const businessImpacts = /* @__PURE__ */ new Set();
-    const domains = /* @__PURE__ */ new Set();
-    let worstRank = SEVERITY_ORDER.length;
-    let worstSeverity2 = NO_SEVERITY;
-    let iac = 0;
-    let ignored = 0;
-    let firstSeenAt = "";
-    let title = "";
-    let remediation;
-    for (const row of sorted) {
-      if (row.assetId) assetIds.add(row.assetId);
-      if (row.severity) severityMix[row.severity] = ((_a5 = severityMix[row.severity]) != null ? _a5 : 0) + 1;
-      if (row.businessImpact) businessImpacts.add(row.businessImpact);
-      if (row.domain) domains.add(row.domain);
-      const rank = severityRank5(String((_b = row.severity) != null ? _b : ""));
-      if (rank < worstRank) {
-        worstRank = rank;
-        worstSeverity2 = String((_c = row.severity) != null ? _c : "");
-      }
-      if (row.iac) iac += 1;
-      if (row.ignored) ignored += 1;
-      if (row.firstSeenAt && (!firstSeenAt || row.firstSeenAt < firstSeenAt)) {
-        firstSeenAt = row.firstSeenAt;
-      }
-      if (!title && row.title) title = row.title;
-      if (!remediation && row.ruleRemediation) remediation = row.ruleRemediation;
-    }
-    return {
-      key,
-      kind: first.kind,
-      ruleId: first.ruleId,
-      ruleShortId: first.ruleShortId,
-      title: title || first.title,
-      problems: rows.length,
-      assets: assetIds.size,
-      worstSeverity: worstSeverity2,
-      severityMix,
-      businessImpacts: [...businessImpacts].sort(),
-      domains: [...domains].sort(),
-      autoRemediable: false,
-      iac,
-      ignored,
-      firstSeenAt: firstSeenAt || void 0,
-      remediation
-    };
-  }
-  function rankActionsByCover(rows, limit) {
-    let remaining = rows.slice();
-    const ranked = [];
-    while (remaining.length > 0) {
-      const groups = candidatesFrom(remaining);
-      let best = null;
-      for (const [key, groupRows] of groups) {
-        const candidate = scoreCandidate(key, groupRows);
-        if (!best || compareCandidates(candidate, best) < 0) best = candidate;
-      }
-      if (!best) break;
-      ranked.push(buildActionRow(best.key, best.rows));
-      const covered = new Set(best.rows.map((r) => r.id));
-      remaining = remaining.filter((r) => !covered.has(r.id));
-    }
-    return limit !== void 0 && limit >= 0 ? ranked.slice(0, limit) : ranked;
-  }
-  function withAutoRemediation(actions, policies) {
-    const byId = /* @__PURE__ */ new Map();
-    const byShortId = /* @__PURE__ */ new Map();
-    for (const p of policies) {
-      if (p.hasAutoRemediation !== true) continue;
-      byId.set(p.policyId, true);
-      if (p.shortId) byShortId.set(p.shortId, true);
-    }
-    return actions.map((a) => {
-      const auto = a.ruleId !== void 0 && byId.get(a.ruleId) === true || a.ruleShortId !== void 0 && byShortId.get(a.ruleShortId) === true;
-      return auto ? { ...a, autoRemediable: true } : a;
-    });
-  }
-  function coverCurve(ranked, total2) {
-    const out = [];
-    let cumulative = 0;
-    let rank = 0;
-    for (const a of ranked) {
-      rank += 1;
-      cumulative += a.problems;
-      out.push({ rank, cumulative, share: total2 > 0 ? cumulative / total2 : 0 });
-    }
-    return out;
-  }
-  function concentrationRatio(ranked, total2) {
-    const problems = ranked.reduce((n, a) => n + a.problems, 0);
-    const top10 = ranked.slice(0, 10).reduce((n, a) => n + a.problems, 0);
-    return {
-      actions: ranked.length,
-      problems,
-      top10Share: total2 > 0 ? top10 / total2 : 0
-    };
-  }
-
-  // src/domain/configFindings.ts
-  var CONFIG_SORTS = [
-    "severity",
-    "rule",
-    "resource",
-    "firstSeen",
-    "status"
-  ];
-  var DEFAULT_CONFIG_SORT_DIR = {
-    severity: "desc",
-    firstSeen: "desc",
-    rule: "asc",
-    resource: "asc",
-    status: "asc"
-    // Phase 5: the problem tree's outcome, worst (ACT) first — same convention as severity.
-  };
-  var DEFAULT_CONFIG_PAGE_SIZE = 50;
-  var MAX_CONFIG_PAGE_SIZE = 500;
-  var CONFIG_CLIENT_ALL_MAX = 1e3;
-  var CONFIG_FACET_KEYS = [
-    "severities",
-    "statuses",
-    "clouds",
-    "resourceTypes",
-    "rules",
-    "projects",
-    "domains",
-    "linkage",
-    "flags"
-  ];
-  var LINKAGE_VALUES = ["linked", "unlinked"];
-  var CONFIG_FLAGS = ["gap", "ignored", "iac"];
-  var sevRank2 = (s) => {
-    const i = SEVERITY_ORDER.indexOf(s);
-    return i < 0 ? SEVERITY_ORDER.length : i;
-  };
-  function toConfigView(f, linked, domain = "") {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r;
-    return {
-      id: f.id,
-      name: (_b = (_a5 = f.name) != null ? _a5 : f.ruleName) != null ? _b : "",
-      severity: (_c = f.severity) != null ? _c : "UNKNOWN",
-      status: (_d = f.status) != null ? _d : "",
-      result: (_e = f.result) != null ? _e : "",
-      ruleShortId: (_f = f.ruleShortId) != null ? _f : "",
-      ruleName: (_g = f.ruleName) != null ? _g : "",
-      resourceId: f.resourceId,
-      resourceName: (_h = f.resourceName) != null ? _h : "",
-      resourceType: (_i = f.resourceType) != null ? _i : "",
-      cloud: (_j = f.cloudProvider) != null ? _j : "",
-      subscriptionName: (_k = f.subscriptionName) != null ? _k : "",
-      projects: ((_l = f.projects) != null ? _l : []).map((p) => p.name).filter(Boolean),
-      businessImpact: (_m = f.businessImpact) != null ? _m : "",
-      firstSeenAt: (_n = f.firstSeenAt) != null ? _n : "",
-      analyzedAt: (_o = f.analyzedAt) != null ? _o : "",
-      risks: (_p = f.risks) != null ? _p : [],
-      linked,
-      domain,
-      ignored: ((_q = f.ignoreRuleIds) != null ? _q : []).length > 0,
-      iac: ((_r = f.iacFindingIds) != null ? _r : []).length > 0,
-      gap: isOpenGap(f)
-    };
-  }
-  function listParam(v) {
-    if (Array.isArray(v)) return v.map((x) => String(x)).filter(Boolean);
-    const s = toStr(v);
-    return s ? s.split(",").map((x) => x.trim()).filter(Boolean) : [];
-  }
-  function resolveConfigQuery(params) {
-    var _a5;
-    return {
-      q: ((_a5 = toStr(params["q"])) != null ? _a5 : "").trim().toLowerCase(),
-      severities: listParam(params["severities"]),
-      statuses: listParam(params["statuses"]),
-      clouds: listParam(params["clouds"]),
-      resourceTypes: listParam(params["resourceTypes"]),
-      rules: listParam(params["rules"]),
-      projects: listParam(params["projects"]),
-      domains: listParam(params["domains"]),
-      linkage: listParam(params["linkage"]).filter(
-        (v) => LINKAGE_VALUES.indexOf(v) >= 0
-      ),
-      flags: listParam(params["flags"]).filter(
-        (v) => CONFIG_FLAGS.indexOf(v) >= 0
-      )
-    };
-  }
-  function hasConfigFlag(row, flag) {
-    if (flag === "gap") return row.gap;
-    if (flag === "ignored") return row.ignored;
-    if (flag === "iac") return row.iac;
-    return false;
-  }
-  function anyOf(selected, value) {
-    return selected.length === 0 || selected.indexOf(value) >= 0;
-  }
-  function matchesConfigQuery(row, q) {
-    if (!anyOf(q.severities, row.severity)) return false;
-    if (!anyOf(q.statuses, row.status)) return false;
-    if (!anyOf(q.clouds, row.cloud)) return false;
-    if (!anyOf(q.resourceTypes, row.resourceType)) return false;
-    if (!anyOf(q.rules, row.ruleShortId)) return false;
-    if (q.projects.length && !row.projects.some((p) => q.projects.indexOf(p) >= 0)) return false;
-    if (q.domains.length && q.domains.indexOf(row.domain) < 0) return false;
-    if (q.linkage.length && !anyOf(q.linkage, row.linked ? "linked" : "unlinked")) return false;
-    for (const flag of q.flags) if (!hasConfigFlag(row, flag)) return false;
-    if (q.q) {
-      const hay = [
-        row.name,
-        row.ruleShortId,
-        row.ruleName,
-        row.resourceName,
-        row.resourceType,
-        row.subscriptionName
-      ].join(" ").toLowerCase();
-      if (hay.indexOf(q.q) < 0) return false;
-    }
-    return true;
-  }
-  function filterConfigRows(rows, q) {
-    return rows.filter((r) => matchesConfigQuery(r, q));
-  }
-  function configComparator(sort, dir) {
-    const d = (dir != null ? dir : DEFAULT_CONFIG_SORT_DIR[sort]) === "asc" ? 1 : -1;
-    const tie = (a, b) => a.id.localeCompare(b.id);
-    return (a, b) => {
-      let cmp2 = 0;
-      if (sort === "severity") cmp2 = sevRank2(b.severity) - sevRank2(a.severity);
-      else if (sort === "rule") cmp2 = a.ruleShortId.localeCompare(b.ruleShortId);
-      else if (sort === "resource") cmp2 = a.resourceName.localeCompare(b.resourceName);
-      else if (sort === "status") cmp2 = a.status.localeCompare(b.status);
-      else if (sort === "firstSeen") cmp2 = a.firstSeenAt.localeCompare(b.firstSeenAt);
-      return cmp2 !== 0 ? cmp2 * d : tie(a, b);
-    };
-  }
-  function sortConfigRows(rows, sort, dir) {
-    return rows.slice().sort(configComparator(sort, dir));
-  }
-  function facetValues2(key, row) {
-    if (key === "severities") return [row.severity].filter(Boolean);
-    if (key === "statuses") return [row.status].filter(Boolean);
-    if (key === "clouds") return [row.cloud].filter(Boolean);
-    if (key === "resourceTypes") return [row.resourceType].filter(Boolean);
-    if (key === "rules") return [row.ruleShortId].filter(Boolean);
-    if (key === "projects") return row.projects;
-    if (key === "domains") return [row.domain].filter(Boolean);
-    if (key === "linkage") return [row.linked ? "linked" : "unlinked"];
-    return CONFIG_FLAGS.filter((f) => hasConfigFlag(row, f));
-  }
-  function facetSorter2(key) {
-    if (key === "severities") return (a, b) => sevRank2(a.value) - sevRank2(b.value);
-    if (key === "flags") {
-      const order = CONFIG_FLAGS;
-      return (a, b) => order.indexOf(a.value) - order.indexOf(b.value);
-    }
-    if (key === "linkage") {
-      const order = LINKAGE_VALUES;
-      return (a, b) => order.indexOf(a.value) - order.indexOf(b.value);
-    }
-    return (a, b) => a.value.localeCompare(b.value);
-  }
-  function configFacetCounts(rows, q) {
-    var _a5;
-    const out = { matched: 0 };
-    for (const key of CONFIG_FACET_KEYS) {
-      const scope = key === "flags" ? q : { ...q, [key]: [] };
-      const counts = /* @__PURE__ */ new Map();
-      for (const row of rows) {
-        if (!matchesConfigQuery(row, scope)) continue;
-        for (const value of facetValues2(key, row)) {
-          counts.set(value, ((_a5 = counts.get(value)) != null ? _a5 : 0) + 1);
-        }
-      }
-      for (const value of q[key]) if (!counts.has(value)) counts.set(value, 0);
-      out[key] = Array.from(counts, ([value, count2]) => ({ value, count: count2 })).sort(facetSorter2(key));
-    }
-    out.matched = rows.reduce((n, row) => matchesConfigQuery(row, q) ? n + 1 : n, 0);
-    return out;
-  }
-  function rollupByControl(rows) {
-    var _a5;
-    const byRule = /* @__PURE__ */ new Map();
-    for (const row of rows) {
-      const key = row.ruleShortId || row.ruleName || "\u2014";
-      const bucket = byRule.get(key);
-      if (bucket) bucket.push(row);
-      else byRule.set(key, [row]);
-    }
-    const out = [];
-    for (const [ruleShortId, group] of byRule) {
-      const resources = /* @__PURE__ */ new Set();
-      const gapResources = /* @__PURE__ */ new Set();
-      const unlinkedGapResources = /* @__PURE__ */ new Set();
-      const clouds = /* @__PURE__ */ new Set();
-      const projects = /* @__PURE__ */ new Set();
-      const domains = /* @__PURE__ */ new Set();
-      const risks = /* @__PURE__ */ new Set();
-      const severityMix = {};
-      let worst = "UNKNOWN";
-      let firstSeenAt = "";
-      let gaps = 0;
-      let linked = 0;
-      let unlinked = 0;
-      let ignored = 0;
-      let iac = 0;
-      for (const row of group) {
-        resources.add(row.resourceId);
-        if (row.cloud) clouds.add(row.cloud);
-        for (const p of row.projects) projects.add(p);
-        if (row.domain) domains.add(row.domain);
-        for (const r of row.risks) risks.add(r);
-        severityMix[row.severity] = ((_a5 = severityMix[row.severity]) != null ? _a5 : 0) + 1;
-        if (sevRank2(row.severity) < sevRank2(worst)) worst = row.severity;
-        if (row.firstSeenAt && (!firstSeenAt || row.firstSeenAt < firstSeenAt)) {
-          firstSeenAt = row.firstSeenAt;
-        }
-        if (row.gap) {
-          gaps += 1;
-          gapResources.add(row.resourceId);
-          if (!row.linked) unlinkedGapResources.add(row.resourceId);
-        }
-        if (row.linked) linked += 1;
-        else unlinked += 1;
-        if (row.ignored) ignored += 1;
-        if (row.iac) iac += 1;
-      }
-      out.push({
-        ruleShortId,
-        ruleName: group[0].ruleName || group[0].name || "",
-        severity: worst,
-        risks: [...risks].sort(),
-        findings: group.length,
-        gaps,
-        resources: resources.size,
-        gapResources: gapResources.size,
-        unlinkedGapResources: unlinkedGapResources.size,
-        linked,
-        unlinked,
-        ignored,
-        iac,
-        clouds: [...clouds].sort(),
-        projects: [...projects].sort(),
-        domains: [...domains].sort(),
-        severityMix,
-        firstSeenAt
-      });
-    }
-    return out.sort((a, b) => sevRank2(a.severity) - sevRank2(b.severity) || b.gaps - a.gaps || b.resources - a.resources || a.ruleShortId.localeCompare(b.ruleShortId));
-  }
-  function configTotals(rows) {
-    var _a5;
-    const controls = /* @__PURE__ */ new Set();
-    const resources = /* @__PURE__ */ new Set();
-    const severityMix = {};
-    let gaps = 0;
-    let unlinkedGaps = 0;
-    let ignored = 0;
-    let iac = 0;
-    for (const row of rows) {
-      if (row.ruleShortId) controls.add(row.ruleShortId);
-      resources.add(row.resourceId);
-      if (row.gap) {
-        gaps += 1;
-        severityMix[row.severity] = ((_a5 = severityMix[row.severity]) != null ? _a5 : 0) + 1;
-        if (!row.linked) unlinkedGaps += 1;
-      }
-      if (row.ignored) ignored += 1;
-      if (row.iac) iac += 1;
-    }
-    return {
-      findings: rows.length,
-      gaps,
-      controls: controls.size,
-      resources: resources.size,
-      unlinkedGaps,
-      ignored,
-      iac,
-      severityMix
-    };
-  }
-
-  // src/domain/complianceOverview.ts
-  function severityRank6(s) {
-    const i = SEVERITY_ORDER.indexOf(s);
-    return i === -1 ? SEVERITY_ORDER.length : i;
-  }
-  var STATE_KEYS2 = ["scored", "noResources", "noPolicies", "unknown"];
-  function frameworkRail(trees) {
-    return trees.map((tree) => ({
-      frameworkId: tree.frameworkId,
-      name: tree.name,
-      posturePct: tree.posturePct,
-      state: tree.state,
-      postureBand: tree.postureBand,
-      emptyPostureReason: tree.emptyPostureReason,
-      categoryCount: tree.categories.length,
-      // From stateCounts, not from the listed nodes: the tree lists only scored
-      // subcategories (compliancePosture.ts), and a rail that counted those would report a
-      // framework's size as the part of it that happened to score.
-      subcategoryCount: STATE_KEYS2.reduce((sum, k) => sum + (tree.stateCounts[k] || 0), 0),
-      policyCount: tree.policyCount,
-      failingPolicyCount: tree.failingPolicyCount,
-      worstFailingSeverity: tree.worstFailingSeverity,
-      // Copied rather than aliased: a caller holding this row must not be able to mutate
-      // the FrameworkTree it was built from by mutating what looks like its own object.
-      stateCounts: { ...tree.stateCounts }
-    }));
-  }
-  function isScoredRow(row) {
-    return row.state === "scored";
-  }
-  function weakestAreas(trees, limit) {
-    const rows = [];
-    for (const tree of trees) {
-      for (const category of tree.categories) {
-        for (const sub of category.subcategories) {
-          if (sub.state === "scored" && !sub.policies.length) continue;
-          rows.push({
-            frameworkId: tree.frameworkId,
-            frameworkName: tree.name,
-            categoryExternalId: category.externalId,
-            categoryTitle: category.title,
-            externalId: sub.externalId,
-            showExternalId: sub.showExternalId,
-            title: sub.title,
-            posturePct: sub.posturePct,
-            state: sub.state,
-            emptyPostureReason: sub.emptyPostureReason,
-            passCount: sub.passCount,
-            failCount: sub.failCount,
-            // Distinct policies THIS subcategory carries. buildFrameworkTree already
-            // deduped `policies` to that scope (compliancePosture.ts:190), so re-deduping
-            // here would be the wrong scope all over again — count the list as given.
-            policyCount: sub.policies.length,
-            failingPolicyCount: sub.failingPolicyCount,
-            postureBand: sub.postureBand
-          });
-        }
-      }
-    }
-    const scored = rows.filter(isScoredRow);
-    scored.sort((a, b) => a.posturePct - b.posturePct || b.failingPolicyCount - a.failingPolicyCount || (a.frameworkName < b.frameworkName ? -1 : a.frameworkName > b.frameworkName ? 1 : 0) || (a.title < b.title ? -1 : a.title > b.title ? 1 : 0));
-    return typeof limit === "number" ? scored.slice(0, limit) : scored;
-  }
-  function sharedControls(trees) {
-    const byPolicy = /* @__PURE__ */ new Map();
-    for (const tree of trees) {
-      for (const category of tree.categories) {
-        for (const sub of category.subcategories) {
-          for (const p of sub.policies) {
-            let acc = byPolicy.get(p.policyId);
-            if (!acc) {
-              acc = {
-                policyId: p.policyId,
-                shortId: p.shortId,
-                name: p.name,
-                policyKind: p.policyKind,
-                severity: p.severity,
-                severityRank: severityRank6(p.severity),
-                hasAutoRemediation: p.hasAutoRemediation === true,
-                frameworkIds: [],
-                frameworkNames: [],
-                subcategoryKeys: /* @__PURE__ */ new Set(),
-                failCount: 0
-              };
-              byPolicy.set(p.policyId, acc);
-            }
-            const rank = severityRank6(p.severity);
-            if (rank < acc.severityRank) {
-              acc.severityRank = rank;
-              acc.severity = p.severity;
-              acc.shortId = p.shortId;
-              acc.name = p.name;
-              acc.policyKind = p.policyKind;
-              acc.hasAutoRemediation = p.hasAutoRemediation === true;
-            }
-            if (acc.frameworkIds.indexOf(tree.frameworkId) === -1) {
-              acc.frameworkIds.push(tree.frameworkId);
-              acc.frameworkNames.push(tree.name);
-            }
-            acc.subcategoryKeys.add(`${tree.frameworkId}|${sub.externalId}`);
-            if (p.failCount > acc.failCount) acc.failCount = p.failCount;
-          }
-        }
-      }
-    }
-    const rows = [];
-    for (const acc of byPolicy.values()) {
-      if (acc.failCount <= 0) continue;
-      rows.push({
-        policyId: acc.policyId,
-        shortId: acc.shortId,
-        name: acc.name,
-        policyKind: acc.policyKind,
-        severity: acc.severity,
-        hasAutoRemediation: acc.hasAutoRemediation,
-        frameworkIds: acc.frameworkIds,
-        frameworkNames: acc.frameworkNames,
-        frameworkCount: acc.frameworkIds.length,
-        subcategoryCount: acc.subcategoryKeys.size,
-        failCount: acc.failCount
-      });
-    }
-    rows.sort((a, b) => b.frameworkCount - a.frameworkCount || severityRank6(a.severity) - severityRank6(b.severity) || b.failCount - a.failCount || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-    return rows;
-  }
-  function coverageSummary(trees, catalogue) {
-    const stateCounts = {
-      scored: 0,
-      noResources: 0,
-      noPolicies: 0,
-      unknown: 0
-    };
-    let subcategoryCount2 = 0;
-    for (const tree of trees) {
-      stateCounts.scored += tree.stateCounts.scored;
-      stateCounts.noResources += tree.stateCounts.noResources;
-      stateCounts.noPolicies += tree.stateCounts.noPolicies;
-      stateCounts.unknown += tree.stateCounts.unknown;
-      subcategoryCount2 += STATE_KEYS2.reduce((sum, k) => sum + (tree.stateCounts[k] || 0), 0);
-    }
-    return {
-      collected: trees.length,
-      catalogued: catalogue.length,
-      scoredFrameworks: trees.filter((t) => t.state === "scored").length,
-      stateCounts,
-      subcategoryCount: subcategoryCount2
-    };
-  }
-
-  // src/domain/fiveRsPosture.ts
-  function isActiveFiveRsPolicy(p) {
-    return p.selected && p.enabled !== false;
-  }
-  function clampAwayFromFalseExtreme(rounded, hasFailing, hasPassing) {
-    if (rounded === 100 && hasFailing) return 99;
-    if (rounded === 0 && hasPassing) return 1;
-    return rounded;
-  }
-  function fiveRsDerivedPosture(scope, wizPosturePct) {
-    if (scope.frameworkId === null) return null;
-    let passCount = 0;
-    let failCount = 0;
-    let cleanPolicyCount = 0;
-    let failingPolicyCount2 = 0;
-    let activePolicyCount = 0;
-    let disabledPolicyCount = 0;
-    for (const p of scope.policies) {
-      if (p.selected && p.enabled === false) disabledPolicyCount += 1;
-      if (!isActiveFiveRsPolicy(p)) continue;
-      activePolicyCount += 1;
-      passCount += p.passCount;
-      failCount += p.failCount;
-      if (p.failCount === 0) cleanPolicyCount += 1;
-      else failingPolicyCount2 += 1;
-    }
-    const posturePct2 = activePolicyCount === 0 || passCount + failCount === 0 ? null : clampAwayFromFalseExtreme(
-      Math.round(100 * passCount / (passCount + failCount)),
-      failCount > 0,
-      passCount > 0
-    );
-    const controlPassPct = activePolicyCount === 0 ? null : clampAwayFromFalseExtreme(
-      Math.round(100 * cleanPolicyCount / activePolicyCount),
-      failingPolicyCount2 > 0,
-      cleanPolicyCount > 0
-    );
-    return {
-      frameworkId: scope.frameworkId,
-      posturePct: posturePct2,
-      postureBand: postureBandOf(posturePct2),
-      controlPassPct,
-      cleanPolicyCount,
-      failingPolicyCount: failingPolicyCount2,
-      activePolicyCount,
-      disabledPolicyCount,
-      passCount,
-      failCount,
-      wizPosturePct
-    };
-  }
-
-  // src/domain/landscapePosture.ts
-  function isApplicableControl(enabled) {
-    return enabled !== false;
-  }
-  function landscapeDerivedPosture(trees, wiz) {
-    const byPolicy = /* @__PURE__ */ new Map();
-    for (const tree of trees) {
-      for (const category of tree.categories) {
-        for (const sub of category.subcategories) {
-          for (const p of sub.policies) {
-            let acc = byPolicy.get(p.policyId);
-            if (!acc) {
-              acc = {
-                passCount: 0,
-                failCount: 0,
-                // Sticky-false's initial reading, overridden below by any later row saying
-                // false — `scopeFiveRs` accumulates `enabled` the identical way.
-                enabled: p.enabled,
-                frameworkIds: /* @__PURE__ */ new Set()
-              };
-              byPolicy.set(p.policyId, acc);
-            }
-            if (p.passCount > acc.passCount) acc.passCount = p.passCount;
-            if (p.failCount > acc.failCount) acc.failCount = p.failCount;
-            if (p.enabled === false) acc.enabled = false;
-            acc.frameworkIds.add(tree.frameworkId);
-          }
-        }
-      }
-    }
-    let passCount = 0;
-    let failCount = 0;
-    let cleanPolicyCount = 0;
-    let failingPolicyCount2 = 0;
-    let applicablePolicyCount = 0;
-    let disabledPolicyCount = 0;
-    const frameworks = /* @__PURE__ */ new Set();
-    for (const acc of byPolicy.values()) {
-      if (!isApplicableControl(acc.enabled)) {
-        disabledPolicyCount += 1;
-        continue;
-      }
-      applicablePolicyCount += 1;
-      passCount += acc.passCount;
-      failCount += acc.failCount;
-      if (acc.failCount === 0) cleanPolicyCount += 1;
-      else failingPolicyCount2 += 1;
-      for (const id of acc.frameworkIds) frameworks.add(id);
-    }
-    const posturePct2 = applicablePolicyCount === 0 || passCount + failCount === 0 ? null : clampAwayFromFalseExtreme(
-      Math.round(100 * passCount / (passCount + failCount)),
-      failCount > 0,
-      passCount > 0
-    );
-    const controlPassPct = applicablePolicyCount === 0 ? null : clampAwayFromFalseExtreme(
-      Math.round(100 * cleanPolicyCount / applicablePolicyCount),
-      failingPolicyCount2 > 0,
-      cleanPolicyCount > 0
-    );
-    return {
-      posturePct: posturePct2,
-      postureBand: postureBandOf(posturePct2),
-      controlPassPct,
-      cleanPolicyCount,
-      failingPolicyCount: failingPolicyCount2,
-      applicablePolicyCount,
-      disabledPolicyCount,
-      frameworkCount: frameworks.size,
-      passCount,
-      failCount,
-      wizAveragePosture: wiz.averagePosture,
-      scoredFrameworks: wiz.scoredFrameworks
-    };
-  }
-
-  // src/domain/settingsImpact.ts
-  function categoryMaskOf(categories, candidateIds) {
-    let mask = 0;
-    for (const cat of categories != null ? categories : []) {
-      const idx = candidateIds.indexOf(cat);
-      if (idx >= 0) mask |= 1 << idx;
-    }
-    return mask;
-  }
-  function buildCategoryCube(rows, candidateIds, configuredIds) {
-    var _a5;
-    const cells = {};
-    let seenBits = 0;
-    for (const r of rows) {
-      const mask = categoryMaskOf(r.categories, candidateIds);
-      seenBits |= mask;
-      const key = String(mask);
-      cells[key] = ((_a5 = cells[key]) != null ? _a5 : 0) + 1;
-    }
-    const configured = new Set(configuredIds);
-    const measuredCandidateIds = candidateIds.filter(
-      (id, i) => configured.has(id) || (seenBits & 1 << i) !== 0
-    );
-    return { total: rows.length, cells, candidateIds: [...candidateIds], measuredCandidateIds };
-  }
-  var DEFAULT_CANDIDATE_IDS = CANDIDATE_CATEGORIES.map((c) => c.id);
-  function parsesAsDate(v) {
-    return typeof v === "string" && v !== "" && Number.isFinite(Date.parse(v));
-  }
-  function termCoverageOf(rows) {
-    var _a5;
-    let dueAtN = 0;
-    let createdAtN = 0;
-    let exploitationN = 0;
-    let adjacencyN = 0;
-    for (const r of rows) {
-      if (parsesAsDate(r.dueAt)) dueAtN += 1;
-      if (parsesAsDate(r.createdAt)) createdAtN += 1;
-      const tier = String((_a5 = r.exploitationTier) != null ? _a5 : "").trim().toLowerCase();
-      if (tier && tier !== "unknown") exploitationN += 1;
-      if (r.aiAdjacency) adjacencyN += 1;
-    }
-    return {
-      total: rows.length,
-      rule: rows.length,
-      time: { dueAt: dueAtN, createdAt: createdAtN },
-      exploitation: exploitationN,
-      adjacency: adjacencyN
-    };
-  }
-  var RANK_EPSS_BINS = 100;
-  var RANK_DAY_MS = 864e5;
-  function rankLadderIdx(value, buckets) {
-    let idx = 0;
-    for (let i = 0; i < buckets.length; i++) if (value > buckets[i]) idx = i + 1;
-    return idx;
-  }
-  function rankClamp01(v) {
-    const n = typeof v === "number" ? v : Number(v);
-    if (!Number.isFinite(n)) return 0;
-    return n < 0 ? 0 : n > 1 ? 1 : n;
-  }
-  function rankWeightFor(row, rule) {
-    var _a5, _b;
-    for (const rw of (_a5 = rule.ruleWeights) != null ? _a5 : []) {
-      if (rw && String((_b = rw.ruleId) != null ? _b : "").trim() === rankKeyOf(row)) return rankClamp01(rw.weight);
-    }
-    return rankClamp01(rule.defaultRuleWeight);
-  }
-  function rankEpssBinOf(v, bins = RANK_EPSS_BINS) {
-    if (v >= 1) return bins;
-    return Math.max(0, Math.min(bins - 1, Math.floor(v * bins + 1e-9)));
-  }
-  function rankTupleOf(row, rule, nowIso2) {
-    var _a5, _b, _c, _d;
-    const overdueBuckets = (_a5 = rule.overdueDayBuckets) != null ? _a5 : DEFAULT_RANK_RULE.overdueDayBuckets;
-    const ageBuckets = (_b = rule.ageDayBuckets) != null ? _b : DEFAULT_RANK_RULE.ageDayBuckets;
-    const now = Date.parse(nowIso2);
-    const due = row.dueAt ? Date.parse(row.dueAt) : NaN;
-    const dueStep = Number.isFinite(due) && Number.isFinite(now) ? rankLadderIdx((now - due) / RANK_DAY_MS, overdueBuckets) : null;
-    const created = row.createdAt ? Date.parse(row.createdAt) : NaN;
-    const ageStep = Number.isFinite(created) && Number.isFinite(now) ? rankLadderIdx((now - created) / RANK_DAY_MS, ageBuckets) : null;
-    const tier = String((_c = row.exploitationTier) != null ? _c : "").trim().toLowerCase();
-    const peak = typeof row.epssPeak === "number" && Number.isFinite(row.epssPeak) ? row.epssPeak : null;
-    let exploitationTier = "unmeasured";
-    let epssBin = null;
-    if (tier === "kev") exploitationTier = "kev";
-    else if (tier === "exploit") exploitationTier = "exploit";
-    else if (tier === "none") exploitationTier = "none";
-    else if (tier === "epss") {
-      if (peak !== null) {
-        exploitationTier = "epss";
-        epssBin = rankEpssBinOf(peak);
-      } else exploitationTier = "none";
-    }
-    const adjRaw = String((_d = row.aiAdjacency) != null ? _d : "").trim().toUpperCase();
-    const adjacency2 = adjRaw === "DIRECT" || adjRaw === "ADJACENT" || adjRaw === "UNLINKED" ? adjRaw : "unmeasured";
-    return { ruleWeightKey: rankWeightFor(row, rule), dueStep, ageStep, exploitationTier, epssBin, adjacency: adjacency2 };
-  }
-  var RANK_EXPL_CODE = {
-    kev: "k",
-    exploit: "e",
-    epss: "p",
-    none: "n",
-    unmeasured: "u"
-  };
-  var RANK_ADJ_CODE = {
-    DIRECT: "D",
-    ADJACENT: "A",
-    UNLINKED: "U",
-    unmeasured: "u"
-  };
-  function rankTupleKey(t) {
+  // src/server/syncJobs.ts
+  var CANCEL_PROP = "CANCEL_SYNC_JOB_ID";
+  var CONTINUE_HANDLER = "trigger_continueSync";
+  var CONTINUE_DELAY_MS = 3e4;
+  var FIRST_STEP_BUDGET_MS = 45e3;
+  var BUDGET_MS = 27e4;
+  var CHECKPOINT_MS = 8e3;
+  var SKIP_REASON_MAX = 400;
+  function syncSteps(aiTypes) {
+    const types = aiTypes != null ? aiTypes : resolveAiResourceTypes().types;
+    const frameworkIds = getSelectedFrameworks2(() => loadFrameworks());
+    const categoryIds = getIssueCategories2();
+    const overrides = getScanVars2();
+    const vars = (stepId, base) => effectiveStepVars(stepId, base, overrides[stepId]);
+    const selectedFrameworks = () => frameworkIds;
+    const catalogue = loadConfigRules();
+    const catalogueFresh = configRulesAreFresh2(catalogue.length > 0, Date.now());
+    const hygieneRules = resolveHygieneRules(catalogue);
     return [
-      t.ruleWeightKey.toFixed(4),
-      t.dueStep === null ? "x" : t.dueStep,
-      t.ageStep === null ? "x" : t.ageStep,
-      RANK_EXPL_CODE[t.exploitationTier],
-      t.epssBin === null ? "x" : t.epssBin,
-      RANK_ADJ_CODE[t.adjacency]
-    ].join("|");
-  }
-  function buildRankCube(rows, rule, nowIso2) {
-    var _a5, _b, _c;
-    const overdueBuckets = (_a5 = rule.overdueDayBuckets) != null ? _a5 : DEFAULT_RANK_RULE.overdueDayBuckets;
-    const ageBuckets = (_b = rule.ageDayBuckets) != null ? _b : DEFAULT_RANK_RULE.ageDayBuckets;
-    const cells = {};
-    for (const row of rows) {
-      const key = rankTupleKey(rankTupleOf(row, rule, nowIso2));
-      cells[key] = ((_c = cells[key]) != null ? _c : 0) + 1;
-    }
-    return {
-      total: rows.length,
-      cells,
-      overdueSteps: overdueBuckets.length,
-      ageSteps: ageBuckets.length,
-      epssBins: RANK_EPSS_BINS
-    };
-  }
-
-  // src/domain/graphProject.ts
-  var DEFAULT_PER_KIND_CAP = {
-    USER_ACCOUNT: 8,
-    BUCKET: 6,
-    // Same cap as BUCKET: the sensitive-data chain makes databases a real fan-out target for
-    // the first time — before it, no live query produced one at all.
-    DATABASE: 6,
-    DATABASE_SERVER: 6,
-    ACCESS_ROLE_BINDING: 5
-  };
-  var DEFAULT_KIND_CAP = 12;
-  function nodeOrder(a, b) {
-    var _a5, _b, _c, _d;
-    const sev = severityRank(a.severity) - severityRank(b.severity);
-    if (sev !== 0) return sev;
-    const issues2 = ((_a5 = b.openIssues) != null ? _a5 : 0) - ((_b = a.openIssues) != null ? _b : 0);
-    if (issues2 !== 0) return issues2;
-    const findings = ((_c = b.openFindings) != null ? _c : 0) - ((_d = a.openFindings) != null ? _d : 0);
-    if (findings !== 0) return findings;
-    return cmp(a.name, b.name);
-  }
-  function passesFilters(node2, f) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j;
-    if (!f) return true;
-    if (isRiskKind(node2.kind) && !((_a5 = f.kinds) == null ? void 0 : _a5.some(isRiskKind))) return true;
-    if (((_b = f.severities) == null ? void 0 : _b.length) && !f.severities.includes((_c = node2.severity) != null ? _c : "")) return false;
-    if (((_d = f.kinds) == null ? void 0 : _d.length) && !f.kinds.includes(node2.kind)) return false;
-    if (((_e = f.clouds) == null ? void 0 : _e.length) && !f.clouds.includes((_f = node2.cloudPlatform) != null ? _f : "")) return false;
-    if ((_g = f.projects) == null ? void 0 : _g.length) {
-      const names = ((_h = node2.projects) != null ? _h : []).map((p) => p.name);
-      if (!names.some((n) => f.projects.includes(n))) return false;
-    }
-    if (((_i = f.domains) == null ? void 0 : _i.length) && !f.domains.includes((_j = node2.domain) != null ? _j : "")) return false;
-    return true;
-  }
-  function projectGraph(doc, opts) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j;
-    const byId = indexBy(doc.nodes, (n) => n.id);
-    const adjacency2 = /* @__PURE__ */ new Map();
-    const sortedEdges = [...doc.edges].sort(cmpBy((e) => e.id));
-    for (const edge2 of sortedEdges) {
-      if (!byId.has(edge2.src) || !byId.has(edge2.dst)) continue;
-      if (!adjacency2.has(edge2.src)) adjacency2.set(edge2.src, []);
-      if (!adjacency2.has(edge2.dst)) adjacency2.set(edge2.dst, []);
-      adjacency2.get(edge2.src).push({ edge: edge2, otherId: edge2.dst });
-      adjacency2.get(edge2.dst).push({ edge: edge2, otherId: edge2.src });
-    }
-    const maxNodes = (_a5 = opts.maxNodes) != null ? _a5 : MAX_NODES_DEFAULT;
-    const maxEdges = (_b = opts.maxEdges) != null ? _b : MAX_EDGES_DEFAULT;
-    const expand = new Set((_c = opts.expandIds) != null ? _c : []);
-    let capped = false;
-    const shown = /* @__PURE__ */ new Set();
-    const summaries = [];
-    const summaryNodes = [];
-    const summaryEdges = [];
-    const queue = [];
-    const atNodeBudget = () => shown.size + summaryNodes.length >= maxNodes;
-    const orderedSeeds = opts.seedIds.map((id) => byId.get(id)).filter((n) => !!n && (!opts.filterSeeds || passesFilters(n, opts.filters))).sort(nodeOrder);
-    const seedWave = Math.max(1, Math.floor(maxNodes * SEED_WAVE_RATIO));
-    let seedCursor = 0;
-    function admitSeedWave() {
-      let admitted = 0;
-      while (admitted < seedWave && seedCursor < orderedSeeds.length) {
-        const seed = orderedSeeds[seedCursor];
-        if (shown.has(seed.id)) {
-          seedCursor++;
-          continue;
-        }
-        if (atNodeBudget()) return;
-        shown.add(seed.id);
-        queue.push({ id: seed.id, depth: 0 });
-        seedCursor++;
-        admitted++;
-      }
-    }
-    do {
-      admitSeedWave();
-      while (queue.length) {
-        const { id, depth } = queue.shift();
-        if (depth >= opts.depth && !expand.has(id)) continue;
-        const groups = /* @__PURE__ */ new Map();
-        for (const { otherId } of (_d = adjacency2.get(id)) != null ? _d : []) {
-          if (shown.has(otherId)) continue;
-          const other = byId.get(otherId);
-          if (!passesFilters(other, opts.filters)) continue;
-          if (!groups.has(other.kind)) groups.set(other.kind, []);
-          const group = groups.get(other.kind);
-          if (!group.some((n) => n.id === otherId)) group.push(other);
-        }
-        for (const kind of [...groups.keys()].sort()) {
-          const members = groups.get(kind).sort(nodeOrder);
-          const cap = expand.has(id) ? Infinity : (_g = (_f = (_e = opts.perKindCap) == null ? void 0 : _e[kind]) != null ? _f : DEFAULT_PER_KIND_CAP[kind]) != null ? _g : DEFAULT_KIND_CAP;
-          const overflow = members.length > cap;
-          const kept = overflow ? members.slice(0, Math.max(1, cap - 1)) : members;
-          for (const member of kept) {
-            if (atNodeBudget()) {
-              capped = true;
-              break;
-            }
-            shown.add(member.id);
-            queue.push({
-              id: member.id,
-              depth: expand.has(id) ? Math.max(depth + 1, opts.depth) : depth + 1
-            });
-          }
-          const hidden = members.filter((m) => !shown.has(m.id));
-          if (hidden.length) {
-            if (!overflow) {
-              capped = true;
-              continue;
-            }
-            if (atNodeBudget() || summaryEdges.length >= maxEdges) {
-              capped = true;
-              continue;
-            }
-            const sumId = `sum|${id}|${kind}`;
-            summaries.push({
-              id: sumId,
-              of: kind,
-              count: hidden.length,
-              parentId: id,
-              memberIds: hidden.map((m) => m.id)
-            });
-            summaryNodes.push({
-              id: sumId,
-              kind: "SUMMARY",
-              name: `+${hidden.length} more`,
-              summaryOf: kind,
-              summaryCount: hidden.length,
-              memberIds: hidden.map((m) => m.id)
-            });
-            const viaEdge = (_i = ((_h = adjacency2.get(id)) != null ? _h : []).find(
-              (a) => a.otherId === hidden[0].id
-            )) == null ? void 0 : _i.edge;
-            summaryEdges.push({
-              id: `${id}|SUMMARY|${sumId}`,
-              src: id,
-              dst: sumId,
-              type: (_j = viaEdge == null ? void 0 : viaEdge.type) != null ? _j : "USES"
-            });
-          }
-        }
-      }
-    } while (seedCursor < orderedSeeds.length && !atNodeBudget());
-    if (seedCursor < orderedSeeds.length) capped = true;
-    const inducedBudget = Math.max(0, maxEdges - summaryEdges.length);
-    const edges2 = [];
-    const seenEdge = /* @__PURE__ */ new Set();
-    for (const edge2 of sortedEdges) {
-      if (!shown.has(edge2.src) || !shown.has(edge2.dst)) continue;
-      if (seenEdge.has(edge2.id)) continue;
-      seenEdge.add(edge2.id);
-      if (edges2.length >= inducedBudget) {
-        capped = true;
-        break;
-      }
-      edges2.push(edge2);
-    }
-    const nodes = doc.nodes.filter((n) => shown.has(n.id));
-    return {
-      nodes: [...nodes, ...summaryNodes],
-      edges: [...edges2, ...summaryEdges],
-      summaries,
-      counts: {
-        totalNodes: doc.nodes.length,
-        shownNodes: nodes.length,
-        totalEdges: doc.edges.length,
-        shownEdges: edges2.length,
-        capped
-      }
-    };
-  }
-
-  // src/domain/graphLayout.ts
-  var LAYOUT_MODES = ["lanes", "rows", "grid", "organic", "radial"];
-  var DEFAULT_LAYOUT = "grid";
-  var GROUP_KEYS = ["asset", "combo", "project", "cloud", "kind", "severity", "domain"];
-  var SORT_KEYS = ["smart", "severity", "issues", "name"];
-  var GROUP_NONE = "__none__";
-  var LANE_OF = {
-    ISSUE: 0,
-    EXCESSIVE_ACCESS_FINDING: 0,
-    IDENTITY_ACCESS_FINDING: 0,
-    LATERAL_MOVEMENT_FINDING: 0,
-    EXCESSIVE_PRIVILEGE: 0,
-    MISSING_GUARDRAIL: 0,
-    INTERNET_EXPOSURE: 0,
-    AI_AGENT: 1,
-    AI_MODEL: 1,
-    AI_GUARDRAIL: 1,
-    AI_PIPELINE: 1,
-    AI_DATASET: 1,
-    MCP_SERVER: 1,
-    AI_AGENT_REGISTRY: 1,
-    AI_DEPLOYMENT: 1,
-    AI_EXTENSION: 1,
-    AI_GATEWAY: 1,
-    AI_SERVICE: 1,
-    AI_SKILL: 1,
-    AI_SKILL_TEMPLATE: 1,
-    AI_TOOL: 1,
-    SERVICE_ACCOUNT: 2,
-    USER_ACCOUNT: 2,
-    ACCESS_ROLE: 2,
-    ACCESS_ROLE_BINDING: 2,
-    IAM_BINDING: 2,
-    ACCESS_ROLE_PERMISSION: 2,
-    BUCKET: 3,
-    DATABASE: 3,
-    DATABASE_SERVER: 3,
-    SENSITIVE_DATA: 3,
-    // The bands ARE the path, read left to right, and the data-exposure chain ends here:
-    // agent (1) → identity (2) → classified store (3) → what was found in it (4). Filing data
-    // findings with the other evidence in band 0 would make the graph's most important edge
-    // its longest, running back across the whole canvas from the store it describes.
-    DATA_FINDING: 4,
-    VIRTUAL_MACHINE: 5,
-    SERVERLESS: 5,
-    CONTAINER_IMAGE: 5,
-    REPOSITORY: 5,
-    // Beside the compute that serves it. An endpoint is the far edge of the landscape, but it is
-    // inventory rather than evidence, so it belongs in the infrastructure band and not in the
-    // risk band where INTERNET_EXPOSURE sits.
-    ENDPOINT: 5
-  };
-  var LANE_COUNT = 6;
-  function laneOf(kind, summaryOf) {
-    var _a5, _b;
-    if (kind === "SUMMARY" && summaryOf) return (_a5 = LANE_OF[summaryOf]) != null ? _a5 : 2;
-    return (_b = LANE_OF[kind]) != null ? _b : 2;
-  }
-  var BARYCENTER_SWEEPS = 3;
-  var ROW_COL_STEP = 260;
-  var ROW_BAND_GAP = 150;
-  var ROW_CLUSTER_GAP = 140;
-  var LANE_CLUSTER_GAP = 48;
-  var ROW_SHELF_GAP = 200;
-  var LANE_SHELF_GAP = 200;
-  var VIEWPORT_ASPECT = 1.9;
-  var CELL_W = 240;
-  var CELL_H = 84;
-  var GROUP_PAD = 24;
-  var HEADER_H = 30;
-  var BLOCK_GAP_X = 48;
-  var BLOCK_GAP_Y = 64;
-  var MAX_SHELF_W = 1600;
-  var MAX_CLUSTER_ROWS = 16;
-  var CLUSTER_GAP_X = 32;
-  var CLUSTER_GAP_Y = 40;
-  function cmpName(a, b) {
-    return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
-  }
-  function cmpId(a, b) {
-    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-  }
-  function comparator(sort) {
-    if (sort === "severity") {
-      return (a, b) => severityRank(a.severity) - severityRank(b.severity) || cmpName(a, b) || cmpId(a, b);
-    }
-    if (sort === "issues") {
-      return (a, b) => {
-        var _a5, _b;
-        return ((_a5 = b.openIssues) != null ? _a5 : 0) - ((_b = a.openIssues) != null ? _b : 0) || cmpName(a, b) || cmpId(a, b);
-      };
-    }
-    if (sort === "name") {
-      return (a, b) => cmpName(a, b) || cmpId(a, b);
-    }
-    return (a, b) => nodeOrder(a, b) || cmpId(a, b);
-  }
-  function parentIndex(p) {
-    const byId = new Map(p.nodes.map((n) => [n.id, n]));
-    const parentOf = /* @__PURE__ */ new Map();
-    for (const e of [...p.edges].sort((a, b) => a.id < b.id ? -1 : 1)) {
-      const dst = byId.get(e.dst);
-      const src = byId.get(e.src);
-      if (!dst || !src || !isRiskKind(dst.kind) || parentOf.has(dst.id)) continue;
-      parentOf.set(dst.id, src);
-    }
-    for (const s of p.summaries) {
-      const parent = byId.get(s.parentId);
-      if (parent) parentOf.set(s.id, parent);
-    }
-    return parentOf;
-  }
-  function adjacency(p) {
-    const adj = /* @__PURE__ */ new Map();
-    for (const e of [...p.edges].sort((a, b) => a.id < b.id ? -1 : 1)) {
-      if (!adj.has(e.src)) adj.set(e.src, []);
-      if (!adj.has(e.dst)) adj.set(e.dst, []);
-      adj.get(e.src).push(e.dst);
-      adj.get(e.dst).push(e.src);
-    }
-    return adj;
-  }
-  function hopDepth(p) {
-    var _a5, _b, _c;
-    const { hubs } = assignToHubs(p, parentIndex(p));
-    const root = (_b = (_a5 = hubs[0]) != null ? _a5 : p.nodes[0]) != null ? _b : null;
-    const depth = /* @__PURE__ */ new Map();
-    if (!root) return { depth, root: null, max: 0 };
-    const adj = adjacency(p);
-    depth.set(root.id, 0);
-    const queue = [root.id];
-    let max = 0;
-    for (let head = 0; head < queue.length; head++) {
-      const id = queue[head];
-      const d = depth.get(id) + 1;
-      for (const next of (_c = adj.get(id)) != null ? _c : []) {
-        if (depth.has(next)) continue;
-        depth.set(next, d);
-        max = Math.max(max, d);
-        queue.push(next);
-      }
-    }
-    const orphanRing = max + 1;
-    let used = max;
-    for (const n of p.nodes) {
-      if (depth.has(n.id)) continue;
-      depth.set(n.id, orphanRing);
-      used = orphanRing;
-    }
-    return { depth, root, max: used };
-  }
-  function componentRoots(p) {
-    const parent = /* @__PURE__ */ new Map();
-    for (const n of p.nodes) parent.set(n.id, n.id);
-    const find = (x) => {
-      let root = x;
-      while (parent.get(root) !== root) root = parent.get(root);
-      while (parent.get(x) !== root) {
-        const next = parent.get(x);
-        parent.set(x, root);
-        x = next;
-      }
-      return root;
-    };
-    for (const e of [...p.edges].sort((a, b) => a.id < b.id ? -1 : 1)) {
-      if (!parent.has(e.src) || !parent.has(e.dst)) continue;
-      const a = find(e.src);
-      const b = find(e.dst);
-      if (a !== b) parent.set(a, b);
-    }
-    const roots = /* @__PURE__ */ new Map();
-    for (const n of p.nodes) roots.set(n.id, find(n.id));
-    return roots;
-  }
-  function clusterRanks(p) {
-    var _a5, _b, _c, _d, _e, _f, _g;
-    const { hubOf } = assignToHubs(p, parentIndex(p));
-    const roots = componentRoots(p);
-    const degree = /* @__PURE__ */ new Map();
-    for (const e of p.edges) {
-      degree.set(e.src, ((_a5 = degree.get(e.src)) != null ? _a5 : 0) + 1);
-      degree.set(e.dst, ((_b = degree.get(e.dst)) != null ? _b : 0) + 1);
-    }
-    const keyOf = /* @__PURE__ */ new Map();
-    for (const node2 of p.nodes) {
-      keyOf.set(node2.id, (_c = hubOf.get(node2.id)) != null ? _c : "cc:" + roots.get(node2.id));
-    }
-    const sharedEdges = (key) => {
-      var _a6, _b2;
-      const out = /* @__PURE__ */ new Map();
-      for (const e of [...p.edges].sort((a, b) => a.id < b.id ? -1 : 1)) {
-        const a = key(e.src);
-        const b = key(e.dst);
-        if (!a || !b || a === b) continue;
-        if (!out.has(a)) out.set(a, /* @__PURE__ */ new Map());
-        if (!out.has(b)) out.set(b, /* @__PURE__ */ new Map());
-        out.get(a).set(b, ((_a6 = out.get(a).get(b)) != null ? _a6 : 0) + 1);
-        out.get(b).set(a, ((_b2 = out.get(b).get(a)) != null ? _b2 : 0) + 1);
-      }
-      return out;
-    };
-    const merged = new Map([...keyOf.values()].map((k) => [k, k]));
-    const resolve = (k) => {
-      let root = k;
-      while (merged.get(root) !== root) root = merged.get(root);
-      return root;
-    };
-    const groupBy2 = (key) => {
-      const out = /* @__PURE__ */ new Map();
-      for (const node2 of p.nodes) {
-        const k = key(node2.id);
-        if (!out.has(k)) out.set(k, []);
-        out.get(k).push(node2);
-      }
-      return out;
-    };
-    const initial = groupBy2((id) => keyOf.get(id));
-    const initialShared = sharedEdges((id) => keyOf.get(id));
-    for (const key of [...initial.keys()].sort()) {
-      const list2 = initial.get(key);
-      if (list2.length !== 1 || !((_d = degree.get(list2[0].id)) != null ? _d : 0)) continue;
-      let best = 0;
-      let target = "";
-      for (const [other, weight] of [...(_e = initialShared.get(key)) != null ? _e : /* @__PURE__ */ new Map()].sort()) {
-        if (resolve(other) === resolve(key) || weight <= best) continue;
-        best = weight;
-        target = other;
-      }
-      if (target) merged.set(resolve(key), resolve(target));
-    }
-    const finalKey = (id) => resolve(keyOf.get(id));
-    const members = groupBy2(finalKey);
-    const shared = sharedEdges(finalKey);
-    const worst = (key) => {
-      var _a6;
-      let rank = SEVERITY_ORDER.length;
-      for (const n of (_a6 = members.get(key)) != null ? _a6 : []) rank = Math.min(rank, severityRank(n.severity));
-      return rank;
-    };
-    const keys = [...members.keys()].filter((k) => members.get(k).length > 1).sort((a, b) => worst(a) - worst(b) || members.get(b).length - members.get(a).length || (a < b ? -1 : a > b ? 1 : 0));
-    const chain = [];
-    const unplaced = new Set(keys);
-    while (unplaced.size) {
-      let pick2 = "";
-      let anchor = chain.length - 1;
-      let best = 0;
-      for (const k of keys) {
-        if (!unplaced.has(k)) continue;
-        const links = shared.get(k);
-        if (!links) continue;
-        for (let i = 0; i < chain.length; i++) {
-          const weight = (_f = links.get(chain[i])) != null ? _f : 0;
-          if (weight > best) {
-            best = weight;
-            pick2 = k;
-            anchor = i;
-          }
-        }
-      }
-      if (!pick2) {
-        pick2 = keys.find((k) => unplaced.has(k));
-        anchor = chain.length - 1;
-      }
-      chain.splice(anchor + 1, 0, pick2);
-      unplaced.delete(pick2);
-    }
-    const rankOfKey = new Map(chain.map((k, i) => [k, i]));
-    const tail = chain.length;
-    const ranks = /* @__PURE__ */ new Map();
-    for (const node2 of p.nodes) {
-      ranks.set(node2.id, (_g = rankOfKey.get(finalKey(node2.id))) != null ? _g : tail);
-    }
-    return ranks;
-  }
-  function packLanes(lanes, rankOf, step, gap2, bandSpan, shelfGap, pad, horizontal) {
-    var _a5, _b, _c, _d, _e;
-    const pos = /* @__PURE__ */ new Map();
-    const shelfOf = /* @__PURE__ */ new Map();
-    if (!rankOf) {
-      const widest = Math.max(1, ...lanes.map((l) => l.length));
-      for (const lane of lanes) {
-        const offset = (widest - lane.length) * step / 2;
-        lane.forEach((id, i) => {
-          pos.set(id, offset + i * step);
-          shelfOf.set(id, 0);
-        });
-      }
-      return { pos, shelfOf, extent: (widest - 1) * step, shelves: 1 };
-    }
-    const slots = /* @__PURE__ */ new Map();
-    for (const lane of lanes) {
-      const perRank = /* @__PURE__ */ new Map();
-      for (const id of lane) {
-        const r = (_a5 = rankOf.get(id)) != null ? _a5 : 0;
-        perRank.set(r, ((_b = perRank.get(r)) != null ? _b : 0) + 1);
-      }
-      for (const [r, count2] of perRank) slots.set(r, Math.max((_c = slots.get(r)) != null ? _c : 0, count2));
-    }
-    const ranks = [...slots.keys()].sort((a, b) => a - b);
-    if (!ranks.length) return { pos, shelfOf, extent: 0, shelves: 1 };
-    const runLength = ranks.reduce((acc, r) => acc + slots.get(r) * step + gap2, 0) - gap2;
-    let best = null;
-    let bestFit = 0;
-    let cumulative = 0;
-    for (let i = 0; i < ranks.length; i++) {
-      cumulative += slots.get(ranks[i]) * step + (i ? gap2 : 0);
-      const plan = wrapRun(ranks, slots, step, gap2, cumulative);
-      const along = plan.longest + pad;
-      const across = (plan.shelves - 1) * (bandSpan + shelfGap) + bandSpan + pad;
-      const fit = horizontal ? Math.min(VIEWPORT_ASPECT / along, 1 / across) : Math.min(VIEWPORT_ASPECT / across, 1 / along);
-      if (fit > bestFit * (1 + 1e-9)) {
-        bestFit = fit;
-        best = plan;
-      }
-    }
-    const { start, shelfOfRank } = best;
-    const shelf = best.shelves - 1;
-    let extent = 0;
-    for (const lane of lanes) {
-      let i = 0;
-      while (i < lane.length) {
-        const r = (_d = rankOf.get(lane[i])) != null ? _d : 0;
-        let j = i;
-        while (j < lane.length && ((_e = rankOf.get(lane[j])) != null ? _e : 0) === r) j++;
-        const offset = start.get(r) + (slots.get(r) - (j - i)) * step / 2;
-        for (let k = i; k < j; k++) {
-          const at = offset + (k - i) * step;
-          pos.set(lane[k], at);
-          shelfOf.set(lane[k], shelfOfRank.get(r));
-          extent = Math.max(extent, at);
-        }
-        i = j;
-      }
-    }
-    return { pos, shelfOf, extent, shelves: shelf + 1 };
-  }
-  function wrapRun(ranks, slots, step, gap2, target) {
-    const start = /* @__PURE__ */ new Map();
-    const shelfOfRank = /* @__PURE__ */ new Map();
-    let shelf = 0;
-    let cursor = 0;
-    let longest = 0;
-    for (const r of ranks) {
-      const length = slots.get(r) * step;
-      if (cursor > 0 && cursor + length > target) {
-        shelf++;
-        cursor = 0;
-      }
-      shelfOfRank.set(r, shelf);
-      start.set(r, cursor);
-      cursor += length + gap2;
-      longest = Math.max(longest, cursor - gap2);
-    }
-    return { start, shelfOfRank, shelves: shelf + 1, longest };
-  }
-  function layoutGraph(p, opts = {}) {
-    var _a5, _b;
-    const laid = ((_a5 = opts.groupBy) != null ? _a5 : []).length ? layoutGrouped(p, opts) : layoutWhole(p, opts, (_b = opts.mode) != null ? _b : DEFAULT_LAYOUT);
-    const clusters = clusterHulls(p, laid);
-    return clusters.length ? { ...laid, clusters } : laid;
-  }
-  function layoutWhole(p, opts, mode) {
-    if (mode === "radial") return layoutRadial(p, opts);
-    if (mode === "organic") return layoutOrganic(p, opts);
-    if (mode === "grid") return layoutGrid(p, opts);
-    return layoutLanes(p, opts, mode !== "lanes");
-  }
-  function layoutLanes(p, opts, horizontal) {
-    var _a5, _b, _c, _d, _e, _f;
-    const laneGap = (_a5 = opts.laneGap) != null ? _a5 : 280;
-    const rowGap = (_b = opts.rowGap) != null ? _b : 84;
-    const margin = (_c = opts.margin) != null ? _c : 120;
-    const sort = (_d = opts.sort) != null ? _d : "smart";
-    const lanes = Array.from({ length: LANE_COUNT }, () => []);
-    const laneIndex = /* @__PURE__ */ new Map();
-    for (const node2 of p.nodes) {
-      const lane = laneOf(node2.kind, node2.summaryOf);
-      laneIndex.set(node2.id, lane);
-      lanes[lane].push(node2.id);
-    }
-    if (sort === "smart") {
-      const neighbors = /* @__PURE__ */ new Map();
-      for (const edge2 of p.edges) {
-        if (!neighbors.has(edge2.src)) neighbors.set(edge2.src, []);
-        if (!neighbors.has(edge2.dst)) neighbors.set(edge2.dst, []);
-        neighbors.get(edge2.src).push(edge2.dst);
-        neighbors.get(edge2.dst).push(edge2.src);
-      }
-      const rowOf = /* @__PURE__ */ new Map();
-      const refreshRows = () => {
-        for (const lane of lanes) lane.forEach((id, i) => rowOf.set(id, i));
-      };
-      refreshRows();
-      for (let sweep = 0; sweep < BARYCENTER_SWEEPS; sweep++) {
-        for (const lane of lanes) {
-          if (lane.length < 2) continue;
-          const score = /* @__PURE__ */ new Map();
-          for (const id of lane) {
-            const others = ((_e = neighbors.get(id)) != null ? _e : []).filter(
-              (n) => laneIndex.get(n) !== laneIndex.get(id) && rowOf.has(n)
-            );
-            score.set(
-              id,
-              others.length ? others.reduce((acc, n) => {
-                var _a6;
-                return acc + ((_a6 = rowOf.get(n)) != null ? _a6 : 0);
-              }, 0) / others.length : (_f = rowOf.get(id)) != null ? _f : 0
-            );
-          }
-          lane.sort((a, b) => {
-            var _a6, _b2, _c2, _d2;
-            const d = ((_a6 = score.get(a)) != null ? _a6 : 0) - ((_b2 = score.get(b)) != null ? _b2 : 0);
-            if (d !== 0) return d;
-            return ((_c2 = rowOf.get(a)) != null ? _c2 : 0) - ((_d2 = rowOf.get(b)) != null ? _d2 : 0);
-          });
-          refreshRows();
-        }
-      }
-    } else {
-      const byId = new Map(p.nodes.map((n) => [n.id, n]));
-      const cmp2 = comparator(sort);
-      for (const lane of lanes) {
-        lane.sort((a, b) => cmp2(byId.get(a), byId.get(b)));
-      }
-    }
-    const rankOf = sort === "smart" ? clusterRanks(p) : null;
-    if (rankOf) {
-      for (const lane of lanes) {
-        lane.sort((a, b) => {
-          var _a6, _b2;
-          return ((_a6 = rankOf.get(a)) != null ? _a6 : 0) - ((_b2 = rankOf.get(b)) != null ? _b2 : 0);
-        });
-      }
-    }
-    const step = horizontal ? ROW_COL_STEP : rowGap;
-    const gap2 = horizontal ? ROW_CLUSTER_GAP : LANE_CLUSTER_GAP;
-    const bandGap = horizontal ? ROW_BAND_GAP : laneGap;
-    const occupied = lanes.map((lane, i) => lane.length ? i : -1).filter((i) => i >= 0);
-    const slotOfBand = (i) => opts.compactBands ? occupied.indexOf(i) : i;
-    const bandCount = opts.compactBands ? Math.max(occupied.length, 1) : LANE_COUNT;
-    const bandSpan = (bandCount - 1) * bandGap;
-    const shelfPitch = bandSpan + (horizontal ? ROW_SHELF_GAP : LANE_SHELF_GAP);
-    const { pos, shelfOf, extent, shelves } = packLanes(
-      lanes,
-      rankOf,
-      step,
-      rankOf ? gap2 : 0,
-      bandSpan,
-      horizontal ? ROW_SHELF_GAP : LANE_SHELF_GAP,
-      margin * 2,
-      horizontal
-    );
-    const nodes = [];
-    for (let shelf = 0; shelf < shelves; shelf++) {
-      lanes.forEach((lane, laneIdx) => {
-        for (const id of lane) {
-          if (shelfOf.get(id) !== shelf) continue;
-          const along = margin + pos.get(id);
-          const across = margin + shelf * shelfPitch + slotOfBand(laneIdx) * bandGap;
-          nodes.push({
-            id,
-            lane: laneIdx,
-            cluster: rankOf == null ? void 0 : rankOf.get(id),
-            shelf: shelves > 1 ? shelf : void 0,
-            x: horizontal ? along : across,
-            y: horizontal ? across : along
-          });
-        }
-      });
-    }
-    const alongSize = margin * 2 + extent;
-    const acrossSize = margin * 2 + (shelves - 1) * shelfPitch + bandSpan;
-    return horizontal ? {
-      nodes,
-      width: alongSize,
-      height: acrossSize,
-      laneGap: ROW_BAND_GAP,
-      rowGap: ROW_COL_STEP,
-      mode: "rows"
-    } : {
-      nodes,
-      width: acrossSize,
-      height: alongSize,
-      laneGap,
-      rowGap,
-      mode: "lanes"
-    };
-  }
-  function groupKeyOf(node2, groupBy2, parentOf) {
-    if ((node2.kind === "SUMMARY" || isRiskKind(node2.kind)) && groupBy2 !== "kind") {
-      const own = ownGroupKey(node2, groupBy2);
-      if (own !== GROUP_NONE) return own;
-      const parent = parentOf.get(node2.id);
-      return parent ? groupKeyOf(parent, groupBy2, parentOf) : GROUP_NONE;
-    }
-    return ownGroupKey(node2, groupBy2);
-  }
-  function ownGroupKey(node2, groupBy2) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h;
-    switch (groupBy2) {
-      case "combo": {
-        const groups = [...(_a5 = node2.comboGroups) != null ? _a5 : []].sort();
-        return (_b = groups[0]) != null ? _b : GROUP_NONE;
-      }
-      case "project": {
-        const names = ((_c = node2.projects) != null ? _c : []).map((p) => p.name).sort();
-        return (_d = names[0]) != null ? _d : GROUP_NONE;
-      }
-      case "cloud":
-        return (_e = node2.cloudPlatform) != null ? _e : GROUP_NONE;
-      case "kind":
-        return node2.kind === "SUMMARY" ? (_f = node2.summaryOf) != null ? _f : "SUMMARY" : node2.kind;
-      case "severity":
-        return (_g = node2.severity) != null ? _g : GROUP_NONE;
-      case "domain":
-        return (_h = node2.domain) != null ? _h : GROUP_NONE;
-      case "asset":
-        return GROUP_NONE;
-    }
-  }
-  function groupLabel(key, groupBy2) {
-    var _a5, _b;
-    if (key === GROUP_NONE) return "Ungrouped";
-    if (groupBy2 === "combo") return (_b = (_a5 = comboGroupById(key)) == null ? void 0 : _a5.shortLabel) != null ? _b : key;
-    return key;
-  }
-  function orderGroups(keys, groupBy2, members) {
-    const canonical = (key) => {
-      if (groupBy2 === "severity") return SEVERITY_ORDER.indexOf(key);
-      if (groupBy2 === "kind") return NODE_KINDS.indexOf(key);
-      if (groupBy2 === "combo") return REGISTER_GROUPS.findIndex((g) => g.id === key);
-      return -1;
-    };
-    const worstSeverity2 = (key) => {
-      var _a5;
-      let worst = SEVERITY_ORDER.length;
-      for (const n of (_a5 = members.get(key)) != null ? _a5 : []) worst = Math.min(worst, severityRank(n.severity));
-      return worst;
-    };
-    return [...keys].sort((a, b) => {
-      if (a === GROUP_NONE) return b === GROUP_NONE ? 0 : 1;
-      if (b === GROUP_NONE) return -1;
-      const ca = canonical(a);
-      const cb = canonical(b);
-      if (ca !== -1 || cb !== -1) {
-        if (ca === -1) return 1;
-        if (cb === -1) return -1;
-        return ca - cb;
-      }
-      return worstSeverity2(a) - worstSeverity2(b) || (a < b ? -1 : a > b ? 1 : 0);
-    });
-  }
-  var RING_CAP = 8;
-  var RING_RX = 300;
-  var RING_RY = 150;
-  function round2(v) {
-    return Math.round(v * 100) / 100;
-  }
-  function packBlocks(specs, wrapW, origin, gap2 = { x: BLOCK_GAP_X, y: BLOCK_GAP_Y }) {
-    const at = [];
-    let shelfX = origin;
-    let shelfY = origin;
-    let shelfH = 0;
-    let maxX = 0;
-    for (const spec of specs) {
-      if (shelfX > origin && shelfX + spec.width > origin + wrapW) {
-        shelfY += shelfH + gap2.y;
-        shelfX = origin;
-        shelfH = 0;
-      }
-      at.push({ spec, x: shelfX, y: shelfY });
-      shelfX += spec.width + gap2.x;
-      shelfH = Math.max(shelfH, spec.height);
-      maxX = Math.max(maxX, at[at.length - 1].x + spec.width);
-    }
-    return { at, width: maxX, height: shelfY + shelfH };
-  }
-  function shelfWidth(specs, floor) {
-    const area = specs.reduce(
-      (acc, s) => acc + (s.width + BLOCK_GAP_X) * (s.height + BLOCK_GAP_Y),
-      0
-    );
-    return Math.max(floor, Math.ceil(Math.sqrt(area * 1.8)));
-  }
-  function nestBlock(key, label, children) {
-    const inset = HEADER_H + GROUP_PAD;
-    const packed = packBlocks(children, shelfWidth(children, 900), inset);
-    const cells = [];
-    const subs = [];
-    for (const place of packed.at) {
-      for (const c of place.spec.cells) {
-        cells.push({ id: c.id, x: place.x + c.x, y: place.y + c.y });
-      }
-      subs.push({
-        key: place.spec.key,
-        label: place.spec.label,
-        count: place.spec.cells.length,
-        x: place.x,
-        y: place.y,
-        width: place.spec.width,
-        height: place.spec.height
-      });
-    }
-    return {
-      key,
-      label,
-      cells,
-      subs,
-      width: packed.width + GROUP_PAD,
-      height: packed.height + GROUP_PAD
-    };
-  }
-  function subProjection(p, list2) {
-    const ids = new Set(list2.map((n) => n.id));
-    return {
-      nodes: list2,
-      edges: p.edges.filter((e) => ids.has(e.src) && ids.has(e.dst)),
-      summaries: p.summaries.filter((s) => ids.has(s.id)),
-      counts: p.counts
-    };
-  }
-  function blockOf(key, label, layout) {
-    const pts = layout.nodes;
-    const minX = Math.min(...pts.map((n) => n.x));
-    const minY = Math.min(...pts.map((n) => n.y));
-    const maxX = Math.max(...pts.map((n) => n.x));
-    const maxY = Math.max(...pts.map((n) => n.y));
-    const originX = GROUP_PAD + CELL_W / 2;
-    const originY = HEADER_H + GROUP_PAD + CELL_H / 2;
-    return {
-      key,
-      label,
-      width: GROUP_PAD * 2 + CELL_W + (maxX - minX),
-      height: HEADER_H + GROUP_PAD * 2 + CELL_H + (maxY - minY),
-      cells: pts.map((n) => ({
-        id: n.id,
-        x: round2(originX + n.x - minX),
-        y: round2(originY + n.y - minY)
-      }))
-    };
-  }
-  function blockFor(mode, key, label, list2, p, opts, hub) {
-    var _a5;
-    if (!list2.length) return gridBlock(key, label, list2);
-    if (mode === "grid") {
-      if (((_a5 = opts.sort) != null ? _a5 : "smart") !== "smart") return gridBlock(key, label, list2);
-      const packed = packClusters(list2, componentRoots(p), { columns: 4, width: 4 * CELL_W });
-      return {
-        key,
-        label,
-        width: GROUP_PAD * 2 + packed.width,
-        height: HEADER_H + GROUP_PAD * 2 + packed.height,
-        cells: packed.cells.map((c) => ({
-          id: c.id,
-          x: round2(GROUP_PAD + c.x),
-          y: round2(HEADER_H + GROUP_PAD + c.y)
-        }))
-      };
-    }
-    if (mode === "radial") {
-      const centre = hub != null ? hub : list2[0];
-      return radialBlock(key, label, centre, list2.filter((n) => n.id !== centre.id));
-    }
-    const sub = subProjection(p, list2);
-    const inner = { ...opts, margin: 0, groupBy: [], compactBands: true };
-    return blockOf(key, label, layoutWhole(sub, inner, mode));
-  }
-  function gridColumns(n) {
-    return Math.max(1, Math.min(n, Math.round(Math.sqrt(VIEWPORT_ASPECT * CELL_H * n / CELL_W))));
-  }
-  function gridBlock(key, label, list2, opts = {}) {
-    var _a5;
-    const cols = (_a5 = opts.columns) != null ? _a5 : Math.min(4, Math.max(1, Math.ceil(Math.sqrt(list2.length))));
-    const rows = Math.ceil(list2.length / cols);
-    const pad = opts.chrome === false ? 0 : GROUP_PAD;
-    const header = opts.chrome === false ? 0 : HEADER_H;
-    return {
-      key,
-      label,
-      width: pad * 2 + cols * CELL_W,
-      height: header + pad * 2 + rows * CELL_H,
-      cells: list2.map((node2, i) => ({
-        id: node2.id,
-        x: pad + i % cols * CELL_W + CELL_W / 2,
-        y: header + pad + Math.floor(i / cols) * CELL_H + CELL_H / 2
-      }))
-    };
-  }
-  function packClusters(sorted, roots, limit = {}) {
-    var _a5, _b;
-    if (!sorted.length) return { cells: [], width: 0, height: 0 };
-    const runs = /* @__PURE__ */ new Map();
-    for (const node2 of sorted) {
-      const root = (_a5 = roots.get(node2.id)) != null ? _a5 : node2.id;
-      if (!runs.has(root)) runs.set(root, []);
-      runs.get(root).push(node2);
-    }
-    const members = [];
-    const lone = [];
-    for (const [root, list2] of runs) {
-      if (list2.length < 2) lone.push(...list2);
-      else members.push([root, list2]);
-    }
-    if (lone.length) members.push(["", lone]);
-    const shaped = (rows) => members.map(([root, list2]) => {
-      var _a6;
-      return gridBlock(
-        root,
-        "",
-        list2,
-        {
-          columns: Math.max(1, Math.min((_a6 = limit.columns) != null ? _a6 : Infinity, Math.ceil(list2.length / rows))),
-          chrome: false
-        }
-      );
-    });
-    let best = null;
-    let bestFit = 0;
-    const deepest = Math.max(...members.map(([, list2]) => list2.length));
-    for (let rows = 1; rows <= Math.min(deepest, MAX_CLUSTER_ROWS); rows++) {
-      const specs = shaped(rows);
-      const widths = [];
-      let run2 = 0;
-      for (const spec of specs) {
-        run2 += spec.width + CLUSTER_GAP_X;
-        const width = run2 - CLUSTER_GAP_X;
-        if (!limit.width || width <= limit.width) widths.push(width);
-      }
-      if (!widths.length) widths.push((_b = limit.width) != null ? _b : specs[0].width);
-      for (const width of widths) {
-        const packed = packBlocks(specs, width, 0, { x: CLUSTER_GAP_X, y: CLUSTER_GAP_Y });
-        const fit = Math.min(VIEWPORT_ASPECT / packed.width, 1 / packed.height);
-        if (fit > bestFit * (1 + 1e-9)) {
-          bestFit = fit;
-          best = packed;
-        }
-      }
-    }
-    const cells = [];
-    for (const place of best.at) {
-      for (const c of place.spec.cells) {
-        cells.push({ id: c.id, x: round2(place.x + c.x), y: round2(place.y + c.y) });
-      }
-    }
-    return { cells, width: best.width, height: best.height };
-  }
-  function radialBlock(key, label, hub, satellites) {
-    const rings = [];
-    for (let i = 0, ring = 1; i < satellites.length; ring++) {
-      rings.push(satellites.slice(i, i + RING_CAP * ring));
-      i += RING_CAP * ring;
-    }
-    const n = rings.length;
-    const halfW = RING_RX * n + CELL_W / 2;
-    const halfH = RING_RY * n + CELL_H / 2;
-    const width = GROUP_PAD * 2 + halfW * 2;
-    const height = HEADER_H + GROUP_PAD * 2 + halfH * 2;
-    const cx = width / 2;
-    const cy = HEADER_H + GROUP_PAD + halfH;
-    const cells = [{ id: hub.id, x: cx, y: cy }];
-    rings.forEach((ringNodes, ri) => {
-      const rx = RING_RX * (ri + 1);
-      const ry = RING_RY * (ri + 1);
-      const step = Math.PI * 2 / ringNodes.length;
-      ringNodes.forEach((node2, k) => {
-        const a = -Math.PI / 2 + k * step;
-        cells.push({
-          id: node2.id,
-          x: round2(cx + rx * Math.cos(a)),
-          y: round2(cy + ry * Math.sin(a))
-        });
-      });
-    });
-    return { key, label, width, height, cells };
-  }
-  function assignToHubs(p, parentOf) {
-    var _a5;
-    const cmp2 = (a, b) => nodeOrder(a, b) || cmpId(a, b);
-    let hubs = p.nodes.filter((n) => n.kind === "AI_AGENT");
-    if (!hubs.length) {
-      hubs = p.nodes.filter((n) => AI_ASSET_KINDS.includes(n.kind));
-    }
-    hubs = [...hubs].sort(cmp2);
-    const adj = adjacency(p);
-    const hubOf = /* @__PURE__ */ new Map();
-    const queue = [];
-    for (const h of hubs) {
-      hubOf.set(h.id, h.id);
-      queue.push(h.id);
-    }
-    while (queue.length) {
-      const id = queue.shift();
-      for (const next of (_a5 = adj.get(id)) != null ? _a5 : []) {
-        if (hubOf.has(next)) continue;
-        hubOf.set(next, hubOf.get(id));
-        queue.push(next);
-      }
-    }
-    for (const [childId, parent] of parentOf) {
-      const h = hubOf.get(parent.id);
-      if (h) hubOf.set(childId, h);
-    }
-    return { hubOf, hubs };
-  }
-  function layoutGrouped(p, opts) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h;
-    const margin = (_a5 = opts.margin) != null ? _a5 : 120;
-    const levels = (_b = opts.groupBy) != null ? _b : [];
-    const groupBy2 = levels[0];
-    const second = (_c = levels[1]) != null ? _c : null;
-    const inner = groupBy2 === "asset" || second === "asset" || second === groupBy2 ? null : second;
-    const sort = (_d = opts.sort) != null ? _d : "smart";
-    const mode = (_e = opts.mode) != null ? _e : DEFAULT_LAYOUT;
-    const parentOf = parentIndex(p);
-    const cmp2 = memberOrder(p, sort);
-    const block = (key, label, list2, hub) => blockFor(mode, key, label, [...list2].sort(cmp2), p, opts, hub);
-    const specs = [];
-    if (groupBy2 === "asset") {
-      const { hubOf, hubs } = assignToHubs(p, parentOf);
-      const members = new Map(hubs.map((h) => [h.id, []]));
-      const strays = [];
-      for (const node2 of p.nodes) {
-        const key = hubOf.get(node2.id);
-        if (key) members.get(key).push(node2);
-        else strays.push(node2);
-      }
-      for (const hub of hubs) specs.push(block(hub.id, hub.name, members.get(hub.id), hub));
-      if (strays.length) specs.push(block(GROUP_NONE, "Ungrouped", strays));
-    } else {
-      const members = /* @__PURE__ */ new Map();
-      for (const node2 of p.nodes) {
-        const key = groupKeyOf(node2, groupBy2, parentOf);
-        if (!members.has(key)) members.set(key, []);
-        members.get(key).push(node2);
-      }
-      for (const key of orderGroups([...members.keys()], groupBy2, members)) {
-        const list2 = members.get(key);
-        const label = groupLabel(key, groupBy2);
-        if (!inner) {
-          specs.push(block(key, label, list2));
-          continue;
-        }
-        const subs = /* @__PURE__ */ new Map();
-        for (const node2 of list2) {
-          const k2 = groupKeyOf(node2, inner, parentOf);
-          if (!subs.has(k2)) subs.set(k2, []);
-          subs.get(k2).push(node2);
-        }
-        const children = orderGroups([...subs.keys()], inner, subs).map((k2) => block(k2, groupLabel(k2, inner), subs.get(k2)));
-        specs.push(nestBlock(key, label, children));
-      }
-    }
-    const packed = packBlocks(specs, shelfWidth(specs, MAX_SHELF_W), margin);
-    const nodes = [];
-    const groups = [];
-    for (const { spec, x: gx, y: gy } of packed.at) {
-      const parentIdx = groups.length;
-      groups.push({
-        id: `${groupBy2}:${spec.key}`,
-        key: spec.key,
-        label: spec.label,
-        x: gx,
-        y: gy,
-        width: spec.width,
-        height: spec.height,
-        count: spec.cells.length,
-        by: groupBy2,
-        depth: 0
-      });
-      for (const sub of (_f = spec.subs) != null ? _f : []) {
-        groups.push({
-          id: `${groupBy2}:${spec.key}/${inner}:${sub.key}`,
-          key: sub.key,
-          label: sub.label,
-          x: gx + sub.x,
-          y: gy + sub.y,
-          width: sub.width,
-          height: sub.height,
-          count: sub.count,
-          by: inner,
-          depth: 1,
-          parent: parentIdx
-        });
-      }
-      for (const c of spec.cells) {
-        const px = gx + c.x;
-        const py = gy + c.y;
-        let lane = parentIdx;
-        for (let i = 0; i < ((_h = (_g = spec.subs) == null ? void 0 : _g.length) != null ? _h : 0); i++) {
-          const sub = spec.subs[i];
-          if (c.x >= sub.x && c.x <= sub.x + sub.width && c.y >= sub.y && c.y <= sub.y + sub.height) {
-            lane = parentIdx + 1 + i;
-            break;
-          }
-        }
-        nodes.push({ id: c.id, lane, x: px, y: py });
-      }
-    }
-    return {
-      nodes,
-      width: packed.width + margin,
-      height: packed.height + margin,
-      laneGap: CELL_W,
-      rowGap: CELL_H,
-      // The ARRANGEMENT, which is what `mode` means everywhere now — a grouped layout used to
-      // report "grouped" and swallow the arrangement with it. `groups` being present is what says
-      // this picture is grouped, and the renderer reads it that way.
-      mode,
-      groups
-    };
-  }
-  function layoutGrid(p, opts) {
-    var _a5, _b;
-    const margin = (_a5 = opts.margin) != null ? _a5 : 120;
-    const sort = (_b = opts.sort) != null ? _b : "smart";
-    const cmp2 = memberOrder(p, sort);
-    const sorted = [...p.nodes].sort(cmp2);
-    const packed = sort === "smart" ? packClusters(sorted, componentRoots(p)) : gridBlock("", "", sorted, { columns: gridColumns(sorted.length), chrome: false });
-    const rows = [...new Set(packed.cells.map((c) => c.y))].sort((a, b) => a - b);
-    return {
-      nodes: packed.cells.map((c) => ({
-        id: c.id,
-        x: round2(margin + c.x),
-        y: round2(margin + c.y),
-        lane: rows.indexOf(c.y)
+      {
+        id: "INVENTORY_AI",
+        area: "aispm",
+        writes: ["ai_assets"],
+        run: "cloudResources",
+        query: Q_AI_INVENTORY,
+        extraVariables: vars("INVENTORY_AI", aiInventoryVariables(types, projectScope())),
+        normalize: normalizeInventoryPage,
+        pageSize: PAGE_SIZE_WIDE
+      },
+      // Toxic-combination issues, from issuesV2 and from nowhere else.
+      //
+      // THERE USED TO BE FOUR MORE STEPS HERE, one per combo rule, walking cloudResourcesV2
+      // for the assets carrying an issue for that rule and RECONSTRUCTING an issue row per
+      // asset. They were a stand-in from before issuesV2 was wired, and they are gone because
+      // `ai_issues` is meant to be exactly what Wiz returned — a reconstruction can only ever
+      // add rows issuesV2 did not have, which is the one thing this tab must not do.
+      //
+      // They also never worked. Every one was rejected on every sync (three wrong field names
+      // in one filter), and repairing that in 4da48ae exposed a second defect the failure had
+      // been hiding: they carried no `projectScope()`, so they collected TENANT-WIDE against a
+      // project-scoped register — 797 rows and 617 assets where the scope holds 99 issues.
+      {
+        id: "ISSUES_TOXIC",
+        area: "toxic",
+        writes: ["ai_issues", "ai_assets"],
+        run: "connection",
+        connectionField: "issuesV2",
+        query: Q_ISSUES,
+        extraVariables: vars("ISSUES_TOXIC", aiIssuesVariables(projectScope())),
+        normalize: normalizeIssuesPage,
+        optional: true
+      },
+      // The rest of the selected risk categories — ONE STEP PER CATEGORY, generated the way
+      // the posture steps below are, so the budget/resume machinery needs no special case.
+      //
+      // WHY NOT ONE STEP WITH SIX IDS IN ITS FILTER. Nothing in an issue says which category
+      // matched it (AARS_LIVE_MEASUREMENTS.md §6.8: `Issue` has 51 fields and not one names a
+      // category), so a filter naming six categories returns rows that cannot be stamped —
+      // and the stamp is the only thing standing between "the AI register" and "every issue
+      // in the project" once the list is widened. One step per category means the step's own
+      // id says what its rows are, and its normalizer writes that onto every row it returns.
+      //
+      // ISSUES_TOXIC keeps its id and its own default category rather than being folded into
+      // this family: it is the step every stored override, every scan-area assertion and the
+      // whole toxic-combinations area is keyed on, and renaming it would silently orphan them.
+      ...categoryIds.filter((id) => id !== RISK_CATEGORY_ID).map((categoryId) => ({
+        id: `ISSUES_CAT_${categoryId}`,
+        area: "toxic",
+        writes: ["ai_issues", "ai_assets"],
+        run: "connection",
+        connectionField: "issuesV2",
+        query: Q_ISSUES,
+        // No `vars()` indirection, exactly as the posture family has none: these steps are
+        // LOCKED, overrides are stored per step id, so a shared "ISSUES_CAT_" key would be
+        // an override slot nothing could ever write to.
+        extraVariables: aiIssuesVariables(projectScope(), [categoryId]),
+        // The stamp. Closed over the category this step was generated for, the way the
+        // per-rule steps closed over their group — it is the one place the fact survives.
+        normalize: (rows) => normalizeIssuesPage(rows, categoryId),
+        optional: true
       })),
-      width: round2(margin * 2 + packed.width),
-      height: round2(margin * 2 + packed.height),
-      laneGap: CELL_W,
-      rowGap: CELL_H,
-      mode: "grid"
-    };
-  }
-  var FREE_W = CELL_W;
-  var FREE_H = CELL_H;
-  var RING_STEP = 220;
-  var FR_PAIR_BUDGET = 6e3;
-  var FR_MIN_STEPS = 30;
-  var FR_MAX_STEPS = 120;
-  var FR_GRAVITY = 0.06;
-  var FR_COHESION = 0.1;
-  var SEPARATE_PASSES = 24;
-  function layoutRadial(p, opts) {
-    var _a5, _b, _c, _d;
-    const margin = (_a5 = opts.margin) != null ? _a5 : 120;
-    const cmp2 = memberOrder(p, (_b = opts.sort) != null ? _b : "smart");
-    const { depth, max } = hopDepth(p);
-    const rings = Array.from({ length: max + 1 }, () => []);
-    for (const node2 of p.nodes) rings[(_c = depth.get(node2.id)) != null ? _c : 0].push(node2);
-    for (const ring of rings) ring.sort(cmp2);
-    const fits = (count2) => count2 < 2 ? 0 : FREE_W / (2 * Math.sin(Math.PI / count2));
-    const radii = [];
-    let prev = 0;
-    for (let d = 0; d < rings.length; d++) {
-      if (d === 0) {
-        prev = fits(rings[0].length);
-        radii.push(round2(prev));
-        continue;
-      }
-      prev = Math.max(prev + RING_STEP, fits(rings[d].length));
-      radii.push(round2(prev));
-    }
-    const outer = (_d = radii[radii.length - 1]) != null ? _d : 0;
-    const half = outer + FREE_W / 2;
-    const cx = round2(margin + half);
-    const cy = round2(margin + outer + FREE_H / 2);
-    const nodes = [];
-    rings.forEach((ring, d) => {
-      if (!ring.length) return;
-      if (d === 0 && ring.length === 1) {
-        nodes.push({ id: ring[0].id, x: cx, y: cy, lane: 0 });
-        return;
-      }
-      const r = radii[d];
-      const step = Math.PI * 2 / ring.length;
-      ring.forEach((node2, k) => {
-        const a = -Math.PI / 2 + k * step;
-        nodes.push({
-          id: node2.id,
-          x: round2(cx + r * Math.cos(a)),
-          y: round2(cy + r * Math.sin(a)),
-          lane: d
-        });
-      });
-    });
-    return {
-      nodes,
-      width: round2(cx + half + margin),
-      height: round2(cy + outer + FREE_H / 2 + margin),
-      // Reported for the renderer's edge routing and keyboard steps, not used for placement here.
-      laneGap: RING_STEP,
-      rowGap: FREE_H,
-      mode: "radial"
-    };
-  }
-  function layoutOrganic(p, opts) {
-    var _a5, _b;
-    const margin = (_a5 = opts.margin) != null ? _a5 : 120;
-    const n = p.nodes.length;
-    const seed = layoutRadial(p, { ...opts, margin: 0 });
-    const component = componentRoots(p);
-    const at = new Map(seed.nodes.map((s) => [s.id, { x: s.x, y: s.y }]));
-    const lane = new Map(seed.nodes.map((s) => [s.id, s.lane]));
-    const ids = p.nodes.map((node2) => node2.id).filter((id) => at.has(id));
-    if (ids.length > 1) {
-      const area = Math.max(seed.width, 1) * Math.max(seed.height, 1);
-      const k = Math.sqrt(area / ids.length);
-      const cx = seed.width / 2;
-      const cy = seed.height / 2;
-      const steps = Math.min(FR_MAX_STEPS, Math.max(FR_MIN_STEPS, Math.round(FR_PAIR_BUDGET / n)));
-      const disp = new Map(ids.map((id) => [id, { x: 0, y: 0 }]));
-      const springs = p.edges.filter((e) => at.has(e.src) && at.has(e.dst) && e.src !== e.dst).map((e) => [e.src, e.dst]);
-      for (let step = 0; step < steps; step++) {
-        const temp = k / 10 * (1 - step / steps);
-        for (const d of disp.values()) {
-          d.x = 0;
-          d.y = 0;
-        }
-        for (let i = 0; i < ids.length; i++) {
-          const a = at.get(ids[i]);
-          const da = disp.get(ids[i]);
-          for (let j = i + 1; j < ids.length; j++) {
-            const b = at.get(ids[j]);
-            let dx = a.x - b.x;
-            let dy = a.y - b.y;
-            let dist = Math.sqrt(dx * dx + dy * dy);
-            if (dist < 0.01) {
-              dx = i - j || 1;
-              dy = 1;
-              dist = Math.sqrt(dx * dx + dy * dy);
-            }
-            const force = k * k / dist;
-            const ux = dx / dist * force;
-            const uy = dy / dist * force;
-            da.x += ux;
-            da.y += uy;
-            const db = disp.get(ids[j]);
-            db.x -= ux;
-            db.y -= uy;
-          }
-        }
-        for (const [src, dst] of springs) {
-          const a = at.get(src);
-          const b = at.get(dst);
-          const dx = a.x - b.x;
-          const dy = a.y - b.y;
-          const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 0.01);
-          const force = dist * dist / k;
-          const ux = dx / dist * force;
-          const uy = dy / dist * force;
-          disp.get(src).x -= ux;
-          disp.get(src).y -= uy;
-          disp.get(dst).x += ux;
-          disp.get(dst).y += uy;
-        }
-        const hub = /* @__PURE__ */ new Map();
-        for (const id of ids) {
-          const key = component.get(id);
-          const acc = (_b = hub.get(key)) != null ? _b : { x: 0, y: 0, n: 0 };
-          const a = at.get(id);
-          acc.x += a.x;
-          acc.y += a.y;
-          acc.n += 1;
-          hub.set(key, acc);
-        }
-        for (const id of ids) {
-          const a = at.get(id);
-          const d = disp.get(id);
-          const own = hub.get(component.get(id));
-          d.x += (own.x / own.n - a.x) * FR_COHESION * k;
-          d.y += (own.y / own.n - a.y) * FR_COHESION * k;
-          d.x += (cx - a.x) * FR_GRAVITY * k;
-          d.y += (cy - a.y) * FR_GRAVITY * k;
-          const len = Math.sqrt(d.x * d.x + d.y * d.y);
-          if (len < 0.01) continue;
-          const travel = Math.min(len, temp);
-          a.x += d.x / len * travel;
-          a.y += d.y / len * travel;
-        }
-      }
-    }
-    separate(ids, at);
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    for (const id of ids) {
-      const a = at.get(id);
-      minX = Math.min(minX, a.x);
-      minY = Math.min(minY, a.y);
-      maxX = Math.max(maxX, a.x);
-      maxY = Math.max(maxY, a.y);
-    }
-    if (!ids.length) {
-      minX = 0;
-      minY = 0;
-      maxX = 0;
-      maxY = 0;
-    }
-    const offX = margin + FREE_W / 2 - minX;
-    const offY = margin + FREE_H / 2 - minY;
-    return {
-      nodes: ids.map((id) => {
-        var _a6;
-        return {
-          id,
-          x: round2(at.get(id).x + offX),
-          y: round2(at.get(id).y + offY),
-          lane: (_a6 = lane.get(id)) != null ? _a6 : 0
-        };
-      }),
-      width: round2(maxX - minX + FREE_W + margin * 2),
-      height: round2(maxY - minY + FREE_H + margin * 2),
-      laneGap: RING_STEP,
-      rowGap: FREE_H,
-      mode: "organic"
-    };
-  }
-  function separate(ids, at) {
-    for (let pass = 0; pass < SEPARATE_PASSES; pass++) {
-      let moved = false;
-      for (let i = 0; i < ids.length; i++) {
-        const a = at.get(ids[i]);
-        for (let j = i + 1; j < ids.length; j++) {
-          const b = at.get(ids[j]);
-          const dx = b.x - a.x;
-          const dy = b.y - a.y;
-          const overlapX = FREE_W - Math.abs(dx);
-          const overlapY = FREE_H - Math.abs(dy);
-          if (overlapX <= 0 || overlapY <= 0) continue;
-          moved = true;
-          if (overlapX / FREE_W < overlapY / FREE_H) {
-            const push = overlapX / 2 * (dx < 0 ? -1 : 1);
-            a.x -= push;
-            b.x += push;
-          } else {
-            const push = overlapY / 2 * (dy < 0 ? -1 : 1);
-            a.y -= push;
-            b.y += push;
-          }
-        }
-      }
-      if (!moved) return;
-    }
-  }
-  var CLUSTER_PAD = 12;
-  function clusterHulls(p, laid) {
-    var _a5, _b, _c, _d;
-    if (laid.nodes.length < 2) return [];
-    const roots = componentRoots(p);
-    const boxes = (_a5 = laid.groups) != null ? _a5 : [];
-    const nested = boxes.some((g) => g.depth === 1);
-    const leaves = boxes.map((g, i) => ({ g, i })).filter(({ g }) => nested ? g.depth === 1 : g.depth === 0);
-    const boxOf = (n) => {
-      for (const { g, i } of leaves) {
-        if (n.x >= g.x && n.x <= g.x + g.width && n.y >= g.y && n.y <= g.y + g.height) return i;
-      }
-      return -1;
-    };
-    const buckets = /* @__PURE__ */ new Map();
-    const perBox = /* @__PURE__ */ new Map();
-    for (const n of laid.nodes) {
-      const group = boxOf(n);
-      const key = ((_b = roots.get(n.id)) != null ? _b : n.id) + "|" + group;
-      if (!buckets.has(key)) buckets.set(key, { members: [], group });
-      buckets.get(key).members.push(n);
-      perBox.set(group, ((_c = perBox.get(group)) != null ? _c : 0) + 1);
-    }
-    const out = [];
-    const candidates = [...buckets.keys()].sort((a, b) => buckets.get(b).members.length - buckets.get(a).members.length || (a < b ? -1 : 1));
-    for (const key of candidates) {
-      const { members, group } = buckets.get(key);
-      if (members.length < 2) continue;
-      if (members.length === ((_d = perBox.get(group)) != null ? _d : 0)) continue;
-      const hull = convexHull(members.flatMap((n) => [
-        [n.x - NODE_HALF_W, n.y - NODE_HALF_H],
-        [n.x + NODE_HALF_W, n.y - NODE_HALF_H],
-        [n.x + NODE_HALF_W, n.y + NODE_HALF_H],
-        [n.x - NODE_HALF_W, n.y + NODE_HALF_H]
-      ]));
-      if (hull.length < 3) continue;
-      const mine = new Set(members.map((n) => n.id));
-      const claimsAnother = laid.nodes.some((n) => !mine.has(n.id) && boxOf(n) === group && inPolygon(n.x, n.y, hull));
-      if (claimsAnother) continue;
-      if (out.some((c) => !convexDisjoint(hull, c.points))) continue;
-      out.push({
-        points: hull.map(([x, y]) => [round2(x), round2(y)]),
-        count: members.length,
-        ...group === -1 ? {} : { group }
-      });
-    }
-    return out.sort((a, b) => a.points[0][0] - b.points[0][0] || a.points[0][1] - b.points[0][1]);
-  }
-  function convexDisjoint(a, b) {
-    for (const poly of [a, b]) {
-      for (let i = 0; i < poly.length; i++) {
-        const [x1, y1] = poly[i];
-        const [x2, y2] = poly[(i + 1) % poly.length];
-        const nx = -(y2 - y1);
-        const ny = x2 - x1;
-        let aMin = Infinity;
-        let aMax = -Infinity;
-        let bMin = Infinity;
-        let bMax = -Infinity;
-        for (const [x, y] of a) {
-          const d = x * nx + y * ny;
-          aMin = Math.min(aMin, d);
-          aMax = Math.max(aMax, d);
-        }
-        for (const [x, y] of b) {
-          const d = x * nx + y * ny;
-          bMin = Math.min(bMin, d);
-          bMax = Math.max(bMax, d);
-        }
-        if (aMax <= bMin || bMax <= aMin) return true;
-      }
-    }
-    return false;
-  }
-  var NODE_HALF_W = 196 / 2 + CLUSTER_PAD;
-  var NODE_HALF_H = 56 / 2 + CLUSTER_PAD;
-  function convexHull(pts) {
-    const sorted = [...pts].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-    if (sorted.length < 3) return sorted;
-    const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
-    const half = (list2) => {
-      const chain = [];
-      for (const pt of list2) {
-        while (chain.length >= 2 && cross(chain[chain.length - 2], chain[chain.length - 1], pt) <= 0) {
-          chain.pop();
-        }
-        chain.push(pt);
-      }
-      return chain;
-    };
-    const lower = half(sorted);
-    const upper = half([...sorted].reverse());
-    return lower.slice(0, -1).concat(upper.slice(0, -1));
-  }
-  function inPolygon(x, y, poly) {
-    let inside = false;
-    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-      const [xi, yi] = poly[i];
-      const [xj, yj] = poly[j];
-      if (yi > y !== yj > y && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
-    }
-    return inside;
-  }
-  function memberOrder(p, sort) {
-    const cmp2 = comparator(sort);
-    return sort === "smart" ? byComponent(p, cmp2) : cmp2;
-  }
-  function byComponent(p, cmp2) {
-    const roots = componentRoots(p);
-    const rank = /* @__PURE__ */ new Map();
-    [...p.nodes].sort(cmp2).forEach((n) => {
-      var _a5;
-      const root = (_a5 = roots.get(n.id)) != null ? _a5 : n.id;
-      if (!rank.has(root)) rank.set(root, rank.size);
-    });
-    const of = (n) => {
-      var _a5, _b;
-      return (_b = rank.get((_a5 = roots.get(n.id)) != null ? _a5 : n.id)) != null ? _b : rank.size;
-    };
-    return (a, b) => of(a) - of(b) || cmp2(a, b);
-  }
-
-  // src/domain/graphApiParams.ts
-  function toList(v) {
-    const raw = Array.isArray(v) ? v : typeof v === "string" ? v.split(",") : [];
-    const out = [];
-    for (const item of raw) {
-      const s = String(item != null ? item : "").trim();
-      if (s && out.indexOf(s) < 0) out.push(s);
-    }
-    return out;
-  }
-  function comboAssetIds(issues2, groupId) {
-    const out = [];
-    const seen = /* @__PURE__ */ new Set();
-    for (const issue2 of issues2) {
-      if (!isUnresolvedIssue(issue2) || !issue2.comboGroup) continue;
-      if (groupId && issue2.comboGroup !== groupId) continue;
-      if (issue2.assetId && !seen.has(issue2.assetId)) {
-        seen.add(issue2.assetId);
-        out.push(issue2.assetId);
-      }
-    }
-    return out;
-  }
-  function pick(v, allowed, fallback) {
-    const s = typeof v === "string" ? v.toLowerCase() : "";
-    return allowed.includes(s) ? s : fallback;
-  }
-  function pickList(v) {
-    const raw = typeof v === "string" ? v.split(",") : [];
-    const out = [];
-    for (const part of raw) {
-      const s = part.trim().toLowerCase();
-      if (!GROUP_KEYS.includes(s)) continue;
-      const key = s;
-      if (out.includes(key)) continue;
-      if (key === "asset" && out.length) continue;
-      out.push(key);
-      if (key === "asset" || out.length === 2) break;
-    }
-    return out;
-  }
-  function resolveLayoutParams(p) {
-    const legacyGrouped = typeof p["layout"] === "string" && p["layout"].toLowerCase() === "grouped";
-    const asked = pickList(p["groupBy"]);
-    const groupBy2 = legacyGrouped && !asked.length ? ["combo"] : asked;
-    return {
-      mode: legacyGrouped ? groupBy2[0] === "asset" ? "radial" : "grid" : pick(p["layout"], LAYOUT_MODES, DEFAULT_LAYOUT),
-      groupBy: groupBy2,
-      // `sort=aars` IS AN OLD LINK too, and it maps to `issues` rather than falling through
-      // to `smart`. The two are the closest honest pair: the score's own ordering was driven
-      // almost entirely by its issue pillar (tau-b 0.863 — ai/AARS_SCORING_ASSESSMENT.md §3,
-      // pinned by test/scoreOrdinality.test.ts), so a reader who asked for "worst score
-      // first" gets the ordering they were actually looking at. Falling back to `smart`
-      // would silently answer a different question and give no sign it had.
-      sort: pick(
-        typeof p["sort"] === "string" && p["sort"].toLowerCase() === "aars" ? "issues" : p["sort"],
-        SORT_KEYS,
-        "smart"
-      )
-    };
-  }
-  function resolveGraphParams(p, ctx) {
-    var _a5;
-    const seed = typeof p["seed"] === "string" ? p["seed"] : "";
-    const seedKind = typeof p["seedKind"] === "string" ? p["seedKind"] : "";
-    let seedIds;
-    if (seedKind === "scored" || seedKind === "issues") {
-      const withIssues = [];
-      const seen = {};
-      for (const issue2 of ctx.issues) {
-        if (!issue2.assetId || seen[issue2.assetId]) continue;
-        seen[issue2.assetId] = true;
-        withIssues.push(issue2.assetId);
-      }
-      seedIds = withIssues;
-    } else if (seed && (seedKind === "combo" || comboGroupById(seed))) {
-      seedIds = comboAssetIds(ctx.issues, seed);
-    } else if (seed && seedKind === "domain") {
-      seedIds = ((_a5 = ctx.nodes) != null ? _a5 : []).filter((n) => n.domain === seed).map((n) => n.id);
-    } else if (seed) {
-      seedIds = [seed];
-    } else {
-      seedIds = comboAssetIds(ctx.issues);
-    }
-    const filters = {
-      severities: toList(p["severities"]),
-      kinds: toList(p["kinds"]),
-      projects: toList(p["projects"]),
-      clouds: toList(p["clouds"]),
-      domains: toList(p["domains"])
-    };
-    const hasFilters = filters.severities.length || filters.kinds.length || filters.projects.length || filters.clouds.length || filters.domains.length;
-    const rawDepth = p["depth"];
-    const rawMaxNodes = p["maxNodes"];
-    const maxNodes = clampMaxNodes(
-      rawMaxNodes == null || rawMaxNodes === "" ? ctx.maxNodes : rawMaxNodes
-    );
-    return {
-      seedIds,
-      depth: clampDepth(rawDepth == null || rawDepth === "" ? ctx.defaultDepth : rawDepth),
-      expandIds: toList(p["expand"]),
-      filters: hasFilters ? filters : void 0,
-      maxNodes,
-      maxEdges: Math.round(maxNodes * EDGE_BUDGET_RATIO),
-      ...seedKind === "scored" || seedKind === "issues" ? { filterSeeds: true } : {}
-    };
-  }
-  function graphCacheParams(p) {
-    const sorted = (v) => toList(v).sort();
-    return {
-      seed: typeof p["seed"] === "string" ? p["seed"] : "",
-      seedKind: typeof p["seedKind"] === "string" ? p["seedKind"] : "",
-      depth: p["depth"] == null || p["depth"] === "" ? "" : String(p["depth"]),
-      maxNodes: p["maxNodes"] == null ? "" : String(p["maxNodes"]),
-      expand: sorted(p["expand"]),
-      severities: sorted(p["severities"]),
-      kinds: sorted(p["kinds"]),
-      projects: sorted(p["projects"]),
-      clouds: sorted(p["clouds"]),
-      domains: sorted(p["domains"]),
-      view: resolveLayoutParams(p)
-    };
-  }
-
-  // src/domain/graphScope.ts
-  function unattributed(n) {
-    var _a5;
-    return ((_a5 = n.projects) != null ? _a5 : []).length === 0;
-  }
-  function scopeGraphDoc(doc, projectId) {
-    if (!projectId) return doc;
-    return scopeBy(doc, (n) => inProject(n.projects, projectId), unattributed);
-  }
-  function scopeGraphDocToDomain(doc, domain) {
-    if (!domain) return doc;
-    return scopeBy(doc, (n) => n.domain === domain, (n) => !n.domain);
-  }
-  function scopeBy(doc, anchored, ridesAlong) {
-    var _a5;
-    const keep = /* @__PURE__ */ new Set();
-    const open = [];
-    for (const n of doc.nodes) {
-      if (anchored(n)) {
-        keep.add(n.id);
-        open.push(n.id);
-      }
-    }
-    const byId = new Map(doc.nodes.map((n) => [n.id, n]));
-    const adjacency2 = /* @__PURE__ */ new Map();
-    const link = (from, to) => {
-      const seen = adjacency2.get(from);
-      if (seen) seen.push(to);
-      else adjacency2.set(from, [to]);
-    };
-    for (const e of doc.edges) {
-      link(e.src, e.dst);
-      link(e.dst, e.src);
-    }
-    while (open.length) {
-      for (const nextId of (_a5 = adjacency2.get(open.pop())) != null ? _a5 : []) {
-        if (keep.has(nextId)) continue;
-        const next = byId.get(nextId);
-        if (!next || !ridesAlong(next)) continue;
-        keep.add(nextId);
-        open.push(nextId);
-      }
-    }
-    const nodes = doc.nodes.filter((n) => keep.has(n.id));
-    const edges2 = doc.edges.filter((e) => keep.has(e.src) && keep.has(e.dst));
-    return { nodes, edges: edges2, syncedAt: doc.syncedAt };
-  }
-
-  // src/domain/graphQuery.ts
-  function kindsOf(node2) {
-    return Array.isArray(node2.kind) ? node2.kind : [node2.kind];
-  }
-  var KIND_SEP = "-";
-  function kindKey(node2) {
-    return kindsOf(node2).join(KIND_SEP);
-  }
-  function isGroup(step) {
-    return step.op !== void 0;
-  }
-  var DEFAULT_QUERY = { kind: "AI_AGENT" };
-  var QUERY_ROW_MAX = 2e3;
-  var QUERY_SCAN_MAX = 1e5;
-  var MAX_QUERY_NODES = 12;
-  var MAX_QUERY_DEPTH = 6;
-  var MAX_HOPS = 3;
-  var IDENTITY_KINDS = [
-    "SERVICE_ACCOUNT",
-    "USER_ACCOUNT",
-    "ACCESS_ROLE",
-    "ACCESS_ROLE_BINDING",
-    "ACCESS_KEY"
-  ];
-  function orNull(v) {
-    if (v === void 0 || v === null || v === "") return null;
-    if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") return v;
-    return String(v);
-  }
-  function humanDiscoveryMethod(raw) {
-    const body = raw.replace(/^Method/, "");
-    const spaced = body.replace(/([a-z0-9])([A-Z])/g, "$1 $2").trim();
-    return spaced || raw;
-  }
-  var QUERY_FIELDS = [
-    { key: "name", label: "Name", type: "text", get: (n) => n.name },
-    { key: "kind", label: "Kind", type: "choice", get: (n) => n.kind },
-    {
-      key: "publisher",
-      label: "Publisher",
-      type: "text",
-      kinds: AI_ASSET_KINDS,
-      get: (n) => orNull(n.publisher)
-    },
-    {
-      key: "discoveredBy",
-      label: "Discovered by",
-      type: "choice",
-      multi: true,
-      kinds: AI_ASSET_KINDS,
-      get: (n) => {
-        var _a5;
-        const m = (_a5 = n.discoveryMethods) != null ? _a5 : [];
-        return m.length ? m.map(humanDiscoveryMethod).join(", ") : null;
-      }
-    },
-    {
-      key: "displayName",
-      label: "Display name",
-      type: "text",
-      kinds: IDENTITY_KINDS,
-      get: (n) => orNull(n.displayName)
-    },
-    { key: "email", label: "Email", type: "text", kinds: IDENTITY_KINDS, get: (n) => orNull(n.email) },
-    {
-      // Three states, not two. Absent means the identity steps never carried a dormancy read;
-      // rendering that as "No" would assert the opposite of what is known.
-      key: "inactive",
-      label: "Inactive for the last 90 days",
-      type: "boolean",
-      kinds: IDENTITY_KINDS,
-      get: (n) => n.inactive === void 0 ? null : n.inactive
-    },
-    {
-      key: "identityPurpose",
-      label: "Purpose",
-      type: "choice",
-      kinds: IDENTITY_KINDS,
-      get: (n) => orNull(n.identityPurpose)
-    },
-    { key: "cloud", label: "Cloud", type: "choice", get: (n) => orNull(n.cloudPlatform) },
-    { key: "region", label: "Region", type: "choice", get: (n) => orNull(n.region) },
-    // The cloud tags, rendered `key: value` and joined like any other list cell so the table and
-    // the column chooser need to know nothing about them. They were synced and shown on the asset
-    // sheet long before this — `tags_json` round-trips through the ledger — but with no entry here
-    // you could read a tag and not ask about it, which is the gap this closes.
-    //
-    // `pairs` rather than `choice` because the value space is the landscape's, not the schema's: a
-    // real tenant has thousands of distinct `key: value` strings, far past VALUE_CARDINALITY_MAX,
-    // so `fieldValuesFor` offers no list and the builder asks for a key and a value instead.
-    {
-      key: "tags",
-      label: "Tags",
-      type: "pairs",
-      multi: true,
-      get: (n) => {
-        var _a5;
-        return orNull(((_a5 = n.tags) != null ? _a5 : []).map((t) => t.value ? `${t.key}: ${t.value}` : t.key).join(", "));
-      }
-    },
-    // The business domain, off the resource's own Wiz/Domain tag — and `choice` where `tags`
-    // above is `pairs`, for exactly the reason stated there. A tenant has tens of domains, not
-    // thousands of key/value strings, so this one stays inside VALUE_CARDINALITY_MAX and
-    // `fieldValuesFor` can offer a real picker rather than two free-text boxes. Asking through
-    // `tags` still works and still means the same thing — this is the shorthand for the one
-    // tag key the app names, not a second source of truth.
-    { key: "domain", label: "Domain", type: "choice", get: (n) => orNull(n.domain) },
-    { key: "status", label: "Status", type: "choice", get: (n) => orNull(n.status) },
-    { key: "severity", label: "Issue severity", type: "choice", get: (n) => orNull(n.severity) },
-    // The two counts that replaced the score, the percentile and the level here. A query is
-    // a question about the landscape, and these are answerable from what Wiz reported;
-    // "findings score above 70" was answerable only from a model this app was still
-    // calibrating, which is why it now lives on the workbench and nowhere else.
-    {
-      key: "openIssues",
-      label: "Open issues",
-      type: "number",
-      numeric: true,
-      get: (n) => {
-        var _a5;
-        return (_a5 = n.openIssues) != null ? _a5 : 0;
-      }
-    },
-    {
-      key: "openFindings",
-      label: "Cloud findings",
-      type: "number",
-      numeric: true,
-      get: (n) => {
-        var _a5;
-        return (_a5 = n.openFindings) != null ? _a5 : 0;
-      }
-    },
-    {
-      key: "projects",
-      label: "Projects",
-      type: "choice",
-      multi: true,
-      get: (n) => {
-        var _a5;
-        const names = ((_a5 = n.projects) != null ? _a5 : []).map((p) => p.name).filter(Boolean);
-        return names.length ? names.join(", ") : null;
-      }
-    },
-    {
-      key: "guardrail",
-      label: "Guardrail",
-      type: "choice",
-      kinds: AI_ASSET_KINDS,
-      get: (n) => n.guardrailMissing === void 0 ? null : n.guardrailMissing ? "missing" : "present"
-    },
-    {
-      key: "combos",
-      label: "Toxic combinations",
-      type: "number",
-      numeric: true,
-      get: (n) => {
-        var _a5;
-        const g = (_a5 = n.comboGroups) != null ? _a5 : [];
-        return g.length ? g.length : null;
-      }
-    },
-    {
-      // The combination patterns BY NAME, where `combos` only ever counted them. "Show me the
-      // members of the privileged managed-agent pattern" is the question the register is built
-      // around, and a count cannot answer it.
-      key: "comboGroup",
-      label: "Toxic combination",
-      type: "choice",
-      multi: true,
-      get: (n) => {
-        var _a5;
-        const g = (_a5 = n.comboGroups) != null ? _a5 : [];
-        return g.length ? g.join(", ") : null;
-      }
-    },
-    {
-      // Read through the SAME predicate the canvas draws from. Reading only
-      // `isAccessibleFromInternet` — which is what this did — disagreed with the graph on a node
-      // that is open to all internet but not flagged accessible: the table said no while an
-      // INTERNET_EXPOSURE node hung off it two panes away. One reading, one answer.
-      key: "internet",
-      label: "Internet reachable",
-      type: "boolean",
-      get: (n) => conditionState(n, "INTERNET_EXPOSURE")
-    },
-    {
-      key: "sensitiveAccess",
-      label: "Reaches classified data",
-      type: "boolean",
-      get: (n) => n.hasAccessToSensitiveData === void 0 ? null : n.hasAccessToSensitiveData
-    },
-    {
-      // HOLDS classified data, which is a different claim from reaching it — a bucket holds, an
-      // agent reaches. The pair is what makes the data-exposure path readable from either end.
-      key: "sensitiveData",
-      label: "Holds classified data",
-      type: "boolean",
-      get: (n) => n.hasSensitiveData === void 0 ? null : n.hasSensitiveData
-    },
-    {
-      // Kept apart rather than folded into one "privileged" flag: ADMIN is the stronger claim,
-      // and `withExcessivePrivilegeNodes` names its stub differently for it. EXCESSIVE_PRIVILEGE
-      // is their disjunction, so anyone wanting that reads the risk condition instead.
-      key: "highPriv",
-      label: "High privileges",
-      type: "boolean",
-      get: (n) => n.hasHighPrivileges === void 0 ? null : n.hasHighPrivileges
-    },
-    {
-      key: "adminPriv",
-      label: "Admin privileges",
-      type: "boolean",
-      get: (n) => n.hasAdminPrivileges === void 0 ? null : n.hasAdminPrivileges
-    }
-  ];
-  var FIELD_BY_KEY = new Map(QUERY_FIELDS.map((f) => [f.key, f]));
-  function ev(kind, steps) {
-    return steps ? { kind, show: false, steps } : { kind, show: false };
-  }
-  var WITNESSES = [
-    {
-      // The four-hop chain, which is why "one hop of evidence" was never an option: the data end
-      // sits at RUNS_AS → ALLOWS_ACCESS_TO → BUCKET → HAS_DATA_FINDING. Same shape as the
-      // `reaches-classified` shortcut, carried one hop further to the findings — the shortcut stops
-      // at the bucket because that is where its table column wants to stop, and a canvas does not.
-      key: "sensitiveAccess",
-      when: ["true"],
-      steps: [
-        {
-          edge: "RUNS_AS",
-          optional: true,
-          node: ev("SERVICE_ACCOUNT", [{
-            edge: "ALLOWS_ACCESS_TO",
-            optional: true,
-            node: ev(["BUCKET", "DATABASE"], [
-              { edge: "HAS_DATA_FINDING", optional: true, node: ev("DATA_FINDING") }
-            ])
-          }])
-        },
-        { edge: "HAS_ACCESS_TO_SENSITIVE_DATA", optional: true, node: ev("SENSITIVE_DATA") }
-      ]
-    },
-    {
-      // Holding it rather than reaching it — the other end of the same chain, read from the store.
-      key: "sensitiveData",
-      when: ["true"],
-      steps: [
-        { edge: "HAS_DATA_FINDING", optional: true, node: ev("DATA_FINDING") },
-        { edge: "HAS_SENSITIVE_DATA", optional: true, node: ev("SENSITIVE_DATA") }
-      ]
-    },
-    {
-      key: "internet",
-      when: ["true"],
-      steps: [{ edge: "EXPOSED_TO_INTERNET", optional: true, node: ev("INTERNET_EXPOSURE") }]
-    },
-    {
-      // A choice field, not a boolean: "missing" is the affirmative here and "present" is the
-      // absence of a finding, so only one of its two values arms anything.
+      // Exploitation evidence for the issues the steps above collected — `vulnerabilityFindings`
+      // filtered to the SAME category list, through `hasRelatedIssue`.
       //
-      // `viaAbsence` because the edge is a NEGATED `PROTECTED_BY` — enrich's own words — and every
-      // ordinary step skips negated edges on purpose. This witness is the one thing that wants it:
-      // the stub is only reachable by the edge that says the guardrail is not there. Without the
-      // flag this row armed correctly and then drew nothing, which is how it was caught.
-      key: "guardrail",
-      when: ["missing"],
-      steps: [{
-        edge: "PROTECTED_BY",
+      // THE FILTER IS THE CLAIM. There is nothing on a vulnerability finding that says it is
+      // exploitation evidence for this register; what makes it so is that it names an issue in
+      // one of the selected categories. Sent unfiltered, the same root answers 5,173,698 rows in
+      // project scope (AARS_LIVE_MEASUREMENTS.md §6.4) — not a bigger version of this step but a
+      // different product, and one nothing here is built to store. Narrowed, it is 7,368 at ~15
+      // pages, 99.8% of every related-issue finding in scope.
+      //
+      // ONE STEP, NOT ONE PER CATEGORY, and the asymmetry with the family above it is deliberate.
+      // The issue steps are split because an issue carries no category and an unstamped row is
+      // what turns "AI issues" into "issues". A finding is not stored under a category at all: it
+      // is folded onto the ISSUE it names, and that issue already carries the stamp. Splitting
+      // this would fetch the same finding once per category of the issue it joins.
+      //
+      // OPTIONAL, and that is load-bearing rather than cautious: the related-issue selection in
+      // Q_VULN_FINDINGS is UNVERIFIED until `phase0.mjs --stage=k` runs, so a wrong field name is
+      // an HTTP 400 on the whole document. Optional makes that LOUD — the step lands in
+      // `skippedSteps` with Wiz's own message, which names the field — and leaves
+      // `ai_issue_exploitation` and the three issue columns untouched rather than writing an
+      // empty axis over a good one.
+      //
+      // No `vars()` indirection, exactly like the ISSUES_CAT family: the step is LOCKED
+      // (scanVars.ts), so an override slot would be one nothing could ever write to.
+      {
+        id: "VULN_FINDINGS",
+        area: "toxic",
+        writes: ["ai_issue_exploitation", "ai_issues"],
+        run: "connection",
+        connectionField: "vulnerabilityFindings",
+        query: Q_VULN_FINDINGS,
+        extraVariables: aiVulnFindingsVariables(projectScope(), categoryIds),
+        normalize: normalizeVulnFindingsPage,
         optional: true,
-        viaAbsence: true,
-        node: ev("MISSING_GUARDRAIL")
-      }]
-    },
-    ...["highPriv", "adminPriv"].map((key) => ({
-      // Both flags are witnessed by one stub — `conditionState` reads EXCESSIVE_PRIVILEGE as their
-      // disjunction — and `HAS_FINDING` is the second spelling: enrich suppresses its own stub on
-      // an asset already carrying Wiz's real EXCESSIVE_ACCESS_FINDING.
+        // Eleven flat scalars, one `{id}` list and a union read for three fields — narrow by the
+        // standard `pageSize` sets, and ~15 pages at 500 against ~74 at the default.
+        pageSize: PAGE_SIZE_WIDE
+      },
+      // Real compliance findings (configurationFindings) — feeds AARS pillar B.
+      {
+        id: "CONFIG_FINDINGS",
+        area: "configFindings",
+        writes: ["ai_findings"],
+        run: "connection",
+        connectionField: "configurationFindings",
+        query: Q_CONFIG_FINDINGS,
+        extraVariables: vars("CONFIG_FINDINGS", aiConfigFindingsVariables(projectScope())),
+        normalize: normalizeConfigFindingsPage,
+        optional: true
+      },
+      // Wiz's cloud-configuration RULE CATALOGUE — reference data, and the only step here whose
+      // contents describe the product rather than the landscape. It is what glosses an opaque
+      // `SUB-082` in the AARS cascade, and what the identity-hygiene matchers resolve against
+      // instead of hardcoding MFA rule ids that differ per cloud.
       //
-      // The two land on different nodes rather than being alternatives for the same one:
-      // `HAS_FINDING` runs identity → finding, so it fires when the filter is on a SERVICE_ACCOUNT,
-      // while the stub is what an AI asset carries. Both listed, so either end of the same claim
-      // draws its evidence.
-      key,
-      when: ["true"],
-      steps: [
-        { edge: "HAS_EXCESSIVE_PRIVILEGE", optional: true, node: ev("EXCESSIVE_PRIVILEGE") },
-        { edge: "HAS_FINDING", optional: true, node: ev("EXCESSIVE_ACCESS_FINDING") }
-      ]
-    }))
-  ];
-  var WITNESS_BY_KEY = new Map(WITNESSES.map((w) => [w.key, w]));
-  var WITNESS_FANOUT_CAP = 6;
-  function witnessFor(node2) {
-    var _a5;
-    const steps = [];
-    for (const f of (_a5 = node2.where) != null ? _a5 : []) {
-      if (f.negate) continue;
-      const w = WITNESS_BY_KEY.get(f.key);
-      if (!w) continue;
-      if (!f.values.some((v) => w.when.includes(String(v).toLowerCase()))) continue;
-      steps.push(...w.steps);
-    }
-    return steps.length ? { kind: "ANY", show: false, steps } : null;
-  }
-  function fieldsForKind(kind) {
-    const kinds = Array.isArray(kind) ? kind : [kind];
-    return QUERY_FIELDS.filter((f) => {
-      if (!f.kinds) return true;
-      return kinds.every((k) => k !== "ANY" && f.kinds.includes(k));
-    });
-  }
-  function defaultFieldsForKind(kind) {
-    const kinds = Array.isArray(kind) ? kind : [kind];
-    const all = (family) => kinds.every((k) => k !== "ANY" && family.includes(k));
-    if (all(AI_ASSET_KINDS)) return ["name", "publisher", "discoveredBy"];
-    if (all(IDENTITY_KINDS)) return ["name", "displayName", "inactive"];
-    return ["name", "kind", "cloud"];
-  }
-  var QueryError = class extends Error {
-  };
-  function fail(msg) {
-    throw new QueryError(msg);
-  }
-  var KIND_SET = new Set(NODE_KINDS);
-  var EDGE_SET = new Set(EDGE_TYPES);
-  function validateQueryWithWarnings(raw) {
-    const counter = { nodes: 0, retired: [] };
-    const query = readNode(raw, 1, counter);
-    const retired = counter.retired.filter((k, i, all) => all.indexOf(k) === i);
-    return { query, retired };
-  }
-  var RETIRED_FIELDS = /* @__PURE__ */ new Set([
-    "aars",
-    "aarsPercentile",
-    "aarsSeverity",
-    "postureTier",
-    "problemOutcome"
-  ]);
-  function readKinds(raw) {
-    const list2 = Array.isArray(raw) ? raw : [raw];
-    if (!list2.length) fail("node names no kind");
-    const out = [];
-    for (const one of list2) {
-      if (typeof one !== "string" || one !== "ANY" && !KIND_SET.has(one)) {
-        fail(`unknown node kind: ${String(one)}`);
-      }
-      if (!out.includes(one)) out.push(one);
-    }
-    if (out.includes("ANY")) return "ANY";
-    return out.length === 1 ? out[0] : out;
-  }
-  function readNode(raw, depth, counter) {
-    if (!raw || typeof raw !== "object") fail("query node must be an object");
-    if (depth > MAX_QUERY_DEPTH) fail(`query nests deeper than ${MAX_QUERY_DEPTH} levels`);
-    if (++counter.nodes > MAX_QUERY_NODES) fail(`query has more than ${MAX_QUERY_NODES} nodes`);
-    const r = raw;
-    const node2 = { kind: readKinds(r["kind"]) };
-    if (r["show"] === false) node2.show = false;
-    const where = r["where"];
-    if (where !== void 0) {
-      if (!Array.isArray(where)) fail("where must be an array");
-      const filters = [];
-      for (const f of where) {
-        if (!f || typeof f !== "object") fail("filter must be an object");
-        const key = f["key"];
-        const values = f["values"];
-        if (typeof key !== "string") fail(`unknown filter field: ${String(key)}`);
-        if (RETIRED_FIELDS.has(key)) {
-          counter.retired.push(key);
-          continue;
-        }
-        if (key !== "id" && !FIELD_BY_KEY.has(key)) {
-          fail(`unknown filter field: ${String(key)}`);
-        }
-        if (!Array.isArray(values) || !values.length) fail(`filter ${key} has no values`);
-        const op = f["op"];
-        if (op !== void 0 && op !== "eq" && op !== "contains") {
-          fail(`unknown filter operator: ${String(op)}`);
-        }
-        const all = f["all"];
-        const negate = f["negate"];
-        if (all !== void 0 && typeof all !== "boolean") {
-          fail(`filter ${key}: all must be a boolean`);
-        }
-        if (negate !== void 0 && typeof negate !== "boolean") {
-          fail(`filter ${key}: negate must be a boolean`);
-        }
-        const filter = { key, values: values.map((v) => String(v)) };
-        if (op === "contains") filter.op = "contains";
-        if (all === true) filter.all = true;
-        if (negate === true) filter.negate = true;
-        filters.push(filter);
-      }
-      if (filters.length) node2.where = filters;
-    }
-    const steps = r["steps"];
-    if (steps !== void 0) {
-      if (!Array.isArray(steps)) fail("steps must be an array");
-      const out = [];
-      for (const s of steps) out.push(readStep(s, depth + 1, counter));
-      if (out.length) node2.steps = out;
-    }
-    return node2;
-  }
-  function readStep(raw, depth, counter) {
-    var _a5;
-    if (!raw || typeof raw !== "object") fail("step must be an object");
-    const r = raw;
-    if (r["op"] !== void 0) return readGroup(r, depth, counter);
-    const edge2 = r["edge"];
-    if (typeof edge2 !== "string" || edge2 !== "ANY" && !EDGE_SET.has(edge2)) {
-      fail(`unknown relationship: ${String(edge2)}`);
-    }
-    const step = { edge: edge2, node: readNode(r["node"], depth, counter) };
-    if (r["reverse"] === true) step.reverse = true;
-    if (r["negate"] === true) step.negate = true;
-    if (r["optional"] === true) step.optional = true;
-    if (edge2 === "ANY") {
-      const hops = Number(r["hops"]);
-      step.hops = Number.isFinite(hops) ? Math.min(MAX_HOPS, Math.max(1, Math.round(hops))) : 1;
-    }
-    if (step.negate && ((_a5 = step.node.steps) == null ? void 0 : _a5.length)) {
-      fail("a negated relationship cannot carry further steps \u2014 there is nothing to walk from");
-    }
-    if (step.negate && step.optional) fail("a relationship cannot be both negated and optional");
-    return step;
-  }
-  function readGroup(r, depth, counter) {
-    const op = r["op"];
-    if (op !== "and" && op !== "or") fail(`unknown group operator: ${String(op)}`);
-    if (depth > MAX_QUERY_DEPTH) fail(`query nests deeper than ${MAX_QUERY_DEPTH} levels`);
-    const steps = r["steps"];
-    if (!Array.isArray(steps) || !steps.length) {
-      fail(`an ${op.toUpperCase()} group needs at least one branch`);
-    }
-    const group = { op, steps: steps.map((s) => readStep(s, depth + 1, counter)) };
-    if (r["optional"] === true) group.optional = true;
-    return group;
-  }
-  var VALUE_CARDINALITY_MAX = 40;
-  function queryVocabulary(doc) {
-    var _a5;
-    const byId = new Map(doc.nodes.map((n) => [n.id, n]));
-    const kindCounts = /* @__PURE__ */ new Map();
-    for (const n of doc.nodes) kindCounts.set(n.kind, ((_a5 = kindCounts.get(n.kind)) != null ? _a5 : 0) + 1);
-    const stepsFrom = {};
-    const seen = /* @__PURE__ */ new Map();
-    const note = (from, edge2, reverse, to) => {
-      var _a6;
-      const key = `${from}|${edge2}|${reverse ? "r" : "f"}|${to}`;
-      const hit = seen.get(key);
-      if (hit) {
-        hit.count += 1;
-        return;
-      }
-      const entry = { edge: edge2, reverse, kind: to, count: 1 };
-      seen.set(key, entry);
-      ((_a6 = stepsFrom[from]) != null ? _a6 : stepsFrom[from] = []).push(entry);
-    };
-    for (const e of doc.edges) {
-      if (e.negated) continue;
-      const src = byId.get(e.src);
-      const dst = byId.get(e.dst);
-      if (!src || !dst) continue;
-      note(src.kind, e.type, false, dst.kind);
-      note(dst.kind, e.type, true, src.kind);
-    }
-    for (const list2 of Object.values(stepsFrom)) {
-      list2.sort((a, b) => b.count - a.count || cmp(a.reverse, b.reverse) || cmp(a.edge, b.edge) || cmp(a.kind, b.kind));
-    }
-    const kinds = NODE_KINDS.filter((k) => kindCounts.has(k)).map((kind) => {
-      var _a6;
-      return { kind, count: (_a6 = kindCounts.get(kind)) != null ? _a6 : 0 };
-    });
-    const base = { kinds, stepsFrom, valuesFor: {}, fieldsFor: {}, shortcuts: [] };
-    const shortcuts = [];
-    for (const shortcut of QUERY_SHORTCUTS) {
-      const answerable = shortcut.kinds.filter((k) => shortcutsFor(k, base).some((s) => s.id === shortcut.id));
-      if (answerable.length) shortcuts.push({ ...shortcut, kinds: answerable });
-    }
-    return { ...base, shortcuts };
-  }
-  function fieldValuesFor(doc, kind) {
-    var _a5;
-    const nodes = kind === "ANY" ? doc.nodes : doc.nodes.filter((n) => n.kind === kind);
-    const perField = [];
-    for (const spec of QUERY_FIELDS) {
-      if (spec.type !== "choice" && spec.type !== "boolean") continue;
-      if (spec.kinds && (kind === "ANY" || !spec.kinds.includes(kind))) continue;
-      if (spec.key === "kind") continue;
-      const counts = /* @__PURE__ */ new Map();
-      let overflow = false;
-      for (const node2 of nodes) {
-        const raw = spec.get(node2);
-        const parts = raw === null ? ["unknown"] : spec.type === "choice" ? String(raw).split(", ") : [String(raw)];
-        for (const part of parts) {
-          if (!part) continue;
-          if (!counts.has(part) && counts.size >= VALUE_CARDINALITY_MAX) {
-            overflow = true;
-            continue;
-          }
-          counts.set(part, ((_a5 = counts.get(part)) != null ? _a5 : 0) + 1);
-        }
-      }
-      if (overflow || !counts.size) continue;
-      perField.push({
-        key: spec.key,
-        values: [...counts.entries()].map(([value, count2]) => ({ value, count: count2 })).sort((a, b) => b.count - a.count || cmp(a.value, b.value))
-      });
-    }
-    return perField;
-  }
-  var QUERY_SHORTCUTS = [
-    {
-      id: "no-guardrail",
-      label: "Has no guardrail",
-      phrase: "Wiz reports the guardrail missing",
-      blurb: "Reads the asset's own guardrail flag, which is what the canvas draws its MISSING_GUARDRAIL stub from \u2014 so the two always agree.\n\nDeliberately not the \u201CNOT protected by a guardrail\u201D traversal, which answers a wider question: it counts every asset with no guardrail relationship in the graph, including ones Wiz reports as protected without naming the guardrail. Add a NOT on a PROTECTED_BY step if that wider question is the one you want.",
-      helpId: "missing-guardrail",
-      kinds: AI_ASSET_KINDS,
-      steps: [],
-      filters: [{ path: [], key: "guardrail", values: ["missing"] }]
-    },
-    {
-      id: "runs-as-privileged",
-      label: "Runs as a privileged identity",
-      phrase: "its service account holds high privileges",
-      blurb: "Reads the identity's own privilege flag rather than walking to the EXCESSIVE_PRIVILEGE stub, which is suppressed wherever a real access finding exists \u2014 walking to it would quietly answer with the leftovers. Admin privilege is the stronger claim and has its own field.",
-      helpId: "excessive-privilege",
-      kinds: AI_ASSET_KINDS,
-      steps: [{ edge: "RUNS_AS", node: { kind: "SERVICE_ACCOUNT" } }],
-      filters: [{ path: [0], key: "highPriv", values: ["true"] }]
-    },
-    {
-      id: "runs-as-dormant",
-      label: "Runs as a dormant identity",
-      phrase: "its service account has been idle 90 days",
-      blurb: "An identity nobody has used in ninety days, still able to act on the asset's behalf. The dormancy is a field Wiz reports, not something derived here.",
-      helpId: "agentic-identity",
-      kinds: AI_ASSET_KINDS,
-      steps: [{ edge: "RUNS_AS", node: { kind: "SERVICE_ACCOUNT" } }],
-      filters: [{ path: [0], key: "inactive", values: ["true"] }]
-    },
-    {
-      id: "reaches-classified",
-      label: "Reaches classified data",
-      phrase: "through its identity, to a bucket",
-      blurb: "The real path \u2014 asset to identity to bucket \u2014 with the identity hidden, so the table reads asset beside data. Deliberately NOT the SENSITIVE_DATA stub, which graphEnrich suppresses exactly where this chain exists: walking to the stub would return only the assets whose path could not be traced.",
-      helpId: "sensitive-data",
-      kinds: AI_ASSET_KINDS,
-      steps: [{
-        edge: "RUNS_AS",
-        node: {
-          kind: "SERVICE_ACCOUNT",
-          show: false,
-          steps: [{ edge: "ALLOWS_ACCESS_TO", node: { kind: "BUCKET" } }]
-        }
-      }]
-    },
-    {
-      id: "internet-reachable",
-      label: "Reachable from the internet",
-      phrase: "an exposure path reaches it",
-      blurb: "Assets carrying an internet exposure node. Exposure is inherited from the compute underneath, so this is the topology answer rather than a flag read off the asset.",
-      helpId: "internet-exposure",
-      kinds: AI_ASSET_KINDS,
-      steps: [{ edge: "EXPOSED_TO_INTERNET", node: { kind: "INTERNET_EXPOSURE" } }]
-    },
-    {
-      id: "dormant-human-access",
-      label: "A dormant person can reach it",
-      phrase: "a human account, idle 90 days, still has access",
-      blurb: "Human access read backwards: the accounts that ALLOW_ACCESS_TO this asset, narrowed to the ones nobody has signed into in ninety days. Standing access that no longer has a person behind it.",
-      kinds: AI_ASSET_KINDS,
-      steps: [{ edge: "ALLOWS_ACCESS_TO", reverse: true, node: { kind: "USER_ACCOUNT" } }],
-      filters: [{ path: [0], key: "inactive", values: ["true"] }]
-    }
-  ];
-  function shortcutsFor(kind, vocab) {
-    const from = kindsOf({ kind }).filter((k) => k !== "ANY");
-    if (!from.length) return [];
-    const present2 = from.filter((k) => vocab.kinds.some((v) => v.kind === k));
-    if (!present2.length) return [];
-    return QUERY_SHORTCUTS.filter((s) => present2.some((k) => s.kinds.includes(k) && s.steps.every((step) => reachable(k, step, vocab))));
-  }
-  function reachable(from, step, vocab) {
-    var _a5;
-    if (isGroup(step)) return step.steps.every((s) => reachable(from, s, vocab));
-    if (step.negate) return true;
-    if (step.edge === "ANY") return true;
-    const targets = kindsOf(step.node);
-    const from2 = (_a5 = vocab.stepsFrom[from]) != null ? _a5 : [];
-    return targets.some((target) => {
-      var _a6;
-      const hit = from2.some((e) => e.edge === step.edge && e.reverse === !!step.reverse && e.kind === target);
-      if (!hit) return false;
-      if (target === "ANY") return true;
-      return ((_a6 = step.node.steps) != null ? _a6 : []).every((s) => reachable(target, s, vocab));
-    });
-  }
-  function queryColumnGroups(query, selected) {
-    var _a5;
-    const groups = [];
-    for (const slot of bindingSlots(query)) {
-      const node2 = slot.node;
-      if (node2.show === false) continue;
-      const index = groups.length;
-      const offered = fieldsForKind(node2.kind);
-      const offeredKeys = new Set(offered.map((f) => f.key));
-      const picked = ((_a5 = selected == null ? void 0 : selected[index]) != null ? _a5 : []).filter((k) => offeredKeys.has(k));
-      const keys = picked.length ? picked : defaultFieldsForKind(node2.kind).filter((k) => offeredKeys.has(k));
-      groups.push({
-        index,
-        // `kindKey`, not `node.kind`: the builder row derives its own identity the same way, and
-        // graphQueryWalk.test.js compares the two by value across the wire. A one-kind node
-        // answers the bare kind, so no existing payload moves.
-        kind: kindKey(node2),
-        label: kindsOf(node2).map((k) => k === "ANY" ? "Any node" : k).join(" or "),
-        fields: keys.map((k) => {
-          const f = FIELD_BY_KEY.get(k);
-          return { key: f.key, label: f.label, numeric: f.numeric };
-        }),
-        available: offered.map((f) => ({ key: f.key, label: f.label })),
-        // Only when the group IS an alternative. Most queries have no OR in them, and stamping
-        // every column group with two undefined keys would put them in the wire payload and in
-        // the golden snapshot, where they read as a fact about the group rather than an absence.
-        ...slot.altOf === void 0 ? {} : { altOf: slot.altOf, altIndex: slot.altIndex }
-      });
-    }
-    return groups;
-  }
-  function bindingSlots(node2, path = "", alt) {
-    var _a5;
-    const out = [{ node: node2, altOf: alt == null ? void 0 : alt.of, altIndex: alt == null ? void 0 : alt.index }];
-    ((_a5 = node2.steps) != null ? _a5 : []).forEach((step, i) => out.push(...stepSlots(step, path + "." + i, alt)));
-    return out;
-  }
-  function stepSlots(step, path, alt) {
-    if (isGroup(step)) {
-      const out = [];
-      step.steps.forEach((child, i) => {
-        const inner = step.op === "or" ? { of: path, index: i } : alt;
-        out.push(...stepSlots(child, path + "." + i, inner));
-      });
-      return out;
-    }
-    if (step.negate) return [];
-    return bindingSlots(step.node, path, alt);
-  }
-  function buildAdjacency(doc) {
-    const byId = new Map(doc.nodes.map((n) => [n.id, n]));
-    const out = /* @__PURE__ */ new Map();
-    const inn = /* @__PURE__ */ new Map();
-    for (const e of doc.edges) {
-      if (!byId.has(e.src) || !byId.has(e.dst)) continue;
-      pushInto(out, e.src, e);
-      pushInto(inn, e.dst, e);
-    }
-    return { byId, out, in: inn };
-  }
-  function fieldValue(node2, key) {
-    if (key === "id") return node2.id;
-    const spec = FIELD_BY_KEY.get(key);
-    return spec ? spec.get(node2) : null;
-  }
-  function matchesFilter(node2, f) {
-    const v = fieldValue(node2, f.key);
-    const hit = (x) => {
-      if (v === null) {
-        return x === "unknown" || x === "";
-      }
-      const s = String(v).toLowerCase();
-      const want = String(x).toLowerCase();
-      if (f.op !== "contains" && fieldIsPairs(f.key)) return matchesTag(node2, want);
-      if (f.op === "contains") {
-        return s.indexOf(want) !== -1;
-      }
-      if (want === s) return true;
-      return s.split(", ").includes(want);
-    };
-    const held = f.all ? f.values.every(hit) : f.values.some(hit);
-    return f.negate ? !held : held;
-  }
-  function fieldIsPairs(key) {
-    var _a5;
-    return ((_a5 = FIELD_BY_KEY.get(key)) == null ? void 0 : _a5.type) === "pairs";
-  }
-  function matchesTag(node2, want) {
-    var _a5;
-    const at = want.indexOf(":");
-    const wantKey = (at === -1 ? want : want.slice(0, at)).trim();
-    const wantValue = at === -1 ? null : want.slice(at + 1).trim();
-    return ((_a5 = node2.tags) != null ? _a5 : []).some((t) => {
-      var _a6;
-      if (String(t.key).toLowerCase() !== wantKey) return false;
-      return wantValue === null || String((_a6 = t.value) != null ? _a6 : "").toLowerCase() === wantValue;
-    });
-  }
-  function matchesNode(node2, q) {
-    var _a5;
-    const kinds = kindsOf(q);
-    if (!kinds.includes("ANY") && !kinds.includes(node2.kind)) return false;
-    for (const f of (_a5 = q.where) != null ? _a5 : []) {
-      if (!matchesFilter(node2, f)) return false;
-    }
-    return true;
-  }
-  function stepTargets(from, step, adj) {
-    var _a5;
-    if (step.edge === "ANY") return anyHopTargets(from, step, adj);
-    const edges2 = (_a5 = step.reverse ? adj.in.get(from.id) : adj.out.get(from.id)) != null ? _a5 : [];
-    const seen = /* @__PURE__ */ new Set();
-    const hits = [];
-    for (const e of edges2) {
-      if (e.type !== step.edge) continue;
-      if (Boolean(e.negated) !== Boolean(step.viaAbsence)) continue;
-      const other = adj.byId.get(step.reverse ? e.src : e.dst);
-      if (!other || seen.has(other.id)) continue;
-      if (!matchesNode(other, step.node)) continue;
-      seen.add(other.id);
-      hits.push({ node: other, edges: [e] });
-    }
-    return hits;
-  }
-  function anyHopTargets(from, step, adj) {
-    var _a5, _b, _c;
-    const limit = Math.min(MAX_HOPS, Math.max(1, (_a5 = step.hops) != null ? _a5 : 1));
-    const prev = /* @__PURE__ */ new Map();
-    const seen = /* @__PURE__ */ new Set([from.id]);
-    let frontier = [from.id];
-    const hits = [];
-    for (let depth = 0; depth < limit && frontier.length; depth++) {
-      const next = [];
-      for (const id of frontier) {
-        const touching = [...(_b = adj.out.get(id)) != null ? _b : [], ...(_c = adj.in.get(id)) != null ? _c : []];
-        for (const e of touching) {
-          if (e.negated) continue;
-          const otherId = e.src === id ? e.dst : e.src;
-          if (seen.has(otherId)) continue;
-          seen.add(otherId);
-          prev.set(otherId, { via: e, from: id });
-          next.push(otherId);
-          const other = adj.byId.get(otherId);
-          if (other && matchesNode(other, step.node)) {
-            hits.push({ node: other, edges: pathEdges(otherId, from.id, prev) });
-          }
-        }
-      }
-      frontier = next;
-    }
-    return hits;
-  }
-  function pathEdges(toId, rootId, prev) {
-    const edges2 = [];
-    let cursor = toId;
-    while (cursor !== rootId) {
-      const hop = prev.get(cursor);
-      if (!hop) break;
-      edges2.push(hop.via);
-      cursor = hop.from;
-    }
-    return edges2.reverse();
-  }
-  function solutions(q, node2, adj, scan) {
-    var _a5;
-    let acc = [{ slots: [node2], edges: [] }];
-    for (const step of (_a5 = q.steps) != null ? _a5 : []) {
-      const sub = solveStep(step, node2, adj, scan);
-      if (sub === null) return [];
-      acc = crossProduct(acc, sub, scan);
-      if (scan.truncated) return [];
-    }
-    return acc;
-  }
-  function crossProduct(left, right, scan) {
-    const out = [];
-    for (const a of left) {
-      for (const b of right) {
-        if (++scan.scanned > scan.max) {
-          scan.truncated = true;
-          return out;
-        }
-        out.push({ slots: a.slots.concat(b.slots), edges: a.edges.concat(b.edges) });
-      }
-    }
-    return out;
-  }
-  function nullSolution(width) {
-    return { slots: new Array(width).fill(null), edges: [] };
-  }
-  function solveStep(step, from, adj, scan) {
-    if (isGroup(step)) return solveGroup(step, from, adj, scan);
-    const targets = stepTargets(from, step, adj);
-    if (step.negate) {
-      return targets.length ? null : [{ slots: [], edges: [] }];
-    }
-    const out = [];
-    for (const t of targets) {
-      for (const sub of solutions(step.node, t.node, adj, scan)) {
-        out.push({ slots: sub.slots, edges: t.edges.concat(sub.edges) });
-      }
-      if (scan.truncated) break;
-    }
-    if (out.length) return out;
-    return step.optional ? [nullSolution(stepSlots(step, "").length)] : null;
-  }
-  function solveGroup(group, from, adj, scan) {
-    const widths = group.steps.map((s) => stepSlots(s, "").length);
-    if (group.op === "and") {
-      let acc = [{ slots: [], edges: [] }];
-      for (const child of group.steps) {
-        const sub = solveStep(child, from, adj, scan);
-        if (sub === null) {
-          return group.optional ? [nullSolution(total(widths))] : null;
-        }
-        acc = crossProduct(acc, sub, scan);
-        if (scan.truncated) return [];
-      }
-      return acc;
-    }
-    const bound = [];
-    const empty = [];
-    for (let i = 0; i < group.steps.length; i++) {
-      if (scan.truncated) break;
-      const sub = solveStep(group.steps[i], from, adj, scan);
-      if (sub === null) continue;
-      const before = total(widths.slice(0, i));
-      const after = total(widths.slice(i + 1));
-      for (const s of sub) {
-        const solution = {
-          slots: new Array(before).fill(null).concat(s.slots, new Array(after).fill(null)),
-          edges: s.edges
-        };
-        (s.slots.some((n) => n !== null) ? bound : empty).push(solution);
-      }
-    }
-    if (bound.length) return bound;
-    if (empty.length) return [empty[0]];
-    return group.optional ? [nullSolution(total(widths))] : null;
-  }
-  function total(ns) {
-    let sum = 0;
-    for (const n of ns) sum += n;
-    return sum;
-  }
-  function runQuery(doc, query, opts = {}) {
-    var _a5, _b;
-    const rowMax = (_a5 = opts.rowMax) != null ? _a5 : QUERY_ROW_MAX;
-    const scan = { scanned: 0, max: (_b = opts.scanMax) != null ? _b : QUERY_SCAN_MAX, truncated: false };
-    const adj = buildAdjacency(doc);
-    const groups = queryColumnGroups(query, opts.columns);
-    const slots = bindingSlots(query);
-    const shownMask = slots.map((slot) => slot.node.show !== false);
-    const witnessOf = slots.map((slot) => witnessFor(slot.node));
-    const anyWitness = witnessOf.some(Boolean);
-    const groupFields = groups.map((g) => g.fields.map((f) => f.key));
-    const roots = doc.nodes.filter((n) => matchesNode(n, query)).sort((a, b) => {
-      var _a6, _b2;
-      return severityRank(a.severity) - severityRank(b.severity) || ((_a6 = b.aars) != null ? _a6 : -1) - ((_b2 = a.aars) != null ? _b2 : -1) || cmp(a.name, b.name);
-    });
-    const rows = [];
-    const nodeIds = /* @__PURE__ */ new Set();
-    const edgeIds = /* @__PURE__ */ new Set();
-    const witnessNodeIds = /* @__PURE__ */ new Set();
-    const witnessEdgeIds = /* @__PURE__ */ new Set();
-    const paths = [];
-    let total2 = 0;
-    for (const root of roots) {
-      for (const sol of solutions(query, root, adj, scan)) {
-        total2 += 1;
-        if (rows.length < rowMax) {
-          rows.push({ cells: toCells(sol.slots, shownMask, groupFields) });
-          const mine = [];
-          const mineAdd = (id) => {
-            if (!mine.includes(id)) mine.push(id);
-          };
-          for (const n of sol.slots) if (n) {
-            nodeIds.add(n.id);
-            mineAdd(n.id);
-          }
-          for (const e of sol.edges) {
-            edgeIds.add(e.id);
-            nodeIds.add(e.src);
-            nodeIds.add(e.dst);
-            mineAdd(e.src);
-            mineAdd(e.dst);
-          }
-          if (anyWitness) {
-            sol.slots.forEach((bound, i) => {
-              const witness = witnessOf[i];
-              if (!bound || !witness) return;
-              let taken = 0;
-              for (const found of solutions(witness, bound, adj, scan)) {
-                if (taken++ >= WITNESS_FANOUT_CAP) break;
-                for (const n of found.slots) {
-                  if (!n || n.id === bound.id) continue;
-                  witnessNodeIds.add(n.id);
-                  mineAdd(n.id);
-                }
-                for (const e of found.edges) {
-                  witnessEdgeIds.add(e.id);
-                  for (const end of [e.src, e.dst]) {
-                    if (end !== bound.id) witnessNodeIds.add(end);
-                    mineAdd(end);
-                  }
-                }
-              }
-            });
-          }
-          paths.push(mine);
-        }
-      }
-      if (scan.truncated) break;
-    }
-    return {
-      rows,
-      groups,
-      total: total2,
-      capped: total2 > rows.length,
-      truncated: scan.truncated,
-      nodeIds: [...nodeIds],
-      edgeIds: [...edgeIds],
-      witnessNodeIds: [...witnessNodeIds],
-      witnessEdgeIds: [...witnessEdgeIds],
-      paths
-    };
-  }
-  function toCells(slots, shownMask, groupFields) {
-    var _a5;
-    const cells = [];
-    for (let i = 0; i < slots.length; i++) {
-      if (!shownMask[i]) continue;
-      const node2 = slots[i];
-      const keys = (_a5 = groupFields[cells.length]) != null ? _a5 : [];
-      if (!node2) {
-        cells.push(null);
-        continue;
-      }
-      const fields = {};
-      for (const key of keys) fields[key] = fieldValue(node2, key);
-      cells.push({ id: node2.id, kind: node2.kind, name: node2.name, fields });
-    }
-    return cells;
-  }
-
-  // src/domain/severity.ts
-  function normalizeSeverity(sev) {
-    if (typeof sev !== "string") return "UNKNOWN";
-    const s = sev.toUpperCase().trim();
-    if (s === "INFORMATIONAL" || s === "INFO") return "INFO";
-    return SEVERITY_ORDER.includes(s) ? s : "UNKNOWN";
-  }
-  function countBySeverity2(records) {
-    var _a5;
-    if (!records.length || !records.some((r) => "severity" in r)) return {};
-    const counts = {};
-    for (const rec4 of records) {
-      const sev = normalizeSeverity(rec4["severity"]);
-      counts[sev] = ((_a5 = counts[sev]) != null ? _a5 : 0) + 1;
-    }
-    return counts;
-  }
-
-  // src/domain/comboDigest.ts
-  var DUE_SOON_DAYS = 7;
-  var DAY_MS3 = 864e5;
-  var carriesCondition = conditionState;
-  function mixOf(issues2, field) {
-    return countBySeverity2(issues2.map((i) => ({ severity: i[field] })));
-  }
-  function daysUntil(dueAt, nowMs) {
-    const t = Date.parse(dueAt || "");
-    if (Number.isNaN(t)) return null;
-    return Math.round((t - nowMs) / DAY_MS3);
-  }
-  function slaTally(issues2, nowMs) {
-    const out = { pastDue: 0, dueSoon: 0, noDueDate: 0 };
-    for (const issue2 of issues2) {
-      const days = daysUntil(issue2.dueAt, nowMs);
-      if (days === null) out.noDueDate += 1;
-      else if (days < 0) out.pastDue += 1;
-      else if (days <= DUE_SOON_DAYS) out.dueSoon += 1;
-    }
-    return out;
-  }
-  function emptyConditions() {
-    const out = {};
-    for (const key of CONDITION_KEYS) {
-      out[key] = { required: false, carried: 0, unknown: 0, total: 0 };
-    }
-    return out;
-  }
-  function reRatedCount(issues2) {
-    return issues2.filter((i) => i.nativeSeverity !== i.adjustedSeverity).length;
-  }
-  function comboDigest(issues2, assets, nowIso2) {
-    const nowMs = Date.parse(nowIso2);
-    const byAsset = new Map(assets.map((a) => [a.id, a]));
-    const open = issues2.filter(isUnresolvedIssue);
-    const summaries = comboSummary(issues2);
-    const groups = summaries.map((summary) => {
-      const group = summary.group;
-      const assetIds = summary.assetIds;
-      const rows = open.filter((i) => registerBucketId(i) === group.id);
-      const conditions = emptyConditions();
-      const declared = new Set(group.conditions);
-      for (const key of CONDITION_KEYS) conditions[key].required = declared.has(key);
-      for (const id of assetIds) {
-        const asset = byAsset.get(id);
-        if (!asset) continue;
-        for (const key of CONDITION_KEYS) {
-          const tally = conditions[key];
-          tally.total += 1;
-          const carried = carriesCondition(asset, key);
-          if (carried === null) tally.unknown += 1;
-          else if (carried) tally.carried += 1;
-        }
-      }
-      const sla2 = slaTally(rows, nowMs);
-      return {
-        id: group.id,
-        count: summary.count,
-        assetCount: assetIds.length,
-        conditions,
-        nativeMix: mixOf(rows, "nativeSeverity"),
-        adjustedMix: mixOf(rows, "adjustedSeverity"),
-        reRated: reRatedCount(rows),
-        pastDue: sla2.pastDue,
-        dueSoon: sla2.dueSoon,
-        noDueDate: sla2.noDueDate
-      };
-    });
-    const affected = /* @__PURE__ */ new Set();
-    for (const s of summaries) for (const id of s.assetIds) affected.add(id);
-    const sla = slaTally(open, nowMs);
-    const modelled = new Set(COMBO_GROUPS.map((g) => g.id));
-    return {
-      totals: {
-        totalOpen: open.length,
-        assetsAffected: affected.size,
-        // Four modelled patterns is still four: Other is a residual bucket, not a pattern,
-        // so counting it would render "5 of 5 patterns active" — a claim the rule set
-        // does not make.
-        patternsActive: groups.filter((g) => g.count > 0 && modelled.has(g.id)).length,
-        patternsTotal: COMBO_GROUPS.length,
-        unclassified: groups.filter((g) => !modelled.has(g.id)).reduce((n, g) => n + g.count, 0),
-        inProgress: open.filter((i) => i.status === "IN_PROGRESS").length,
-        nativeMix: mixOf(open, "nativeSeverity"),
-        adjustedMix: mixOf(open, "adjustedSeverity"),
-        reRated: reRatedCount(open),
-        pastDue: sla.pastDue,
-        dueSoon: sla.dueSoon,
-        noDueDate: sla.noDueDate
-      },
-      groups
-    };
-  }
-
-  // src/domain/backlogMovement.ts
-  var MOVEMENT_MIN_GAP_DAYS = 7;
-  var MOVEMENT_DAY_MS = 864e5;
-  var DELTA_KEYS = ["new", "resolved", "reopened", "carried", "skippedNarrowedScope"];
-  function round1(n) {
-    return Math.round(n * 10) / 10;
-  }
-  function deltasOf(cell2) {
-    const counts = parseCounts(cell2, DELTA_KEYS, true);
-    if (!counts) return null;
-    const out = {};
-    for (const k of DELTA_KEYS) {
-      const n = counts[k];
-      if (n === null) return null;
-      out[k] = n;
-    }
-    return out;
-  }
-  function stepsOf(history) {
-    var _a5, _b;
-    const out = [];
-    for (const r of history) {
-      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
-      const at = String(r["finished_at"] || r["started_at"] || "");
-      const atMs = parseTs(at);
-      if (!at || atMs === null) continue;
-      out.push({
-        at,
-        atMs,
-        scope: String((_b = r["register_scope"]) != null ? _b : ""),
-        deltas: deltasOf(r["ledger_json"])
-      });
-    }
-    out.sort((a, b) => a.atMs - b.atMs);
-    return out;
-  }
-  function stepBack(open, d) {
-    return open - d.new - d.reopened + d.resolved;
-  }
-  function directionOf(open, prevOpen) {
-    if (open > prevOpen) return "up";
-    if (open < prevOpen) return "down";
-    return "flat";
-  }
-  function stepRefusal(newer, older) {
-    if (newer.deltas === null || older.deltas === null) return "noLedger";
-    if (newer.deltas.skippedNarrowedScope > 0) return "rescoped";
-    if (!newer.scope || !older.scope || newer.scope !== older.scope) return "rescoped";
-    return null;
-  }
-  function backlogMovement(history, opts) {
-    const minGapDays = opts.minGapDays === void 0 ? MOVEMENT_MIN_GAP_DAYS : opts.minGapDays;
-    const anchor = Number.isFinite(opts.openNow) && opts.openNow >= 0 ? Math.floor(opts.openNow) : null;
-    const steps = anchor === null ? [] : stepsOf(history);
-    const n = steps.length;
-    const spanDays2 = n >= 2 ? round1((steps[n - 1].atMs - steps[0].atMs) / MOVEMENT_DAY_MS) : null;
-    const none = (previous2, week) => ({ previous: null, week: null, reasons: { previous: previous2, week }, spanDays: spanDays2 });
-    if (n === 0) return none("noSync", "tooClose");
-    if (n === 1) return none("oneSync", "tooClose");
-    const latest = steps[n - 1];
-    const openNow = anchor;
-    let previous = null;
-    let previousReason = null;
-    const priorStep = steps[n - 2];
-    const priorRefusal = stepRefusal(latest, priorStep);
-    if (priorRefusal !== null) {
-      previousReason = priorRefusal;
-    } else {
-      const prevOpen = stepBack(openNow, latest.deltas);
-      previous = {
-        since: priorStep.at,
-        until: latest.at,
-        gapDays: round1((latest.atMs - priorStep.atMs) / MOVEMENT_DAY_MS),
-        deltas: { ...latest.deltas },
-        open: openNow,
-        prevOpen,
-        direction: directionOf(openNow, prevOpen)
-      };
-    }
-    let target = -1;
-    for (let i = n - 2; i >= 0; i -= 1) {
-      if ((latest.atMs - steps[i].atMs) / MOVEMENT_DAY_MS >= minGapDays) {
-        target = i;
-        break;
-      }
-    }
-    if (target < 0) {
-      return {
-        previous,
-        week: null,
-        reasons: { previous: previousReason, week: "tooClose" },
-        spanDays: spanDays2
-      };
-    }
-    const sum = {
-      new: 0,
-      resolved: 0,
-      reopened: 0,
-      carried: 0,
-      skippedNarrowedScope: 0
-    };
-    let open = openNow;
-    for (let k = n - 1; k > target; k -= 1) {
-      const refusal = stepRefusal(steps[k], steps[k - 1]);
-      if (refusal !== null) {
-        return {
-          previous,
-          week: null,
-          reasons: { previous: previousReason, week: refusal },
-          spanDays: spanDays2
-        };
-      }
-      const d = steps[k].deltas;
-      for (const key of DELTA_KEYS) sum[key] += d[key];
-      open = stepBack(open, d);
-    }
-    const older = steps[target];
-    return {
-      previous,
-      week: {
-        since: older.at,
-        until: latest.at,
-        gapDays: round1((latest.atMs - older.atMs) / MOVEMENT_DAY_MS),
-        deltas: sum,
-        open: openNow,
-        prevOpen: open,
-        direction: directionOf(openNow, open)
-      },
-      reasons: { previous: previousReason, week: null },
-      spanDays: spanDays2
-    };
-  }
-
-  // src/domain/issueSurvival.ts
-  var CROSSING_EPSILON = 1e-9;
-  var DAY_MS4 = 864e5;
-  function kmCurve(events, times) {
-    const curve = [];
-    let s = 1;
-    for (const t of [...new Set(events)].sort((a, b) => a - b)) {
-      const atRisk = times.filter((x) => x >= t).length;
-      if (atRisk === 0) continue;
-      const d = events.filter((x) => x === t).length;
-      s *= 1 - d / atRisk;
-      curve.push({ t, s, atRisk, events: d });
-    }
-    return curve;
-  }
-  function kmQuantileFromCurve(curve, q) {
-    const threshold = 1 - q;
-    for (const p of curve) if (p.s <= threshold + CROSSING_EPSILON) return p.t;
-    return null;
-  }
-  function kmMedianFromCurve(curve) {
-    return kmQuantileFromCurve(curve, 0.5);
-  }
-  function kaplanMeier(observations) {
-    const events = [];
-    const times = [];
-    let censored = 0;
-    for (const o of observations) {
-      if (!Number.isFinite(o.t)) continue;
-      times.push(o.t);
-      if (o.event) events.push(o.t);
-      else censored += 1;
-    }
-    let longest = null;
-    for (const t of times) if (longest === null || t > longest) longest = t;
-    if (!events.length) {
-      return {
-        curve: [],
-        median: null,
-        medianLowerBound: longest,
-        p90: null,
-        events: 0,
-        censored,
-        total: times.length
-      };
-    }
-    const curve = kmCurve(events, times);
-    const median = kmMedianFromCurve(curve);
-    return {
-      curve,
-      median,
-      medianLowerBound: median === null ? longest : null,
-      p90: kmQuantileFromCurve(curve, 0.9),
-      events: events.length,
-      censored,
-      total: times.length
-    };
-  }
-  function spanDays(fromIso, toIsoValue) {
-    const from = parseTs(fromIso);
-    const to = parseTs(toIsoValue);
-    if (from === null || to === null) return null;
-    const days = (to - from) / DAY_MS4;
-    if (!Number.isFinite(days) || days < 0) return null;
-    return days;
-  }
-  function ledgerObservations(ledger) {
-    const obs = [];
-    let returnedExcluded = 0;
-    let unmeasurable = 0;
-    for (const row of ledger) {
-      const episode = row ? row.episode : void 0;
-      if (typeof episode !== "number" || !Number.isFinite(episode)) {
-        unmeasurable += 1;
-        continue;
-      }
-      if (episode > 1) {
-        returnedExcluded += 1;
-        continue;
-      }
-      const gone = row.disappearedAt;
-      if (gone !== null && gone !== void 0) {
-        const t2 = spanDays(row.firstSeenAt, gone);
-        if (t2 === null) unmeasurable += 1;
-        else obs.push({ t: t2, event: true });
-        continue;
-      }
-      const t = spanDays(row.firstSeenAt, row.lastSeenAt);
-      if (t === null) unmeasurable += 1;
-      else obs.push({ t, event: false });
-    }
-    return { obs, returnedExcluded, unmeasurable };
-  }
-  function issueHalfLife(ledger) {
-    const { obs, returnedExcluded, unmeasurable } = ledgerObservations(ledger);
-    let latest = null;
-    for (const row of ledger) {
-      if (!row) continue;
-      for (const value of [row.lastSeenAt, row.disappearedAt]) {
-        const ts = parseTs(value);
-        if (ts !== null && (latest === null || ts > latest)) latest = ts;
-      }
-    }
-    return {
-      ...kaplanMeier(obs),
-      returnedExcluded,
-      unmeasurable,
-      asOf: toIso(latest)
-    };
-  }
-
-  // src/domain/reach.ts
-  var READ_TIME_EDGE_TYPES = [
-    "HAS_ISSUE",
-    "HAS_SENSITIVE_DATA",
-    "HAS_ACCESS_TO_SENSITIVE_DATA",
-    "EXPOSED_TO_INTERNET",
-    "HAS_EXCESSIVE_PRIVILEGE",
-    "HAS_DATA_FINDING"
-  ];
-  function isDecidedRow(row) {
-    return !!row.problemOutcome && !!row.problemInput && OUTCOME_VALUES.includes(row.problemOutcome);
-  }
-  function isEnriched(edgeTouched, a) {
-    var _a5, _b, _c, _d, _e, _f, _g;
-    if (edgeTouched.has(a.id)) return true;
-    const ev2 = a.exposureEvidence;
-    if (ev2 && (((_b = (_a5 = ev2.hostIds) == null ? void 0 : _a5.length) != null ? _b : 0) > 0 || ((_d = (_c = ev2.endpointIds) == null ? void 0 : _c.length) != null ? _d : 0) > 0)) return true;
-    return ((_g = (_f = (_e = a.humanAccess) == null ? void 0 : _e.identityIds) == null ? void 0 : _f.length) != null ? _g : 0) > 0;
-  }
-  function estateReach(input) {
-    var _a5;
-    const { assets, issues: issues2, findings, edges: edges2 } = input;
-    const unresolvedIssues = issues2.filter(isUnresolvedIssue);
-    const openFindings = findings.filter(isOpenGap);
-    const issueAssetIds = new Set(unresolvedIssues.map((i) => i.assetId));
-    const findingResourceIds = new Set(openFindings.map((f) => f.resourceId));
-    const edgeTouched = /* @__PURE__ */ new Set();
-    for (const e of edges2) {
-      edgeTouched.add(e.src);
-      edgeTouched.add(e.dst);
-    }
-    const hasSignal = (a) => issueAssetIds.has(a.id) || findingResourceIds.has(a.id) || CONDITION_KEYS.some((k) => conditionHolds(a, k));
-    const byKind = /* @__PURE__ */ new Map();
-    for (const a of assets) {
-      const slot = (_a5 = byKind.get(a.kind)) != null ? _a5 : { total: 0, signal: 0 };
-      slot.total += 1;
-      if (hasSignal(a)) slot.signal += 1;
-      byKind.set(a.kind, slot);
-    }
-    const kinds = [...byKind.entries()].sort((a, b) => b[1].total - a[1].total).map(([kind, s]) => ({
-      kind,
-      total: s.total,
-      signal: s.signal,
-      ai: AI_ASSET_KINDS.includes(kind)
-    }));
-    const aiAssets = assets.filter((a) => AI_ASSET_KINDS.includes(a.kind));
-    const stages = [
-      // 1. IN REGISTER. Denominator: every row on ai_assets (assets.length). Covered: the
-      // AI-kinded subset (AI_ASSET_KINDS membership on ai_assets.kind) — the same number
-      // registerScopeDiagnostic prints as "in AI_ASSET_KINDS". Everything past this stage is
-      // scoped to that covered count, which is why it becomes every later stage's total.
-      { key: "register", label: "In register", covered: aiAssets.length, total: assets.length },
-      // 2. OBSERVED. Denominator: the AI-kinded population stage 1 established. Covered: AI
-      // assets where hasSignal() holds — ai_issues.status (unresolved), ai_findings.result /
-      // .status (open gap), or ai_assets' four condition columns (sensitive_data,
-      // sensitive_access, high_priv, admin_priv, guardrail_missing, internet /
-      // exposure_evidence_json) via conditionHolds. An asset with none of these contributes
-      // nothing any scoring model can read — "carrying any signal" in
-      // registerScopeDiagnostic's own words.
+      // GATED, not unconditional. ~3,858 rules is ~39 pages against a battery that is otherwise
+      // ~10–20 calls, to re-collect a list that changes when Wiz ships rules. `catalogueFresh`
+      // is resolved once, above, and a skip here is recorded as SCHEDULED rather than joining
+      // `skippedSteps` — that list means "the tenant refused this", and a step we chose not to
+      // run must not be reported as a rejection.
+      ...catalogueFresh ? [] : [{
+        id: "CONFIG_RULES",
+        area: "configFindings",
+        writes: ["ai_config_rules"],
+        run: "connection",
+        connectionField: "cloudConfigurationRules",
+        query: Q_CONFIG_RULES,
+        // `hasFindings: true` — 3,905 rules down to 1,401, measured against this tenant
+        // (AARS_LIVE_MEASUREMENTS.md §6.10), where `project` is completely inert. It narrows
+        // the FETCH only: the catalogue is a join target, so syncStore writes this tab only
+        // when the step returned rows and a rule that stops having findings keeps the entry a
+        // stored issue still references. See aiConfigRulesVariables.
+        extraVariables: aiConfigRulesVariables(),
+        normalize: normalizeConfigRulesPage,
+        optional: true,
+        // The big one: ~3,858 rules is 39 pages at PAGE_SIZE and 8 at PAGE_SIZE_WIDE, and
+        // the document is five flat scalars per node.
+        pageSize: PAGE_SIZE_WIDE
+      }],
+      // MFA and dormancy on the humans who can reach an AI asset. The rules come from the
+      // catalogue, matched by name (domain/identityHygiene.ts), so this step exists only once
+      // the catalogue has been collected at least once — on a first sync it resolves to nothing
+      // and is skipped, and the following sync has it.
+      ...hygieneRules.ids.length ? [{
+        id: "IDENTITY_HYGIENE",
+        area: "identity",
+        writes: ["ai_identity_findings"],
+        run: "connection",
+        connectionField: "configurationFindings",
+        query: Q_CONFIG_FINDINGS,
+        extraVariables: aiIdentityHygieneVariables(hygieneRules.ids, projectScope()),
+        // Closed over the resolved map, the way the per-rule combo steps close over their group.
+        // It is also what lets the normalizer verify the filter was honoured at all.
+        normalize: (rows) => normalizeIdentityFindingsPage(rows, hygieneRules.byId),
+        optional: true
+      }] : [],
+      // Effective permissions on those same assets: not who holds a role, but what they can do
+      // and which policy says so. Runs BESIDE IDENTITY_ACCESS rather than replacing it — that
+      // step draws the graph's ALLOWS_ACCESS_TO edges and speaks ADMIN/HIGH_PRIVILEGE, this one
+      // speaks DATA, and withHumanAccess keeps the two in separate fields.
       {
-        key: "observed",
-        label: "Observed",
-        covered: aiAssets.filter(hasSignal).length,
-        total: aiAssets.length
+        id: "EFFECTIVE_ACCESS",
+        area: "identity",
+        writes: ["ai_assets (human_access_json)"],
+        run: "connection",
+        connectionField: "entityEffectiveAccessEntries",
+        query: Q_EFFECTIVE_ACCESS,
+        extraVariables: effectiveAccessVariables(types, projectScope()),
+        normalize: normalizeEffectiveAccessPage,
+        optional: true,
+        pageSize: PAGE_SIZE_WIDE
       },
-      // 3. ENRICHED. Denominator: the AI-kinded population. Covered: AI assets a graph
-      // traversal actually reached — participates in a row of ai_edges (src or dst), or
-      // carries folded exposure evidence (ai_assets.exposure_evidence_json) or human-access
-      // evidence (ai_assets.human_access_json). An asset with none of these was never walked
-      // by anything past the mandatory inventory query.
-      {
-        key: "enriched",
-        label: "Enriched",
-        covered: aiAssets.filter((a) => isEnriched(edgeTouched, a)).length,
-        total: aiAssets.length
-      },
-      // 4. DECIDED. Denominator: the AI-kinded population. Covered: AI assets carrying a
-      // problem verdict (ai_assets.worst_open_problem, folded from the Phase 4 tree onto the
-      // asset by graphEnrich.withProblemVerdicts). An asset without one sits in the register
-      // unrouted: no cascade row matched it because nothing was known about it.
+      // The framework catalogue. Populates the Settings picker; it does NOT decide the
+      // battery — see the posture steps below for why.
       //
-      // A PERSISTED AARS SCORE DOES NOT COUNT, and this stage used to accept one. That made it
-      // a tautology: `enrichGraphDoc` scores every AI-kinded node unconditionally, so
-      // `typeof a.aars === "number"` is true for the whole population and the stage reported
-      // 100% by construction on every tenant. It did so most loudly on the tenant it mattered
-      // for — a green 100% Decided printed directly under a 0% Enriched, which is exactly the
-      // false-green this file's header says it exists to refuse. A score of 0 on an asset with
-      // no issue, no finding, no edge and no evidence is the ABSENCE of a conclusion; counting
-      // it as one is counting the scorer having run.
+      // `area` is the posture one, not the configuration-findings one. The tag is what the
+      // Wiz Scans drill-down filters on (scanSheet.js), so it decides which area DISPLAYS
+      // this document — it is a join key, not a label. Both this step and the posture steps
+      // below spent a release tagged "compliance", which left the posture area rendering
+      // "No sync step issues a query for this area" beside its own live figure. Pinned by
+      // test/scanAreaSteps.test.ts.
       {
-        key: "decided",
-        label: "Decided",
-        covered: aiAssets.filter((a) => a.worstOpenProblem !== void 0).length,
-        total: aiAssets.length
+        id: "FRAMEWORKS_LIST",
+        area: "posture",
+        writes: ["ai_frameworks"],
+        run: "connection",
+        connectionField: "securityFrameworks",
+        query: Q_SECURITY_FRAMEWORKS,
+        extraVariables: vars("FRAMEWORKS_LIST", aiSecurityFrameworksVariables()),
+        normalize: normalizeFrameworksPage,
+        optional: true,
+        pageSize: PAGE_SIZE_WIDE
+      },
+      // Per-framework compliance posture — ONE STEP PER FRAMEWORK, because the query takes a
+      // framework id and returns one object. Generated the same way the per-rule combo steps
+      // above are, so the budget/resume machinery needs no special case.
+      //
+      // Driven by the SELECTION, not by the catalogue: posture costs a round trip per
+      // framework and a tenant can carry a hundred builtin ones this app has no vocabulary
+      // for. Each step is optional, so a framework id that is wrong on this tenant costs a
+      // recorded skip rather than a failed sync.
+      ...selectedFrameworks().map((frameworkId) => ({
+        id: `COMPLIANCE_POSTURE_${frameworkId}`,
+        area: "posture",
+        writes: ["ai_framework_posture", "ai_framework_policies"],
+        run: "single",
+        connectionField: "securityFramework",
+        query: Q_COMPLIANCE_POSTURE,
+        // No `vars()` indirection here on purpose: these steps are LOCKED. Overrides are
+        // stored per step id, and every posture step has its own (`COMPLIANCE_POSTURE_<id>`),
+        // so reading them under a shared "COMPLIANCE_POSTURE" key would be an override slot
+        // nothing can ever write to — dead indirection that reads like a feature.
+        //
+        // They are locked because the framework id is not a filter. The existing rule is that
+        // a variable may narrow a selection set but never change it; an id that selects WHICH
+        // OBJECT the selection set is applied to is further outside that line, not inside it.
+        // Choosing frameworks is Settings' job.
+        extraVariables: {
+          ...aiCompliancePostureVariables(projectScope()),
+          id: frameworkId
+        },
+        normalize: normalizeCompliancePosturePage,
+        optional: true
+      })),
+      {
+        id: "GUARDRAIL_GAPS",
+        area: "guardrails",
+        writes: ["ai_assets.guardrail_missing"],
+        run: "graphSearch",
+        query: Q_AGENTS_NO_GUARDRAIL,
+        // Scoped, along with every other step. These four ran tenant-wide while the inventory
+        // did too — that was the argument, and it inverts the moment the register is scoped:
+        // a tenant-wide traversal over a scoped register lands assets the inventory never
+        // collected, and prices them into a coverage ratio whose denominator excludes them.
+        // guardrail-coverage-pct is exactly that ratio, so this one had to move in the same
+        // commit as INVENTORY_AI or the number would have quietly broken.
+        extraVariables: noGuardrailVariables(types, projectScope()),
+        normalize: normalizeNoGuardrailPage,
+        optional: true,
+        pageSize: PAGE_SIZE_TRAVERSAL
+      },
+      {
+        id: "RUNS_AS",
+        area: "ciem",
+        writes: ["ai_edges (RUNS_AS)", "ai_assets"],
+        run: "graphSearch",
+        query: Q_AGENT_RUNS_AS,
+        extraVariables: agentRunsAsVariables(types, projectScope()),
+        normalize: normalizeRunsAsPage,
+        optional: true,
+        pageSize: PAGE_SIZE_TRAVERSAL
+      },
+      {
+        id: "SA_FINDINGS",
+        area: "ciem",
+        writes: ["ai_edges (HAS_FINDING)", "ai_assets"],
+        run: "graphSearch",
+        query: Q_SA_EXCESSIVE_ACCESS,
+        extraVariables: saExcessiveAccessVariables(types, projectScope()),
+        normalize: normalizeRunsAsPage,
+        optional: true,
+        pageSize: PAGE_SIZE_TRAVERSAL
+      },
+      // The data-exposure chain. Runs AFTER the two CIEM steps on purpose: it re-emits the
+      // agent and its service account, and mergeParts lets later truthy values win field-wise,
+      // so landing the richer CIEM projections first means this step can only add to them.
+      {
+        id: "SENSITIVE_DATA_ACCESS",
+        area: "dspm",
+        writes: [
+          "ai_edges (RUNS_AS, ALLOWS_ACCESS_TO)",
+          "ai_assets (BUCKET/DATABASE rows, data_finding_count)",
+          "ai_data_findings"
+        ],
+        run: "graphSearch",
+        query: Q_AGENT_SENSITIVE_DATA_ACCESS,
+        extraVariables: sensitiveDataAccessVariables(types, projectScope()),
+        normalize: normalizeSensitiveDataAccessPage,
+        optional: true,
+        pageSize: PAGE_SIZE_TRAVERSAL
+      },
+      // Network exposure, in two steps because they are two claims. HOST_EXPOSURE says the
+      // compute under an AI asset is reachable; ENDPOINT_EXPOSURE says Wiz's scanner reached a
+      // live endpoint it serves and policy rates that a real exposure. The capture proves they
+      // can disagree — a Cloud Run revision that is openToAllInternet, serving endpoints rated
+      // Low because they redirect to SSO. See domain/exposureQuery.ts.
+      //
+      // Both run AFTER the CIEM and DSPM steps for the reason SENSITIVE_DATA_ACCESS gives:
+      // they re-emit the AI asset as a thin projection, and mergeParts lets later truthy
+      // values win field-wise, so landing the richer projections first means these can only
+      // add to them.
+      {
+        id: "HOST_EXPOSURE",
+        area: "exposure",
+        writes: [
+          "ai_edges (HOSTED_ON, SERVES)",
+          "ai_assets (VM/SERVERLESS + ENDPOINT rows, exposure_evidence_json)"
+        ],
+        run: "graphSearch",
+        query: Q_AI_EXPOSURE,
+        extraVariables: hostExposureVariables(types, projectScope()),
+        normalize: normalizeHostExposurePage,
+        optional: true
+      },
+      {
+        id: "ENDPOINT_EXPOSURE",
+        area: "exposure",
+        writes: ["ai_edges (SERVES)", "ai_assets (ENDPOINT rows, exposure_level, port_validation)"],
+        run: "graphSearch",
+        query: Q_AI_EXPOSURE,
+        extraVariables: endpointExposureVariables(types, projectScope()),
+        normalize: normalizeEndpointExposurePage,
+        optional: true
+      },
+      {
+        // The lineage step: the first traversal rooted at anything but AI_AGENT or the whole
+        // AI type list. AI_PIPELINE + AI_DATASET are 79% of the register and no query has ever
+        // stood at one. Scoped now: the reason it was not is that the inventory which found
+        // those pipelines ran tenant-wide, so capping this at one project would have built a
+        // low Enriched number in rather than measured it. The inventory is scoped, so the
+        // asymmetry has swapped ends — leaving this tenant-wide is now what would land pipelines
+        // the register does not contain. See domain/lineageQuery.ts.
+        id: "LINEAGE",
+        area: "dspm",
+        writes: [
+          "ai_edges (PRODUCES, READS_DATA_FROM, STORES_DATA_IN)",
+          "ai_assets (AI_MODEL/AI_SERVICE/AI_DATASET/BUCKET/DATABASE rows)"
+        ],
+        run: "graphSearch",
+        query: Q_LINEAGE,
+        extraVariables: lineageVariables(types, projectScope()),
+        normalize: normalizeLineagePage,
+        optional: true,
+        pageSize: PAGE_SIZE_TRAVERSAL
+      },
+      {
+        id: "IDENTITY_ACCESS",
+        area: "identity",
+        writes: [
+          "ai_edges (ALLOWS_ACCESS_TO)",
+          "ai_assets (USER_ACCOUNT/ACCESS_ROLE rows, inactive, human_access_json)"
+        ],
+        run: "graphSearch",
+        query: Q_IDENTITY_ACCESS,
+        extraVariables: identityAccessVariables(types, projectScope()),
+        normalize: normalizeIdentityAccessPage,
+        optional: true,
+        pageSize: PAGE_SIZE_TRAVERSAL
+      },
+      // AI-asset provenance: publisher, how Wiz discovered it, and the properties bag's TAGS.
+      // Optional and separate from INVENTORY_AI on purpose — see the note on Q_AI_PROPERTIES.
+      //
+      // Losing it no longer costs only two columns. `Wiz/Domain` appears in no capture's flat
+      // `tags { key value }` array — only in the properties bag — so for an AI ASSET this step
+      // is the sole route by which a domain arrives. A tenant that rejects `graphEntity` on
+      // this root gets domains on its substrate (the traversals read their own bags) and none
+      // on its agents, which is why `bootstrap.scope.domainCoverage` publishes a count rather
+      // than letting an empty Domain facet read as "nobody tagged anything". (It named
+      // getAssets until that endpoint's duplicate copy was removed as unread — the argument
+      // is unchanged, but only the bootstrap one ever had a reader.)
+      {
+        id: "AI_ASSET_PROPERTIES",
+        area: "aispm",
+        writes: ["ai_assets.publisher", "ai_assets.discovery_methods", "ai_assets.tags_json"],
+        run: "cloudResources",
+        query: Q_AI_PROPERTIES,
+        extraVariables: vars("AI_ASSET_PROPERTIES", aiPropertiesVariables(types, projectScope())),
+        // The same normalizer the inventory step uses. Safe because mergeParts merges
+        // field-wise and skips undefined — this step's narrower rows fill in the two provenance
+        // fields without erasing the projects, tags or analytics INVENTORY_AI established.
+        normalize: normalizeInventoryPage,
+        optional: true,
+        pageSize: PAGE_SIZE_WIDE
+      },
+      // Agentic execution identities (cloudResourcesV2 + identityPurpose:AGENTIC).
+      {
+        id: "AGENTIC_IDENTITIES",
+        area: "ciem",
+        writes: ["ai_assets.identity_purpose"],
+        run: "cloudResources",
+        query: Q_PRINCIPALS,
+        extraVariables: vars("AGENTIC_IDENTITIES", aiPrincipalsVariables(projectScope())),
+        normalize: normalizePrincipalsPage,
+        optional: true,
+        pageSize: PAGE_SIZE_WIDE
       }
     ];
-    const seenTypes = new Set(edges2.map((e) => e.type));
-    const populated = EDGE_TYPES.filter((t) => seenTypes.has(t));
-    const unseen = EDGE_TYPES.filter((t) => !seenTypes.has(t));
-    const synthetic = unseen.filter((t) => READ_TIME_EDGE_TYPES.includes(t));
-    const dead = unseen.filter((t) => !READ_TIME_EDGE_TYPES.includes(t));
-    const decidedRows = [...issues2, ...findings].filter(isDecidedRow);
-    const decided = decidedRows.map((r) => ({
-      outcome: r.problemOutcome,
-      vector: r.problemInput.vector,
-      unknowns: r.problemInput.unknowns
-    }));
-    const td = treeDiscrimination(decided);
-    const n = decided.length;
-    const axisKnown = (rate) => n > 0 ? 1 - rate : 0;
-    const axes = {
-      exploitation: axisKnown(td.unknownRate.exploitation),
-      impact: axisKnown(td.unknownRate.impact),
-      exposure: axisKnown(td.unknownRate.exposure),
-      mission: axisKnown(td.unknownRate.mission)
+  }
+  var TYPE_DEPENDENT_STEPS = /* @__PURE__ */ new Set([
+    "INVENTORY_AI",
+    "AI_ASSET_PROPERTIES",
+    "HOST_EXPOSURE",
+    "ENDPOINT_EXPOSURE",
+    "IDENTITY_ACCESS",
+    "EFFECTIVE_ACCESS",
+    "LINEAGE",
+    // Widened from the literal AI_AGENT. GUARDRAIL_GAPS widens to the three kinds a guardrail
+    // fronts rather than to every AI kind — see GUARDRAIL_SUBJECT_KINDS.
+    "GUARDRAIL_GAPS",
+    "RUNS_AS",
+    "SA_FINDINGS",
+    "SENSITIVE_DATA_ACCESS"
+  ]);
+  function rootFieldOf(step) {
+    var _a5;
+    if (step.run === "cloudResources") return "cloudResourcesV2";
+    if (step.run === "graphSearch") return "graphSearch";
+    return (_a5 = step.connectionField) != null ? _a5 : "";
+  }
+  function fetcherFor(step) {
+    if (step.run === "graphSearch") return fetchGraphSearchPage;
+    if (step.run === "cloudResources") return fetchCloudResourcesPage;
+    if (step.run === "single") return (o) => {
+      var _a5;
+      return fetchSingleObject((_a5 = step.connectionField) != null ? _a5 : "", o);
     };
-    return {
-      stages,
-      kinds,
-      edges: { populated, dead, synthetic, declared: EDGE_TYPES.length },
-      axes,
-      axesPopulation: n,
-      impactTagged: {
-        covered: aiAssets.filter((a) => !!a.businessImpact).length,
-        total: aiAssets.length
-      }
+    return (o) => {
+      var _a5;
+      return fetchConnectionPage((_a5 = step.connectionField) != null ? _a5 : "", o);
     };
   }
-
-  // src/server/hubUrl.ts
-  var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
-  var LOCAL_PREFIXES = [
-    ["http:", "", "localhost:"].join("/"),
-    ["http:", "", "127.0.0.1:"].join("/")
-  ];
-  var HUB_URL_REJECTED = "The hub URL must start with " + SCRIPT_PREFIX + " (the hub's deployed /exec URL) or " + LOCAL_PREFIXES[0] + "<port>/ (a hub running under npm run dev).";
-  function normalizeHubUrl(raw) {
-    if (typeof raw !== "string") throw new Error(HUB_URL_REJECTED);
-    const url = raw.trim();
-    if (!url) return "";
-    const legal = url.indexOf(SCRIPT_PREFIX) === 0 || LOCAL_PREFIXES.some((prefix) => url.indexOf(prefix) === 0);
-    if (!legal) throw new Error(HUB_URL_REJECTED);
-    return url;
-  }
-  function readHubUrl() {
-    try {
-      return normalizeHubUrl(getProp(PROP_KEYS.urlHub) || "");
-    } catch (_e) {
-      return "";
-    }
-  }
-  function writeHubUrl(next) {
-    const url = normalizeHubUrl(next);
-    setProp(PROP_KEYS.urlHub, url);
-    return url;
-  }
-
-  // src/server/readModelStore.ts
-  var FOLDER = "readmodels";
-  var ENVELOPE_V = 1;
-  var MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
-  var warming = false;
-  var touched = null;
-  function duringWarm(fn) {
-    warming = true;
-    touched = /* @__PURE__ */ new Set();
-    try {
-      return fn();
-    } finally {
-      warming = false;
-      touched = null;
-    }
-  }
-  var disabled = false;
-  function readModelFileName(name, params) {
-    return `rm-${name}-${paramsHash(params)}.json.gz`;
-  }
-  function l2Read(name, params, version) {
-    if (disabled) return { hit: false, why: "absent" };
-    try {
-      const raw = readGzJsonNamed(FOLDER, readModelFileName(name, params));
-      if (!raw || typeof raw !== "object") return { hit: false, why: "absent" };
-      const env = raw;
-      if (env.v !== ENVELOPE_V || env.name !== name) return { hit: false, why: "stale" };
-      if (env.stamp !== currentStamp(version)) return { hit: false, why: "stale" };
-      if (typeof env.writtenAtMs !== "number") return { hit: false, why: "stale" };
-      if (Date.now() - env.writtenAtMs > MAX_AGE_MS) return { hit: false, why: "stale" };
-      return { hit: true, value: env.value };
-    } catch (e) {
-      disabled = true;
-      console.warn(`Durable read-model read failed (${name}) \u2014 L2 disabled for this run: ${e}`);
-      return { hit: false, why: "absent" };
-    }
-  }
-  function l2Write(name, params, version, value) {
-    if (disabled) return;
-    try {
-      const env = {
-        v: ENVELOPE_V,
-        stamp: currentStamp(version),
-        name,
-        hash: paramsHash(params),
-        writtenAtMs: Date.now(),
-        value
+  function describeSyncSteps() {
+    const overrides = getScanVars2();
+    const resolved = describeAiTypes();
+    return syncSteps(resolved.types).map((step) => {
+      var _a5, _b, _c;
+      const base = defaultStepVariables(step.id, (_a5 = step.extraVariables) != null ? _a5 : {}, resolved.types);
+      return {
+        id: step.id,
+        area: step.area,
+        writes: step.writes,
+        rootField: rootFieldOf(step),
+        run: step.run,
+        optional: !!step.optional,
+        document: step.query,
+        // What this step will actually send, overrides included. `first`, `after` and (for
+        // graphSearch) `quick` are added by the transport on every request and are named in
+        // the panel rather than folded in here, so what is shown is what is configured.
+        variables: (_b = step.extraVariables) != null ? _b : {},
+        // The `first` the transport will send for THIS step. Named because it is no longer one
+        // number for the whole battery: the panel would otherwise list `first` as a transport
+        // variable whose value the operator cannot see and cannot predict.
+        pageSize: (_c = step.pageSize) != null ? _c : PAGE_SIZE,
+        defaultVariables: base,
+        editable: isEditableStep(step.id),
+        overridden: changedPaths(step.id, base, overrides[step.id]),
+        // Three steps build their filter from the tenant-resolved AI type list, so only those
+        // three can be described provisionally. Said out loud rather than shown as settled
+        // fact — this page's whole job is not doing that.
+        typesResolved: TYPE_DEPENDENT_STEPS.has(step.id) ? resolved.resolved : true
       };
-      writeGzJson(subfolder(FOLDER), readModelFileName(name, params), env);
-    } catch (e) {
-      disabled = true;
-      console.warn(`Durable read-model write failed (${name}) \u2014 L2 disabled for this run: ${e}`);
-    }
+    });
   }
-  function durablyCached(name, params, compute, ttlSec, version) {
-    if (warming && touched) touched.add(readModelFileName(name, params));
-    return cached(name, params, () => {
-      const hit = l2Read(name, params, version);
-      if (hit.hit) return hit.value;
-      const value = compute();
-      if (warming) l2Write(name, params, version, value);
-      return value;
-    }, ttlSec, version);
-  }
-  function sweepReadModels() {
-    if (disabled || !touched) return 0;
-    const keep = touched;
-    let trashed = 0;
+  function describeAiTypes() {
     try {
-      for (const name of listNames(FOLDER)) {
-        if (!keep.has(name)) {
-          trashNamed(FOLDER, name);
-          trashed += 1;
-        }
-      }
+      return { types: resolveAiResourceTypes().types, resolved: true };
     } catch (e) {
-      console.warn(`Durable read-model sweep failed: ${e}`);
+      return { types: AI_RESOURCE_TYPE_CANDIDATES, resolved: false };
     }
-    return trashed;
+  }
+  function defaultStepVariables(stepId, withOverride, aiTypes) {
+    switch (stepId) {
+      case "INVENTORY_AI":
+        return aiInventoryVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
+      case "ISSUES_TOXIC":
+        return aiIssuesVariables(projectScope());
+      case "CONFIG_FINDINGS":
+        return aiConfigFindingsVariables(projectScope());
+      case "AI_ASSET_PROPERTIES":
+        return aiPropertiesVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
+      case "AGENTIC_IDENTITIES":
+        return aiPrincipalsVariables(projectScope());
+      // Like INVENTORY_AI, these two build their `$query` from the tenant-resolved AI type
+      // list, so their default is only fully known once types resolve. They are not editable,
+      // so this is describing the request rather than offering a reset target — but it has to
+      // go through the same builder either way, or the panel would print a default the sync
+      // does not send.
+      case "HOST_EXPOSURE":
+        return hostExposureVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
+      case "ENDPOINT_EXPOSURE":
+        return endpointExposureVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
+      case "IDENTITY_ACCESS":
+        return identityAccessVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
+      case "LINEAGE":
+        return lineageVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
+      // The widened agent-path traversals. `null` scope, as they have always sent.
+      case "GUARDRAIL_GAPS":
+        return noGuardrailVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
+      case "RUNS_AS":
+        return agentRunsAsVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
+      case "SA_FINDINGS":
+        return saExcessiveAccessVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
+      case "SENSITIVE_DATA_ACCESS":
+        return sensitiveDataAccessVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
+      case "EFFECTIVE_ACCESS":
+        return effectiveAccessVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
+      case "IDENTITY_HYGIENE":
+        return aiIdentityHygieneVariables(
+          resolveHygieneRules(loadConfigRules()).ids,
+          projectScope()
+        );
+      case "FRAMEWORKS_LIST":
+        return aiSecurityFrameworksVariables();
+      default:
+        if (stepId.indexOf("ISSUES_CAT_") === 0) {
+          return aiIssuesVariables(
+            projectScope(),
+            [stepId.slice("ISSUES_CAT_".length)]
+          );
+        }
+        if (stepId.indexOf("COMPLIANCE_POSTURE_") === 0) {
+          return {
+            ...aiCompliancePostureVariables(projectScope()),
+            id: stepId.slice("COMPLIANCE_POSTURE_".length)
+          };
+        }
+        return withOverride;
+    }
+  }
+  function testStepVariables(stepId, vars) {
+    var _a5;
+    const step = syncSteps().filter((s) => s.id === stepId)[0];
+    if (!step) throw new Error(`No sync step called ${stepId}.`);
+    const proposed = effectiveStepVars(
+      stepId,
+      defaultStepVariables(stepId, (_a5 = step.extraVariables) != null ? _a5 : {}),
+      vars
+    );
+    const opts = { query: step.query, cursor: null, extraVariables: proposed };
+    let result;
+    try {
+      result = fetcherFor(step)(opts);
+    } catch (e) {
+      return {
+        ok: false,
+        stepId,
+        variables: proposed,
+        error: String(e instanceof Error ? e.message : e)
+      };
+    }
+    const part = step.normalize(result.rows);
+    return {
+      ok: true,
+      stepId,
+      variables: proposed,
+      rows: result.rows.length,
+      totalCount: result.totalCount,
+      hasNextPage: result.hasNextPage,
+      normalized: {
+        nodes: part.nodes.length,
+        edges: part.edges.length,
+        issues: part.issues.length,
+        findings: part.findings.length
+      },
+      // One row, so the operator can see the shape came back as expected. Stringified and
+      // capped: a raw Wiz row can be large, and this rides a google.script.run response.
+      sample: result.rows.length ? JSON.stringify(result.rows[0]).slice(0, 1200) : ""
+    };
+  }
+  function warmAfterSync() {
+    try {
+      warmReadModels();
+    } catch (e) {
+      console.warn(`Cache warm after sync failed: ${e}`);
+    }
+  }
+  function startSync() {
+    const existing = activeJob();
+    if (existing) {
+      return { jobId: existing.job_id, message: "A sync is already running." };
+    }
+    if (!hasWizCredentials()) return dryRunSync();
+    return startLiveSync();
+  }
+  function seedDryRunHistory(endIso, registerScope) {
+    if (dataRowCount(TABS.syncHistory) > 0) return;
+    seedTrendHistory(endIso, registerScope, seedIssueLedger(endIso, registerScope));
+  }
+  function seedIssueLedger(endIso, registerScope) {
+    if (dataRowCount(TABS.issueLedger) > 0) return false;
+    appendRows(TABS.issueLedger, seedLedgerRows(endIso, registerScope).map(issueLedgerToRow));
+    return true;
+  }
+  function seedTrendHistory(endIso, registerScope, withLedger) {
+    if (dataRowCount(TABS.syncHistory) > 0) return;
+    const posture = withLedger ? seedPostureTrend(endIso) : null;
+    const compliancePosture = seedCompliancePostureCell();
+    appendRows(TABS.syncHistory, SEED_TREND.map((counts, i) => {
+      const at = seedSyncAt(endIso, i);
+      const entry = withLedger ? SEED_LEDGER.history[i] : void 0;
+      return {
+        sync_id: seedSyncId(i),
+        started_at: at,
+        finished_at: at,
+        status: "SUCCESS",
+        mode: "dry-run",
+        node_count: null,
+        edge_count: null,
+        // The OPEN population this synthetic sync ended with, not the size of its register:
+        // the two differ by every row that had already left.
+        issue_count: entry ? entry.issueCount : null,
+        api_calls: 0,
+        snapshot_ref: null,
+        error: null,
+        aars_severity_json: JSON.stringify(counts),
+        // What the ledger DID on this sync — the five transition counts, in the same shape
+        // `persistSync` writes for a real one. Without them every lifecycle figure has one
+        // comparable point, which is none.
+        ledger_json: entry ? JSON.stringify(entry.deltas) : null,
+        // LOAD-BEARING. `reconcileIssueLedger` reads the last committed row's scope as
+        // `prevScopeSignature`, and resolves by absence only when it EQUALS the scope the
+        // current sync applies. Absent here reads as UNKNOWN, and the dry run's six departures
+        // become six `skippedNarrowedScope` instead — the perturbation in test/seedLedger.test.ts
+        // measures exactly that.
+        register_scope: entry ? registerScope : null,
+        // WHERE THE OPEN ROWS SAT relative to the AI estate, and how many adjacency edges the
+        // graph held to place them with — the three placements plus their denominator, in the
+        // same cell `persistSync` writes them into. Without it this series has one point, and
+        // "Where issues sit" renders a heading, a note and no chart on the one dataset every
+        // dev harness and every test opens.
+        adjacency_json: posture ? JSON.stringify(posture[i].adjacency) : null,
+        // Open issues per risk category at this sync, counted from the same open rows.
+        category_counts_json: posture ? JSON.stringify(posture[i].categoryCounts) : null,
+        // NULL ON EVERY SYNTHETIC ROW, DELIBERATELY, and null is the measurement. No evidence
+        // pass ran over the fabricated history — and none runs on the dry run either, which
+        // passes no `vulnFindings`, so `persistSync` writes null on its own row too. A zeroed
+        // census here would draw five flat lines saying nothing is exploitable over a register
+        // nobody asked the question of, which is the one thing `EXPLOITATION_SPEC`'s null-skip
+        // exists to prevent. The card says "No sync has recorded this yet." and means it.
+        exploitation_json: null,
+        // EVERY FRAMEWORK'S PERCENTAGE, the same on all eight rows — see
+        // `seedCompliancePostureCell`. The fabricated history runs over one posture fixture, so
+        // the line is flat because the fixture is; `edgesKnown` is the same 79 on every row for
+        // the identical reason. NOT gated on `withLedger`, unlike the two cells above it: those
+        // count rows the LEDGER says were open, and this counts subcategories Wiz scored, which
+        // the ledger has no say in.
+        compliance_posture_json: compliancePosture
+      };
+    }));
+  }
+  function dryRunSync() {
+    const startedAt = nowIso();
+    seedDryRunHistory(
+      startedAt,
+      registerScopeSignature(getIssueCategories2(), projectScope())
+    );
+    const syncId = `sync-${startedAt.replace(/[:]/g, "")}`;
+    const doc = persistSync(
+      seedGraphDoc(startedAt),
+      SEED_ISSUES,
+      SEED_AARS_HINTS,
+      { syncId, mode: "dry-run", startedAt, apiCalls: 0 },
+      void 0,
+      SEED_FINDINGS,
+      SEED_DATA_FINDINGS,
+      SEED_FRAMEWORKS,
+      SEED_POSTURE,
+      SEED_FRAMEWORK_POLICIES,
+      {
+        configRules: SEED_CONFIG_RULES,
+        identityFindings: SEED_IDENTITY_FINDINGS,
+        effectiveAccess: SEED_EFFECTIVE_ACCESS
+      }
+    );
+    setSkippedSteps([]);
+    setTruncatedSteps([]);
+    warmAfterSync();
+    return {
+      jobId: null,
+      message: `Dry-run sync complete: ${doc.nodes.length} nodes, ${doc.edges.length} edges, ${SEED_ISSUES.length} issues (sample data).`
+    };
+  }
+  function strList(v) {
+    return Array.isArray(v) ? v.map(String) : [];
+  }
+  function strMap(v) {
+    if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+    const out = {};
+    for (const [k, s] of Object.entries(v)) {
+      if (k && typeof s === "string" && s) out[k] = s;
+    }
+    return out;
+  }
+  function numMap(v) {
+    if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+    const out = {};
+    for (const [k, n] of Object.entries(v)) {
+      const num2 = Number(n);
+      if (Number.isFinite(num2)) out[k] = num2;
+    }
+    return out;
+  }
+  function jobParams(job) {
+    var _a5;
+    const parsed = parseJson(job.params_json, {});
+    return {
+      apiCalls: Number((_a5 = parsed["apiCalls"]) != null ? _a5 : 0),
+      skippedSteps: strList(parsed["skippedSteps"]),
+      truncatedSteps: strList(parsed["truncatedSteps"]),
+      stepRows: numMap(parsed["stepRows"]),
+      skipReasons: strMap(parsed["skipReasons"])
+    };
+  }
+  function partRefs(job) {
+    return strList(parseJson(job.part_refs_json, []));
+  }
+  function startLiveSync() {
+    const now = nowIso();
+    const job = createJob({
+      job_id: newJobId("sync"),
+      kind: "sync",
+      phase: "FETCHING",
+      sync_id: `sync-${now.replace(/[:]/g, "")}`,
+      step_index: 0,
+      cursor: null,
+      page: 0,
+      nodes_so_far: 0,
+      total_count: 0,
+      part_refs_json: "[]",
+      params_json: JSON.stringify({ apiCalls: 0 }),
+      error: null
+    });
+    runBattery(job, { budgetMs: FIRST_STEP_BUDGET_MS, lockHeld: true });
+    const after = getJob(job.job_id);
+    return {
+      jobId: job.job_id,
+      message: after && after.phase === "DONE" ? "Sync complete." : "Sync started \u2014 it continues in the background."
+    };
+  }
+  function continueJob(_e) {
+    clearContinuationTriggers();
+    const job = activeJob();
+    if (!job || job.kind !== "sync" || job.phase !== "FETCHING") return;
+    runBattery(job, { budgetMs: BUDGET_MS, lockHeld: false });
+  }
+  function clearContinuationTriggers() {
+    for (const t of ScriptApp.getProjectTriggers()) {
+      if (t.getHandlerFunction() === CONTINUE_HANDLER) ScriptApp.deleteTrigger(t);
+    }
+  }
+  function scheduleContinuation() {
+    ScriptApp.newTrigger(CONTINUE_HANDLER).timeBased().after(CONTINUE_DELAY_MS).create();
+  }
+  function runBattery(job, opts) {
+    var _a5, _b, _c;
+    const deadline = Date.now() + opts.budgetMs;
+    const syncId = (_a5 = job.sync_id) != null ? _a5 : job.job_id;
+    const refs = partRefs(job);
+    const params = jobParams(job);
+    let stepIndex = job.step_index;
+    let inFlight = "";
+    let cursor = job.cursor;
+    let page = job.page;
+    let nodesSoFar = job.nodes_so_far;
+    let hopPart = emptyPart();
+    let lastCheckpoint = Date.now();
+    const spillHopPart = () => {
+      if (partIsEmpty(hopPart)) return;
+      const name = `normalized-part-${String(refs.length + 1).padStart(3, "0")}.json.gz`;
+      refs.push(writeGzJson(syncFolder(syncId), name, hopPart).getId());
+      hopPart = emptyPart();
+    };
+    try {
+      const steps = syncSteps();
+      while (stepIndex < steps.length) {
+        const step = steps[stepIndex];
+        inFlight = step.id;
+        for (; ; ) {
+          if (cancelRequested(job.job_id)) {
+            clearCancelFlag();
+            updateJob(job.job_id, { phase: "CANCELLED" });
+            return;
+          }
+          if (Date.now() >= deadline) {
+            spillHopPart();
+            updateJob(job.job_id, {
+              step_index: stepIndex,
+              cursor,
+              page,
+              nodes_so_far: nodesSoFar,
+              part_refs_json: JSON.stringify(refs),
+              params_json: JSON.stringify(params)
+            });
+            scheduleContinuation();
+            return;
+          }
+          const fetcher = fetcherFor(step);
+          let result;
+          try {
+            result = fetcher({
+              query: step.query,
+              cursor,
+              extraVariables: step.extraVariables,
+              first: step.pageSize
+            });
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            if (step.optional && isTenantRefusal(e)) {
+              params.apiCalls += 1;
+              params.skippedSteps.push(step.id);
+              params.skipReasons[step.id] = msg.slice(0, SKIP_REASON_MAX);
+              console.warn(`Sync step ${step.id} skipped \u2014 tenant rejected its query: ${msg}`);
+              break;
+            }
+            throw e;
+          }
+          params.apiCalls += 1;
+          page += 1;
+          nodesSoFar += result.rows.length;
+          params.stepRows[step.id] = ((_b = params.stepRows[step.id]) != null ? _b : 0) + result.rows.length;
+          writeSyncPage(syncId, stepIndex, page, result.rows);
+          try {
+            appendPart(hopPart, step.normalize(result.rows));
+          } catch (e) {
+            if (step.optional && e instanceof FilterNotHonouredError) {
+              params.skippedSteps.push(step.id);
+              params.skipReasons[step.id] = e.message.slice(0, SKIP_REASON_MAX);
+              console.warn(`Sync step ${step.id} skipped \u2014 ${e.message}`);
+              break;
+            }
+            throw e;
+          }
+          if (page === 1 || Date.now() - lastCheckpoint >= CHECKPOINT_MS) {
+            updateJob(job.job_id, {
+              step_index: stepIndex,
+              cursor: result.endCursor,
+              page,
+              nodes_so_far: nodesSoFar,
+              total_count: (_c = result.totalCount) != null ? _c : 0,
+              params_json: JSON.stringify(params)
+            });
+            lastCheckpoint = Date.now();
+          }
+          if (!result.hasNextPage) break;
+          if (page >= MAX_PAGES) {
+            params.truncatedSteps.push(step.id);
+            console.warn(
+              `Sync step ${step.id} stopped at the ${MAX_PAGES}-page cap with more rows available.`
+            );
+            break;
+          }
+          cursor = result.endCursor;
+        }
+        spillHopPart();
+        stepIndex += 1;
+        cursor = null;
+        page = 0;
+        updateJob(job.job_id, {
+          step_index: stepIndex,
+          cursor: null,
+          page: 0,
+          // Carried here because the page loop no longer writes it on every page: without it a
+          // throttled tail would leave the row reporting the count from the last checkpoint.
+          nodes_so_far: nodesSoFar,
+          part_refs_json: JSON.stringify(refs),
+          params_json: JSON.stringify(params)
+        });
+        lastCheckpoint = Date.now();
+      }
+      updateJob(job.job_id, { phase: "RECONCILING" });
+      const parts = [];
+      for (const ref of refs) {
+        const parsed = readGzJsonFile(ref);
+        if (parsed && Array.isArray(parsed.nodes)) parts.push(parsed);
+      }
+      const startedAt = job.started_at;
+      const merged = mergeParts(parts, nowIso());
+      const doc = merged.doc;
+      const issues2 = merged.issues;
+      const aarsRule = getAarsRule2().rule;
+      const findings = aarsRule.gapSources.frameworkMapping === true ? withFrameworkCodes(
+        merged.findings,
+        frameworkCodeLookup(merged.frameworkPolicies, merged.posture, merged.frameworks)
+      ) : merged.findings;
+      if (!doc.nodes.length) {
+        updateJob(job.job_id, {
+          phase: "FAILED",
+          error: "Sync fetched no assets \u2014 check the service account's scope and permissions."
+        });
+        return;
+      }
+      const vulnRefused = params.skippedSteps.indexOf("VULN_FINDINGS") >= 0;
+      const vulnRan = Object.prototype.hasOwnProperty.call(params.stepRows, "VULN_FINDINGS");
+      const vulnEvidence = vulnRan && !vulnRefused ? merged.vulnFindings : void 0;
+      updateJob(job.job_id, { phase: "PERSISTING" });
+      const hints = buildAarsHintsFromFindings(findings, doc, issues2, aarsRule);
+      const persist = () => {
+        persistSync(
+          doc,
+          issues2,
+          hints,
+          {
+            syncId,
+            mode: "live",
+            startedAt,
+            apiCalls: params.apiCalls
+          },
+          void 0,
+          findings,
+          merged.dataFindings,
+          merged.frameworks,
+          merged.posture,
+          merged.frameworkPolicies,
+          {
+            configRules: merged.configRules,
+            identityFindings: merged.identityFindings,
+            effectiveAccess: merged.effectiveAccess,
+            // PASSED ONLY WHEN THE STEP ACTUALLY RAN, and this is the whole optional-step
+            // contract rather than a nicety. `merged.vulnFindings` is `[]` both when the tenant
+            // refused the query and when it answered with nothing, and `persistSync` reads `[]`
+            // as a MEASUREMENT: it overwrites `ai_issue_exploitation` and writes a five-zero
+            // census. Handing it the refusal in that shape would erase a good exploitation
+            // register on the first sync a tenant rejected one document — the same class as the
+            // empty page a sync must never be able to read as a remediation.
+            //
+            // Two conditions, because each catches a refusal the other cannot. `skippedSteps`
+            // names a step the tenant rejected, whether on page one or on page three — and a
+            // page-three refusal leaves REAL ROWS behind, so an unguarded read would publish a
+            // population truncated at whatever page the walk died on. `stepRows` catches the
+            // other direction: a battery that never ran the step at all records no entry, and a
+            // step that was never asked has no more measured an empty register than one that was
+            // refused.
+            vulnFindings: vulnEvidence
+          }
+        );
+        setSkippedSteps(params.skippedSteps);
+        setTruncatedSteps(params.truncatedSteps);
+        setStepRows(params.stepRows);
+        setSkipReasons(params.skipReasons);
+        if (merged.configRules.length) setConfigRulesSyncedAt(Date.now());
+      };
+      if (opts.lockHeld) persist();
+      else withScriptLock(persist);
+      updateJob(job.job_id, { phase: "DONE" });
+      warmAfterSync();
+    } catch (e) {
+      updateJob(job.job_id, {
+        phase: "FAILED",
+        step_index: stepIndex,
+        error: (inFlight ? `[${inFlight}] ` : "") + String(e instanceof Error ? e.message : e).slice(0, 800)
+      });
+    }
+  }
+  function dailySync() {
+    if (!hasWizCredentials()) return;
+    withScriptLock(() => {
+      startSyncFromTrigger();
+    });
+  }
+  function startSyncFromTrigger() {
+    const existing = activeJob();
+    if (existing) return;
+    startLiveSync();
+  }
+  function cancelSync(jobId) {
+    const job = getJob(jobId);
+    if (!job) return { message: "No such sync job." };
+    if (job.phase === "DONE" || job.phase === "FAILED" || job.phase === "CANCELLED") {
+      return { message: "The sync already finished." };
+    }
+    setProp(CANCEL_PROP, jobId);
+    return { message: "Stopping sync\u2026" };
+  }
+  function cancelRequested(jobId) {
+    return getProp(CANCEL_PROP) === jobId;
+  }
+  function clearCancelFlag() {
+    deleteProp(CANCEL_PROP);
+  }
+  function jobStatus(jobId) {
+    const j = getJob(jobId);
+    if (!j) return null;
+    return {
+      job_id: j.job_id,
+      phase: j.phase,
+      step_index: j.step_index,
+      page: j.page,
+      nodes_so_far: j.nodes_so_far,
+      total_count: j.total_count,
+      error: j.error,
+      started_at: j.started_at,
+      updated_at: j.updated_at
+    };
   }
 
   // src/server/api.ts
@@ -19751,7 +20663,7 @@ var Server = (() => {
   function getStorageStats(_p) {
     return run(
       () => durablyCached("getStorageStats", null, () => ({
-        cellCount: cellCount(),
+        cellCount: cellCount3(),
         archiveBytes: archiveBytes(),
         rows: {
           assets: dataRowCount(TABS.assets),
@@ -19782,1068 +20694,175 @@ var Server = (() => {
     });
   }
 
-  // src/server/warm.ts
-  var WARM_BUDGET_MS = 27e4;
-  var TARGETS = [
-    ["bootstrap", () => bootstrap({})],
-    ["assetsModel", () => getAssetsHead({})],
-    ["assetOptions", () => getAssetOptions({})],
-    ["problemsModel", () => getProblems({})],
-    ["configModel", () => getConfigFindings({})],
-    ["compliance", () => getCompliance({})],
-    ["toxicCombos", () => getToxicCombos({})],
-    ["issues", () => getIssues({})],
-    ["graph", () => getGraph({})],
-    ["queryVocabulary", () => getQueryVocabulary({})],
-    ["syncHistory", () => getSyncHistory({})],
-    ["storageStats", () => getStorageStats({})]
-  ];
-  function warmReadModels(budgetMs = WARM_BUDGET_MS) {
-    return duringWarm(() => warmInner(budgetMs));
+  // ../gas_shared/server/inlineBoot.ts
+  var UNSAFE = /[<>&/'`\u2028\u2029]/g;
+  function inlineJson(value) {
+    const json = JSON.stringify(value);
+    if (json === void 0) return "";
+    return json.replace(UNSAFE, (c) => c === "/" ? "\\/" : "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"));
   }
-  function warmInner(budgetMs) {
+  function inlineBootJson(bootstrap2) {
     const t0 = Date.now();
-    let warmed = 0;
-    let skipped = 0;
-    let failed = 0;
-    for (const [label, run2] of TARGETS) {
-      if (Date.now() - t0 >= budgetMs) {
-        skipped += 1;
-        continue;
-      }
-      try {
-        run2();
-        warmed += 1;
-      } catch (e) {
-        failed += 1;
-        console.warn(`Cache warm (${label}) failed: ${e}`);
-      }
+    try {
+      const res = bootstrap2();
+      if (!res || res.ok !== true) return "";
+      return inlineJson(res);
+    } catch (_e) {
+      return "";
+    } finally {
+      console.log(JSON.stringify({ api: "bootstrap", inline: true, ms: Date.now() - t0 }));
     }
-    const swept = skipped ? -1 : sweepReadModels();
-    const ms2 = Date.now() - t0;
-    if (skipped) {
-      console.warn(`Cache warm: ran out of budget after ${warmed} entries, ${skipped} left cold`);
-    } else {
-      console.log(
-        `Cache warm: ${warmed} entries in ${ms2}ms` + (failed ? `, ${failed} failed` : "") + (swept > 0 ? `, swept ${swept} stale durable file(s)` : "")
-      );
-    }
-    return { warmed, skipped, failed, ms: ms2, swept };
-  }
-  function warmReadModelsScheduled() {
-    const job = activeJob();
-    if (job) {
-      console.log(`Cache warm: skipped, ${job.kind} job ${job.job_id} is ${job.phase}`);
-      return null;
-    }
-    return warmReadModels();
   }
 
-  // src/server/syncJobs.ts
-  var CANCEL_PROP = "CANCEL_SYNC_JOB_ID";
-  var CONTINUE_HANDLER = "trigger_continueSync";
-  var CONTINUE_DELAY_MS = 3e4;
-  var FIRST_STEP_BUDGET_MS = 45e3;
-  var BUDGET_MS = 27e4;
-  var CHECKPOINT_MS = 8e3;
-  var SKIP_REASON_MAX = 400;
-  function syncSteps(aiTypes) {
-    const types = aiTypes != null ? aiTypes : resolveAiResourceTypes().types;
-    const frameworkIds = getSelectedFrameworks2(() => loadFrameworks());
-    const categoryIds = getIssueCategories2();
-    const overrides = getScanVars2();
-    const vars = (stepId, base) => effectiveStepVars(stepId, base, overrides[stepId]);
-    const selectedFrameworks = () => frameworkIds;
-    const catalogue = loadConfigRules();
-    const catalogueFresh = configRulesAreFresh2(catalogue.length > 0, Date.now());
-    const hygieneRules = resolveHygieneRules(catalogue);
-    return [
-      {
-        id: "INVENTORY_AI",
-        area: "aispm",
-        writes: ["ai_assets"],
-        run: "cloudResources",
-        query: Q_AI_INVENTORY,
-        extraVariables: vars("INVENTORY_AI", aiInventoryVariables(types, projectScope())),
-        normalize: normalizeInventoryPage,
-        pageSize: PAGE_SIZE_WIDE
-      },
-      // Toxic-combination issues, from issuesV2 and from nowhere else.
-      //
-      // THERE USED TO BE FOUR MORE STEPS HERE, one per combo rule, walking cloudResourcesV2
-      // for the assets carrying an issue for that rule and RECONSTRUCTING an issue row per
-      // asset. They were a stand-in from before issuesV2 was wired, and they are gone because
-      // `ai_issues` is meant to be exactly what Wiz returned — a reconstruction can only ever
-      // add rows issuesV2 did not have, which is the one thing this tab must not do.
-      //
-      // They also never worked. Every one was rejected on every sync (three wrong field names
-      // in one filter), and repairing that in 4da48ae exposed a second defect the failure had
-      // been hiding: they carried no `projectScope()`, so they collected TENANT-WIDE against a
-      // project-scoped register — 797 rows and 617 assets where the scope holds 99 issues.
-      {
-        id: "ISSUES_TOXIC",
-        area: "toxic",
-        writes: ["ai_issues", "ai_assets"],
-        run: "connection",
-        connectionField: "issuesV2",
-        query: Q_ISSUES,
-        extraVariables: vars("ISSUES_TOXIC", aiIssuesVariables(projectScope())),
-        normalize: normalizeIssuesPage,
-        optional: true
-      },
-      // The rest of the selected risk categories — ONE STEP PER CATEGORY, generated the way
-      // the posture steps below are, so the budget/resume machinery needs no special case.
-      //
-      // WHY NOT ONE STEP WITH SIX IDS IN ITS FILTER. Nothing in an issue says which category
-      // matched it (AARS_LIVE_MEASUREMENTS.md §6.8: `Issue` has 51 fields and not one names a
-      // category), so a filter naming six categories returns rows that cannot be stamped —
-      // and the stamp is the only thing standing between "the AI register" and "every issue
-      // in the project" once the list is widened. One step per category means the step's own
-      // id says what its rows are, and its normalizer writes that onto every row it returns.
-      //
-      // ISSUES_TOXIC keeps its id and its own default category rather than being folded into
-      // this family: it is the step every stored override, every scan-area assertion and the
-      // whole toxic-combinations area is keyed on, and renaming it would silently orphan them.
-      ...categoryIds.filter((id) => id !== RISK_CATEGORY_ID).map((categoryId) => ({
-        id: `ISSUES_CAT_${categoryId}`,
-        area: "toxic",
-        writes: ["ai_issues", "ai_assets"],
-        run: "connection",
-        connectionField: "issuesV2",
-        query: Q_ISSUES,
-        // No `vars()` indirection, exactly as the posture family has none: these steps are
-        // LOCKED, overrides are stored per step id, so a shared "ISSUES_CAT_" key would be
-        // an override slot nothing could ever write to.
-        extraVariables: aiIssuesVariables(projectScope(), [categoryId]),
-        // The stamp. Closed over the category this step was generated for, the way the
-        // per-rule steps closed over their group — it is the one place the fact survives.
-        normalize: (rows) => normalizeIssuesPage(rows, categoryId),
-        optional: true
-      })),
-      // Exploitation evidence for the issues the steps above collected — `vulnerabilityFindings`
-      // filtered to the SAME category list, through `hasRelatedIssue`.
-      //
-      // THE FILTER IS THE CLAIM. There is nothing on a vulnerability finding that says it is
-      // exploitation evidence for this register; what makes it so is that it names an issue in
-      // one of the selected categories. Sent unfiltered, the same root answers 5,173,698 rows in
-      // project scope (AARS_LIVE_MEASUREMENTS.md §6.4) — not a bigger version of this step but a
-      // different product, and one nothing here is built to store. Narrowed, it is 7,368 at ~15
-      // pages, 99.8% of every related-issue finding in scope.
-      //
-      // ONE STEP, NOT ONE PER CATEGORY, and the asymmetry with the family above it is deliberate.
-      // The issue steps are split because an issue carries no category and an unstamped row is
-      // what turns "AI issues" into "issues". A finding is not stored under a category at all: it
-      // is folded onto the ISSUE it names, and that issue already carries the stamp. Splitting
-      // this would fetch the same finding once per category of the issue it joins.
-      //
-      // OPTIONAL, and that is load-bearing rather than cautious: the related-issue selection in
-      // Q_VULN_FINDINGS is UNVERIFIED until `phase0.mjs --stage=k` runs, so a wrong field name is
-      // an HTTP 400 on the whole document. Optional makes that LOUD — the step lands in
-      // `skippedSteps` with Wiz's own message, which names the field — and leaves
-      // `ai_issue_exploitation` and the three issue columns untouched rather than writing an
-      // empty axis over a good one.
-      //
-      // No `vars()` indirection, exactly like the ISSUES_CAT family: the step is LOCKED
-      // (scanVars.ts), so an override slot would be one nothing could ever write to.
-      {
-        id: "VULN_FINDINGS",
-        area: "toxic",
-        writes: ["ai_issue_exploitation", "ai_issues"],
-        run: "connection",
-        connectionField: "vulnerabilityFindings",
-        query: Q_VULN_FINDINGS,
-        extraVariables: aiVulnFindingsVariables(projectScope(), categoryIds),
-        normalize: normalizeVulnFindingsPage,
-        optional: true,
-        // Eleven flat scalars, one `{id}` list and a union read for three fields — narrow by the
-        // standard `pageSize` sets, and ~15 pages at 500 against ~74 at the default.
-        pageSize: PAGE_SIZE_WIDE
-      },
-      // Real compliance findings (configurationFindings) — feeds AARS pillar B.
-      {
-        id: "CONFIG_FINDINGS",
-        area: "configFindings",
-        writes: ["ai_findings"],
-        run: "connection",
-        connectionField: "configurationFindings",
-        query: Q_CONFIG_FINDINGS,
-        extraVariables: vars("CONFIG_FINDINGS", aiConfigFindingsVariables(projectScope())),
-        normalize: normalizeConfigFindingsPage,
-        optional: true
-      },
-      // Wiz's cloud-configuration RULE CATALOGUE — reference data, and the only step here whose
-      // contents describe the product rather than the landscape. It is what glosses an opaque
-      // `SUB-082` in the AARS cascade, and what the identity-hygiene matchers resolve against
-      // instead of hardcoding MFA rule ids that differ per cloud.
-      //
-      // GATED, not unconditional. ~3,858 rules is ~39 pages against a battery that is otherwise
-      // ~10–20 calls, to re-collect a list that changes when Wiz ships rules. `catalogueFresh`
-      // is resolved once, above, and a skip here is recorded as SCHEDULED rather than joining
-      // `skippedSteps` — that list means "the tenant refused this", and a step we chose not to
-      // run must not be reported as a rejection.
-      ...catalogueFresh ? [] : [{
-        id: "CONFIG_RULES",
-        area: "configFindings",
-        writes: ["ai_config_rules"],
-        run: "connection",
-        connectionField: "cloudConfigurationRules",
-        query: Q_CONFIG_RULES,
-        // `hasFindings: true` — 3,905 rules down to 1,401, measured against this tenant
-        // (AARS_LIVE_MEASUREMENTS.md §6.10), where `project` is completely inert. It narrows
-        // the FETCH only: the catalogue is a join target, so syncStore writes this tab only
-        // when the step returned rows and a rule that stops having findings keeps the entry a
-        // stored issue still references. See aiConfigRulesVariables.
-        extraVariables: aiConfigRulesVariables(),
-        normalize: normalizeConfigRulesPage,
-        optional: true,
-        // The big one: ~3,858 rules is 39 pages at PAGE_SIZE and 8 at PAGE_SIZE_WIDE, and
-        // the document is five flat scalars per node.
-        pageSize: PAGE_SIZE_WIDE
-      }],
-      // MFA and dormancy on the humans who can reach an AI asset. The rules come from the
-      // catalogue, matched by name (domain/identityHygiene.ts), so this step exists only once
-      // the catalogue has been collected at least once — on a first sync it resolves to nothing
-      // and is skipped, and the following sync has it.
-      ...hygieneRules.ids.length ? [{
-        id: "IDENTITY_HYGIENE",
-        area: "identity",
-        writes: ["ai_identity_findings"],
-        run: "connection",
-        connectionField: "configurationFindings",
-        query: Q_CONFIG_FINDINGS,
-        extraVariables: aiIdentityHygieneVariables(hygieneRules.ids, projectScope()),
-        // Closed over the resolved map, the way the per-rule combo steps close over their group.
-        // It is also what lets the normalizer verify the filter was honoured at all.
-        normalize: (rows) => normalizeIdentityFindingsPage(rows, hygieneRules.byId),
-        optional: true
-      }] : [],
-      // Effective permissions on those same assets: not who holds a role, but what they can do
-      // and which policy says so. Runs BESIDE IDENTITY_ACCESS rather than replacing it — that
-      // step draws the graph's ALLOWS_ACCESS_TO edges and speaks ADMIN/HIGH_PRIVILEGE, this one
-      // speaks DATA, and withHumanAccess keeps the two in separate fields.
-      {
-        id: "EFFECTIVE_ACCESS",
-        area: "identity",
-        writes: ["ai_assets (human_access_json)"],
-        run: "connection",
-        connectionField: "entityEffectiveAccessEntries",
-        query: Q_EFFECTIVE_ACCESS,
-        extraVariables: effectiveAccessVariables(types, projectScope()),
-        normalize: normalizeEffectiveAccessPage,
-        optional: true,
-        pageSize: PAGE_SIZE_WIDE
-      },
-      // The framework catalogue. Populates the Settings picker; it does NOT decide the
-      // battery — see the posture steps below for why.
-      //
-      // `area` is the posture one, not the configuration-findings one. The tag is what the
-      // Wiz Scans drill-down filters on (scanSheet.js), so it decides which area DISPLAYS
-      // this document — it is a join key, not a label. Both this step and the posture steps
-      // below spent a release tagged "compliance", which left the posture area rendering
-      // "No sync step issues a query for this area" beside its own live figure. Pinned by
-      // test/scanAreaSteps.test.ts.
-      {
-        id: "FRAMEWORKS_LIST",
-        area: "posture",
-        writes: ["ai_frameworks"],
-        run: "connection",
-        connectionField: "securityFrameworks",
-        query: Q_SECURITY_FRAMEWORKS,
-        extraVariables: vars("FRAMEWORKS_LIST", aiSecurityFrameworksVariables()),
-        normalize: normalizeFrameworksPage,
-        optional: true,
-        pageSize: PAGE_SIZE_WIDE
-      },
-      // Per-framework compliance posture — ONE STEP PER FRAMEWORK, because the query takes a
-      // framework id and returns one object. Generated the same way the per-rule combo steps
-      // above are, so the budget/resume machinery needs no special case.
-      //
-      // Driven by the SELECTION, not by the catalogue: posture costs a round trip per
-      // framework and a tenant can carry a hundred builtin ones this app has no vocabulary
-      // for. Each step is optional, so a framework id that is wrong on this tenant costs a
-      // recorded skip rather than a failed sync.
-      ...selectedFrameworks().map((frameworkId) => ({
-        id: `COMPLIANCE_POSTURE_${frameworkId}`,
-        area: "posture",
-        writes: ["ai_framework_posture", "ai_framework_policies"],
-        run: "single",
-        connectionField: "securityFramework",
-        query: Q_COMPLIANCE_POSTURE,
-        // No `vars()` indirection here on purpose: these steps are LOCKED. Overrides are
-        // stored per step id, and every posture step has its own (`COMPLIANCE_POSTURE_<id>`),
-        // so reading them under a shared "COMPLIANCE_POSTURE" key would be an override slot
-        // nothing can ever write to — dead indirection that reads like a feature.
-        //
-        // They are locked because the framework id is not a filter. The existing rule is that
-        // a variable may narrow a selection set but never change it; an id that selects WHICH
-        // OBJECT the selection set is applied to is further outside that line, not inside it.
-        // Choosing frameworks is Settings' job.
-        extraVariables: {
-          ...aiCompliancePostureVariables(projectScope()),
-          id: frameworkId
-        },
-        normalize: normalizeCompliancePosturePage,
-        optional: true
-      })),
-      {
-        id: "GUARDRAIL_GAPS",
-        area: "guardrails",
-        writes: ["ai_assets.guardrail_missing"],
-        run: "graphSearch",
-        query: Q_AGENTS_NO_GUARDRAIL,
-        // Scoped, along with every other step. These four ran tenant-wide while the inventory
-        // did too — that was the argument, and it inverts the moment the register is scoped:
-        // a tenant-wide traversal over a scoped register lands assets the inventory never
-        // collected, and prices them into a coverage ratio whose denominator excludes them.
-        // guardrail-coverage-pct is exactly that ratio, so this one had to move in the same
-        // commit as INVENTORY_AI or the number would have quietly broken.
-        extraVariables: noGuardrailVariables(types, projectScope()),
-        normalize: normalizeNoGuardrailPage,
-        optional: true,
-        pageSize: PAGE_SIZE_TRAVERSAL
-      },
-      {
-        id: "RUNS_AS",
-        area: "ciem",
-        writes: ["ai_edges (RUNS_AS)", "ai_assets"],
-        run: "graphSearch",
-        query: Q_AGENT_RUNS_AS,
-        extraVariables: agentRunsAsVariables(types, projectScope()),
-        normalize: normalizeRunsAsPage,
-        optional: true,
-        pageSize: PAGE_SIZE_TRAVERSAL
-      },
-      {
-        id: "SA_FINDINGS",
-        area: "ciem",
-        writes: ["ai_edges (HAS_FINDING)", "ai_assets"],
-        run: "graphSearch",
-        query: Q_SA_EXCESSIVE_ACCESS,
-        extraVariables: saExcessiveAccessVariables(types, projectScope()),
-        normalize: normalizeRunsAsPage,
-        optional: true,
-        pageSize: PAGE_SIZE_TRAVERSAL
-      },
-      // The data-exposure chain. Runs AFTER the two CIEM steps on purpose: it re-emits the
-      // agent and its service account, and mergeParts lets later truthy values win field-wise,
-      // so landing the richer CIEM projections first means this step can only add to them.
-      {
-        id: "SENSITIVE_DATA_ACCESS",
-        area: "dspm",
-        writes: [
-          "ai_edges (RUNS_AS, ALLOWS_ACCESS_TO)",
-          "ai_assets (BUCKET/DATABASE rows, data_finding_count)",
-          "ai_data_findings"
-        ],
-        run: "graphSearch",
-        query: Q_AGENT_SENSITIVE_DATA_ACCESS,
-        extraVariables: sensitiveDataAccessVariables(types, projectScope()),
-        normalize: normalizeSensitiveDataAccessPage,
-        optional: true,
-        pageSize: PAGE_SIZE_TRAVERSAL
-      },
-      // Network exposure, in two steps because they are two claims. HOST_EXPOSURE says the
-      // compute under an AI asset is reachable; ENDPOINT_EXPOSURE says Wiz's scanner reached a
-      // live endpoint it serves and policy rates that a real exposure. The capture proves they
-      // can disagree — a Cloud Run revision that is openToAllInternet, serving endpoints rated
-      // Low because they redirect to SSO. See domain/exposureQuery.ts.
-      //
-      // Both run AFTER the CIEM and DSPM steps for the reason SENSITIVE_DATA_ACCESS gives:
-      // they re-emit the AI asset as a thin projection, and mergeParts lets later truthy
-      // values win field-wise, so landing the richer projections first means these can only
-      // add to them.
-      {
-        id: "HOST_EXPOSURE",
-        area: "exposure",
-        writes: [
-          "ai_edges (HOSTED_ON, SERVES)",
-          "ai_assets (VM/SERVERLESS + ENDPOINT rows, exposure_evidence_json)"
-        ],
-        run: "graphSearch",
-        query: Q_AI_EXPOSURE,
-        extraVariables: hostExposureVariables(types, projectScope()),
-        normalize: normalizeHostExposurePage,
-        optional: true
-      },
-      {
-        id: "ENDPOINT_EXPOSURE",
-        area: "exposure",
-        writes: ["ai_edges (SERVES)", "ai_assets (ENDPOINT rows, exposure_level, port_validation)"],
-        run: "graphSearch",
-        query: Q_AI_EXPOSURE,
-        extraVariables: endpointExposureVariables(types, projectScope()),
-        normalize: normalizeEndpointExposurePage,
-        optional: true
-      },
-      {
-        // The lineage step: the first traversal rooted at anything but AI_AGENT or the whole
-        // AI type list. AI_PIPELINE + AI_DATASET are 79% of the register and no query has ever
-        // stood at one. Scoped now: the reason it was not is that the inventory which found
-        // those pipelines ran tenant-wide, so capping this at one project would have built a
-        // low Enriched number in rather than measured it. The inventory is scoped, so the
-        // asymmetry has swapped ends — leaving this tenant-wide is now what would land pipelines
-        // the register does not contain. See domain/lineageQuery.ts.
-        id: "LINEAGE",
-        area: "dspm",
-        writes: [
-          "ai_edges (PRODUCES, READS_DATA_FROM, STORES_DATA_IN)",
-          "ai_assets (AI_MODEL/AI_SERVICE/AI_DATASET/BUCKET/DATABASE rows)"
-        ],
-        run: "graphSearch",
-        query: Q_LINEAGE,
-        extraVariables: lineageVariables(types, projectScope()),
-        normalize: normalizeLineagePage,
-        optional: true,
-        pageSize: PAGE_SIZE_TRAVERSAL
-      },
-      {
-        id: "IDENTITY_ACCESS",
-        area: "identity",
-        writes: [
-          "ai_edges (ALLOWS_ACCESS_TO)",
-          "ai_assets (USER_ACCOUNT/ACCESS_ROLE rows, inactive, human_access_json)"
-        ],
-        run: "graphSearch",
-        query: Q_IDENTITY_ACCESS,
-        extraVariables: identityAccessVariables(types, projectScope()),
-        normalize: normalizeIdentityAccessPage,
-        optional: true,
-        pageSize: PAGE_SIZE_TRAVERSAL
-      },
-      // AI-asset provenance: publisher, how Wiz discovered it, and the properties bag's TAGS.
-      // Optional and separate from INVENTORY_AI on purpose — see the note on Q_AI_PROPERTIES.
-      //
-      // Losing it no longer costs only two columns. `Wiz/Domain` appears in no capture's flat
-      // `tags { key value }` array — only in the properties bag — so for an AI ASSET this step
-      // is the sole route by which a domain arrives. A tenant that rejects `graphEntity` on
-      // this root gets domains on its substrate (the traversals read their own bags) and none
-      // on its agents, which is why `bootstrap.scope.domainCoverage` publishes a count rather
-      // than letting an empty Domain facet read as "nobody tagged anything". (It named
-      // getAssets until that endpoint's duplicate copy was removed as unread — the argument
-      // is unchanged, but only the bootstrap one ever had a reader.)
-      {
-        id: "AI_ASSET_PROPERTIES",
-        area: "aispm",
-        writes: ["ai_assets.publisher", "ai_assets.discovery_methods", "ai_assets.tags_json"],
-        run: "cloudResources",
-        query: Q_AI_PROPERTIES,
-        extraVariables: vars("AI_ASSET_PROPERTIES", aiPropertiesVariables(types, projectScope())),
-        // The same normalizer the inventory step uses. Safe because mergeParts merges
-        // field-wise and skips undefined — this step's narrower rows fill in the two provenance
-        // fields without erasing the projects, tags or analytics INVENTORY_AI established.
-        normalize: normalizeInventoryPage,
-        optional: true,
-        pageSize: PAGE_SIZE_WIDE
-      },
-      // Agentic execution identities (cloudResourcesV2 + identityPurpose:AGENTIC).
-      {
-        id: "AGENTIC_IDENTITIES",
-        area: "ciem",
-        writes: ["ai_assets.identity_purpose"],
-        run: "cloudResources",
-        query: Q_PRINCIPALS,
-        extraVariables: vars("AGENTIC_IDENTITIES", aiPrincipalsVariables(projectScope())),
-        normalize: normalizePrincipalsPage,
-        optional: true,
-        pageSize: PAGE_SIZE_WIDE
-      }
-    ];
+  // src/server/main.ts
+  function doGet(_e) {
+    const template = HtmlService.createTemplateFromFile("index");
+    template.bootJson = inlineBootJson(() => bootstrap());
+    return template.evaluate().setTitle("Wiz SIDEKICK AI").addMetaTag("viewport", "width=device-width, initial-scale=1").setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);
   }
-  var TYPE_DEPENDENT_STEPS = /* @__PURE__ */ new Set([
-    "INVENTORY_AI",
-    "AI_ASSET_PROPERTIES",
-    "HOST_EXPOSURE",
-    "ENDPOINT_EXPOSURE",
-    "IDENTITY_ACCESS",
-    "EFFECTIVE_ACCESS",
-    "LINEAGE",
-    // Widened from the literal AI_AGENT. GUARDRAIL_GAPS widens to the three kinds a guardrail
-    // fronts rather than to every AI kind — see GUARDRAIL_SUBJECT_KINDS.
-    "GUARDRAIL_GAPS",
-    "RUNS_AS",
-    "SA_FINDINGS",
-    "SENSITIVE_DATA_ACCESS"
-  ]);
-  function rootFieldOf(step) {
-    var _a5;
-    if (step.run === "cloudResources") return "cloudResourcesV2";
-    if (step.run === "graphSearch") return "graphSearch";
-    return (_a5 = step.connectionField) != null ? _a5 : "";
+  function include(filename) {
+    return HtmlService.createHtmlOutputFromFile(filename).getContent();
   }
-  function fetcherFor(step) {
-    if (step.run === "graphSearch") return fetchGraphSearchPage;
-    if (step.run === "cloudResources") return fetchCloudResourcesPage;
-    if (step.run === "single") return (o) => {
-      var _a5;
-      return fetchSingleObject((_a5 = step.connectionField) != null ? _a5 : "", o);
-    };
-    return (o) => {
-      var _a5;
-      return fetchConnectionPage((_a5 = step.connectionField) != null ? _a5 : "", o);
-    };
+
+  // src/server/welcome.ts
+  var welcome_exports = {};
+  __export(welcome_exports, {
+    ENTER_PARAM: () => ENTER_PARAM,
+    ENTRY_TTL_SEC: () => ENTRY_TTL_SEC,
+    gate: () => gate,
+    welcomeHtml: () => welcomeHtml
+  });
+  var ENTRY_TTL_SEC = 21600;
+  var ENTER_PARAM = "enter";
+  function markerKey(email) {
+    return "entered:" + paramsHash(email.trim().toLowerCase());
   }
-  function describeSyncSteps() {
-    const overrides = getScanVars2();
-    const resolved = describeAiTypes();
-    return syncSteps(resolved.types).map((step) => {
-      var _a5, _b, _c;
-      const base = defaultStepVariables(step.id, (_a5 = step.extraVariables) != null ? _a5 : {}, resolved.types);
-      return {
-        id: step.id,
-        area: step.area,
-        writes: step.writes,
-        rootField: rootFieldOf(step),
-        run: step.run,
-        optional: !!step.optional,
-        document: step.query,
-        // What this step will actually send, overrides included. `first`, `after` and (for
-        // graphSearch) `quick` are added by the transport on every request and are named in
-        // the panel rather than folded in here, so what is shown is what is configured.
-        variables: (_b = step.extraVariables) != null ? _b : {},
-        // The `first` the transport will send for THIS step. Named because it is no longer one
-        // number for the whole battery: the panel would otherwise list `first` as a transport
-        // variable whose value the operator cannot see and cannot predict.
-        pageSize: (_c = step.pageSize) != null ? _c : PAGE_SIZE,
-        defaultVariables: base,
-        editable: isEditableStep(step.id),
-        overridden: changedPaths(step.id, base, overrides[step.id]),
-        // Three steps build their filter from the tenant-resolved AI type list, so only those
-        // three can be described provisionally. Said out loud rather than shown as settled
-        // fact — this page's whole job is not doing that.
-        typesResolved: TYPE_DEPENDENT_STEPS.has(step.id) ? resolved.resolved : true
-      };
+  function markEntered(email) {
+    try {
+      CacheService.getScriptCache().put(markerKey(email), "1", ENTRY_TTL_SEC);
+    } catch (e) {
+      console.warn("entry marker write failed: " + e);
+    }
+  }
+  function hasEntered(email) {
+    try {
+      return CacheService.getScriptCache().get(markerKey(email)) !== null;
+    } catch (e) {
+      console.warn("entry marker read failed: " + e);
+      return true;
+    }
+  }
+  function welcomeHtml(email, continueUrl, switchUrl) {
+    return cardPage({
+      title: PRODUCT,
+      eyebrow: PRODUCT,
+      heading: "You're signed in.",
+      paragraphs: [
+        "This dashboard will open as <strong>" + escapeHtml(email) + "</strong>.",
+        "If that isn't the account you meant to use, switch before you continue \u2014 the register you see depends on which account opens it."
+      ],
+      actions: primaryAction(continueUrl, "Continue") + (switchUrl ? secondaryAction(switchUrl, "Switch Google account") : "")
     });
   }
-  function describeAiTypes() {
-    try {
-      return { types: resolveAiResourceTypes().types, resolved: true };
-    } catch (e) {
-      return { types: AI_RESOURCE_TYPE_CANDIDATES, resolved: false };
+  function gate(e) {
+    const email = check().email;
+    if (!email) return null;
+    if (e && e.parameter && e.parameter[ENTER_PARAM]) {
+      markEntered(email);
+      return null;
     }
-  }
-  function defaultStepVariables(stepId, withOverride, aiTypes) {
-    switch (stepId) {
-      case "INVENTORY_AI":
-        return aiInventoryVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
-      case "ISSUES_TOXIC":
-        return aiIssuesVariables(projectScope());
-      case "CONFIG_FINDINGS":
-        return aiConfigFindingsVariables(projectScope());
-      case "AI_ASSET_PROPERTIES":
-        return aiPropertiesVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
-      case "AGENTIC_IDENTITIES":
-        return aiPrincipalsVariables(projectScope());
-      // Like INVENTORY_AI, these two build their `$query` from the tenant-resolved AI type
-      // list, so their default is only fully known once types resolve. They are not editable,
-      // so this is describing the request rather than offering a reset target — but it has to
-      // go through the same builder either way, or the panel would print a default the sync
-      // does not send.
-      case "HOST_EXPOSURE":
-        return hostExposureVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
-      case "ENDPOINT_EXPOSURE":
-        return endpointExposureVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
-      case "IDENTITY_ACCESS":
-        return identityAccessVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
-      case "LINEAGE":
-        return lineageVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
-      // The widened agent-path traversals. `null` scope, as they have always sent.
-      case "GUARDRAIL_GAPS":
-        return noGuardrailVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
-      case "RUNS_AS":
-        return agentRunsAsVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
-      case "SA_FINDINGS":
-        return saExcessiveAccessVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
-      case "SENSITIVE_DATA_ACCESS":
-        return sensitiveDataAccessVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
-      case "EFFECTIVE_ACCESS":
-        return effectiveAccessVariables(aiTypes != null ? aiTypes : resolveAiResourceTypes().types, projectScope());
-      case "IDENTITY_HYGIENE":
-        return aiIdentityHygieneVariables(
-          resolveHygieneRules(loadConfigRules()).ids,
-          projectScope()
-        );
-      case "FRAMEWORKS_LIST":
-        return aiSecurityFrameworksVariables();
-      default:
-        if (stepId.indexOf("ISSUES_CAT_") === 0) {
-          return aiIssuesVariables(
-            projectScope(),
-            [stepId.slice("ISSUES_CAT_".length)]
-          );
-        }
-        if (stepId.indexOf("COMPLIANCE_POSTURE_") === 0) {
-          return {
-            ...aiCompliancePostureVariables(projectScope()),
-            id: stepId.slice("COMPLIANCE_POSTURE_".length)
-          };
-        }
-        return withOverride;
+    if (hasEntered(email)) {
+      markEntered(email);
+      return null;
     }
+    const url = serviceUrl();
+    if (!url) return null;
+    const continueUrl = url + (url.indexOf("?") >= 0 ? "&" : "?") + ENTER_PARAM + "=1";
+    return HtmlService.createHtmlOutput(welcomeHtml(email, continueUrl, accountChooserUrl())).setTitle(PRODUCT).addMetaTag("viewport", "width=device-width, initial-scale=1");
   }
-  function testStepVariables(stepId, vars) {
-    var _a5;
-    const step = syncSteps().filter((s) => s.id === stepId)[0];
-    if (!step) throw new Error(`No sync step called ${stepId}.`);
-    const proposed = effectiveStepVars(
-      stepId,
-      defaultStepVariables(stepId, (_a5 = step.extraVariables) != null ? _a5 : {}),
-      vars
+
+  // src/server/setup.ts
+  var SPREADSHEET_NAME = "Wiz SIDEKICK AI Ledger";
+  var FOLDER_NAME = "wiz-sidekick-ai";
+  var DAILY_TRIGGER_HANDLER = "trigger_dailySync";
+  var DAILY_TRIGGER_HOUR = 5;
+  var WARM_TRIGGER_HANDLER = "trigger_warmReadModels";
+  var WARM_READY_BY_HOURS = [9, 13, 17];
+  var WARM_TRIGGER_NEAR_MINUTE = 30;
+  var WARM_TRIGGER_HOURS = WARM_READY_BY_HOURS.map((h) => (h + 23) % 24);
+  var WARM_TRIGGER_TZ = "Europe/Paris";
+  function warmScheduleSignature() {
+    return `${WARM_TRIGGER_TZ}|${WARM_TRIGGER_HOURS.join(",")}@${WARM_TRIGGER_NEAR_MINUTE}`;
+  }
+  function setup() {
+    const notes = [];
+    let ssId = getProp(PROP_KEYS.ledgerSpreadsheetId);
+    let ss;
+    if (ssId) {
+      ss = SpreadsheetApp.openById(ssId);
+      notes.push(`spreadsheet: existing ${ssId}`);
+    } else {
+      ss = SpreadsheetApp.create(SPREADSHEET_NAME);
+      ssId = ss.getId();
+      setProp(PROP_KEYS.ledgerSpreadsheetId, ssId);
+      notes.push(`spreadsheet: created ${ssId}`);
+    }
+    ensureTabs(ss);
+    let folderId = getProp(PROP_KEYS.archiveFolderId);
+    if (!folderId) {
+      folderId = DriveApp.createFolder(FOLDER_NAME).getId();
+      setProp(PROP_KEYS.archiveFolderId, folderId);
+      notes.push(`archive folder: created ${folderId}`);
+    } else {
+      notes.push(`archive folder: existing ${folderId}`);
+    }
+    ensureFolders(folderId);
+    if (!getProp(PROP_KEYS.wizAuthUrl)) setProp(PROP_KEYS.wizAuthUrl, DEFAULT_WIZ_AUTH_URL);
+    if (!getProp(PROP_KEYS.allowedUsers)) {
+      const owner = ownerEmail();
+      if (owner) {
+        setProp(PROP_KEYS.allowedUsers, owner);
+        notes.push(`allowlist: seeded with owner ${owner}`);
+      } else {
+        notes.push("allowlist: not seeded (owner email unavailable)");
+      }
+    } else {
+      notes.push("allowlist: existing (left alone)");
+    }
+    const existing = ScriptApp.getProjectTriggers().filter(
+      (t) => t.getHandlerFunction() === DAILY_TRIGGER_HANDLER
     );
-    const opts = { query: step.query, cursor: null, extraVariables: proposed };
-    let result;
-    try {
-      result = fetcherFor(step)(opts);
-    } catch (e) {
-      return {
-        ok: false,
-        stepId,
-        variables: proposed,
-        error: String(e instanceof Error ? e.message : e)
-      };
+    if (!existing.length) {
+      ScriptApp.newTrigger(DAILY_TRIGGER_HANDLER).timeBased().everyDays(1).atHour(DAILY_TRIGGER_HOUR).create();
+      notes.push(`daily trigger: installed (hour ${DAILY_TRIGGER_HOUR} Europe/Paris)`);
+    } else {
+      notes.push("daily trigger: already installed");
     }
-    const part = step.normalize(result.rows);
-    return {
-      ok: true,
-      stepId,
-      variables: proposed,
-      rows: result.rows.length,
-      totalCount: result.totalCount,
-      hasNextPage: result.hasNextPage,
-      normalized: {
-        nodes: part.nodes.length,
-        edges: part.edges.length,
-        issues: part.issues.length,
-        findings: part.findings.length
-      },
-      // One row, so the operator can see the shape came back as expected. Stringified and
-      // capped: a raw Wiz row can be large, and this rides a google.script.run response.
-      sample: result.rows.length ? JSON.stringify(result.rows[0]).slice(0, 1200) : ""
-    };
-  }
-  function warmAfterSync() {
-    try {
-      warmReadModels();
-    } catch (e) {
-      console.warn(`Cache warm after sync failed: ${e}`);
-    }
-  }
-  function startSync() {
-    const existing = activeJob();
-    if (existing) {
-      return { jobId: existing.job_id, message: "A sync is already running." };
-    }
-    if (!hasWizCredentials()) return dryRunSync();
-    return startLiveSync();
-  }
-  function seedDryRunHistory(endIso, registerScope) {
-    if (dataRowCount(TABS.syncHistory) > 0) return;
-    seedTrendHistory(endIso, registerScope, seedIssueLedger(endIso, registerScope));
-  }
-  function seedIssueLedger(endIso, registerScope) {
-    if (dataRowCount(TABS.issueLedger) > 0) return false;
-    appendRows(TABS.issueLedger, seedLedgerRows(endIso, registerScope).map(issueLedgerToRow));
-    return true;
-  }
-  function seedTrendHistory(endIso, registerScope, withLedger) {
-    if (dataRowCount(TABS.syncHistory) > 0) return;
-    const posture = withLedger ? seedPostureTrend(endIso) : null;
-    const compliancePosture = seedCompliancePostureCell();
-    appendRows(TABS.syncHistory, SEED_TREND.map((counts, i) => {
-      const at = seedSyncAt(endIso, i);
-      const entry = withLedger ? SEED_LEDGER.history[i] : void 0;
-      return {
-        sync_id: seedSyncId(i),
-        started_at: at,
-        finished_at: at,
-        status: "SUCCESS",
-        mode: "dry-run",
-        node_count: null,
-        edge_count: null,
-        // The OPEN population this synthetic sync ended with, not the size of its register:
-        // the two differ by every row that had already left.
-        issue_count: entry ? entry.issueCount : null,
-        api_calls: 0,
-        snapshot_ref: null,
-        error: null,
-        aars_severity_json: JSON.stringify(counts),
-        // What the ledger DID on this sync — the five transition counts, in the same shape
-        // `persistSync` writes for a real one. Without them every lifecycle figure has one
-        // comparable point, which is none.
-        ledger_json: entry ? JSON.stringify(entry.deltas) : null,
-        // LOAD-BEARING. `reconcileIssueLedger` reads the last committed row's scope as
-        // `prevScopeSignature`, and resolves by absence only when it EQUALS the scope the
-        // current sync applies. Absent here reads as UNKNOWN, and the dry run's six departures
-        // become six `skippedNarrowedScope` instead — the perturbation in test/seedLedger.test.ts
-        // measures exactly that.
-        register_scope: entry ? registerScope : null,
-        // WHERE THE OPEN ROWS SAT relative to the AI estate, and how many adjacency edges the
-        // graph held to place them with — the three placements plus their denominator, in the
-        // same cell `persistSync` writes them into. Without it this series has one point, and
-        // "Where issues sit" renders a heading, a note and no chart on the one dataset every
-        // dev harness and every test opens.
-        adjacency_json: posture ? JSON.stringify(posture[i].adjacency) : null,
-        // Open issues per risk category at this sync, counted from the same open rows.
-        category_counts_json: posture ? JSON.stringify(posture[i].categoryCounts) : null,
-        // NULL ON EVERY SYNTHETIC ROW, DELIBERATELY, and null is the measurement. No evidence
-        // pass ran over the fabricated history — and none runs on the dry run either, which
-        // passes no `vulnFindings`, so `persistSync` writes null on its own row too. A zeroed
-        // census here would draw five flat lines saying nothing is exploitable over a register
-        // nobody asked the question of, which is the one thing `EXPLOITATION_SPEC`'s null-skip
-        // exists to prevent. The card says "No sync has recorded this yet." and means it.
-        exploitation_json: null,
-        // EVERY FRAMEWORK'S PERCENTAGE, the same on all eight rows — see
-        // `seedCompliancePostureCell`. The fabricated history runs over one posture fixture, so
-        // the line is flat because the fixture is; `edgesKnown` is the same 79 on every row for
-        // the identical reason. NOT gated on `withLedger`, unlike the two cells above it: those
-        // count rows the LEDGER says were open, and this counts subcategories Wiz scored, which
-        // the ledger has no say in.
-        compliance_posture_json: compliancePosture
-      };
-    }));
-  }
-  function dryRunSync() {
-    const startedAt = nowIso();
-    seedDryRunHistory(
-      startedAt,
-      registerScopeSignature(getIssueCategories2(), projectScope())
+    const warmExisting = ScriptApp.getProjectTriggers().filter(
+      (t) => t.getHandlerFunction() === WARM_TRIGGER_HANDLER
     );
-    const syncId = `sync-${startedAt.replace(/[:]/g, "")}`;
-    const doc = persistSync(
-      seedGraphDoc(startedAt),
-      SEED_ISSUES,
-      SEED_AARS_HINTS,
-      { syncId, mode: "dry-run", startedAt, apiCalls: 0 },
-      void 0,
-      SEED_FINDINGS,
-      SEED_DATA_FINDINGS,
-      SEED_FRAMEWORKS,
-      SEED_POSTURE,
-      SEED_FRAMEWORK_POLICIES,
-      {
-        configRules: SEED_CONFIG_RULES,
-        identityFindings: SEED_IDENTITY_FINDINGS,
-        effectiveAccess: SEED_EFFECTIVE_ACCESS
+    const wantSchedule = warmScheduleSignature();
+    if (warmExisting.length === WARM_TRIGGER_HOURS.length && getProp(PROP_KEYS.warmTriggerSchedule) === wantSchedule) {
+      notes.push(`warm triggers: already installed (${wantSchedule})`);
+    } else {
+      for (const t of warmExisting) ScriptApp.deleteTrigger(t);
+      for (const hour of WARM_TRIGGER_HOURS) {
+        ScriptApp.newTrigger(WARM_TRIGGER_HANDLER).timeBased().everyDays(1).atHour(hour).nearMinute(WARM_TRIGGER_NEAR_MINUTE).inTimezone(WARM_TRIGGER_TZ).create();
       }
-    );
-    setSkippedSteps([]);
-    setTruncatedSteps([]);
-    warmAfterSync();
-    return {
-      jobId: null,
-      message: `Dry-run sync complete: ${doc.nodes.length} nodes, ${doc.edges.length} edges, ${SEED_ISSUES.length} issues (sample data).`
-    };
-  }
-  function strList(v) {
-    return Array.isArray(v) ? v.map(String) : [];
-  }
-  function strMap(v) {
-    if (!v || typeof v !== "object" || Array.isArray(v)) return {};
-    const out = {};
-    for (const [k, s] of Object.entries(v)) {
-      if (k && typeof s === "string" && s) out[k] = s;
+      setProp(PROP_KEYS.warmTriggerSchedule, wantSchedule);
+      notes.push(
+        `warm triggers: installed ${WARM_TRIGGER_HOURS.length} (${wantSchedule}), ready by ${WARM_READY_BY_HOURS.join(", ")} ${WARM_TRIGGER_TZ}` + (warmExisting.length ? ` (replaced ${warmExisting.length})` : "")
+      );
     }
-    return out;
-  }
-  function numMap(v) {
-    if (!v || typeof v !== "object" || Array.isArray(v)) return {};
-    const out = {};
-    for (const [k, n] of Object.entries(v)) {
-      const num2 = Number(n);
-      if (Number.isFinite(num2)) out[k] = num2;
+    const missing = [
+      PROP_KEYS.wizClientId,
+      PROP_KEYS.wizClientSecret,
+      PROP_KEYS.wizApiUrl
+    ].filter((k) => !getProp(k));
+    if (missing.length) {
+      notes.push(`NOTE: set Script Properties for live syncs: ${missing.join(", ")} (without them the app runs dry-run only)`);
     }
-    return out;
-  }
-  function jobParams(job) {
-    var _a5;
-    const parsed = parseJson(job.params_json, {});
-    return {
-      apiCalls: Number((_a5 = parsed["apiCalls"]) != null ? _a5 : 0),
-      skippedSteps: strList(parsed["skippedSteps"]),
-      truncatedSteps: strList(parsed["truncatedSteps"]),
-      stepRows: numMap(parsed["stepRows"]),
-      skipReasons: strMap(parsed["skipReasons"])
-    };
-  }
-  function partRefs(job) {
-    return strList(parseJson(job.part_refs_json, []));
-  }
-  function startLiveSync() {
-    const now = nowIso();
-    const job = createJob({
-      job_id: newJobId("sync"),
-      kind: "sync",
-      phase: "FETCHING",
-      sync_id: `sync-${now.replace(/[:]/g, "")}`,
-      step_index: 0,
-      cursor: null,
-      page: 0,
-      nodes_so_far: 0,
-      total_count: 0,
-      part_refs_json: "[]",
-      params_json: JSON.stringify({ apiCalls: 0 }),
-      error: null
-    });
-    runBattery(job, { budgetMs: FIRST_STEP_BUDGET_MS, lockHeld: true });
-    const after = getJob(job.job_id);
-    return {
-      jobId: job.job_id,
-      message: after && after.phase === "DONE" ? "Sync complete." : "Sync started \u2014 it continues in the background."
-    };
-  }
-  function continueJob(_e) {
-    clearContinuationTriggers();
-    const job = activeJob();
-    if (!job || job.kind !== "sync" || job.phase !== "FETCHING") return;
-    runBattery(job, { budgetMs: BUDGET_MS, lockHeld: false });
-  }
-  function clearContinuationTriggers() {
-    for (const t of ScriptApp.getProjectTriggers()) {
-      if (t.getHandlerFunction() === CONTINUE_HANDLER) ScriptApp.deleteTrigger(t);
-    }
-  }
-  function scheduleContinuation() {
-    ScriptApp.newTrigger(CONTINUE_HANDLER).timeBased().after(CONTINUE_DELAY_MS).create();
-  }
-  function runBattery(job, opts) {
-    var _a5, _b, _c;
-    const deadline = Date.now() + opts.budgetMs;
-    const syncId = (_a5 = job.sync_id) != null ? _a5 : job.job_id;
-    const refs = partRefs(job);
-    const params = jobParams(job);
-    let stepIndex = job.step_index;
-    let inFlight = "";
-    let cursor = job.cursor;
-    let page = job.page;
-    let nodesSoFar = job.nodes_so_far;
-    let hopPart = emptyPart();
-    let lastCheckpoint = Date.now();
-    const spillHopPart = () => {
-      if (partIsEmpty(hopPart)) return;
-      const name = `normalized-part-${String(refs.length + 1).padStart(3, "0")}.json.gz`;
-      refs.push(writeGzJson(syncFolder(syncId), name, hopPart).getId());
-      hopPart = emptyPart();
-    };
-    try {
-      const steps = syncSteps();
-      while (stepIndex < steps.length) {
-        const step = steps[stepIndex];
-        inFlight = step.id;
-        for (; ; ) {
-          if (cancelRequested(job.job_id)) {
-            clearCancelFlag();
-            updateJob(job.job_id, { phase: "CANCELLED" });
-            return;
-          }
-          if (Date.now() >= deadline) {
-            spillHopPart();
-            updateJob(job.job_id, {
-              step_index: stepIndex,
-              cursor,
-              page,
-              nodes_so_far: nodesSoFar,
-              part_refs_json: JSON.stringify(refs),
-              params_json: JSON.stringify(params)
-            });
-            scheduleContinuation();
-            return;
-          }
-          const fetcher = fetcherFor(step);
-          let result;
-          try {
-            result = fetcher({
-              query: step.query,
-              cursor,
-              extraVariables: step.extraVariables,
-              first: step.pageSize
-            });
-          } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            if (step.optional && isTenantRefusal(e)) {
-              params.apiCalls += 1;
-              params.skippedSteps.push(step.id);
-              params.skipReasons[step.id] = msg.slice(0, SKIP_REASON_MAX);
-              console.warn(`Sync step ${step.id} skipped \u2014 tenant rejected its query: ${msg}`);
-              break;
-            }
-            throw e;
-          }
-          params.apiCalls += 1;
-          page += 1;
-          nodesSoFar += result.rows.length;
-          params.stepRows[step.id] = ((_b = params.stepRows[step.id]) != null ? _b : 0) + result.rows.length;
-          writeSyncPage(syncId, stepIndex, page, result.rows);
-          try {
-            appendPart(hopPart, step.normalize(result.rows));
-          } catch (e) {
-            if (step.optional && e instanceof FilterNotHonouredError) {
-              params.skippedSteps.push(step.id);
-              params.skipReasons[step.id] = e.message.slice(0, SKIP_REASON_MAX);
-              console.warn(`Sync step ${step.id} skipped \u2014 ${e.message}`);
-              break;
-            }
-            throw e;
-          }
-          if (page === 1 || Date.now() - lastCheckpoint >= CHECKPOINT_MS) {
-            updateJob(job.job_id, {
-              step_index: stepIndex,
-              cursor: result.endCursor,
-              page,
-              nodes_so_far: nodesSoFar,
-              total_count: (_c = result.totalCount) != null ? _c : 0,
-              params_json: JSON.stringify(params)
-            });
-            lastCheckpoint = Date.now();
-          }
-          if (!result.hasNextPage) break;
-          if (page >= MAX_PAGES) {
-            params.truncatedSteps.push(step.id);
-            console.warn(
-              `Sync step ${step.id} stopped at the ${MAX_PAGES}-page cap with more rows available.`
-            );
-            break;
-          }
-          cursor = result.endCursor;
-        }
-        spillHopPart();
-        stepIndex += 1;
-        cursor = null;
-        page = 0;
-        updateJob(job.job_id, {
-          step_index: stepIndex,
-          cursor: null,
-          page: 0,
-          // Carried here because the page loop no longer writes it on every page: without it a
-          // throttled tail would leave the row reporting the count from the last checkpoint.
-          nodes_so_far: nodesSoFar,
-          part_refs_json: JSON.stringify(refs),
-          params_json: JSON.stringify(params)
-        });
-        lastCheckpoint = Date.now();
-      }
-      updateJob(job.job_id, { phase: "RECONCILING" });
-      const parts = [];
-      for (const ref of refs) {
-        const parsed = readGzJsonFile(ref);
-        if (parsed && Array.isArray(parsed.nodes)) parts.push(parsed);
-      }
-      const startedAt = job.started_at;
-      const merged = mergeParts(parts, nowIso());
-      const doc = merged.doc;
-      const issues2 = merged.issues;
-      const aarsRule = getAarsRule2().rule;
-      const findings = aarsRule.gapSources.frameworkMapping === true ? withFrameworkCodes(
-        merged.findings,
-        frameworkCodeLookup(merged.frameworkPolicies, merged.posture, merged.frameworks)
-      ) : merged.findings;
-      if (!doc.nodes.length) {
-        updateJob(job.job_id, {
-          phase: "FAILED",
-          error: "Sync fetched no assets \u2014 check the service account's scope and permissions."
-        });
-        return;
-      }
-      const vulnRefused = params.skippedSteps.indexOf("VULN_FINDINGS") >= 0;
-      const vulnRan = Object.prototype.hasOwnProperty.call(params.stepRows, "VULN_FINDINGS");
-      const vulnEvidence = vulnRan && !vulnRefused ? merged.vulnFindings : void 0;
-      updateJob(job.job_id, { phase: "PERSISTING" });
-      const hints = buildAarsHintsFromFindings(findings, doc, issues2, aarsRule);
-      const persist = () => {
-        persistSync(
-          doc,
-          issues2,
-          hints,
-          {
-            syncId,
-            mode: "live",
-            startedAt,
-            apiCalls: params.apiCalls
-          },
-          void 0,
-          findings,
-          merged.dataFindings,
-          merged.frameworks,
-          merged.posture,
-          merged.frameworkPolicies,
-          {
-            configRules: merged.configRules,
-            identityFindings: merged.identityFindings,
-            effectiveAccess: merged.effectiveAccess,
-            // PASSED ONLY WHEN THE STEP ACTUALLY RAN, and this is the whole optional-step
-            // contract rather than a nicety. `merged.vulnFindings` is `[]` both when the tenant
-            // refused the query and when it answered with nothing, and `persistSync` reads `[]`
-            // as a MEASUREMENT: it overwrites `ai_issue_exploitation` and writes a five-zero
-            // census. Handing it the refusal in that shape would erase a good exploitation
-            // register on the first sync a tenant rejected one document — the same class as the
-            // empty page a sync must never be able to read as a remediation.
-            //
-            // Two conditions, because each catches a refusal the other cannot. `skippedSteps`
-            // names a step the tenant rejected, whether on page one or on page three — and a
-            // page-three refusal leaves REAL ROWS behind, so an unguarded read would publish a
-            // population truncated at whatever page the walk died on. `stepRows` catches the
-            // other direction: a battery that never ran the step at all records no entry, and a
-            // step that was never asked has no more measured an empty register than one that was
-            // refused.
-            vulnFindings: vulnEvidence
-          }
-        );
-        setSkippedSteps(params.skippedSteps);
-        setTruncatedSteps(params.truncatedSteps);
-        setStepRows(params.stepRows);
-        setSkipReasons(params.skipReasons);
-        if (merged.configRules.length) setConfigRulesSyncedAt(Date.now());
-      };
-      if (opts.lockHeld) persist();
-      else withScriptLock(persist);
-      updateJob(job.job_id, { phase: "DONE" });
-      warmAfterSync();
-    } catch (e) {
-      updateJob(job.job_id, {
-        phase: "FAILED",
-        step_index: stepIndex,
-        error: (inFlight ? `[${inFlight}] ` : "") + String(e instanceof Error ? e.message : e).slice(0, 800)
-      });
-    }
-  }
-  function dailySync() {
-    if (!hasWizCredentials()) return;
-    withScriptLock(() => {
-      startSyncFromTrigger();
-    });
-  }
-  function startSyncFromTrigger() {
-    const existing = activeJob();
-    if (existing) return;
-    startLiveSync();
-  }
-  function cancelSync(jobId) {
-    const job = getJob(jobId);
-    if (!job) return { message: "No such sync job." };
-    if (job.phase === "DONE" || job.phase === "FAILED" || job.phase === "CANCELLED") {
-      return { message: "The sync already finished." };
-    }
-    setProp(CANCEL_PROP, jobId);
-    return { message: "Stopping sync\u2026" };
-  }
-  function cancelRequested(jobId) {
-    return getProp(CANCEL_PROP) === jobId;
-  }
-  function clearCancelFlag() {
-    deleteProp(CANCEL_PROP);
-  }
-  function jobStatus(jobId) {
-    const j = getJob(jobId);
-    if (!j) return null;
-    return {
-      job_id: j.job_id,
-      phase: j.phase,
-      step_index: j.step_index,
-      page: j.page,
-      nodes_so_far: j.nodes_so_far,
-      total_count: j.total_count,
-      error: j.error,
-      started_at: j.started_at,
-      updated_at: j.updated_at
-    };
+    return notes.join("\n");
   }
 
   // src/domain/postureDelta.ts
