@@ -5511,6 +5511,129 @@ var Server = (() => {
     return (r) => orNull(r[column]);
   }
 
+  // src/domain/snapshotCodec.ts
+  var DICT_MAX_DISTINCT_SHARE = 0.5;
+  function encodeRows(rows, strings, index) {
+    const cols = [];
+    const colOf = /* @__PURE__ */ new Map();
+    for (const r of rows) {
+      for (const k of Object.keys(r)) {
+        if (!colOf.has(k)) {
+          colOf.set(k, cols.length);
+          cols.push(k);
+        }
+      }
+    }
+    const dict = [];
+    for (let c = 0; c < cols.length; c++) {
+      const name = cols[c];
+      const seen2 = /* @__PURE__ */ new Set();
+      let strs = 0;
+      let onlyStrings = true;
+      for (const r of rows) {
+        const v = r[name];
+        if (v === null || v === void 0) continue;
+        if (typeof v !== "string") {
+          onlyStrings = false;
+          break;
+        }
+        strs += 1;
+        seen2.add(v);
+      }
+      if (onlyStrings && strs > 0 && seen2.size <= strs * DICT_MAX_DISTINCT_SHARE) dict.push(c);
+    }
+    const isDict = new Array(cols.length).fill(false);
+    for (const c of dict) isDict[c] = true;
+    const out = [];
+    const absent = [];
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const cells = new Array(cols.length);
+      for (let c = 0; c < cols.length; c++) {
+        const name = cols[c];
+        const v = r[name];
+        if (v === void 0 || !Object.prototype.hasOwnProperty.call(r, name)) {
+          absent.push([i, c]);
+          cells[c] = null;
+          continue;
+        }
+        if (!isDict[c] || v === null) {
+          cells[c] = v;
+          continue;
+        }
+        if (typeof v === "string") {
+          let at = index.get(v);
+          if (at === void 0) {
+            at = strings.length;
+            strings.push(v);
+            index.set(v, at);
+          }
+          cells[c] = at;
+        } else {
+          cells[c] = [v];
+        }
+      }
+      out.push(cells);
+    }
+    return { cols, dict, rows: out, absent };
+  }
+  function decodeRows(t, strings) {
+    const n = t.cols.length;
+    const isDict = new Array(n).fill(false);
+    for (const c of t.dict) isDict[c] = true;
+    const absentByRow = /* @__PURE__ */ new Map();
+    for (const [i, c] of t.absent) {
+      let s = absentByRow.get(i);
+      if (!s) absentByRow.set(i, s = /* @__PURE__ */ new Set());
+      s.add(c);
+    }
+    const out = new Array(t.rows.length);
+    for (let i = 0; i < t.rows.length; i++) {
+      const cells = t.rows[i];
+      const skip = absentByRow.get(i);
+      const r = {};
+      for (let c = 0; c < n; c++) {
+        if (skip && skip.has(c)) continue;
+        const v = cells[c];
+        if (isDict[c] && v !== null) {
+          r[t.cols[c]] = typeof v === "number" ? strings[v] : v[0];
+        } else {
+          r[t.cols[c]] = v;
+        }
+      }
+      out[i] = r;
+    }
+    return out;
+  }
+  var SNAPSHOT_V2 = 2;
+  function encodeSnapshot(ledger, episodes) {
+    const strings = [];
+    const index = /* @__PURE__ */ new Map();
+    const keys = Object.keys(ledger);
+    const rows = keys.map((k) => ledger[k]);
+    const snap = {
+      version: 2,
+      strings,
+      ledgerTable: encodeRows(rows, strings, index),
+      episodeTable: encodeRows(episodes, strings, index)
+    };
+    if (keys.some((k, i) => rows[i]["vuln_key"] !== k)) snap.ledgerKeys = keys;
+    return snap;
+  }
+  function decodeSnapshot(v) {
+    if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+    const s = v;
+    if (s.version !== SNAPSHOT_V2 || !Array.isArray(s.strings) || !s.ledgerTable || !s.episodeTable) {
+      return null;
+    }
+    const rows = decodeRows(s.ledgerTable, s.strings);
+    const ledger = {};
+    for (let i = 0; i < rows.length; i++) {
+      ledger[s.ledgerKeys ? s.ledgerKeys[i] : String(rows[i]["vuln_key"])] = rows[i];
+    }
+    return { ledger, episodes: decodeRows(s.episodeTable, s.strings) };
+  }
+
   // src/server/props.ts
   var PROP_KEYS = {
     wizApiToken: "WIZ_API_TOKEN",
@@ -5673,7 +5796,7 @@ var Server = (() => {
       }
       const blob = files.next().getBlob();
       const t1 = Date.now();
-      const meta = { bytes: 0 };
+      const meta = { bytes: 0, ungzipMs: 0, textMs: 0, jsonMs: 0 };
       const parsed = parseGzBlob(blob, meta);
       console.log(JSON.stringify({
         stage: "drive",
@@ -5681,7 +5804,10 @@ var Server = (() => {
         name,
         bytes: meta.bytes,
         fileMs: t1 - t0,
-        parseMs: Date.now() - t1
+        parseMs: Date.now() - t1,
+        ungzipMs: meta.ungzipMs,
+        textMs: meta.textMs,
+        jsonMs: meta.jsonMs
       }));
       return parsed;
     } catch (e) {
@@ -5718,8 +5844,18 @@ var Server = (() => {
       const bytes = blob.getBytes();
       if (meta) meta.bytes = bytes.length;
       const isGzip = bytes.length > 2 && (bytes[0] & 255) === 31 && (bytes[1] & 255) === 139;
-      const text2 = isGzip ? Utilities.ungzip(blob).getDataAsString("UTF-8") : blob.getDataAsString("UTF-8");
-      return JSON.parse(text2);
+      const t0 = Date.now();
+      const plain = isGzip ? Utilities.ungzip(blob) : blob;
+      const t1 = Date.now();
+      const text2 = plain.getDataAsString("UTF-8");
+      const t2 = Date.now();
+      const parsed = JSON.parse(text2);
+      if (meta) {
+        meta.ungzipMs = t1 - t0;
+        meta.textMs = t2 - t1;
+        meta.jsonMs = Date.now() - t2;
+      }
+      return parsed;
     } catch (e) {
       console.warn(`Failed to parse archive blob: ${e}`);
       return null;
@@ -5921,7 +6057,10 @@ var Server = (() => {
   }
   var SNAPSHOT_NAME = "ledger-snapshot.json.gz";
   function writeLedgerSnapshot(state) {
-    const snap = { version: 1, ledger: state.ledger, episodes: state.episodes };
+    const snap = encodeSnapshot(
+      state.ledger,
+      state.episodes
+    );
     writeGzJson(subfolder("snapshots"), SNAPSHOT_NAME, snap);
   }
   function readLedgerSnapshot() {
@@ -5929,6 +6068,16 @@ var Server = (() => {
     const parsed = readGzJsonIn(findSubfolder("snapshots"), SNAPSHOT_NAME, "archiveRead:snapshot");
     console.log(JSON.stringify({ stage: "driveTotal", label: "snapshot", ms: Date.now() - t0 }));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const t1 = Date.now();
+    const v2 = decodeSnapshot(parsed);
+    if (v2) {
+      console.log(JSON.stringify({ stage: "snapshotDecode", version: SNAPSHOT_V2, ms: Date.now() - t1 }));
+      return {
+        version: SNAPSHOT_V2,
+        ledger: v2.ledger,
+        episodes: v2.episodes
+      };
+    }
     const snap = parsed;
     return snap.ledger && snap.episodes ? snap : null;
   }
@@ -6329,7 +6478,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "a4bb44b1f665" : "dev";
+  var BUILD_ID = true ? "c229d80bb5bc" : "dev";
   var CACHE_EPOCH = "1";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;

@@ -233,3 +233,23 @@ describe("the failure is recorded, once per label per execution", () => {
     expect(recorded).toEqual([]);
   });
 });
+
+// The snapshot is written as v2 (columns + a string dictionary, domain/snapshotCodec.ts) and must
+// read back as the same ledger map a v1 file did; a v1 file an older deployment left behind
+// still reads (the spec above).
+describe("the v2 ledger snapshot", () => {
+  it("reads back the ledger and episodes it was encoded from", async () => {
+    const { encodeSnapshot } = await import("../src/domain/snapshotCodec");
+    const ledger = {
+      k1: { vuln_key: "k1", status: "OPEN", tags_json: '{"Wiz/Domain":"A"}', epss: 0.2 },
+      k2: { vuln_key: "k2", status: "OPEN", tags_json: '{"Wiz/Domain":"A"}', epss: null },
+    };
+    const episodes = [{ vuln_key: "e1", tags_json: '{"Wiz/Domain":"A"}', reopened_count: 1 }];
+    drive.tree["snapshots"] = {
+      "ledger-snapshot.json.gz": JSON.parse(JSON.stringify(encodeSnapshot(ledger, episodes))),
+    };
+    const snap = archive.readLedgerSnapshot();
+    expect(snap?.ledger).toStrictEqual(ledger);
+    expect(snap?.episodes).toStrictEqual(episodes);
+  });
+});
