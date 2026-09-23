@@ -234,12 +234,12 @@ describe("the failure is recorded, once per label per execution", () => {
   });
 });
 
-// The snapshot is written as v2 (columns + a string dictionary, domain/snapshotCodec.ts) and must
-// read back as the same ledger map a v1 file did; a v1 file an older deployment left behind
-// still reads (the spec above).
+// The snapshot is written as v2 (columns + a string dictionary,
+// gas_shared/domain/snapshotCodec.ts) and must read back as the same ledger map a v1 file did; a
+// v1 file an older deployment left behind still reads (the spec above).
 describe("the v2 ledger snapshot", () => {
   it("reads back the ledger and episodes it was encoded from", async () => {
-    const { encodeSnapshot } = await import("../src/domain/snapshotCodec");
+    const { encodeSnapshot } = await import("../../gas_shared/domain/snapshotCodec");
     const ledger = {
       k1: { vuln_key: "k1", status: "OPEN", tags_json: '{"Wiz/Domain":"A"}', epss: 0.2 },
       k2: { vuln_key: "k2", status: "OPEN", tags_json: '{"Wiz/Domain":"A"}', epss: null },

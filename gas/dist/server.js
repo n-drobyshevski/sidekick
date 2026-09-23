@@ -5511,7 +5511,7 @@ var Server = (() => {
     return (r) => orNull(r[column]);
   }
 
-  // src/domain/snapshotCodec.ts
+  // ../gas_shared/domain/snapshotCodec.ts
   var DICT_MAX_DISTINCT_SHARE = 0.5;
   function encodeRows(rows, strings, index) {
     const cols = [];
@@ -5606,7 +5606,8 @@ var Server = (() => {
     return out;
   }
   var SNAPSHOT_V2 = 2;
-  function encodeSnapshot(ledger, episodes) {
+  var DEFAULT_KEY_FIELD = "vuln_key";
+  function encodeSnapshot(ledger, episodes, keyField = DEFAULT_KEY_FIELD) {
     const strings = [];
     const index = /* @__PURE__ */ new Map();
     const keys = Object.keys(ledger);
@@ -5617,7 +5618,8 @@ var Server = (() => {
       ledgerTable: encodeRows(rows, strings, index),
       episodeTable: encodeRows(episodes, strings, index)
     };
-    if (keys.some((k, i) => rows[i]["vuln_key"] !== k)) snap.ledgerKeys = keys;
+    if (keyField !== DEFAULT_KEY_FIELD) snap.keyField = keyField;
+    if (keys.some((k, i) => rows[i][keyField] !== k)) snap.ledgerKeys = keys;
     return snap;
   }
   function decodeSnapshot(v) {
@@ -5626,10 +5628,12 @@ var Server = (() => {
     if (s.version !== SNAPSHOT_V2 || !Array.isArray(s.strings) || !s.ledgerTable || !s.episodeTable) {
       return null;
     }
+    const keyField = typeof s.keyField === "string" ? s.keyField : DEFAULT_KEY_FIELD;
     const rows = decodeRows(s.ledgerTable, s.strings);
     const ledger = {};
     for (let i = 0; i < rows.length; i++) {
-      ledger[s.ledgerKeys ? s.ledgerKeys[i] : String(rows[i]["vuln_key"])] = rows[i];
+      const row = rows[i];
+      ledger[s.ledgerKeys ? s.ledgerKeys[i] : String(row[keyField])] = row;
     }
     return { ledger, episodes: decodeRows(s.episodeTable, s.strings) };
   }
@@ -6478,7 +6482,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "60e5c6c4ce38" : "dev";
+  var BUILD_ID = true ? "6549883bc878" : "dev";
   var CACHE_EPOCH = "1";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;

@@ -3657,13 +3657,11 @@ var Server = (() => {
     ) !== null;
   }
 
-  // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "85c776beafc8" : "dev";
-
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var WIZ_VERSION_PROP = "WIZ_DATA_VERSION";
-  var KEY_PREFIX = `wsk.${BUILD_ID}`;
+  var CACHE_EPOCH = "1";
+  var KEY_PREFIX = `wsk.e${CACHE_EPOCH}`;
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   var dataVersionMemo;
@@ -3699,9 +3697,13 @@ var Server = (() => {
     return `${KEY_PREFIX}:${version}:${name}:${paramsHash(params)}`;
   }
   function configStamp() {
-    var _a;
+    var _a, _b, _c;
     if (configStampMemo === void 0) {
-      configStampMemo = sha1Hex(`${(_a = getProp(PROP_KEYS.wizProjectIdV2)) != null ? _a : ""}`).slice(0, 8);
+      configStampMemo = sha1Hex([
+        (_a = getProp(PROP_KEYS.wizProjectIdV2)) != null ? _a : "",
+        (_b = getProp(PROP_KEYS.wizDomainTagKey)) != null ? _b : "",
+        (_c = getProp(PROP_KEYS.wizLifecycleTagKey)) != null ? _c : ""
+      ].join("\0")).slice(0, 8);
     }
     return configStampMemo;
   }
@@ -5390,6 +5392,9 @@ var Server = (() => {
     return (r) => orNull(r[column]);
   }
 
+  // ../gas_shared/server/buildInfo.ts
+  var BUILD_ID = true ? "98e3c71fd2c3" : "dev";
+
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
   var LOCAL_PREFIXES = [
@@ -5477,6 +5482,133 @@ var Server = (() => {
     bumpDataVersion();
     writeSettingsCache(JSON.parse(JSON.stringify(cleaned)));
     return cleaned;
+  }
+
+  // ../gas_shared/domain/snapshotCodec.ts
+  var DICT_MAX_DISTINCT_SHARE = 0.5;
+  function encodeRows(rows, strings, index) {
+    const cols = [];
+    const colOf = /* @__PURE__ */ new Map();
+    for (const r of rows) {
+      for (const k of Object.keys(r)) {
+        if (!colOf.has(k)) {
+          colOf.set(k, cols.length);
+          cols.push(k);
+        }
+      }
+    }
+    const dict = [];
+    for (let c = 0; c < cols.length; c++) {
+      const name = cols[c];
+      const seen = /* @__PURE__ */ new Set();
+      let strs = 0;
+      let onlyStrings = true;
+      for (const r of rows) {
+        const v = r[name];
+        if (v === null || v === void 0) continue;
+        if (typeof v !== "string") {
+          onlyStrings = false;
+          break;
+        }
+        strs += 1;
+        seen.add(v);
+      }
+      if (onlyStrings && strs > 0 && seen.size <= strs * DICT_MAX_DISTINCT_SHARE) dict.push(c);
+    }
+    const isDict = new Array(cols.length).fill(false);
+    for (const c of dict) isDict[c] = true;
+    const out = [];
+    const absent = [];
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const cells = new Array(cols.length);
+      for (let c = 0; c < cols.length; c++) {
+        const name = cols[c];
+        const v = r[name];
+        if (v === void 0 || !Object.prototype.hasOwnProperty.call(r, name)) {
+          absent.push([i, c]);
+          cells[c] = null;
+          continue;
+        }
+        if (!isDict[c] || v === null) {
+          cells[c] = v;
+          continue;
+        }
+        if (typeof v === "string") {
+          let at = index.get(v);
+          if (at === void 0) {
+            at = strings.length;
+            strings.push(v);
+            index.set(v, at);
+          }
+          cells[c] = at;
+        } else {
+          cells[c] = [v];
+        }
+      }
+      out.push(cells);
+    }
+    return { cols, dict, rows: out, absent };
+  }
+  function decodeRows(t, strings) {
+    const n2 = t.cols.length;
+    const isDict = new Array(n2).fill(false);
+    for (const c of t.dict) isDict[c] = true;
+    const absentByRow = /* @__PURE__ */ new Map();
+    for (const [i, c] of t.absent) {
+      let s2 = absentByRow.get(i);
+      if (!s2) absentByRow.set(i, s2 = /* @__PURE__ */ new Set());
+      s2.add(c);
+    }
+    const out = new Array(t.rows.length);
+    for (let i = 0; i < t.rows.length; i++) {
+      const cells = t.rows[i];
+      const skip = absentByRow.get(i);
+      const r = {};
+      for (let c = 0; c < n2; c++) {
+        if (skip && skip.has(c)) continue;
+        const v = cells[c];
+        if (isDict[c] && v !== null) {
+          r[t.cols[c]] = typeof v === "number" ? strings[v] : v[0];
+        } else {
+          r[t.cols[c]] = v;
+        }
+      }
+      out[i] = r;
+    }
+    return out;
+  }
+  var SNAPSHOT_V2 = 2;
+  var DEFAULT_KEY_FIELD = "vuln_key";
+  function encodeSnapshot(ledger, episodes, keyField = DEFAULT_KEY_FIELD) {
+    const strings = [];
+    const index = /* @__PURE__ */ new Map();
+    const keys = Object.keys(ledger);
+    const rows = keys.map((k) => ledger[k]);
+    const snap = {
+      version: 2,
+      strings,
+      ledgerTable: encodeRows(rows, strings, index),
+      episodeTable: encodeRows(episodes, strings, index)
+    };
+    if (keyField !== DEFAULT_KEY_FIELD) snap.keyField = keyField;
+    if (keys.some((k, i) => rows[i][keyField] !== k)) snap.ledgerKeys = keys;
+    return snap;
+  }
+  function decodeSnapshot(v) {
+    if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+    const s2 = v;
+    if (s2.version !== SNAPSHOT_V2 || !Array.isArray(s2.strings) || !s2.ledgerTable || !s2.episodeTable) {
+      return null;
+    }
+    const keyField = typeof s2.keyField === "string" ? s2.keyField : DEFAULT_KEY_FIELD;
+    const rows = decodeRows(s2.ledgerTable, s2.strings);
+    const ledger = {};
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      ledger[s2.ledgerKeys ? s2.ledgerKeys[i] : String(row[keyField])] = row;
+    }
+    return { ledger, episodes: decodeRows(s2.episodeTable, s2.strings) };
   }
 
   // src/server/archiveStore.ts
@@ -5637,13 +5769,13 @@ var Server = (() => {
     trashNamed("obs", obsFileName(scanId));
   }
   var SNAPSHOT_NAME = "ledger-snapshot.json.gz";
+  var LEDGER_KEY_FIELD = "finding_key";
   function writeLedgerSnapshot(state) {
-    const snap = {
-      version: 1,
-      scans: state.scans,
-      ledger: state.ledger,
-      episodes: state.episodes
-    };
+    const snap = encodeSnapshot(
+      state.ledger,
+      state.episodes,
+      LEDGER_KEY_FIELD
+    );
     writeGzJson(subfolder("snapshots"), SNAPSHOT_NAME, snap);
   }
   function readLedgerSnapshot() {
@@ -5651,6 +5783,16 @@ var Server = (() => {
     const parsed = readGzJson(subfolder("snapshots"), SNAPSHOT_NAME, "archiveRead:snapshot");
     console.log(JSON.stringify({ stage: "driveTotal", label: "snapshot", ms: Date.now() - t0 }));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const t1 = Date.now();
+    const v2 = decodeSnapshot(parsed);
+    if (v2) {
+      console.log(JSON.stringify({ stage: "snapshotDecode", version: SNAPSHOT_V2, ms: Date.now() - t1 }));
+      return {
+        version: SNAPSHOT_V2,
+        ledger: v2.ledger,
+        episodes: v2.episodes
+      };
+    }
     const obj = parsed;
     return looksLikeLedgerState(obj) ? obj : null;
   }
@@ -10353,7 +10495,7 @@ var Server = (() => {
       )
     };
   }
-  var cachedSettingsImpactData = () => cached("settingsImpact", { projectView: loadSettings().projectView || null }, () => settingsImpactData(), 3600);
+  var cachedSettingsImpactData = () => cached("settingsImpact1", { projectView: loadSettings().projectView || null }, () => settingsImpactData(), 3600);
   function getSettingsImpact(_p) {
     return run(() => cachedSettingsImpactData());
   }

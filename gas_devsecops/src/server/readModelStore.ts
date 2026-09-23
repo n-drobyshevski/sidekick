@@ -102,9 +102,8 @@ export function __resetMemosForTest(): void {
  * The file a (name, params) pair lives in.
  *
  * NO STAMP IN THE FILENAME, deliberately — the stamp goes INSIDE the file. A stamp in the
- * name would orphan an entire generation of files on every deploy, because BUILD_ID is a
- * hash of the source tree and so changes on every push. Deterministic names mean a rewrite
- * replaces rather than accumulates.
+ * name would orphan an entire generation of files on every data-version bump (and on every
+ * `CACHE_EPOCH` bump). Deterministic names mean a rewrite replaces rather than accumulates.
  */
 export function readModelFileName(name: string, params: unknown): string {
   return `rm-${name}-${paramsHash(params)}.json.gz`;

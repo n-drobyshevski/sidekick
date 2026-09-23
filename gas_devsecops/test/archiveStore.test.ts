@@ -89,14 +89,40 @@ describe("typed round trips", () => {
     // `ledger` is a Record keyed by finding_key (src/domain/ledgerTypes.ts's LedgerState),
     // not an array — the validity check below must accept an object here and still reject one
     // shaped like the OLD array-typed guess this stand-in started from.
+    //
+    // Written as v2 (PERF_PLAN.md step 2c), which carries the ledger and episodes but not the
+    // scans: `ledgerStore.loadState` reads the scans backbone from the tab.
     const first = partial({ scans: [{ scan_id: "s1" }], ledger: { v1: { finding_key: "v1" } }, episodes: [] });
     store.writeLedgerSnapshot(first);
-    expect(store.readLedgerSnapshot()).toEqual({ version: 1, ...first });
+    expect(store.readLedgerSnapshot()).toEqual({ version: 2, ledger: first.ledger, episodes: [] });
 
     // A second write REPLACES the snapshot rather than accumulating a history of them.
     const second = partial({ scans: [], ledger: {}, episodes: [{ finding_key: "v2" }] });
     store.writeLedgerSnapshot(second);
-    expect(store.readLedgerSnapshot()).toEqual({ version: 1, ...second });
+    expect(store.readLedgerSnapshot()).toEqual({ version: 2, ledger: {}, episodes: second.episodes });
+  });
+
+  it("still reads a v1 snapshot an older deployment left behind", () => {
+    const v1 = { version: 1, scans: [{ scan_id: "s1" }], ledger: { a: { finding_key: "a" } }, episodes: [] };
+    store.writeGzJson(store.subfolder("snapshots"), "ledger-snapshot.json.gz", v1);
+    expect(store.readLedgerSnapshot()).toEqual(v1);
+  });
+
+  it("writes v2 keyed by finding_key, in a shape a v1 reader rejects (rollback safety)", () => {
+    const ledger = {
+      a: { finding_key: "a", scope: "sca", status: "OPEN", repo: "r1" },
+      b: { finding_key: "b", scope: "sca", status: "RESOLVED", repo: "r1" },
+    };
+    store.writeLedgerSnapshot(partial({ scans: [{ scan_id: "s1" }], ledger, episodes: [] }));
+    const raw = store.readGzJson(store.subfolder("snapshots"), "ledger-snapshot.json.gz") as Record<string, unknown>;
+    expect(raw["version"]).toBe(2);
+    expect(raw["keyField"]).toBe("finding_key");
+    // Keys equal each row's finding_key, so the map's keys are not written a second time.
+    expect(raw["ledgerKeys"]).toBeUndefined();
+    // What a v1 reader (`looksLikeLedgerState`) looks for is absent, so a rolled-back
+    // deployment finds "no snapshot" and reads the tabs instead of misreading this one.
+    for (const k of ["ledger", "episodes", "scans"]) expect(raw[k]).toBeUndefined();
+    expect(store.readLedgerSnapshot()!.ledger).toStrictEqual(ledger);
   });
 
   it("writeBackup / readBackup / trashBackup — keyed by jobId", () => {

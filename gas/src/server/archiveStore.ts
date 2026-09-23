@@ -12,7 +12,7 @@
 
 import type { Checkpoint } from "../domain/compaction";
 import type { LedgerState } from "../domain/ledgerCore";
-import { decodeSnapshot, encodeSnapshot, SNAPSHOT_V2 } from "../domain/snapshotCodec";
+import { decodeSnapshot, encodeSnapshot, SNAPSHOT_V2 } from "../../../gas_shared/domain/snapshotCodec";
 import type { Observation } from "../domain/reconcile";
 import { recordError } from "./errorLog";
 import { PROP_KEYS, requireProp } from "./props";
@@ -463,9 +463,10 @@ export interface LedgerSnapshot {
 /**
  * Rewrite the fast-read copy of the ledger (called after every state write).
  *
- * WRITTEN AS V2 (domain/snapshotCodec.ts): columns and a string dictionary rather than one JSON
- * object per row. The v1 file was 4.06 MB gzipped and 2–4.5 s to read back on every cold
- * execution; on a ledger of the same shape v2 is ~6.5× less text to inflate, decode and parse.
+ * WRITTEN AS V2 (gas_shared/domain/snapshotCodec.ts): columns and a string dictionary rather
+ * than one JSON object per row. The v1 file was 4.06 MB gzipped and 2–4.5 s to read back on
+ * every cold execution; on a ledger of the same shape v2 is ~6.5× less text to inflate, decode
+ * and parse.
  * The reader below accepts both, so the first read after this deploy finds a v1 file and the
  * next state write replaces it.
  */

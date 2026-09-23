@@ -12,7 +12,6 @@
 // chunk reads as a miss. Everything degrades to compute() on any cache failure.
 
 import { sha1Hex } from "../../../gas_shared/domain/sha1";
-import { BUILD_ID } from "../../../gas_shared/server/buildInfo";
 import { getProp, PROP_KEYS, setProp } from "./props";
 
 const VERSION_PROP = "DATA_VERSION";
@@ -22,11 +21,25 @@ const VERSION_PROP = "DATA_VERSION";
 // bootstrap payload — and wrong for a cached Wiz response, which does not go stale because
 // someone saved an AARS rule. See `wizDataVersion` and syncStore.commit().
 const WIZ_VERSION_PROP = "WIZ_DATA_VERSION";
-// The build stamp is part of every key. DATA_VERSION only bumps on data MUTATIONS, so
-// without this a code deploy would keep serving payloads computed by the old code until
-// the TTL expires (6h) or someone syncs — the "I deployed the fix but still see the bug"
-// trap. Changing code changes the stamp, making prior entries unreachable at once.
-const KEY_PREFIX = `wsk.${BUILD_ID}`;
+/**
+ * What a CODE change contributes to every cache key, L1 and L2: bump this to make every cached
+ * read-model unreachable on the next deploy.
+ *
+ * IT USED TO BE BUILD_ID (a hash of the source tree), so every deploy — a copy fix in the client
+ * included — made every entry cold at once: the bootstrap core, every read-model, and the
+ * durable Drive copies. gas/ measured that as the most expensive line in its app and moved to
+ * an epoch in #322; this is the same move (PERF_PLAN.md step 2d). The guard BUILD_ID bought is
+ * carried, more precisely, by the namespaces: every cached read-model is named with a version
+ * (`dsMttr4`, `dsBootCore1`, `settingsImpact1`…), and a change to one payload's shape or meaning
+ * bumps that one name — pinned by test/cacheNamespaces.test.ts. Bump THIS only for a change that
+ * alters many payloads at once and cannot sensibly be expressed as a list of namespace bumps.
+ *
+ * A stale payload that slips past both is bounded anyway: DATA_VERSION moves on every sync and
+ * settings save, no L1 entry outlives CacheService's six hours, and no L2 file is served past
+ * readModelStore's `MAX_AGE_MS`.
+ */
+export const CACHE_EPOCH = "1";
+const KEY_PREFIX = `wsk.e${CACHE_EPOCH}`;
 const CHUNK_CHARS = 90_000; // base64 chars per entry, safely under the 100 KB cap
 const DEFAULT_TTL_SEC = 21_600; // the CacheService maximum (6 h)
 
@@ -129,16 +142,15 @@ export function cacheKey(name: string, params: unknown, version: string): string
 /**
  * Configuration that changes what a payload SAYS without changing the data underneath it.
  *
- * Same argument as KEY_PREFIX's build stamp, one step removed. Both version props are
- * bumped by MUTATIONS — a sync, a settings save — and the domain tag key is neither: it is
- * a Script Property an operator edits in the GAS console, so nothing bumps for it and every
- * derived entry would keep answering under the old key until the 6h TTL expired. That is
- * the "I fixed the setting and still see the old answer" trap, and it is worse than the
- * deploy version because the operator has no sync to run to clear it.
+ * Both version props are bumped by MUTATIONS — a sync, a settings save — and the properties
+ * folded here are neither: they are Script Properties an operator edits in the GAS console, so
+ * nothing bumps for them and every derived entry would keep answering under the old value until
+ * the 6h TTL expired. That is the "I fixed the setting and still see the old answer" trap, and
+ * the operator has no sync to run to clear it.
  *
- * It lives here rather than in each caller's `params` for the reason the build stamp does:
- * a dozen call sites is a dozen chances to forget one, and the one forgotten is the one
- * that goes stale. Hashed so an arbitrarily long key cannot push the cache key past 250.
+ * It lives here rather than in each caller's `params` because a dozen call sites is a dozen
+ * chances to forget one, and the one forgotten is the one that goes stale. Hashed so an
+ * arbitrarily long value cannot push the cache key past 250.
  */
 function configStamp(): string {
   if (configStampMemo === undefined) {
@@ -152,7 +164,20 @@ function configStamp(): string {
     // Found by the warm: caching bootstrap at the tail of every sync is what made an
     // existing test able to observe it, because before that the entry was usually cold when
     // the property changed.
-    configStampMemo = sha1Hex(`${getProp(PROP_KEYS.wizProjectIdV2) ?? ""}`).slice(0, 8);
+    //
+    // AND THE TWO REPOSITORY TAG KEYS, which were missing although this function's own header
+    // described the domain one. `repoTags.attachRepoTags` resolves every row's domain and
+    // lifecycle through WIZ_DOMAIN_TAG_KEY / WIZ_LIFECYCLE_TAG_KEY, so every read-model that
+    // attaches tags — and the bootstrap core's domain catalogue — moves when either changes,
+    // and nothing bumps for them. Folded in with PERF_PLAN.md step 2d, whose epoch change
+    // retires every existing key once anyway. Raw property values, not the resolved keys: a
+    // change of the raw value is what an operator makes, and reading `repoTags` from here
+    // would be an import cycle.
+    configStampMemo = sha1Hex([
+      getProp(PROP_KEYS.wizProjectIdV2) ?? "",
+      getProp(PROP_KEYS.wizDomainTagKey) ?? "",
+      getProp(PROP_KEYS.wizLifecycleTagKey) ?? "",
+    ].join("\u0000")).slice(0, 8);
   }
   return configStampMemo;
 }
@@ -162,11 +187,9 @@ function configStamp(): string {
  * into. Exported for the durable L2, which has to stamp a stored payload with EXACTLY what
  * `cached()` would key it under.
  *
- * `BUILD_ID` is folded back in here, and that is easy to miss: this project puts it in
- * `KEY_PREFIX` rather than in the version prefix, so a `currentStamp` that returned only
- * `version.configStamp` would leave the L2 with no deploy invalidation at all — it would go
- * on serving payloads computed by the old code after every push, which is the exact trap
- * KEY_PREFIX exists to close for L1.
+ * `KEY_PREFIX` (and with it `CACHE_EPOCH`) is folded back in here, and that is easy to miss: a
+ * `currentStamp` that returned only `version.configStamp` would leave the L2 untouched by an
+ * epoch bump — it would go on serving payloads the bump exists to retire.
  */
 export function currentStamp(version?: string): string {
   return `${KEY_PREFIX}:${version ?? dataVersion()}.${configStamp()}`;

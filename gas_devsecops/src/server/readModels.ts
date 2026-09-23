@@ -95,7 +95,7 @@
 //                                  left to serve, and a bump would only orphan the fixed-mode
 //                                  files an operator who never switches modes is still
 //                                  hitting. The two other staleness guards are unchanged and
-//                                  still hold: `currentStamp()` carries `BUILD_ID`, and
+//                                  still hold: `currentStamp()` carries `CACHE_EPOCH`, and
 //                                  `MAX_AGE_MS` is 7 days. The same three fields join
 //                                  `dsExecutive1` below, in the same order.
 //   history       durablyCached    The scan log is a stored fact; the KPI band counts rows and

@@ -1015,7 +1015,7 @@ function settingsImpactData(): Rec {
  * durable (cross-request-forever) cache would drift by design.
  */
 const cachedSettingsImpactData = () =>
-  cached("settingsImpact", { projectView: loadSettings().projectView || null }, () => settingsImpactData(), 3600);
+  cached("settingsImpact1", { projectView: loadSettings().projectView || null }, () => settingsImpactData(), 3600);
 
 export function getSettingsImpact(_p?: unknown): ApiResult {
   return run(() => cachedSettingsImpactData());
