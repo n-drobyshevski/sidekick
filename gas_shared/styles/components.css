@@ -2284,3 +2284,46 @@ input[type="range"].cut-hist__range {
 .cut-hist__axis { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; }
 .cut-hist__note { margin: 6px 0 0; max-width: 78ch; }
 .cut-hist__unmeasured { margin: var(--space-1) 0 0; }
+
+/* ------------------------------------------------------------------ scoped viewers
+   The locked scope badge in a scoped viewer's header, the two read-only pages, and the
+   Settings → Access roster editor (ui/scopedPages.js, ui/scopedAccessEditor.js). */
+
+.scope-badge {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  padding: var(--space-half) var(--space-2);
+  border: 1px solid var(--hairline); border-radius: var(--radius-pill);
+  background: var(--surface); color: var(--ink);
+  font-size: var(--fs-label); max-width: 42ch;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.scope-badge__lock { font-size: var(--fs-micro); }
+
+.scoped-summary { display: flex; flex-direction: column; gap: var(--space-4); }
+.scoped-section { display: flex; flex-direction: column; gap: var(--space-2); }
+.scoped-trend { display: flex; flex-wrap: wrap; gap: var(--space-4); }
+.scoped-trend__item { display: flex; flex-direction: column; gap: var(--space-1); color: var(--ink); }
+
+.scoped-row { flex-wrap: wrap; }
+.scoped-row__chips { display: inline-flex; flex-wrap: wrap; gap: var(--space-1); }
+.scoped-row__editor { padding: var(--space-2) var(--space-3); }
+.token--stale { border-style: dashed; color: var(--text-3); }
+.token-dim { font-family: var(--font); }
+.scoped-add { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-2); }
+.scoped-actions { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-2); }
+.scoped-problems:empty { display: none; }
+
+.scoped-preview {
+  padding: var(--space-2) var(--space-3);
+  border-left: 2px solid var(--hairline-strong);
+  margin: 0 0 var(--space-2) var(--space-3);
+}
+.scoped-preview__tiles { display: flex; flex-wrap: wrap; gap: var(--space-4); }
+.scoped-preview__tile { display: flex; flex-direction: column; gap: var(--space-half); }
+
+@media (max-width: 600px) {
+  .scope-badge { max-width: 60vw; }
+  .scoped-trend .sparkline { width: 100%; }
+}
+.access-panels { display: flex; flex-direction: column; gap: var(--space-4); }
+.scoped-add { padding-top: var(--space-3); border-top: 1px solid var(--hairline); }

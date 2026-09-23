@@ -70,6 +70,7 @@ function api_getProgramPage(p) { return timedApi_("getProgramPage", p); }
 function api_getRegisterPage(p) { return timedApi_("getRegisterPage", p); }
 function api_getSecretsPage(p) { return timedApi_("getSecretsPage", p); }
 function api_getRegisterRows(p) { return timedApi_("getRegisterRows", p); }
+function api_getScopeSummary(p) { return timedApi_("getScopeSummary", p); }
 function api_getReposPage(p) { return timedApi_("getReposPage", p); }
 function api_getScanHistory(p) { return timedApi_("getScanHistory", p); }
 function api_getStorageStats(p) { return timedApi_("getStorageStats", p); }
@@ -86,6 +87,7 @@ function api_testWizConnection(p) { return timedApi_("testWizConnection", p); }
 function api_getAccess(p) { return timedApi_("getAccess", p); }
 function api_saveAccess(p) { return timedApi_("saveAccess", p); }
 function api_saveAdmins(p) { return timedApi_("saveAdmins", p); }
+function api_saveScoped(p) { return timedApi_("saveScoped", p); }
 function api_saveHubUrl(p) { return timedApi_("saveHubUrl", p); }
 
 /* ------------------------------------------------------- editor-run, not RPC */

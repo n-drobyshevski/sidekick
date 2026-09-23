@@ -227,6 +227,9 @@ import { BASE_FILTER_WORDS } from "./wizQueries";
 import { loadSettings } from "./settingsStore";
 import { cached, dataVersion } from "./serverCache";
 import { durablyCached, duringWarm, sweepReadModels } from "./readModelStore";
+import { distinctScopes } from "../../../gas_shared/domain/scopedAccess";
+import { scopeSummaryOf } from "../../../gas_shared/domain/scopeSummary";
+import { currentScoped, toViewerScope } from "./access";
 import { bootCoreModel } from "./bootCore";
 
 // --------------------------------------------------------------------------------------- //
@@ -257,6 +260,19 @@ export interface ModelParams {
    * Default true.
    */
   showNoFix?: boolean;
+  /**
+   * A SCOPED VIEWER's scope — the union of these domains and projects — set ONLY by api.ts
+   * from `access.enforcedScope()` (or, for a full user, a Settings → Access preview). When
+   * present it REPLACES the header's global `projectView` / `domainView`: a scoped viewer's
+   * figures are theirs, never narrowed further by a view some full user picked.
+   */
+  viewerScope?: ViewerScope | null;
+}
+
+/** Domains and project slugs; a row is in scope when it is in ANY of them. */
+export interface ViewerScope {
+  domains: string[];
+  projects: string[];
 }
 
 interface NormParams {
@@ -284,6 +300,8 @@ interface NormParams {
    * stored pair carrying both narrows to the intersection instead of silently ignoring one.
    */
   domain: string | null;
+  /** The scoped viewer's union, or null — see `ModelParams.viewerScope`. */
+  viewer: ViewerScope | null;
   /**
    * The SLA windows actually in force — `settingsLogic.effectiveSlaTargets`, read off
    * `settingsStore.loadSettings()` exactly once here, same as `project` above. NEVER a
@@ -384,12 +402,14 @@ function norm(p?: ModelParams): NormParams {
   // relative-mode numbers from another is exactly how `coldZoneProfile` ends up handed a
   // relative mode with nothing to aim at, which it throws on.
   const cold = effectiveColdZoneSettings(settings);
+  const viewer = normViewer(p?.viewerScope);
   return {
     scope,
     severities,
     showNoFix: p?.showNoFix !== false,
-    project,
-    domain,
+    project: viewer ? null : project,
+    domain: viewer ? null : domain,
+    viewer,
     slaTargets: effectiveSlaTargets(settings),
     coldAfterDays: cold.coldAfterDays,
     coldZoneMode: cold.mode,
@@ -403,12 +423,35 @@ function norm(p?: ModelParams): NormParams {
   };
 }
 
+/** Sorted, deduped, non-empty — or null, which is "no viewer scope". */
+function normViewer(v: ViewerScope | null | undefined): ViewerScope | null {
+  if (!v || typeof v !== "object") return null;
+  const clean = (xs: unknown) => (Array.isArray(xs)
+    ? Array.from(new Set(xs.map(String).filter(Boolean))).sort()
+    : []);
+  const out = { domains: clean(v.domains), projects: clean(v.projects) };
+  return out.domains.length || out.projects.length ? out : null;
+}
+
 /** The key a cached model is stored under. Spelled out so the field order is stable. */
 function keyOf(n: NormParams): Rec {
   return {
     scope: n.scope, severities: n.severities, showNoFix: n.showNoFix,
     project: n.project, domain: n.domain,
+    // ONLY WHEN PRESENT, so every unscoped key hashes exactly as it did before scoped viewers
+    // existed and no live cache entry or durable file is orphaned by them.
+    ...(n.viewer ? { viewer: n.viewer } : {}),
   };
+}
+
+/** Union membership for a scoped viewer: any listed domain, or any listed project. */
+function inViewer(r: BaseRow, v: ViewerScope): boolean {
+  for (const d of v.domains) if (inDomain(r, d)) return true;
+  if (v.projects.length) {
+    const projects = parseProjects(r.projects_json);
+    for (const p of v.projects) if (inProject(projects, p)) return true;
+  }
+  return false;
 }
 
 // --------------------------------------------------------------------------------------- //
@@ -633,6 +676,7 @@ function isOpen(status: unknown): boolean {
 function scopedRows(rows: BaseRow[], n: NormParams): BaseRow[] {
   let out = rows;
   if (n.scope) out = out.filter((r) => r.scope === n.scope);
+  if (n.viewer) out = out.filter((r) => inViewer(r, n.viewer!));
   if (n.project) out = out.filter((r) => inProject(parseProjects(r.projects_json), n.project!));
   if (n.domain) out = out.filter((r) => inDomain(r, n.domain!));
   if (n.severities) {
@@ -2291,6 +2335,7 @@ function movementNoteFor(win: MovementWindow): string {
  */
 function movementPopulation(rows: BaseRow[], n: NormParams): MovementRow[] {
   let scoped = rows;
+  if (n.viewer) scoped = scoped.filter((r) => inViewer(r, n.viewer!));
   if (n.project) {
     scoped = scoped.filter((r) => inProject(parseProjects(r.projects_json), n.project!));
   }
@@ -2558,6 +2603,45 @@ export interface WarmReport {
  * post-scan tail — inside a six-minute execution cap — to warm slices a reader may never open;
  * the unscoped landing pages are the ones that must be instant, and they are the ones warmed.
  */
+// --------------------------------------------------------------------------------------- //
+//  scopeSummaryModel — durablyCached, one entry per DISTINCT scoped-viewer scope
+// --------------------------------------------------------------------------------------- //
+
+/**
+ * A scoped viewer's one page: `mttrModel` and `historyModel` over their rows, projected by the
+ * shared `scopeSummaryOf` (gas_shared/domain/scopeSummary.ts) into the shape gas serves too.
+ * Nothing here is a new estimate — the MTTR page's own numbers over a narrower population.
+ *
+ * DURABLE, AND WARMED PER SCOPE SET (`warmTargets` below). Scoping still starts from the whole
+ * ledger, so a cold summary costs what a cold MTTR page does; the warm is what makes a
+ * viewer's first open one small read.
+ *
+ * "dsScopeSummary1": a new namespace — nothing served this shape before.
+ */
+export function scopeSummaryModel(viewer: ViewerScope): Rec {
+  const params: ModelParams = { scope: null, severities: null, showNoFix: true, viewerScope: viewer };
+  const n = norm(params);
+  return durablyCached(
+    "dsScopeSummary1",
+    { ...keyOf(n), slaTargets: n.slaTargets, mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
+    () => {
+      const latest = latestScanRowOf(loadScanRows());
+      return scopeSummaryOf(mttrModel(params), historyModel(params), {
+        asOf: new Date().toISOString(),
+        // Each register syncs on its own; the newest of them is the freshness caption, and no
+        // single scan total describes a union of registers.
+        scan: latest ? { ts: latest.ts, total: null } : null,
+      }, SEVERITY_ORDER) as unknown as Rec;
+    },
+  );
+}
+
+function latestScanRowOf(scans: ScanRow[]): ScanRow | null {
+  let best: ScanRow | null = null;
+  for (const s of scans) if (!best || String(s.ts) > String(best.ts)) best = s;
+  return best;
+}
+
 function warmTargets(): { label: string; run: () => unknown }[] {
   const all: ModelParams = { scope: null, severities: null, showNoFix: true };
   const targets: { label: string; run: () => unknown }[] = [
@@ -2577,6 +2661,19 @@ function warmTargets(): { label: string; run: () => unknown }[] {
   ];
   for (const scope of SCOPES) {
     targets.push({ label: `register:${scope}`, run: () => registerModel(scope, all) });
+  }
+  // Scoped viewers LAST: each is one person's landing page, behind every full user's. One entry
+  // per distinct scope set, however many viewers share it. The roster is a Script Property, so
+  // this list is bounded by it the way the rest is bounded by SCOPES.
+  let roster: ReturnType<typeof currentScoped> = {};
+  try {
+    roster = currentScoped();
+  } catch (e) {
+    console.warn(`Cache warm: scoped roster unreadable: ${e}`);
+  }
+  for (const [key, scope] of distinctScopes(roster)) {
+    const viewer = toViewerScope(scope);
+    targets.push({ label: `scoped:${key.slice(0, 40)}`, run: () => scopeSummaryModel(viewer) });
   }
   return targets;
 }

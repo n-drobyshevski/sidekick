@@ -71,6 +71,7 @@ var Server = (() => {
     getRiskBackfillStatus: () => getRiskBackfillStatus,
     getRiskCohort: () => getRiskCohort,
     getScanHistory: () => getScanHistory,
+    getScopeSummary: () => getScopeSummary,
     getSettings: () => getSettings,
     getSettingsImpact: () => getSettingsImpact,
     getStorageStats: () => getStorageStats,
@@ -90,6 +91,7 @@ var Server = (() => {
     saveAdmins: () => saveAdmins,
     saveDomains: () => saveDomains,
     saveHubUrl: () => saveHubUrl,
+    saveScoped: () => saveScoped,
     saveSettings: () => saveSettings2,
     setAutoCompact: () => setAutoCompact2,
     setIncludeEol: () => setIncludeEol2,
@@ -3226,8 +3228,8 @@ var Server = (() => {
       if (ok) return merged;
     }
     if (coerced && typeof coerced === "object" && !Array.isArray(coerced)) {
-      const obj = coerced;
-      const data = obj["data"];
+      const obj2 = coerced;
+      const data = obj2["data"];
       if (data && typeof data === "object" && !Array.isArray(data)) {
         const d = data;
         const vf = d["vulnerabilityFindings"];
@@ -3240,7 +3242,7 @@ var Server = (() => {
           }
         }
       }
-      if ("nodes" in obj) return (_c = obj["nodes"]) != null ? _c : [];
+      if ("nodes" in obj2) return (_c = obj2["nodes"]) != null ? _c : [];
     }
     if (Array.isArray(coerced)) return coerced;
     return [coerced];
@@ -5656,6 +5658,11 @@ var Server = (() => {
     // Unset means owner-only, like its sibling. Admins are allowed into the app by being admins,
     // and deliberately CANNOT edit this property — see access.ts for why the tier stops here.
     allowedAdmins: "ALLOWED_ADMINS",
+    // Scoped viewers: people who may open the app but see only their own domains/support groups,
+    // through a reduced read-only shell. JSON — `{"a@x.com":{"d":["Payments"],"g":["CS-core"]}}`
+    // — owned by gas_shared/domain/scopedAccess.ts. Unset or unparseable means nobody, like the
+    // lists above. Edited by the owner or an admin from Settings → Access.
+    scopedUsers: "SCOPED_USERS",
     // The /exec URL of the hub launcher (gas_hub), pasted from its Deploy > Manage deployments,
     // or set from Settings > System. A PROPERTY RATHER THAN CODE for the platform's reason, not
     // a preference: `ScriptApp.getService().getUrl()` answers for this deployment only and there
@@ -5991,17 +5998,17 @@ var Server = (() => {
     if (!ref) return null;
     const parsed = readGzJsonFile(ref);
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    const obj = parsed;
-    if (Array.isArray(obj["parts"])) {
+    const obj2 = parsed;
+    if (Array.isArray(obj2["parts"])) {
       const ledger = [];
-      for (const partId of obj["parts"]) {
+      for (const partId of obj2["parts"]) {
         const part = readGzJsonFile(partId);
         if (Array.isArray(part)) for (const row of part) ledger.push(row);
       }
       return {
-        version: Number((_a = obj["version"]) != null ? _a : 1),
-        floor_scan_id: (_b = obj["floor_scan_id"]) != null ? _b : null,
-        floor_ts: (_c = obj["floor_ts"]) != null ? _c : null,
+        version: Number((_a = obj2["version"]) != null ? _a : 1),
+        floor_scan_id: (_b = obj2["floor_scan_id"]) != null ? _b : null,
+        floor_ts: (_c = obj2["floor_ts"]) != null ? _c : null,
         ledger
       };
     }
@@ -6296,8 +6303,8 @@ var Server = (() => {
       return { payload: out.records, removed: out.removed, kept: out.records.length, recognized: true };
     }
     if (payload && typeof payload === "object") {
-      const obj = payload;
-      const data = obj["data"];
+      const obj2 = payload;
+      const data = obj2["data"];
       if (data && typeof data === "object" && !Array.isArray(data)) {
         const vf = data["vulnerabilityFindings"];
         if (vf && typeof vf === "object" && !Array.isArray(vf) && "nodes" in vf) {
@@ -6305,7 +6312,7 @@ var Server = (() => {
           const keptNodes = nodes.filter((n) => !matchesPurge(n, set));
           return {
             payload: {
-              ...obj,
+              ...obj2,
               data: { ...data, vulnerabilityFindings: { ...vf, nodes: keptNodes } }
             },
             removed: nodes.length - keptNodes.length,
@@ -6482,7 +6489,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "c4a50c461a98" : "dev";
+  var BUILD_ID = true ? "550a8508cfba" : "dev";
   var CACHE_EPOCH = "1";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
@@ -8943,6 +8950,8 @@ var Server = (() => {
   var access_exports = {};
   __export(access_exports, {
     PRODUCT: () => PRODUCT,
+    SCOPED_RPCS: () => SCOPED_RPCS,
+    SCOPE_DIMS: () => SCOPE_DIMS,
     accountChooserUrl: () => accountChooserUrl,
     assertAllowed: () => assertAllowed,
     canEditAdmins: () => canEditAdmins,
@@ -8950,17 +8959,123 @@ var Server = (() => {
     check: () => check,
     contactMailto: () => contactMailto,
     currentAdmins: () => currentAdmins,
+    currentScoped: () => currentScoped,
     currentUsers: () => currentUsers,
     decide: () => decide,
     deniedHtml: () => deniedHtml,
     deniedPage: () => deniedPage,
     denyResult: () => denyResult,
+    enforcedScope: () => enforcedScope,
+    fromViewerScope: () => fromViewerScope,
     isOwner: () => isOwner,
     ownerDomain: () => ownerDomain,
     ownerEmail: () => ownerEmail,
     parseAllowlist: () => parseAllowlist,
-    serviceUrl: () => serviceUrl
+    serviceUrl: () => serviceUrl,
+    toViewerScope: () => toViewerScope
   });
+
+  // ../gas_shared/domain/scopedAccess.ts
+  var SCOPED_MAX_BYTES = 8e3;
+  var SCOPED_MAX_ENTRIES = 200;
+  function cleanValues(raw) {
+    if (!Array.isArray(raw)) return [];
+    const seen2 = {};
+    const out = [];
+    for (const v of raw) {
+      const s = typeof v === "string" ? v.trim() : "";
+      if (!s || seen2[s]) continue;
+      seen2[s] = true;
+      out.push(s);
+    }
+    return out.sort();
+  }
+  function cleanScope(raw, dims) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    const src = raw;
+    const out = {};
+    let total = 0;
+    for (const d of dims) {
+      const vals = cleanValues(src[d]);
+      out[d] = vals;
+      total += vals.length;
+    }
+    return total > 0 ? out : null;
+  }
+  function parseScoped(raw, dims) {
+    if (!raw) return {};
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (_e) {
+      return {};
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const out = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      const email = k.trim().toLowerCase();
+      if (!email || email.indexOf("@") < 0) continue;
+      const scope = cleanScope(v, dims);
+      if (scope) out[email] = scope;
+    }
+    return out;
+  }
+  function serializeScoped(roster) {
+    const out = {};
+    for (const email of Object.keys(roster).sort()) {
+      const s = {};
+      for (const [d, vals] of Object.entries(roster[email])) if (vals.length) s[d] = vals;
+      out[email] = s;
+    }
+    return JSON.stringify(out);
+  }
+  function scopeKey(scope) {
+    return Object.keys(scope).sort().filter((d) => (scope[d] || []).length).map((d) => d + "=" + (scope[d] || []).slice().sort().join("")).join("");
+  }
+  function distinctScopes(roster) {
+    const out = /* @__PURE__ */ new Map();
+    for (const scope of Object.values(roster)) {
+      const k = scopeKey(scope);
+      if (!out.has(k)) out.set(k, scope);
+    }
+    return out;
+  }
+  function validateScoped(raw, dims) {
+    var _a;
+    const list = Array.isArray(raw) ? raw : [];
+    const out = {};
+    const bad = [];
+    const empty = [];
+    for (const item of list) {
+      const email = String((_a = item == null ? void 0 : item.email) != null ? _a : "").trim().toLowerCase();
+      if (!email) continue;
+      if (email.indexOf("@") < 0 || /[,;\s]/.test(email)) {
+        bad.push(email);
+        continue;
+      }
+      const scope = cleanScope(item == null ? void 0 : item.scope, dims);
+      if (!scope) {
+        empty.push(email);
+        continue;
+      }
+      const prev = out[email];
+      out[email] = prev ? cleanScope(Object.fromEntries(dims.map((d) => [d, (prev[d] || []).concat(scope[d] || [])])), dims) : scope;
+    }
+    if (bad.length) throw new Error(`Not an email address: ${bad.join(", ")}`);
+    if (empty.length) throw new Error(`Pick at least one domain or team for: ${empty.join(", ")}`);
+    const n = Object.keys(out).length;
+    if (n > SCOPED_MAX_ENTRIES) {
+      throw new Error(`Too many scoped viewers (${n}); the limit is ${SCOPED_MAX_ENTRIES}.`);
+    }
+    const bytes = serializeScoped(out).length;
+    if (bytes > SCOPED_MAX_BYTES) {
+      throw new Error(`That list is too long to store (${bytes} of ${SCOPED_MAX_BYTES} bytes).`);
+    }
+    return out;
+  }
+  function rosterRows(roster) {
+    return Object.keys(roster).sort().map((email) => ({ email, scope: roster[email] }));
+  }
 
   // src/server/pageShell.ts
   var MARK_COMPACT_VIEWBOX = "12.2 8.4 52.7 74";
@@ -9044,10 +9159,12 @@ var Server = (() => {
   }
 
   // src/server/access.ts
+  var SCOPE_DIMS = ["d", "g"];
   var PRODUCT = "Wiz Sidekick OS";
   var DENIAL_MESSAGE = {
     anonymous: "This app can't identify your Google account. It only recognizes accounts signed in to the same Google Workspace domain as the app.",
-    "not-listed": "Your account isn't on this app's access list."
+    "not-listed": "Your account isn't on this app's access list.",
+    scoped: "Your access covers your own domains' summary and findings only."
   };
   function parseAllowlist(raw) {
     if (!raw) return [];
@@ -9061,7 +9178,7 @@ var Server = (() => {
     }
     return out;
   }
-  function decide(active, owner, raw, adminsRaw) {
+  function decide(active, owner, raw, adminsRaw, scopedRaw) {
     const email = (active || "").trim();
     const key = email.toLowerCase();
     if (!key) return { allowed: false, email: "", reason: "anonymous" };
@@ -9070,6 +9187,8 @@ var Server = (() => {
     if (parseAllowlist(adminsRaw != null ? adminsRaw : null).indexOf(key) >= 0) {
       return { allowed: true, email, reason: "admin" };
     }
+    const scope = parseScoped(scopedRaw != null ? scopedRaw : null, SCOPE_DIMS)[key];
+    if (scope) return { allowed: true, email, reason: "scoped", scope };
     return parseAllowlist(raw).indexOf(key) >= 0 ? { allowed: true, email, reason: "listed" } : { allowed: false, email, reason: "not-listed" };
   }
   var memo2;
@@ -9079,17 +9198,45 @@ var Server = (() => {
         Session.getActiveUser().getEmail(),
         Session.getEffectiveUser().getEmail(),
         getProp(PROP_KEYS.allowedUsers),
-        getProp(PROP_KEYS.allowedAdmins)
+        getProp(PROP_KEYS.allowedAdmins),
+        getProp(PROP_KEYS.scopedUsers)
       );
     }
     return memo2;
+  }
+  var SCOPED_RPCS = [
+    // Not an RPC but the gate `include()` asks through: the page's own scriptlets need it.
+    "include",
+    "bootstrap",
+    "getScopeSummary",
+    "getRegisterRows",
+    "getExportCsv"
+  ];
+  function enforcedScope() {
+    let d;
+    try {
+      d = check();
+    } catch (_e) {
+      return null;
+    }
+    if (d.reason !== "scoped" || !d.scope) return null;
+    return toViewerScope(d.scope);
+  }
+  function toViewerScope(scope) {
+    return { domains: (scope["d"] || []).slice(), supportGroups: (scope["g"] || []).slice() };
+  }
+  function fromViewerScope(v) {
+    return { d: v.domains.slice().sort(), g: v.supportGroups.slice().sort() };
+  }
+  function currentScoped() {
+    return parseScoped(getProp(PROP_KEYS.scopedUsers), SCOPE_DIMS);
   }
   function logDenial(op, d) {
     console.log(JSON.stringify({ access: "denied", op, reason: d.reason, email: d.email }));
   }
   function denyResult(op) {
     const d = check();
-    if (d.allowed) return null;
+    if (d.allowed && (d.reason !== "scoped" || SCOPED_RPCS.indexOf(op) >= 0)) return null;
     logDenial(op, d);
     const env = {
       ok: false,
@@ -9105,7 +9252,7 @@ var Server = (() => {
   }
   function assertAllowed(op) {
     const d = check();
-    if (d.allowed) return;
+    if (d.allowed && d.reason !== "scoped") return;
     logDenial(op, d);
     throw new Error(DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"]);
   }
@@ -9166,6 +9313,98 @@ var Server = (() => {
   function ownerDomain() {
     const at = ownerEmail().lastIndexOf("@");
     return at >= 0 ? ownerEmail().slice(at + 1).toLowerCase() : "";
+  }
+
+  // ../gas_shared/domain/scopeSummary.ts
+  var DEFAULT_SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
+  var SUMMARY_TREND_POINTS = 60;
+  function numOrNull(v) {
+    return typeof v === "number" && Number.isFinite(v) ? v : null;
+  }
+  function numOr0(v) {
+    return typeof v === "number" && Number.isFinite(v) ? v : 0;
+  }
+  function obj(v) {
+    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+  }
+  function thinPoints(points, max) {
+    if (points.length <= max || max < 2) return points.slice(-Math.max(max, 1));
+    const out = [];
+    const step4 = (points.length - 1) / (max - 1);
+    for (let i = 0; i < max; i++) out.push(points[Math.round(i * step4)]);
+    return out;
+  }
+  function scopeSummaryOf(mttr, trend, meta, severityOrder = DEFAULT_SEVERITY_ORDER) {
+    var _a;
+    const perSev = obj(mttr["perSev"]);
+    const overall = obj(mttr["overall"]);
+    const rem = obj(mttr["remediation"]);
+    const km = obj(rem["km"]);
+    const kmMedianPerSev = obj(rem["kmMedianPerSev"]);
+    const kmP90PerSev = obj(rem["kmP90PerSev"]);
+    const past = obj(rem["openPastSla"]);
+    const pastPerSev = obj(past["perSev"]);
+    const pastOverall = obj(past["overall"]);
+    const awaiting = obj(rem["awaiting"]);
+    const awaitingPerSev = obj(awaiting["perSev"]);
+    const backlog = obj(mttr["backlog"]);
+    const seen2 = Object.keys(perSev);
+    const ordered = severityOrder.filter((s) => seen2.indexOf(s) >= 0).concat(seen2.filter((s) => severityOrder.indexOf(s) < 0));
+    const sevRows = [];
+    for (const sev2 of ordered) {
+      const st = obj(perSev[sev2]);
+      const open = numOr0(st["open"]);
+      const resolved = numOr0(st["resolved"]);
+      if (!open && !resolved) continue;
+      sevRows.push({
+        sev: sev2,
+        open,
+        resolved,
+        kmMedian: numOrNull(kmMedianPerSev[sev2]),
+        kmP90: numOrNull(kmP90PerSev[sev2]),
+        slaPct: numOrNull(st["sla_pct"]),
+        pastSla: numOr0(obj(pastPerSev[sev2])["breached"]),
+        slaTarget: numOrNull(st["sla_target"]),
+        awaiting: numOr0(awaitingPerSev[sev2])
+      });
+    }
+    const points = Array.isArray(trend["trend"]) ? trend["trend"] : [];
+    const trendOut = thinPoints(points, SUMMARY_TREND_POINTS).map((p) => {
+      var _a2, _b;
+      return {
+        date: String((_a2 = p["date"]) != null ? _a2 : ""),
+        open: numOrNull(p["open"]),
+        // The KM median where the trend carries one, the naive median otherwise — the same
+        // preference the MTTR page's headline line makes.
+        medianDays: (_b = numOrNull(p["km_median_days"])) != null ? _b : numOrNull(p["median_days"])
+      };
+    });
+    return {
+      asOf: meta.asOf,
+      scan: meta.scan,
+      open: numOr0(overall["open"]),
+      resolved: numOr0(overall["resolved"]),
+      mttr: {
+        median: numOrNull(km["median"]),
+        medianLowerBound: numOrNull(km["medianLowerBound"]),
+        // gas publishes the overall p90 beside the curve; gas_devsecops inside it.
+        p90: (_a = numOrNull(rem["kmP90"])) != null ? _a : numOrNull(km["p90"]),
+        naiveMedian: numOrNull(km["naiveMedian"])
+      },
+      sla: {
+        attainmentPct: numOrNull(mttr["slaPct"]),
+        pastSla: numOr0(pastOverall["breached"]),
+        pastSlaPct: numOrNull(pastOverall["pct"]),
+        unknown: numOr0(pastOverall["unknown"])
+      },
+      awaiting: {
+        count: numOr0(awaiting["overall"]),
+        pctOfOpen: numOrNull(awaiting["pctOfOpen"])
+      },
+      backlog: Object.keys(backlog).length ? { observed: numOr0(backlog["observed"]), unobserved: numOr0(backlog["unobserved"]) } : null,
+      perSev: sevRows,
+      trend: trendOut
+    };
   }
 
   // src/server/hubUrl.ts
@@ -10146,6 +10385,8 @@ var Server = (() => {
     return { showNoFix: getShowNoFix2() };
   }
   function bootstrap(_p) {
+    const viewer = enforcedScope();
+    if (viewer) return run(() => withLiveScopedFields(cachedScopedBoot(viewer)));
     return run(() => withLiveBootFields({
       // The core is a pure function of ledger + settings state — cached per DATA_VERSION.
       // "bootstrapCore" → "bootstrapCore2": counts / unassigned / filterOptions now honor the
@@ -10198,6 +10439,14 @@ var Server = (() => {
     };
   }
   function bootstrapIfWarm() {
+    const viewer = enforcedScope();
+    if (viewer) {
+      const boot = durablyPeek(SCOPED_BOOT, scopedBootParams(viewer));
+      if (boot === void 0 || boot === null || typeof boot !== "object") {
+        return { ok: false, error: "scoped bootstrap is cold", errorKind: "cold" };
+      }
+      return run(() => withLiveScopedFields(boot));
+    }
     const core = durablyPeek(BOOT_CORE, bootCoreParams());
     if (core === void 0 || core === null || typeof core !== "object") {
       return { ok: false, error: "bootstrap core is cold", errorKind: "cold" };
@@ -10627,10 +10876,20 @@ var Server = (() => {
       return oldestOpenSlice(cachedInsightsData(p), String((_a = p == null ? void 0 : p["view"]) != null ? _a : ""));
     });
   }
-  function scopedFrameRecords(domain, supportGroup, supportGroupSet) {
+  function scopedFrameRecords(domain, supportGroup, supportGroupSet, viewer = null) {
     const scan = currentScan();
     if (!scan) return [];
     let recs = scan.records;
+    if (viewer) {
+      recs = recs.filter((r) => {
+        var _a, _b;
+        return inViewerScope(
+          viewer,
+          String((_a = r["_domain"]) != null ? _a : UNASSIGNED),
+          String((_b = r["_supportGroup"]) != null ? _b : "")
+        );
+      });
+    }
     if (supportGroup || supportGroupSet.length) {
       const sgMatch = supportGroupPredicate(supportGroup, supportGroupSet);
       recs = recs.filter((r) => {
@@ -10903,19 +11162,31 @@ var Server = (() => {
     );
   }
   var scopedMemo;
-  function scopedBaseRows(domain, supportGroup) {
-    if (!domain && !supportGroup) return loadBaseRows();
+  function scopedBaseRows(domain, supportGroup, viewer = null) {
+    if (!domain && !supportGroup && !viewer) return loadBaseRows();
     const version = currentStamp();
     if (!scopedMemo || scopedMemo.version !== version) {
       scopedMemo = { version, byScope: /* @__PURE__ */ new Map() };
     }
-    const key = domain + "\0" + supportGroup;
+    const key = domain + "\0" + supportGroup + (viewer ? "\0" + scopeKey(fromViewerScope(viewer)) : "");
     let scoped = scopedMemo.byScope.get(key);
     if (!scoped) {
       const t0 = Date.now();
       let rows = loadBaseRows();
       const t1 = Date.now();
       attachSupportGroups(rows);
+      if (viewer) {
+        const compiled = compileDomains(getDomains2().items);
+        attachBizDomains(rows);
+        rows = rows.filter((r) => {
+          var _a;
+          return inViewerScope(
+            viewer,
+            resolveDomainName(r, compiled),
+            String((_a = r["_supportGroup"]) != null ? _a : "")
+          );
+        });
+      }
       if (supportGroup) rows = rows.filter((r) => {
         var _a;
         return String((_a = r["_supportGroup"]) != null ? _a : "") === supportGroup;
@@ -10931,6 +11202,7 @@ var Server = (() => {
         stage: "scopedBase",
         domain,
         supportGroup,
+        viewer: !!viewer,
         rows: rows.length,
         baseMs: t1 - t0,
         attachMs: Date.now() - t1
@@ -10971,7 +11243,7 @@ var Server = (() => {
     var _a, _b, _c;
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
     const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
-    let rows = scopedBaseRows(domain, supportGroup);
+    let rows = scopedBaseRows(domain, supportGroup, readViewerScope(p));
     rows = filterSeverities(rows, readSeverities(p));
     const latencyRows = filterEolBase(rows, getIncludeEol2());
     rows = visibleBase(rows);
@@ -11119,10 +11391,11 @@ var Server = (() => {
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
     const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
     const severities = readSeverities(p);
-    const scoped = Boolean(domain || supportGroup);
+    const viewer = readViewerScope(p);
+    const scoped = Boolean(domain || supportGroup || viewer);
     const includeEol = getIncludeEol2();
     const rows = filterEolBase(
-      scopedBaseRows(domain, supportGroup),
+      scopedBaseRows(domain, supportGroup, viewer),
       includeEol
     );
     return {
@@ -11848,8 +12121,9 @@ var Server = (() => {
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
     const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
     const severities = readSeverities(p);
+    const viewer = readViewerScope(p);
     const recsVisible = filterSeverities(
-      scopedFrameRecords(domain, supportGroup, []),
+      scopedFrameRecords(domain, supportGroup, [], viewer),
       severities
     );
     const exposureKnown = exploitSummary(recsVisible).exposureKnown;
@@ -11860,7 +12134,7 @@ var Server = (() => {
       if (k) framedKeys.add(k);
     }
     const base = visibleBase(
-      filterSeverities(scopedBaseRows(domain, supportGroup), severities)
+      filterSeverities(scopedBaseRows(domain, supportGroup, viewer), severities)
     );
     attachSupportGroups(base);
     attachBizDomains(base);
@@ -11917,6 +12191,9 @@ var Server = (() => {
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
+        // ONLY WHEN PRESENT, so every unscoped key hashes exactly as it did before the scoped
+        // tier existed and no live entry is orphaned by it.
+        ...viewerKeyParam(p),
         severities: readSeverities(p),
         showNoFix: getShowNoFix2(),
         riskRuleVersion: getRiskRule2().version,
@@ -11940,9 +12217,10 @@ var Server = (() => {
     const n = Number(v);
     return Number.isFinite(n) ? Math.floor(n) : 0;
   }
-  function getRegisterRows(p) {
+  function getRegisterRows(p0) {
     return run(() => {
       var _a, _b;
+      const p = forViewer(p0);
       const params = p != null ? p : {};
       const filters = registerRowFilters(p);
       const model = cachedRegisterRows(p, filters);
@@ -12433,7 +12711,7 @@ var Server = (() => {
   }
   function getExportCsv(p) {
     return run(() => {
-      var _a, _b, _c, _d, _e, _f, _g;
+      var _a, _b, _c, _d, _e, _f, _g, _h;
       const params = p != null ? p : {};
       const scan = currentScan();
       if (!scan) return { content: "", filename: "" };
@@ -12448,9 +12726,18 @@ var Server = (() => {
           q: (_g = params["q"]) != null ? _g : ""
         })
       );
+      const viewer = (_h = enforcedScope()) != null ? _h : readViewerScope(p);
+      const rows = viewer ? filtered.filter((r) => {
+        var _a2, _b2;
+        return inViewerScope(
+          viewer,
+          String((_a2 = r["_domain"]) != null ? _a2 : UNASSIGNED),
+          String((_b2 = r["_supportGroup"]) != null ? _b2 : "")
+        );
+      }) : filtered;
       const cols = TABLE_COLUMNS.filter((c) => !c.startsWith("_"));
       const lines = [cols.join(",")];
-      for (const r of filtered) lines.push(cols.map((c) => csvCell(r[c])).join(","));
+      for (const r of rows) lines.push(cols.map((c) => csvCell(r[c])).join(","));
       return {
         content: lines.join("\r\n"),
         filename: `wiz-os-vulnerabilities-${scan.scanId.slice(0, 10)}.csv`
@@ -12635,6 +12922,132 @@ var Server = (() => {
       };
     });
   }
+  function readViewerScope(p) {
+    const raw = p == null ? void 0 : p["viewerScope"];
+    if (!raw || typeof raw !== "object") return null;
+    const r = raw;
+    const list = (v) => Array.isArray(v) ? v.map(String).filter(Boolean) : [];
+    const scope = { domains: list(r["domains"]), supportGroups: list(r["supportGroups"]) };
+    return scope.domains.length || scope.supportGroups.length ? scope : null;
+  }
+  function forViewer(p) {
+    const params = p != null ? p : {};
+    const enforced = enforcedScope();
+    if (!enforced) return params;
+    return { ...params, domain: "", supportGroup: "", supportGroups: [], viewerScope: enforced };
+  }
+  function inViewerScope(viewer, domain, supportGroup) {
+    return viewer.domains.indexOf(domain) >= 0 || !!supportGroup && viewer.supportGroups.indexOf(supportGroup) >= 0;
+  }
+  function viewerKeyParam(p) {
+    const viewer = readViewerScope(p);
+    return viewer ? { viewerScope: scopeKey(fromViewerScope(viewer)) } : {};
+  }
+  function viewerParams(viewer, severities) {
+    return { domain: "", supportGroup: "", severities, viewerScope: viewer };
+  }
+  var SCOPED_BOOT = "scopedBoot1";
+  var SCOPE_SUMMARY = "scopeSummary1";
+  function scopedBootParams(viewer) {
+    return {
+      scope: scopeKey(fromViewerScope(viewer)),
+      showNoFix: getShowNoFix2(),
+      severities: getDisplaySeverities2()
+    };
+  }
+  function scopeSummaryData(viewer) {
+    const severities = getDisplaySeverities2();
+    const p = viewerParams(viewer, severities);
+    const latest = latestScanRow();
+    return scopeSummaryOf(mttrData(p), mttrTrendData(p), {
+      asOf: nowIso(),
+      scan: latest ? { ts: latest.ts, total: latest.total } : null
+    }, SEVERITY_ORDER);
+  }
+  var cachedScopeSummary = (viewer) => durablyCached(SCOPE_SUMMARY, scopedBootParams(viewer), () => scopeSummaryData(viewer));
+  function scopedBootData(viewer) {
+    const latest = latestScanRow();
+    return {
+      role: "scoped",
+      scope: viewer,
+      buildId: BUILD_ID,
+      palette: { order: SEVERITY_ORDER, colors: SEVERITY_COLORS, selectable: SELECTABLE_SEVERITIES },
+      settings: {
+        displaySeverities: getDisplaySeverities2(),
+        showNoFix: getShowNoFix2(),
+        includeEol: getIncludeEol2()
+      },
+      latestScan: latest ? { scanId: latest.scan_id, ts: latest.ts, total: latest.total } : null,
+      summary: cachedScopeSummary(viewer)
+    };
+  }
+  var cachedScopedBoot = (viewer) => durablyCached(SCOPED_BOOT, scopedBootParams(viewer), () => scopedBootData(viewer));
+  function withLiveScopedFields(core) {
+    return { ...core, role: "scoped", hubUrl: readHubUrl() };
+  }
+  function getScopeSummary(p) {
+    return run(() => {
+      var _a;
+      const viewer = (_a = enforcedScope()) != null ? _a : readViewerScope(p);
+      if (!viewer) throw new Error("No scope to summarize \u2014 pick at least one domain or team.");
+      return cachedScopeSummary(viewer);
+    });
+  }
+  function warmScopedViews(step4) {
+    let roster;
+    try {
+      roster = currentScoped();
+    } catch (e) {
+      console.warn(`Cache warm: scoped roster unreadable: ${e}`);
+      return;
+    }
+    for (const scope of distinctScopes(roster).values()) {
+      const viewer = toViewerScope(scope);
+      step4("scopedBoot", () => cachedScopedBoot(viewer));
+      step4("scopedRegister", () => {
+        const p = viewerParams(viewer, getDisplaySeverities2());
+        cachedRegisterRows(p, registerRowFilters(p));
+      });
+    }
+  }
+  function tryScopeCatalogue() {
+    try {
+      return scopeCatalogue();
+    } catch (e) {
+      console.warn(`Scope catalogue unavailable: ${e}`);
+      return null;
+    }
+  }
+  function scopeCatalogue() {
+    var _a, _b, _c, _d, _e, _f;
+    const core = durablyCached(BOOT_CORE, bootCoreParams(), bootstrapCore);
+    const counts = (_a = core["scopeCounts"]) != null ? _a : {};
+    const domainCounts = (_b = counts["domains"]) != null ? _b : {};
+    const groupCounts = (_c = counts["supportGroups"]) != null ? _c : {};
+    const names = Array.isArray(core["domainNames"]) ? core["domainNames"] : [];
+    const groups = (_e = (_d = core["filterOptions"]) == null ? void 0 : _d["supportGroups"]) != null ? _e : [];
+    return {
+      dims: [
+        {
+          key: "d",
+          label: "Domains",
+          options: names.map((n) => {
+            var _a2;
+            return { value: n, count: Number((_a2 = domainCounts[n]) != null ? _a2 : 0) };
+          })
+        },
+        {
+          key: "g",
+          label: "Support groups",
+          options: groups.map((n) => {
+            var _a2;
+            return { value: n, count: Number((_a2 = groupCounts[n]) != null ? _a2 : 0) };
+          })
+        }
+      ],
+      register: Number((_f = counts["register"]) != null ? _f : 0)
+    };
+  }
   var ACCESS_MAX_BYTES = 8e3;
   var ACCESS_MAX_ENTRIES = 500;
   function validateAddresses(raw) {
@@ -12665,7 +13078,11 @@ var Server = (() => {
         owner: ownerEmail(),
         domain: ownerDomain(),
         users: currentUsers(),
-        admins: currentAdmins()
+        admins: currentAdmins(),
+        scoped: scopedRosterRows(),
+        // Best-effort: a catalogue that cannot be built costs the picker its counts and its
+        // suggestions, never the roster editor beside it.
+        catalogue: tryScopeCatalogue()
       };
     }, "getAccess");
   }
@@ -12678,7 +13095,14 @@ var Server = (() => {
       const withOwner = owner && list.indexOf(owner) < 0 ? [owner].concat(list) : list;
       setProp(PROP_KEYS.allowedUsers, withOwner.join(", "));
       logAccessChange("users", check().email, before, withOwner);
-      return { users: withOwner };
+      const roster = currentScoped();
+      const moved = withOwner.filter((e) => roster[e]);
+      if (moved.length) {
+        for (const e of moved) delete roster[e];
+        setProp(PROP_KEYS.scopedUsers, serializeScoped(roster));
+        logAccessChange("scoped", check().email, moved, []);
+      }
+      return { users: withOwner, scoped: scopedRosterRows() };
     }, "saveAccess");
   }
   function saveAdmins(p) {
@@ -12690,6 +13114,50 @@ var Server = (() => {
       logAccessChange("admins", check().email, before, list);
       return { admins: list };
     }, "saveAdmins");
+  }
+  function scopedRosterRows() {
+    return rosterRows(currentScoped()).map((r) => ({
+      email: r.email,
+      scope: toViewerScope(r.scope)
+    }));
+  }
+  function saveScoped(p) {
+    return run(() => {
+      if (!canEditUsers()) throw new Error("Only the owner or an admin can change access.");
+      const raw = p == null ? void 0 : p["scoped"];
+      const entries = (Array.isArray(raw) ? raw : []).map((e) => {
+        var _a;
+        const r = e != null ? e : {};
+        const scope = (_a = r["scope"]) != null ? _a : {};
+        return {
+          email: r["email"],
+          scope: fromViewerScope({
+            domains: Array.isArray(scope["domains"]) ? scope["domains"].map(String) : [],
+            supportGroups: Array.isArray(scope["supportGroups"]) ? scope["supportGroups"].map(String) : []
+          })
+        };
+      });
+      const roster = validateScoped(entries, SCOPE_DIMS);
+      const owner = ownerEmail().trim().toLowerCase();
+      const admins = currentAdmins();
+      const refused = Object.keys(roster).filter((e) => e === owner || admins.indexOf(e) >= 0);
+      if (refused.length) {
+        throw new Error(`The owner and admins always have full access: ${refused.join(", ")}`);
+      }
+      const before = Object.keys(currentScoped());
+      setProp(PROP_KEYS.scopedUsers, serializeScoped(roster));
+      logAccessChange("scoped", check().email, before, Object.keys(roster));
+      const users = currentUsers();
+      const kept = users.filter((e) => !roster[e]);
+      if (kept.length !== users.length) {
+        setProp(PROP_KEYS.allowedUsers, kept.join(", "));
+        logAccessChange("users", check().email, users, kept);
+      }
+      if (Object.keys(roster).some((e) => before.indexOf(e) < 0)) {
+        scheduleWarmContinuation(WARM_CONTINUE_DELAY_MS);
+      }
+      return { scoped: scopedRosterRows(), users: kept };
+    }, "saveScoped");
   }
   function getDomains3(_p) {
     return run(() => getDomains2());
@@ -12880,6 +13348,7 @@ var Server = (() => {
     }
     warm("scanHistory", () => cachedScanHistoryData());
     warm("storageStats", () => cachedStorageStatsData());
+    warmScopedViews(warm);
     if (skipped) {
       console.warn(`Cache warm: ran out of budget after ${warmed} entries, ${skipped} left cold`);
     }

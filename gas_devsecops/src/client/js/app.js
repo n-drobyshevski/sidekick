@@ -34,6 +34,8 @@ import { scopeControl } from "../../../../gas_shared/ui/scopeControl.js";
 import { scopePayload } from "../../../../gas_shared/ui/scopeModel.js";
 import { railStatus, withLabels } from "./railStatus.js";
 import { PAGES } from "./pages.js";
+import { pagesFor } from "./scopedRoutes.js";
+import { scopeBadge } from "../../../../gas_shared/ui/scopedPages.js";
 import { LANE_ICONS, ROUTE_ICONS } from "./routeIcons.js";
 import { findEntry } from "./helpContent.js";
 import { installExperimentalFanout } from "./experimental.js";
@@ -144,6 +146,8 @@ let resumeChecked = false;
  * removed), so every state carries a sentence rather than only a colour.
  */
 function renderSyncZone(data) {
+  // No sync controls or job card for a scoped viewer — the server refuses them every one.
+  if (data && data.role === "scoped") return null;
   const zone = el("div", { class: "scan-zone" });
   const hasCreds = !!(data && data.hasCredentials);
   const runBtn = el("button", {
@@ -430,6 +434,8 @@ async function pickScope(payload) {
  * learned a new encoding — including the `d:` prefix, which never leaves the shared model.
  */
 function appbarScope(data) {
+  // A scoped viewer's scope is not theirs to switch: a locked badge instead of the control.
+  if (data && data.role === "scoped") return scopeBadge(data);
   const kinds = scopeKinds(data);
   const chrome = scopeChrome(data);
   return scopeControl(
@@ -460,6 +466,9 @@ function navContext() {
 // route has settled, and only when the browser is idle. `loadCharts` is memoized, so any chart
 // route opened afterwards awaits this same request instead of starting its own.
 function prefetchCharts() {
+  // The scoped shell draws no Chart.js chart, and the bundle's RPC is outside its fence.
+  const boot = bootstrapCached();
+  if (boot && boot.role === "scoped") return;
   const go = () => { loadCharts().catch(() => {}); }; // a refusal is cached, shown where charts draw
   if (typeof window.requestIdleCallback === "function") window.requestIdleCallback(go, { timeout: 3000 });
   else setTimeout(go, 1000);
@@ -467,6 +476,8 @@ function prefetchCharts() {
 
 const shell = createAppShell({
   pages: PAGES,
+  // The scoped viewer's two-page table (scopedRoutes.js) when the boot payload says so.
+  pagesFor,
   appbarScope,
   railFooter: renderSyncZone,
   navContext,

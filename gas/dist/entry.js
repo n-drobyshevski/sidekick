@@ -69,7 +69,8 @@ function trigger_continueWarm(e) { Server.api.continueWarm(e); }
 function timedApi_(name, p) {
   // Single chokepoint for every api_* delegator below: google.script.run reaches top-level
   // globals directly, so gating here (rather than in each api_X, or inside api.ts's run())
-  // covers all 54 without touching the parity-checked delegator lines themselves.
+  // covers all of them without touching the parity-checked delegator lines themselves. It is
+  // also the scoped viewer's fence: denyResult refuses them every name outside SCOPED_RPCS.
   var denied = Server.access.denyResult(name);
   if (denied) return denied;
   var t0 = Date.now();
@@ -93,6 +94,7 @@ function api_getProgramPage(p) { return timedApi_("getProgramPage", p); }
 function api_getColdZonePage(p) { return timedApi_("getColdZonePage", p); }
 function api_getRiskCohort(p) { return timedApi_("getRiskCohort", p); }
 function api_getRegisterRows(p) { return timedApi_("getRegisterRows", p); }
+function api_getScopeSummary(p) { return timedApi_("getScopeSummary", p); }
 function api_getExportCoverageCsv(p) { return timedApi_("getExportCoverageCsv", p); }
 function api_startRiskBackfill(p) { return timedApi_("startRiskBackfill", p); }
 function api_getRiskBackfillStatus(p) { return timedApi_("getRiskBackfillStatus", p); }
@@ -118,6 +120,7 @@ function api_setRetentionSettings(p) { return timedApi_("setRetentionSettings", 
 function api_getAccess(p) { return timedApi_("getAccess", p); }
 function api_saveAccess(p) { return timedApi_("saveAccess", p); }
 function api_saveAdmins(p) { return timedApi_("saveAdmins", p); }
+function api_saveScoped(p) { return timedApi_("saveScoped", p); }
 function api_saveHubUrl(p) { return timedApi_("saveHubUrl", p); }
 function api_getDomains(p) { return timedApi_("getDomains", p); }
 function api_saveDomains(p) { return timedApi_("saveDomains", p); }

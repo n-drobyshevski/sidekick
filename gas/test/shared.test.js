@@ -36,6 +36,7 @@ import { registerPageHeaderContract } from "../../gas_shared/test/contracts/page
 import { registerDiagnosticsContract } from "../../gas_shared/test/contracts/diagnostics.js";
 import { registerParityContract } from "../../gas_shared/test/contracts/parity.js";
 import { registerScopeContract } from "../../gas_shared/test/contracts/scope.js";
+import { registerScopedViewContract } from "../../gas_shared/test/contracts/scopedView.js";
 import { ratio, registerTokenContract } from "../../gas_shared/test/contracts/tokens.js";
 import { registerZScaleContract } from "../../gas_shared/test/contracts/zscale.js";
 import { registerRelativeAgeContract } from "../../gas_shared/test/contracts/relativeAge.js";
@@ -518,3 +519,6 @@ registerSettingsReadoutsContract({
   ...base, beforeAll, afterAll,
   impactSplitModel, severitySplitModel, tickTimeline, createCutHistogram, openAndTotal,
 });
+
+// The scoped viewer's shared model, over this register's dimensions: domain + support group.
+registerScopedViewContract({ describe, it, expect, dims: ["d", "g"] });

@@ -334,6 +334,52 @@ about at least two of them, and the clock is the product.
 Access fails **closed**: an unset `ALLOWED_USERS` means owner-only, and the owner is allowed
 by identity rather than by membership.
 
+## Scoped viewers
+
+Someone who should see **only their own domains or projects** is listed in the
+`SCOPED_USERS` Script Property, as JSON:
+
+```json
+{"lead@example.com": {"d": ["Payments"], "p": ["team-a"]}}
+```
+
+`d` holds business domains (the repository tag behind `_domain`), and `p` holds project
+slugs. A viewer sees the union of every value.
+
+The owner and admins manage the list in **Settings → Access**, which is now an editor for
+three lists: people, admins and scoped viewers. Anyone who cannot edit access still gets the
+read-only description. The editor offers:
+
+- a searchable picker of domains and projects;
+- counts and reach for each viewer;
+- a per-viewer **Preview** of the summary;
+- a warning on any value no longer in the data.
+
+**What a scoped viewer gets:**
+
+- **My scope**: MTTR (KM median, p90), open / past-SLA / awaiting-fix counts, a
+  severity split and a trend.
+- **My findings**: read-only and paged per register (SCA / SAST / Secrets), with CSV.
+- Nothing else. There is no settings page, no sync and no project switcher.
+
+**The same boundary as gas/, stated there in full:**
+
+- **Fence.** `access.denyResult` refuses a scoped caller everything outside `SCOPED_RPCS`.
+- **Force.** `readModels.ModelParams.viewerScope` is set only by api.ts, from
+  `access.enforcedScope()`. When present it replaces the header's global
+  `projectView` / `domainView`.
+- **No core.** A scoped viewer never receives the bootstrap core.
+- **Fail closed.** A malformed roster admits nobody.
+- **Exclusive lists.** Saving someone as a scoped viewer removes them from
+  `ALLOWED_USERS`, and granting full access un-scopes them.
+
+The summary is `readModels.scopeSummaryModel` (`dsScopeSummary1`, durable). The warm adds
+one target per distinct scope set, after every full-user entry. Unscoped cache keys are
+unchanged.
+
+The CSV export now also honours the header's **domain** view. It used to honour only the
+project view, so an export taken under a domain scope returned the whole register.
+
 ## Development
 
 ```

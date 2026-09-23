@@ -540,6 +540,13 @@ describe("the warm order puts the landing page first", () => {
     expect(all).toBeGreaterThan(subset);
   });
 
+  it("warms the scoped viewers' pages after every full-user entry", () => {
+    // One viewer's landing page each, behind the landing page of every full user: a cut-out
+    // there costs one person a cold first open, never the Executive page.
+    const scoped = API_SRC.indexOf("warmScopedViews(warm);");
+    expect(scoped).toBeGreaterThan(API_SRC.indexOf('warm("storageStats"'));
+  });
+
   it("hands a cut-out pass to a continuation instead of dropping it", () => {
     expect(API_SRC).toMatch(/if \(skipped\) \{\s*scheduleWarmContinuation\(/);
   });

@@ -46,6 +46,11 @@ export const PROP_KEYS = {
   // Unset means owner-only, like its sibling. Admins are allowed into the app by being admins,
   // not by also appearing in ALLOWED_USERS.
   allowedAdmins: "ALLOWED_ADMINS",
+  // Scoped viewers: people who may open the app but see only their own domains / projects,
+  // through a reduced read-only shell. JSON — `{"a@x.com":{"d":["Payments"],"p":["team-a"]}}`
+  // — owned by gas_shared/domain/scopedAccess.ts. Unset or unparseable means nobody, like the
+  // lists above. Edited by the owner or an admin from Settings → Access.
+  scopedUsers: "SCOPED_USERS",
   // The /exec URL of the hub launcher (gas_hub), pasted from its Deploy > Manage deployments,
   // or set from Settings > System. A PROPERTY RATHER THAN CODE for the platform's reason, not
   // a preference: `ScriptApp.getService().getUrl()` answers for this deployment only and there

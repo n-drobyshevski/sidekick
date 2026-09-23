@@ -205,3 +205,21 @@ table.data.heat th[scope="row"] {
    it — that file is a different package's this round, so the rule lands here instead. CANDIDATE
    FOR PROMOTION to gas_shared/styles/settings.css once a second app draws this same caption. */
 .settings-retention-warn { display: block; margin-top: var(--space-1); color: var(--warn); }
+
+/* ------------------------------------------------------ Settings → Access (accessEditor.js)
+   The roster editor ported from gas/, which carries these rules in its own pages.css. Kept
+   app-local like there; components.css holds the .access-row / .access-list primitives. */
+.sub-add { display: flex; gap: 6px; margin-top: 6px; }
+.scope-block { display: flex; flex-direction: column; gap: var(--space-1); }
+.scope-block__note { margin: var(--space-1) 0 var(--space-2); }
+.scope-block--divided {
+  margin-top: var(--space-4); padding-top: var(--space-4); border-top: 1px solid var(--hairline);
+}
+.cond-remove {
+  min-height: 0; padding: var(--space-half) 7px; font-size: var(--fs-label); line-height: 1;
+  background: none; border: 1px solid transparent; box-shadow: none;
+  color: var(--text-3); border-radius: var(--radius-sm); margin-left: auto;
+}
+.cond-remove:hover { background: var(--wash-hover); color: var(--ink); border-color: var(--hairline); }
+.access-row:hover { background: var(--surface-2); }
+.access-row--locked:hover { background: var(--surface); }

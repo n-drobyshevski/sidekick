@@ -990,6 +990,58 @@ just nothing in the DOM. Every successful change writes one Stackdriver line nam
 and the addresses added and removed; a delegated grant power with no record of who used it is
 what makes a feature like this regrettable later.
 
+### Scoped viewers: one domain or team, and a smaller app
+
+A third kind of access, for someone who should see **their own slice** of the register and
+nothing else — a domain owner, a support-group lead. They are listed in the
+`SCOPED_USERS` Script Property, as JSON:
+
+```json
+{"lead@example.com": {"d": ["Payments"], "g": ["CS-CORE"]}}
+```
+
+`d` holds business domains (the resolved `_domain`, tag first), and `g` holds support groups.
+A viewer sees the **union** of every value. The owner and admins edit this list under
+**Settings → Access → Scoped viewers**. The editor offers:
+
+- a searchable picker of every domain and team, each with its open count;
+- a per-viewer reach figure;
+- a **Preview**, which shows the viewer's own summary before you save;
+- a warning chip on any value that no longer exists in the data. The value is kept, not
+  dropped.
+
+|                                     | Opens the app | Sees                                                              |
+| ----------------------------------- | ------------- | ----------------------------------------------------------------- |
+| **Scoped** (in `SCOPED_USERS`)      | yes           | **My scope** (MTTR, open / past-SLA / awaiting-fix, severity split, trend) and **My findings** (read-only, paged, CSV). Nothing else. |
+
+What keeps them in their slice:
+
+- **The fence is on the server.** `access.denyResult` refuses a scoped caller every RPC
+  outside `SCOPED_RPCS`. The only calls let through are `bootstrap`, `getScopeSummary`,
+  `getRegisterRows` and `getExportCsv`. Settings, scans, purges, imports and every
+  register-wide read answer `forbidden`.
+- **The scope is forced, never trusted.** Inside the fence, every endpoint replaces the
+  request's domain, support group and viewer scope with the viewer's own
+  (`access.enforcedScope()`). A console call asking for someone else's domain, or for `""`
+  (the whole register), still gets their rows.
+- **They never receive the bootstrap core.** It carries every domain's name and count. A
+  scoped viewer gets the small `scopedBoot1` payload instead, with their summary inside it.
+- **Fail closed.** Unparseable JSON, a non-object, or an entry with an empty scope admits
+  nobody. Nothing is ever read as "scoped to everything".
+- **The narrower grant wins.** An address hand-edited onto both lists is treated as scoped.
+- **The lists are exclusive.** Saving someone as a scoped viewer removes them from
+  `ALLOWED_USERS`, and granting full access un-scopes them.
+- **The owner and admins cannot be scoped.**
+
+**Why it opens fast.** Scoping still starts from the whole ledger, because there is no
+per-domain shard, so a *cold* scoped summary costs about what a cold MTTR page does. The
+scheduled warm (`warmScopedViews`) therefore precomputes each **distinct** scope set in
+`SCOPED_USERS` into the durable read-model layer. Ten viewers sharing a domain cost one
+compute. A viewer's first open is then one small cache read with no ledger load. Saving the
+roster schedules a warm for any new viewer. Cache namespaces: `scopedBoot1`,
+`scopeSummary1`. Register rows key on the viewer scope only when one is present, so no
+unscoped entry was orphaned.
+
 ### The entry screen
 
 An allowed caller does not land straight in the dashboard. `welcome.gate()`

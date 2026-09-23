@@ -60,6 +60,8 @@ import { durablyCached, durablyPeek, duringWarm, sweepReadModels } from "./readM
 import * as ledgerStore from "./ledgerStore";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
 import * as access from "./access";
+import { distinctScopes, rosterRows, scopeKey, serializeScoped, validateScoped } from "../../../gas_shared/domain/scopedAccess";
+import { scopeSummaryOf } from "../../../gas_shared/domain/scopeSummary";
 import { hasWizCredentials, PROP_KEYS, setProp } from "./props";
 import { readHubUrl, writeHubUrl } from "./hubUrl";
 import { BASE_FILTER_WORDS } from "./wizClient";
@@ -125,6 +127,11 @@ function bootCoreParams(): Rec {
 }
 
 export function bootstrap(_p?: unknown): ApiResult {
+  // A SCOPED VIEWER NEVER RECEIVES THE CORE. It carries every domain's name and count, the
+  // settings and the register-wide tallies — none of which are theirs — and it is the most
+  // expensive payload the app has. They get the small per-scope boot instead.
+  const viewer = access.enforcedScope();
+  if (viewer) return run(() => withLiveScopedFields(cachedScopedBoot(viewer)));
   return run(() => withLiveBootFields({
     // The core is a pure function of ledger + settings state — cached per DATA_VERSION.
     // "bootstrapCore" → "bootstrapCore2": counts / unassigned / filterOptions now honor the
@@ -187,6 +194,14 @@ function withLiveBootFields(core: Rec): Rec {
  * where the splash used to be — measured, which is why this peeks rather than computes.
  */
 export function bootstrapIfWarm(): ApiResult {
+  const viewer = access.enforcedScope();
+  if (viewer) {
+    const boot = durablyPeek(SCOPED_BOOT, scopedBootParams(viewer));
+    if (boot === undefined || boot === null || typeof boot !== "object") {
+      return { ok: false, error: "scoped bootstrap is cold", errorKind: "cold" };
+    }
+    return run(() => withLiveScopedFields(boot as Rec));
+  }
   const core = durablyPeek(BOOT_CORE, bootCoreParams());
   if (core === undefined || core === null || typeof core !== "object") {
     return { ok: false, error: "bootstrap core is cold", errorKind: "cold" };
@@ -792,10 +807,16 @@ export function getOldestOpen(p?: unknown): ApiResult {
  */
 function scopedFrameRecords(
   domain: string, supportGroup: string, supportGroupSet: string[],
+  viewer: access.ViewerScope | null = null,
 ): Rec[] {
   const scan = findings.currentScan();
   if (!scan) return [];
   let recs = scan.records;
+  if (viewer) {
+    recs = recs.filter((r) => inViewerScope(
+      viewer, String(r["_domain"] ?? UNASSIGNED), String(r["_supportGroup"] ?? ""),
+    ));
+  }
   if (supportGroup || supportGroupSet.length) {
     const sgMatch = supportGroupPredicate(supportGroup, supportGroupSet);
     recs = recs.filter((r) => sgMatch(String(r["_supportGroup"] ?? "")));
@@ -1146,19 +1167,31 @@ function visibleBase(rows: Rec[]): Rec[] {
 // so this costs no property read per call.
 let scopedMemo: { version: string; byScope: Map<string, Rec[]> } | undefined;
 
-function scopedBaseRows(domain: string, supportGroup: string): Rec[] {
-  if (!domain && !supportGroup) return ledgerStore.loadBaseRows() as unknown as Rec[];
+function scopedBaseRows(
+  domain: string, supportGroup: string, viewer: access.ViewerScope | null = null,
+): Rec[] {
+  if (!domain && !supportGroup && !viewer) return ledgerStore.loadBaseRows() as unknown as Rec[];
   const version = currentStamp();
   if (!scopedMemo || scopedMemo.version !== version) {
     scopedMemo = { version, byScope: new Map() };
   }
-  const key = domain + "\u0000" + supportGroup;
+  const key = domain + "\u0000" + supportGroup +
+    (viewer ? "\u0000" + scopeKey(access.fromViewerScope(viewer)) : "");
   let scoped = scopedMemo.byScope.get(key);
   if (!scoped) {
     const t0 = Date.now();
     let rows = ledgerStore.loadBaseRows() as unknown as Rec[];
     const t1 = Date.now();
     supportGroups.attachSupportGroups(rows);
+    if (viewer) {
+      // THE UNION, resolved exactly as the header scope resolves each of its halves below —
+      // so a scoped viewer's domain is the same bucket a full user picking it would see.
+      const compiled = compileDomains(settingsStore.getDomains().items);
+      bizDomains.attachBizDomains(rows);
+      rows = rows.filter((r) => inViewerScope(
+        viewer, resolveDomainName(r, compiled), String(r["_supportGroup"] ?? ""),
+      ));
+    }
     if (supportGroup) rows = rows.filter((r) => String(r["_supportGroup"] ?? "") === supportGroup);
     if (domain) {
       // Resolved, not rule-assigned: the scope has to name the same buckets the splits do, or
@@ -1171,7 +1204,7 @@ function scopedBaseRows(domain: string, supportGroup: string): Rec[] {
     scopedMemo.byScope.set(key, scoped);
     // Same line shape as the #319 timings: `baseMs` is the base copy, `attachMs` the scoping.
     console.log(JSON.stringify({
-      stage: "scopedBase", domain, supportGroup, rows: rows.length,
+      stage: "scopedBase", domain, supportGroup, viewer: !!viewer, rows: rows.length,
       baseMs: t1 - t0, attachMs: Date.now() - t1,
     }));
   }
@@ -1267,7 +1300,7 @@ function latencySummary(rows: BaseRow[], origin: LatencyOrigin): Rec {
 function mttrData(p?: unknown): Rec {
   const domain = String((p as Rec)?.["domain"] ?? "");
   const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
-  let rows = scopedBaseRows(domain, supportGroup);
+  let rows = scopedBaseRows(domain, supportGroup, readViewerScope(p));
   rows = filterSeverities(rows, readSeverities(p));
   // The latency clocks measure the wait for a fix to EXIST, so their censored population is
   // EXACTLY the rows the show-no-fix toggle hides. Honoring the toggle would leave only the
@@ -1479,7 +1512,8 @@ function mttrTrendData(p?: unknown): Rec {
   const domain = String((p as Rec)?.["domain"] ?? "");
   const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
   const severities = readSeverities(p);
-  const scoped = Boolean(domain || supportGroup);
+  const viewer = readViewerScope(p);
+  const scoped = Boolean(domain || supportGroup || viewer);
   // Scope the reconstructed trend to the active domain + Support group by handing the
   // pre-filtered base rows to loadTrend (the scans backbone stays whole). Under a scope the
   // persisted mttr_history snapshots — always whole-register — no longer describe the shown
@@ -1490,7 +1524,7 @@ function mttrTrendData(p?: unknown): Rec {
   // excluded the snapshots no longer describe the shown population — drop them like a scope does.
   const includeEol = settingsStore.getIncludeEol();
   const rows = filterEolBase(
-    scopedBaseRows(domain, supportGroup) as unknown as Rec[],
+    scopedBaseRows(domain, supportGroup, viewer) as unknown as Rec[],
     includeEol,
   ) as unknown as BaseRow[];
   return {
@@ -2581,12 +2615,13 @@ function registerRowsData(p: unknown, filters: RegisterRowFilters): Rec {
   const domain = String((p as Rec)?.["domain"] ?? "");
   const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
   const severities = readSeverities(p);
+  const viewer = readViewerScope(p);
 
   // The frame half. `scopedFrameRecords` already applies `visibleFrame`, so this is the same
   // `recsVisible` the Overview's risk ladder and triage funnel read — one join, one answer
   // about which hosts are reachable, rather than a second pass free to disagree.
   const recsVisible = filterSeverities(
-    scopedFrameRecords(domain, supportGroup, []),
+    scopedFrameRecords(domain, supportGroup, [], viewer),
     severities,
   );
   // `exposureKnown` is `exploitSummary`'s own answer rather than a re-derivation: the key it
@@ -2602,7 +2637,7 @@ function registerRowsData(p: unknown, filters: RegisterRowFilters): Rec {
 
   // The durable half — the same chain riskCohortRows uses.
   const base = visibleBase(
-    filterSeverities(scopedBaseRows(domain, supportGroup), severities),
+    filterSeverities(scopedBaseRows(domain, supportGroup, viewer), severities),
   );
   supportGroups.attachSupportGroups(base);
   bizDomains.attachBizDomains(base);
@@ -2703,6 +2738,9 @@ const cachedRegisterRows = (p: unknown, filters: RegisterRowFilters): Rec =>
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
+      // ONLY WHEN PRESENT, so every unscoped key hashes exactly as it did before the scoped
+      // tier existed and no live entry is orphaned by it.
+      ...viewerKeyParam(p),
       severities: readSeverities(p),
       showNoFix: settingsStore.getShowNoFix(),
       riskRuleVersion: settingsStore.getRiskRule().version,
@@ -2746,8 +2784,9 @@ function registerRowsPage(v: unknown): number {
  * requests for the same page return the same rows, and a reader paging forward through a
  * column of equal values cannot see one finding twice and miss another.
  */
-export function getRegisterRows(p?: unknown): ApiResult {
+export function getRegisterRows(p0?: unknown): ApiResult {
   return run(() => {
+    const p = forViewer(p0);
     const params = (p ?? {}) as Rec;
     const filters = registerRowFilters(p);
     const model = cachedRegisterRows(p, filters);
@@ -3395,9 +3434,16 @@ export function getExportCsv(p?: unknown): ApiResult {
         q: (params["q"] as string) ?? "",
       }),
     );
+    // A scoped viewer's export is THEIR rows, whatever the request narrowed or widened.
+    const viewer = access.enforcedScope() ?? readViewerScope(p);
+    const rows = viewer
+      ? filtered.filter((r) => inViewerScope(
+        viewer, String(r["_domain"] ?? UNASSIGNED), String(r["_supportGroup"] ?? ""),
+      ))
+      : filtered;
     const cols = findings.TABLE_COLUMNS.filter((c) => !c.startsWith("_"));
     const lines = [cols.join(",")];
-    for (const r of filtered) lines.push(cols.map((c) => csvCell(r[c])).join(","));
+    for (const r of rows) lines.push(cols.map((c) => csvCell(r[c])).join(","));
     return {
       content: lines.join("\r\n"),
       filename: `wiz-os-vulnerabilities-${scan.scanId.slice(0, 10)}.csv`,
@@ -3653,6 +3699,179 @@ export function setRetentionSettings(p?: unknown): ApiResult {
   });
 }
 
+// ------------------------------------------------------------------- scoped viewers
+//
+// The reduced, read-only shell a scoped viewer gets (see access.ts, "the scoped tier"): one
+// small boot, one summary, their findings list and their CSV. Every endpoint below FORCES the
+// viewer's scope from `access.enforcedScope()`; the scope a request carries is honoured only
+// for a FULL user, where it can only ever narrow what they could already see — which is what
+// lets the owner or an admin preview a viewer's page from Settings.
+//
+// FAST BECAUSE IT IS PRECOMPUTED, not because it is smaller to compute. Scoping still starts
+// from the whole ledger (there is no per-domain shard of it), so a cold summary costs about
+// what a cold MTTR page does. The warm pass therefore computes every DISTINCT scope set in
+// SCOPED_USERS into the durable layer (`warmScopedViews`), and a viewer's first open is one
+// cache read of a few kilobytes — no ledger load at all.
+
+/** The viewer scope a request carries, sanitized; `null` when it carries none. */
+function readViewerScope(p: unknown): access.ViewerScope | null {
+  const raw = (p as Rec)?.["viewerScope"];
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Rec;
+  const list = (v: unknown) => (Array.isArray(v) ? (v as unknown[]).map(String).filter(Boolean) : []);
+  const scope = { domains: list(r["domains"]), supportGroups: list(r["supportGroups"]) };
+  return scope.domains.length || scope.supportGroups.length ? scope : null;
+}
+
+/**
+ * The request as the server will answer it. For a scoped viewer: their scope replaces
+ * whatever the request asked for, and the header-scope params are cleared rather than
+ * intersected, because nothing a scoped client sends is an authority.
+ */
+function forViewer(p: unknown): Rec {
+  const params = (p ?? {}) as Rec;
+  const enforced = access.enforcedScope();
+  if (!enforced) return params;
+  return { ...params, domain: "", supportGroup: "", supportGroups: [], viewerScope: enforced };
+}
+
+/** Union membership: a row is in scope if its domain OR its support group is listed. */
+function inViewerScope(viewer: access.ViewerScope, domain: string, supportGroup: string): boolean {
+  return viewer.domains.indexOf(domain) >= 0 ||
+    (!!supportGroup && viewer.supportGroups.indexOf(supportGroup) >= 0);
+}
+
+function viewerKeyParam(p: unknown): Rec {
+  const viewer = readViewerScope(p);
+  return viewer ? { viewerScope: scopeKey(access.fromViewerScope(viewer)) } : {};
+}
+
+function viewerParams(viewer: access.ViewerScope, severities: string[] | null): Rec {
+  return { domain: "", supportGroup: "", severities, viewerScope: viewer };
+}
+
+// "scopedBoot1" / "scopeSummary1": new namespaces, nothing served these shapes before.
+const SCOPED_BOOT = "scopedBoot1";
+const SCOPE_SUMMARY = "scopeSummary1";
+
+function scopedBootParams(viewer: access.ViewerScope): Rec {
+  return {
+    scope: scopeKey(access.fromViewerScope(viewer)),
+    showNoFix: settingsStore.getShowNoFix(),
+    severities: settingsStore.getDisplaySeverities(),
+  };
+}
+
+/** The summary over the viewer's rows, at the display-severity subset the pages all read. */
+function scopeSummaryData(viewer: access.ViewerScope): Rec {
+  const severities = settingsStore.getDisplaySeverities();
+  const p = viewerParams(viewer, severities);
+  const latest = ledgerStore.latestScanRow();
+  return scopeSummaryOf(mttrData(p), mttrTrendData(p), {
+    asOf: nowIso(),
+    scan: latest ? { ts: latest.ts, total: latest.total } : null,
+  }, SEVERITY_ORDER) as unknown as Rec;
+}
+
+const cachedScopeSummary = (viewer: access.ViewerScope): Rec =>
+  durablyCached(SCOPE_SUMMARY, scopedBootParams(viewer), () => scopeSummaryData(viewer)) as Rec;
+
+/**
+ * Everything the scoped shell needs to paint, summary included, so the landing page is the
+ * boot itself and not a second round trip.
+ */
+function scopedBootData(viewer: access.ViewerScope): Rec {
+  const latest = ledgerStore.latestScanRow();
+  return {
+    role: "scoped",
+    scope: viewer,
+    buildId: BUILD_ID,
+    palette: { order: SEVERITY_ORDER, colors: SEVERITY_COLORS, selectable: SELECTABLE_SEVERITIES },
+    settings: {
+      displaySeverities: settingsStore.getDisplaySeverities(),
+      showNoFix: settingsStore.getShowNoFix(),
+      includeEol: settingsStore.getIncludeEol(),
+    },
+    latestScan: latest ? { scanId: latest.scan_id, ts: latest.ts, total: latest.total } : null,
+    summary: cachedScopeSummary(viewer),
+  };
+}
+
+const cachedScopedBoot = (viewer: access.ViewerScope): Rec =>
+  durablyCached(SCOPED_BOOT, scopedBootParams(viewer), () => scopedBootData(viewer)) as Rec;
+
+/** The scoped boot's live fields. No job, no credentials state — none of it is theirs. */
+function withLiveScopedFields(core: Rec): Rec {
+  return { ...core, role: "scoped", hubUrl: readHubUrl() };
+}
+
+/**
+ * The summary for the caller's scope — or, for a full user, for the scope the request names,
+ * which is how Settings → Access previews what a viewer will see.
+ */
+export function getScopeSummary(p?: unknown): ApiResult {
+  return run(() => {
+    const viewer = access.enforcedScope() ?? readViewerScope(p);
+    if (!viewer) throw new Error("No scope to summarize — pick at least one domain or team.");
+    return cachedScopeSummary(viewer);
+  });
+}
+
+/** One warm entry per DISTINCT scope set: ten viewers sharing a domain cost one compute. */
+function warmScopedViews(step: (label: string, fn: () => unknown) => void): void {
+  let roster: ReturnType<typeof access.currentScoped>;
+  try {
+    roster = access.currentScoped();
+  } catch (e) {
+    console.warn(`Cache warm: scoped roster unreadable: ${e}`);
+    return;
+  }
+  for (const scope of distinctScopes(roster).values()) {
+    const viewer = access.toViewerScope(scope);
+    step("scopedBoot", () => cachedScopedBoot(viewer));
+    step("scopedRegister", () => {
+      const p = viewerParams(viewer, settingsStore.getDisplaySeverities());
+      cachedRegisterRows(p, registerRowFilters(p));
+    });
+  }
+}
+
+/**
+ * The picker's vocabulary: every domain and support group the register knows, with the open
+ * findings in each, read off the bootstrap core the full app already caches — so opening the
+ * Access tab costs no pass over the ledger.
+ */
+function tryScopeCatalogue(): Rec | null {
+  try {
+    return scopeCatalogue();
+  } catch (e) {
+    console.warn(`Scope catalogue unavailable: ${e}`);
+    return null;
+  }
+}
+
+function scopeCatalogue(): Rec {
+  const core = durablyCached(BOOT_CORE, bootCoreParams(), bootstrapCore) as Rec;
+  const counts = (core["scopeCounts"] ?? {}) as Rec;
+  const domainCounts = (counts["domains"] ?? {}) as Record<string, number>;
+  const groupCounts = (counts["supportGroups"] ?? {}) as Record<string, number>;
+  const names = (Array.isArray(core["domainNames"]) ? core["domainNames"] : []) as string[];
+  const groups = ((core["filterOptions"] as Rec)?.["supportGroups"] ?? []) as string[];
+  return {
+    dims: [
+      {
+        key: "d", label: "Domains",
+        options: names.map((n) => ({ value: n, count: Number(domainCounts[n] ?? 0) })),
+      },
+      {
+        key: "g", label: "Support groups",
+        options: groups.map((n) => ({ value: n, count: Number(groupCounts[n] ?? 0) })),
+      },
+    ],
+    register: Number(counts["register"] ?? 0),
+  };
+}
+
 // ------------------------------------------------------------------------- access
 //
 // The Settings → Access panel. Every one of these RE-CHECKS server-side: the client's
@@ -3706,6 +3925,10 @@ export function getAccess(_p?: unknown): ApiResult {
       domain: access.ownerDomain(),
       users: access.currentUsers(),
       admins: access.currentAdmins(),
+      scoped: scopedRosterRows(),
+      // Best-effort: a catalogue that cannot be built costs the picker its counts and its
+      // suggestions, never the roster editor beside it.
+      catalogue: tryScopeCatalogue(),
     };
   }, "getAccess");
 }
@@ -3723,7 +3946,16 @@ export function saveAccess(p?: unknown): ApiResult {
     const withOwner = owner && list.indexOf(owner) < 0 ? [owner].concat(list) : list;
     setProp(PROP_KEYS.allowedUsers, withOwner.join(", "));
     logAccessChange("users", access.check().email, before, withOwner);
-    return { users: withOwner };
+    // THE TIERS ARE EXCLUSIVE. Granting someone full access is also un-scoping them; leaving
+    // them on the roster would keep them scoped, because the narrower grant wins.
+    const roster = access.currentScoped();
+    const moved = withOwner.filter((e) => roster[e]);
+    if (moved.length) {
+      for (const e of moved) delete roster[e];
+      setProp(PROP_KEYS.scopedUsers, serializeScoped(roster));
+      logAccessChange("scoped", access.check().email, moved, []);
+    }
+    return { users: withOwner, scoped: scopedRosterRows() };
   }, "saveAccess");
 }
 
@@ -3741,6 +3973,62 @@ export function saveAdmins(p?: unknown): ApiResult {
     logAccessChange("admins", access.check().email, before, list);
     return { admins: list };
   }, "saveAdmins");
+}
+
+function scopedRosterRows(): Rec[] {
+  return rosterRows(access.currentScoped()).map((r) => ({
+    email: r.email,
+    scope: access.toViewerScope(r.scope),
+  }));
+}
+
+/**
+ * Replace the scoped-viewer roster. Owner or admin, like the people list it sits beside.
+ *
+ * `scoped` is `[{email, scope: {domains, supportGroups}}]`. The owner and admins are refused
+ * (a scope would be a demotion that the identity rule and the admin tier both ignore), and
+ * anyone added here leaves the full-access list in the same save.
+ */
+export function saveScoped(p?: unknown): ApiResult {
+  return run(() => {
+    if (!access.canEditUsers()) throw new Error("Only the owner or an admin can change access.");
+    const raw = (p as Rec)?.["scoped"];
+    const entries = (Array.isArray(raw) ? raw : []).map((e) => {
+      const r = (e ?? {}) as Rec;
+      const scope = (r["scope"] ?? {}) as Rec;
+      return {
+        email: r["email"],
+        scope: access.fromViewerScope({
+          domains: Array.isArray(scope["domains"]) ? (scope["domains"] as unknown[]).map(String) : [],
+          supportGroups: Array.isArray(scope["supportGroups"])
+            ? (scope["supportGroups"] as unknown[]).map(String) : [],
+        }),
+      };
+    });
+    const roster = validateScoped(entries, access.SCOPE_DIMS);
+    const owner = access.ownerEmail().trim().toLowerCase();
+    const admins = access.currentAdmins();
+    const refused = Object.keys(roster).filter((e) => e === owner || admins.indexOf(e) >= 0);
+    if (refused.length) {
+      throw new Error(`The owner and admins always have full access: ${refused.join(", ")}`);
+    }
+    const before = Object.keys(access.currentScoped());
+    setProp(PROP_KEYS.scopedUsers, serializeScoped(roster));
+    logAccessChange("scoped", access.check().email, before, Object.keys(roster));
+    // Out of the full-access list in the same save, for the reason saveAccess gives.
+    const users = access.currentUsers();
+    const kept = users.filter((e) => !roster[e]);
+    if (kept.length !== users.length) {
+      setProp(PROP_KEYS.allowedUsers, kept.join(", "));
+      logAccessChange("users", access.check().email, users, kept);
+    }
+    // Precompute the new viewers' pages now rather than at the next scheduled warm, so the
+    // first open is a cache read. Best-effort: a failed schedule only costs one cold open.
+    if (Object.keys(roster).some((e) => before.indexOf(e) < 0)) {
+      scheduleWarmContinuation(WARM_CONTINUE_DELAY_MS);
+    }
+    return { scoped: scopedRosterRows(), users: kept };
+  }, "saveScoped");
 }
 
 export function getDomains(_p?: unknown): ApiResult {
@@ -4030,6 +4318,9 @@ function warmReadModelsInner(budgetMs: number): number {
   // storage panel (cellCount walks every sheet).
   warm("scanHistory", () => cachedScanHistoryData());
   warm("storageStats", () => cachedStorageStatsData());
+  // Scoped viewers last: each is one person's landing page, where everything above is the
+  // landing page of every full user. A cut-out here costs one viewer a cold first open.
+  warmScopedViews(warm);
   if (skipped) {
     console.warn(`Cache warm: ran out of budget after ${warmed} entries, ${skipped} left cold`);
   }

@@ -43,11 +43,11 @@
 // ONE home only). Bootstrap carries no field for it, so the Register tab states that plainly
 // instead of fabricating a value or a control this page has no data to back.
 //
-// ACCESS HAS NO ROSTER RPC IN THIS BUILD. api.ts exposes `canEditAccess` and nothing to list
-// or save the allowlist/admin list — those live on Script Properties, set outside this tab.
-// So the Access tab is display-only for every viewer regardless of `canEditAccess`: what
-// differs is the WORDS a permitted viewer sees (`manageHint`, pointing at where the roster
-// actually lives), never a button or field this build cannot back.
+// ACCESS IS EDITED HERE BY THE OWNER AND ADMINS, and only described to everyone else. An
+// editor gets `pages/accessEditor.js` — people, admins and scoped viewers, each list saved by
+// its own server-checked endpoint (`api_saveAccess` / `api_saveAdmins` / `api_saveScoped`).
+// A viewer who may not edit access still gets the display-only panel below
+// (`accessFieldView`): state, and nothing that could be mistaken for a way to change it.
 
 import { call } from "../../../../../gas_shared/api.js";
 import { bootstrapCached, invalidateBootstrap, setParams } from "../../../../../gas_shared/store.js";
@@ -59,6 +59,7 @@ import {
 } from "../ui.js";
 import { disclosure, saveBar, settingRow, settingsPanel, switchToggle, tabList } from "../../../../../gas_shared/ui/settings.js";
 import { hubUrlPanel } from "../../../../../gas_shared/ui/hubPanel.js";
+import { renderAccessPanel } from "./accessEditor.js";
 import {
   DEFAULT_TAB, SETTINGS_TABS, TAB_FIELDS,
   changeCountText, changeSummary, changedFields, draftWarnings, normalizeTab, tabStatus,
@@ -464,8 +465,8 @@ export function accessFieldView(canEditAccess) {
     failsClosedNote:
       "An allowlist nobody has set reads as owner-only, never as open — access fails closed.",
     manageHint: editable
-      ? "The allowlist and admin list are Script Properties (ALLOWED_USERS / ALLOWED_ADMINS); "
-        + "an owner or admin sets them outside this tab."
+      ? "You can manage who has access — the people, admins and scoped viewers lists — in the "
+        + "editor on this tab."
       : null,
   };
 }
@@ -1202,6 +1203,13 @@ export async function renderSettings(host, params, ctx) {
   }
 
   function buildAccessPanel() {
+    // An editor gets the roster editor; `renderAccessPanel` answers null for anyone else (and
+    // on any failure), which falls back to the display-only panel below.
+    if (boot.canEditAccess === true) {
+      renderAccessPanel().then((editor) => {
+        if (editor) clear(panels.access).append(editor);
+      }).catch((e) => console.warn("[access] editor unavailable:", e));
+    }
     const v = accessFieldView(boot.canEditAccess);
     const pill = statusPill(v.canEditAccess ? "ok" : "neutral", v.canEditAccess ? "Can manage access" : "View only");
     const body = [
