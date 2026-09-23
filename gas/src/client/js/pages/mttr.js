@@ -867,6 +867,9 @@ export async function renderMttr(main, _params, ctx) {
   // 'loadSeq' before initialization" — while every unit test still passed, because none of
   // them boots the page.
   let loadSeq = 0;
+  // The by-group trend request of the current load — fired by load() beside the page's own two
+  // RPCs, consumed by renderByDomain. See the prefetch note in load().
+  let domainTrend = null;
 
   await load();
 
@@ -916,6 +919,7 @@ export async function renderMttr(main, _params, ctx) {
     clear(byDomainHost);
     const params = { domain, supportGroup, severities: scopeParam() };
 
+
     // Progressive paint over two parallel RPCs that share the same server cache entries (so a
     // warm revisit is still a single-shot repaint):
     //   - api_getMttr is the summary alone — no trend reconstruction — so the hero, survival
@@ -940,6 +944,34 @@ export async function renderMttr(main, _params, ctx) {
     let mttr = null;
     let pageData = null;
     let pagePainted = false;
+
+    // PREFETCHED WITH THE PAGE, NOT AFTER IT. Measured warm in production, the page's requests
+    // ran as a chain: getMttr + getMttrPage (3.3 s), then the Chart.js bundle (2.5 s, requested
+    // by the first chart to draw), then getMttrByDomainTrend (2.3 s, requested when the by-group
+    // section rendered off getMttrPage's answer) — ~8 s to the last chart for ~2 s of server
+    // work, because each GAS call carries ~1.5–2 s of its own and they waited on each other.
+    // Neither needs anything from the others: the bundle is code, and the trend's params are
+    // exactly these ones (the section re-reads the same header scope). So both start now.
+    //
+    // The trend is fetched ONCE here and handed to renderByDomain, not re-requested there: a
+    // second swrCall on a key that has already landed is a revisit, which swrCall answers from
+    // its cache AND revalidates with another RPC — the extra execution this exists to remove.
+    loadCharts().catch(() => {}); // a refusal is cached by loadCharts and shown where charts draw
+    const trend = { value: undefined, error: null, sink: null, failSink: null };
+    domainTrend = trend;
+    const deliverTrend = (t) => {
+      if (seq !== loadSeq) return;
+      trend.value = t;
+      if (trend.sink) trend.sink(t);
+    };
+    swrCall("api_getMttrByDomainTrend", params, deliverTrend)
+      .then(deliverTrend)
+      .catch((e) => {
+        if (seq !== loadSeq) return;
+        console.error("[mttr] getMttrByDomainTrend failed:", e);
+        trend.error = e;
+        if (trend.failSink) trend.failSink(e);
+      });
 
     const apply = ({ summaryChanged = false, pageChanged = false } = {}) => {
       if (seq !== loadSeq) return;
@@ -1532,16 +1564,22 @@ export async function renderMttr(main, _params, ctx) {
     if (cutNote) byDomainHost.append(cutNote);
     if (footnote) byDomainHost.append(footnote);
 
-    swrCall("api_getMttrByDomainTrend",
-      { domain, supportGroup, severities: scopeParam() },
-      (fresh) => absorbTrend(chartHost, fresh))
-      .then((t) => absorbTrend(chartHost, t))
-      .catch((e) => {
-        console.error("[mttr] getMttrByDomainTrend failed:", e);
+    // The trend was requested by load() with the page (see the prefetch note there). Attach
+    // this render's chart host to it: paint now if it has already landed, otherwise when it
+    // does — and a revalidated arrival repaints the newest host, since each repaint of this
+    // section re-attaches.
+    const trend = domainTrend;
+    if (trend) {
+      const fail = (e) => {
         if (!chartHost.isConnected) return;
         clear(chartHost).append(errorState("Couldn't load the trend charts.",
           { detail: String((e && e.message) || e) }));
-      });
+      };
+      trend.sink = (t) => absorbTrend(chartHost, t);
+      trend.failSink = fail;
+      if (trend.value !== undefined) absorbTrend(chartHost, trend.value);
+      else if (trend.error) fail(trend.error);
+    }
 
     /** Swap the skeleton for the real chart pair. Re-entrant: swrCall fires again on
      *  revalidation, and a second arrival must replace the first rather than stack beneath it.
