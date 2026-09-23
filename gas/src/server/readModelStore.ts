@@ -205,7 +205,11 @@ export function durablyCached<T>(
   // sweep then treated every durable file as garbage. Observed: 9 files, then 8, then 0.
   if (warming && touched) touched.add(readModelFileName(name, params));
   return cached(name, params, () => {
+    const t0 = Date.now();
     const hit = l2Read(name, params);
+    console.log(JSON.stringify({
+      stage: "l2", name, hit: hit.hit, why: hit.hit ? null : hit.why, ms: Date.now() - t0,
+    }));
     if (hit.hit) return hit.value as T;
     const value = compute();
     // Only inside the warm, and only when the file was absent or stale. `writeGzJson` trashes

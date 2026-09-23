@@ -5656,8 +5656,25 @@ var Server = (() => {
   function readGzJsonIn(folder, name, label = "archiveRead") {
     if (!folder) return null;
     try {
+      const t0 = Date.now();
       const files = folder.getFilesByName(name);
-      return files.hasNext() ? parseGzBlob(files.next().getBlob()) : null;
+      if (!files.hasNext()) {
+        console.log(JSON.stringify({ stage: "drive", label, name, found: false, ms: Date.now() - t0 }));
+        return null;
+      }
+      const blob = files.next().getBlob();
+      const t1 = Date.now();
+      const meta = { bytes: 0 };
+      const parsed = parseGzBlob(blob, meta);
+      console.log(JSON.stringify({
+        stage: "drive",
+        label,
+        name,
+        bytes: meta.bytes,
+        fileMs: t1 - t0,
+        parseMs: Date.now() - t1
+      }));
+      return parsed;
     } catch (e) {
       noteDriveFailure(label, e);
       return null;
@@ -5687,9 +5704,10 @@ var Server = (() => {
       return null;
     }
   }
-  function parseGzBlob(blob) {
+  function parseGzBlob(blob, meta) {
     try {
       const bytes = blob.getBytes();
+      if (meta) meta.bytes = bytes.length;
       const isGzip = bytes.length > 2 && (bytes[0] & 255) === 31 && (bytes[1] & 255) === 139;
       const text2 = isGzip ? Utilities.ungzip(blob).getDataAsString("UTF-8") : blob.getDataAsString("UTF-8");
       return JSON.parse(text2);
@@ -5731,7 +5749,9 @@ var Server = (() => {
     return writeGzJson(scanFolder(scanId), FRAME_NAME, records).getId();
   }
   function readFrame(scanId) {
+    const t0 = Date.now();
     const parsed = readGzJsonIn(findScanFolder(scanId), FRAME_NAME, "archiveRead:frame");
+    console.log(JSON.stringify({ stage: "driveTotal", label: "frame", ms: Date.now() - t0 }));
     return Array.isArray(parsed) ? parsed : null;
   }
   var PAGE_RUNS_NAME = "pageruns.json.gz";
@@ -5896,7 +5916,9 @@ var Server = (() => {
     writeGzJson(subfolder("snapshots"), SNAPSHOT_NAME, snap);
   }
   function readLedgerSnapshot() {
+    const t0 = Date.now();
     const parsed = readGzJsonIn(findSubfolder("snapshots"), SNAPSHOT_NAME, "archiveRead:snapshot");
+    console.log(JSON.stringify({ stage: "driveTotal", label: "snapshot", ms: Date.now() - t0 }));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
     const snap = parsed;
     return snap.ledger && snap.episodes ? snap : null;
@@ -6298,7 +6320,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "5944d16d832c" : "dev";
+  var BUILD_ID = true ? "2fe61f37c689" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -6345,6 +6367,7 @@ var Server = (() => {
       entries[`${key}:${i}`] = c;
     });
     CacheService.getScriptCache().putAll(entries, ttlSec);
+    return json.length;
   }
   function cacheGetJson(key) {
     const cache = CacheService.getScriptCache();
@@ -6384,22 +6407,38 @@ var Server = (() => {
   }
   function cached(name, params, compute, ttlSec = DEFAULT_TTL_SEC) {
     let key = null;
+    const t0 = Date.now();
     try {
       key = cacheKey(name, params, stamp());
       const hit = cacheGetJson(key);
-      if (hit !== void 0) return hit;
+      if (hit !== void 0) {
+        console.log(JSON.stringify({ stage: "cache", name, hit: true, getMs: Date.now() - t0 }));
+        return hit;
+      }
     } catch (e) {
       console.warn(`Cache read failed for ${name}: ${e}`);
       key = null;
     }
+    const t1 = Date.now();
     const value = compute();
+    const t2 = Date.now();
+    let chars = 0;
     if (key) {
       try {
-        cachePutJson(key, value, ttlSec);
+        chars = cachePutJson(key, value, ttlSec);
       } catch (e) {
         console.warn(`Cache write failed for ${name}: ${e}`);
       }
     }
+    console.log(JSON.stringify({
+      stage: "cache",
+      name,
+      hit: false,
+      getMs: t1 - t0,
+      computeMs: t2 - t1,
+      putMs: Date.now() - t2,
+      chars
+    }));
     return value;
   }
 
@@ -6606,12 +6645,15 @@ var Server = (() => {
     return out;
   }
   function readAll(tab) {
+    const t0 = Date.now();
     const sh = sheet(tab);
     const lastRow = sh.getLastRow();
     const lastCol = sh.getLastColumn();
     if (lastRow < 2 || lastCol < 1) return [];
     const values = sh.getRange(1, 1, lastRow, lastCol).getValues();
-    return mapRows(values[0].map(String), values.slice(1));
+    const rows = mapRows(values[0].map(String), values.slice(1));
+    console.log(JSON.stringify({ stage: "sheet", tab, rows: rows.length, ms: Date.now() - t0 }));
+    return rows;
   }
   function readTail(tab, n) {
     const sh = sheet(tab);
@@ -8556,7 +8598,15 @@ var Server = (() => {
   function durablyCached(name, params, compute, ttlSec) {
     if (warming && touched) touched.add(readModelFileName(name, params));
     return cached(name, params, () => {
+      const t0 = Date.now();
       const hit = l2Read(name, params);
+      console.log(JSON.stringify({
+        stage: "l2",
+        name,
+        hit: hit.hit,
+        why: hit.hit ? null : hit.why,
+        ms: Date.now() - t0
+      }));
       if (hit.hit) return hit.value;
       const value = compute();
       if (warming && (hit.why === "absent" || hit.why === "stale")) l2Write(name, params, value);
@@ -11734,17 +11784,28 @@ var Server = (() => {
     const coldParams = insightsParams;
     return run(() => {
       var _a2;
-      return {
-        mttr: execMttrSlice(cachedMttrData(p)),
-        ...(_a2 = execInsightsSlice(cachedInsightsData(insightsParams))) != null ? _a2 : {},
-        ...execColdSliceGuarded(coldParams),
+      const ms = {};
+      const timed = (label, fn) => {
+        const t0 = Date.now();
+        try {
+          return fn();
+        } finally {
+          ms[label] = Date.now() - t0;
+        }
+      };
+      const out = {
+        mttr: timed("mttr", () => execMttrSlice(cachedMttrData(p))),
+        ...(_a2 = timed("insights", () => execInsightsSlice(cachedInsightsData(insightsParams)))) != null ? _a2 : {},
+        ...timed("coldZone", () => execColdSliceGuarded(coldParams)),
         // The same three-way dimension switch getMttrPage makes, through the same function so the
         // two pages cannot disagree about what a scope means — or miss each other's cache entry.
-        byDomain: execGroupSlice(cachedMttrGroupSplit(p)),
+        byDomain: timed("byDomain", () => execGroupSlice(cachedMttrGroupSplit(p))),
         // Already minimal — four scalars and a per-severity tally — so these two ship whole.
-        weekTrend: cachedExecutiveWeekTrend(p),
-        severityCounts: cachedExecutiveSeverityCounts(p)
+        weekTrend: timed("weekTrend", () => cachedExecutiveWeekTrend(p)),
+        severityCounts: timed("severityCounts", () => cachedExecutiveSeverityCounts(p))
       };
+      console.log(JSON.stringify({ stage: "executive", ...ms }));
+      return out;
     });
   }
   var MOVEMENT_WINDOW_DAYS = 28;

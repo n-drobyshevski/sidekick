@@ -95,8 +95,23 @@ export function readGzJsonIn(
 ): unknown | null {
   if (!folder) return null;
   try {
+    // Timed to the execution log: a cold page was measured at minutes with its CPU stages at
+    // well under a second, which leaves I/O — and this is the one door every Drive read goes
+    // through. `fileMs` is finding the file and fetching its blob, `parseMs` ungzip + parse.
+    const t0 = Date.now();
     const files = folder.getFilesByName(name);
-    return files.hasNext() ? parseGzBlob(files.next().getBlob()) : null;
+    if (!files.hasNext()) {
+      console.log(JSON.stringify({ stage: "drive", label, name, found: false, ms: Date.now() - t0 }));
+      return null;
+    }
+    const blob = files.next().getBlob();
+    const t1 = Date.now();
+    const meta = { bytes: 0 };
+    const parsed = parseGzBlob(blob, meta);
+    console.log(JSON.stringify({
+      stage: "drive", label, name, bytes: meta.bytes, fileMs: t1 - t0, parseMs: Date.now() - t1,
+    }));
+    return parsed;
   } catch (e) {
     noteDriveFailure(label, e);
     return null;
@@ -138,9 +153,10 @@ export function readGzJsonFile(fileId: string): unknown | null {
   }
 }
 
-function parseGzBlob(blob: GoogleAppsScript.Base.Blob): unknown | null {
+function parseGzBlob(blob: GoogleAppsScript.Base.Blob, meta?: { bytes: number }): unknown | null {
   try {
     const bytes = blob.getBytes();
+    if (meta) meta.bytes = bytes.length;
     const isGzip = bytes.length > 2 && (bytes[0] & 0xff) === 0x1f && (bytes[1] & 0xff) === 0x8b;
     const text = isGzip
       ? Utilities.ungzip(blob).getDataAsString("UTF-8")
@@ -204,7 +220,10 @@ export function writeFrame(scanId: string, records: unknown[]): string {
 }
 
 export function readFrame(scanId: string): unknown[] | null {
+  // The folder lookup is outside `readGzJsonIn`'s own timing, so the whole read is timed here.
+  const t0 = Date.now();
   const parsed = readGzJsonIn(findScanFolder(scanId), FRAME_NAME, "archiveRead:frame");
+  console.log(JSON.stringify({ stage: "driveTotal", label: "frame", ms: Date.now() - t0 }));
   return Array.isArray(parsed) ? parsed : null;
 }
 
@@ -431,7 +450,9 @@ export function writeLedgerSnapshot(state: LedgerState): void {
 
 /** The fast-read ledger copy, or null (missing/unreadable -> fall back to the tab). */
 export function readLedgerSnapshot(): LedgerSnapshot | null {
+  const t0 = Date.now();
   const parsed = readGzJsonIn(findSubfolder("snapshots"), SNAPSHOT_NAME, "archiveRead:snapshot");
+  console.log(JSON.stringify({ stage: "driveTotal", label: "snapshot", ms: Date.now() - t0 }));
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
   const snap = parsed as LedgerSnapshot;
   return snap.ledger && snap.episodes ? snap : null;
