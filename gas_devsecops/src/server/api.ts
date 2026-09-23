@@ -44,15 +44,16 @@
 // blocks that say whether a credential is live.
 
 import {
-  AGE_HISTOGRAM_CAP_DAYS, RESOLVED_STATUSES, SCOPE_LABELS, SCOPES, SEVERITY_ORDER, SLA_TARGETS,
-  type Scope,
+  AGE_HISTOGRAM_CAP_DAYS, RESOLVED_STATUSES, SCOPES, type Scope,
 } from "../domain/config";
 import { normalizeSeverity } from "../domain/severity";
 import {
-  effectiveSlaTargets, withDomainView, withProjectView, withSettings,
+  withDomainView, withProjectView, withSettings,
 } from "../domain/settingsLogic";
-import { inProject, parseProjects, projectCatalogue, unattributedCount } from "../domain/projectScope";
-import { domainCatalogue, inDomain, noDomainCount } from "../domain/domainScope";
+import {
+  inProject, parseProjects, type projectCatalogue,
+} from "../domain/projectScope";
+import type { domainCatalogue } from "../domain/domainScope";
 import * as repoTags from "./repoTags";
 import * as settingsImpact from "../domain/settingsImpact";
 import type { Rec } from "../domain/util";
@@ -69,11 +70,13 @@ import {
   scanRowsSlice,
 } from "../domain/pagePayload";
 import { BUILD_ID } from "../../../gas_shared/server/buildInfo";
-import { getProp, hasWizCredentials, projectScope, PROP_KEYS, setProp } from "./props";
+import { getProp, hasWizCredentials, PROP_KEYS, setProp } from "./props";
 import { readHubUrl, writeHubUrl } from "./hubUrl";
 import { cached } from "./serverCache";
 import { loadSettings, saveSettings } from "./settingsStore";
-import { readAll, TAB_HEADERS, TABS } from "./sheetsDb";
+import { TAB_HEADERS, TABS } from "./sheetsDb";
+import * as bootCore from "./bootCore";
+import { stageLaps } from "./stageLog";
 import * as access from "./access";
 import { canEditUsers } from "./access";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
@@ -286,164 +289,84 @@ export interface Bootstrap {
 }
 
 /**
- * Consecutive laps of one request, logged as a single `{"stage": <stage>, <lap>: ms, …}` line to
- * the execution log. Laps rather than a wrapper around each block so the timed code keeps its
- * shape: each `lap(label)` records the time since the previous one (or since creation).
- */
-function stageLaps(stage: string): { lap: (label: string) => void; log: () => void } {
-  let t = Date.now();
-  const ms: Record<string, number> = {};
-  return {
-    lap(label) {
-      const now = Date.now();
-      ms[label] = now - t;
-      t = now;
-    },
-    log() {
-      console.log(JSON.stringify({ stage, ...ms }));
-    },
-  };
-}
-
-/**
  * Everything the shell needs before it can draw: identity, credential state, the register's
  * vocabulary, and the freshness caption. One round trip, because the shell blocks on it.
  *
- * Its parts are timed to the execution log (`{"stage":"bootstrap",…}`), because doGet computes
- * all of this inline on every page load (see main.ts) and the line is what says which part of
- * the inline cost to cache first. test/api.test.ts pins the lap names.
+ * A CACHED CORE PLUS LIVE FIELDS. Everything derived from the ledger, the settings, the scans
+ * tab and the repository tag map is `bootCore.bootCoreModel()` — durably cached per data
+ * version, since every writer of those four bumps it. What changes without a bump, or differs
+ * per viewer, is read live on every call: see `withLiveBootFields`.
+ *
+ * Timed to the execution log as `{"stage":"bootstrap",core,live}`; the core's own parts log
+ * as `{"stage":"bootCore",…}` when it is actually computed. test/api.test.ts pins both.
  */
 export function bootstrap(_p?: unknown): ApiResult<Bootstrap> {
   return run(() => {
-  const laps = stageLaps("bootstrap");
-  const scans = readAll(TABS.scans);
-  // Pass 1: which sync is newest. Pass 2: every row of THAT sync. Two passes rather than one
-  // because the winner is only known at the end, and a sync's rows are not adjacent on the tab.
-  let newestTs = "";
-  let newestSyncId = "";
-  // The rail's OWN clock, one per scope — a max over the whole tab (above) reads "fresh" the
-  // moment any one scope ran; this is the per-scope answer `railStatus.js` takes the worst of.
-  const lastScanByScope: Record<string, string | null> = {};
-  for (const scope of SCOPES) lastScanByScope[scope] = null;
-  for (const row of scans) {
-    const ts = String(row.ts ?? "");
-    if (!ts || ts <= newestTs) continue;
-    newestTs = ts;
-    newestSyncId = String(row.scan_id ?? "");
-  }
-  for (const row of scans) {
-    const ts = String(row.ts ?? "");
-    const scope = String(row.scope ?? "");
-    if (!ts || !(scope in lastScanByScope)) continue;
-    if (lastScanByScope[scope] === null || ts > lastScanByScope[scope]!) {
-      lastScanByScope[scope] = ts;
-    }
-  }
-  let latestSync: Bootstrap["latestSync"] = null;
-  if (newestSyncId) {
-    const members = scans.filter((r) => String(r.scan_id ?? "") === newestSyncId);
-    const order = new Map(SCOPES.map((sc, i) => [String(sc), i]));
-    const rows = members
-      .map((r) => ({
-        scope: String(r.scope ?? ""),
-        total: Number(r.total ?? 0),
-        severities: r.severities == null ? null : String(r.severities),
-        ts: String(r.ts ?? ""),
-      }))
-      // Battery order, not tab order, so the caption reads the same on every load.
-      .sort((a, b) => (order.get(a.scope) ?? 99) - (order.get(b.scope) ?? 99));
-    let total = 0;
-    let ts = "";
-    for (const r of rows) {
-      total += r.total;
-      if (r.ts > ts) ts = r.ts;
-    }
-    latestSync = {
-      sync_id: newestSyncId,
-      ts: ts || newestTs,
-      total,
-      scopes: rows.map((r) => ({ scope: r.scope, total: r.total, severities: r.severities })),
-    };
-  }
-  laps.lap("scans");
-
-  const settings = loadSettings();
-  laps.lap("settings");
-  // Unscoped by construction — `ledgerStore.loadBaseRows()` with no options is every scope,
-  // every project. `scope.register` / `filterOptions.projectList` both read off this same
-  // array so the register-wide side of the header can never disagree with itself.
-  const allRows = ledgerStore.loadBaseRows();
-  laps.lap("baseRows");
-  // ATTACHED BEFORE ANYTHING COUNTS. `_domain` is resolved on read and never persisted (see
-  // domain/domainTag.ts), so every figure below — the catalogue, `shown`, `noDomain` — has to
-  // be taken from rows that have already been through the join. Doing it once here is also
-  // what keeps the register-wide side of the header self-consistent: `filterOptions.domainList`
-  // and `scope.noDomain` read the same array.
-  repoTags.attachRepoTags(allRows as unknown as Rec[]);
-  laps.lap("repoTags");
-  const projectView = settings.projectView || null;
-  const domainView = settings.domainView || null;
-  // At most one of the two is ever set — `withProjectView`/`withDomainView` clear each other —
-  // so this reads as a chain rather than an intersection. A stored pair carrying both would be
-  // a defect upstream, and silently intersecting them here would hide it.
-  const shown = projectView
-    ? allRows.filter((r) => inProject(parseProjects(r.projects_json), projectView)).length
-    : domainView
-      ? allRows.filter((r) => inDomain(r, domainView)).length
-      : allRows.length;
-  const unattributed = unattributedCount(allRows);
-  const noDomain = noDomainCount(allRows);
-  const projectList = projectCatalogue(allRows);
-  const domainList = domainCatalogue(allRows);
-  laps.lap("catalogues");
-
-  // Hoisted out of the literal below only so each can be timed; the payload is unchanged.
-  const job = activeJob();
-  const activeJobSummary = job
-    ? jobSummarySlice(job, !isTerminalPhase(job.phase) && isStaleJob(job))
-    : null;
-  laps.lap("activeJob");
-  const hasCredentials = hasWizCredentials();
-  const wizVerifiedAt = getProp(PROP_KEYS.wizVerifiedAt);
-  const canEditAccess = canEditUsers();
-  const hubUrl = readHubUrl();
-  const syncProjectId = projectScope()?.[0] ?? null;
-  laps.lap("live");
-  laps.log();
-
-  return {
-    product: "Wiz Sidekick DevSecOps",
-    buildId: BUILD_ID,
-    hasCredentials,
-    wizVerifiedAt,
-    scopes: SCOPES,
-    scopeLabels: SCOPE_LABELS,
-    severityOrder: SEVERITY_ORDER,
-    slaTargets: SLA_TARGETS,
-    effectiveSlaTargets: effectiveSlaTargets(settings),
-    latestSync,
-    lastScanByScope,
-    activeJob: activeJobSummary,
-    canEditAccess,
-    hubUrl,
-    settings,
-    scope: {
-      projectView: settings.projectView,
-      domainView: settings.domainView,
-      shown,
-      register: allRows.length,
-      unattributed,
-      noDomain,
-      // The FETCH scope, reported only — see `settingsLogic.ts`'s "TWO PROJECT SCOPES, TWO
-      // HOMES". `projectScope()` is `[id] | null`; only the first element is ever set today.
-      syncProjectId,
-    },
-    filterOptions: {
-      projectList,
-      domainList,
-    },
-  };
+    const laps = stageLaps("bootstrap");
+    const core = bootCore.bootCoreModel();
+    laps.lap("core");
+    const out = withLiveBootFields(core);
+    laps.lap("live");
+    laps.log();
+    return out;
   });
+}
+
+/**
+ * The bootstrap envelope, but only when its core is already stored — L1, then the durable
+ * file — for doGet's inline path (gas_shared/server/inlineBoot.ts). NEVER COMPUTES: a cold core
+ * answers `{ok:false}`, the page ships without the inline block, and the client shows its
+ * splash and asks over `api_bootstrap`, which computes and caches it. Computing here instead is
+ * what the first production log measured: 6.4–7.1 s of every doGet, warm or cold, spent before
+ * the page could leave the server.
+ *
+ * Not an RPC: exported for main.ts only, and allowlisted as such in the entry.js guard
+ * (esbuild.config.mjs `NOT_RPCS`, test/entryPoints.test.js).
+ */
+export function bootstrapIfWarm(): ApiResult<Bootstrap> {
+  const t0 = Date.now();
+  const core = bootCore.peekBootCore();
+  const t1 = Date.now();
+  if (!core) {
+    console.log(JSON.stringify({ stage: "bootstrapIfWarm", hit: false, peek: t1 - t0 }));
+    return { ok: false, error: "bootstrap core is cold", errorKind: "cold" };
+  }
+  const res = run(() => withLiveBootFields(core));
+  console.log(JSON.stringify({ stage: "bootstrapIfWarm", hit: true, peek: t1 - t0, live: Date.now() - t1 }));
+  return res;
+}
+
+/**
+ * The fields no cache may hold, merged over the core in the payload's documented key order.
+ *
+ * OUTSIDE THE CACHED CORE, and each for a stated reason: `activeJob` changes every poll tick;
+ * `canEditAccess` is a fact about the VIEWER, and one cached core is served to everyone;
+ * `hasCredentials`, `wizVerifiedAt` and `hubUrl` are Script Properties that change without a
+ * data-version bump (credentials saved, a connection test, the hub address edited), so a copy
+ * in the core would keep serving the old value until some unrelated sync; `buildId` is the
+ * code actually answering, which a durable entry written by an earlier deploy must not claim.
+ */
+function withLiveBootFields(core: bootCore.BootCore): Bootstrap {
+  const job = activeJob();
+  return {
+    product: core.product,
+    buildId: BUILD_ID,
+    hasCredentials: hasWizCredentials(),
+    wizVerifiedAt: getProp(PROP_KEYS.wizVerifiedAt),
+    scopes: core.scopes,
+    scopeLabels: core.scopeLabels,
+    severityOrder: core.severityOrder,
+    slaTargets: core.slaTargets,
+    effectiveSlaTargets: core.effectiveSlaTargets,
+    latestSync: core.latestSync,
+    lastScanByScope: core.lastScanByScope,
+    activeJob: job ? jobSummarySlice(job, !isTerminalPhase(job.phase) && isStaleJob(job)) : null,
+    canEditAccess: canEditUsers(),
+    hubUrl: readHubUrl(),
+    settings: core.settings,
+    scope: core.scope,
+    filterOptions: core.filterOptions,
+  };
 }
 
 /**

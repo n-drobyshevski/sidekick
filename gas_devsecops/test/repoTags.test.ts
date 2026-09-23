@@ -91,7 +91,15 @@ vi.mock("../src/server/props", () => ({
   },
 }));
 
-vi.mock("../src/server/serverCache", () => ({ bumpDataVersion: () => { H.bumped += 1; } }));
+// The cross-execution map cache (getRepoTagMap) is modelled as ALWAYS MISSING here, so every
+// spec below keeps reading the tab it states; the cache itself is pinned in
+// test/requestCaches.test.ts.
+vi.mock("../src/server/serverCache", () => ({
+  bumpDataVersion: () => { H.bumped += 1; },
+  dataVersion: () => String(H.bumped),
+  cacheGetJson: () => undefined,
+  cachePutJson: () => 0,
+}));
 
 const {
   attachRepoTags, builtUnderKeys, configuredDomainTagKey, configuredLifecycleTagKey,

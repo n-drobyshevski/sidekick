@@ -166,6 +166,12 @@ writeFileSync(join(dist, "index.html"), renderIndexHtml(root));
 // nothing was checking that the hand-written list still matches what api.ts exports, so a
 // new endpoint could ship unreachable and a deleted one could leave a delegator that throws
 // at call time. Both fail the build now.
+//
+// NOT_RPCS mirrors the allowlist in test/entryPoints.test.js: `bootstrapIfWarm` lives in api.ts
+// but is called by doGet (main.ts) in-process, never through a `timedApi_`-gated `api_x`
+// delegator — requiring one would flag a real, working wire-up as unreachable, and adding one
+// would publish a second, cache-only bootstrap RPC nobody asked for.
+const NOT_RPCS = new Set(["bootstrapIfWarm"]);
 const entryJs = readFileSync(join(dist, "entry.js"), "utf8");
 const apiTs = readFileSync(join(root, "src/server/api.ts"), "utf8");
 const declared = new Set(
@@ -174,7 +180,7 @@ const declared = new Set(
 const exported = new Set(
   [...apiTs.matchAll(/^export function (\w+)\s*\(/gm)].map((m) => m[1]),
 );
-const missing = [...exported].filter((n) => !declared.has(n));
+const missing = [...exported].filter((n) => !NOT_RPCS.has(n) && !declared.has(n));
 const stale = [...declared].filter((n) => !exported.has(n));
 if (missing.length || stale.length) {
   throw new Error(

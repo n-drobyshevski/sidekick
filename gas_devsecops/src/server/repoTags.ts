@@ -42,7 +42,7 @@ import { DOMAIN_FIELD } from "../domain/domainScope";
 import { LIFECYCLE_FIELD, lifecycleOfTags, resolveLifecycleTagKey } from "../domain/lifecycleTag";
 import { present, type Rec } from "../domain/util";
 import { getProp, PROP_KEYS, setProp } from "./props";
-import { bumpDataVersion } from "./serverCache";
+import { bumpDataVersion, cacheGetJson, cachePutJson, dataVersion } from "./serverCache";
 import { ensureTab, overwrite, readAll, TABS } from "./sheetsDb";
 import { queryPage } from "./wizClient";
 import { MAX_PAGES, PAGE_SIZE, reposByTagQuery } from "./wizReposQuery";
@@ -241,6 +241,11 @@ export function resetRepoTagMapMemo(): void {
  */
 export function getRepoTagMap(): RepoTagMap {
   if (mapMemo !== undefined) return mapMemo;
+  const hit = readMapCache();
+  if (hit) {
+    mapMemo = hit;
+    return hit;
+  }
   const map: RepoTagMap = {};
   try {
     ensureTab(TABS.domainMap);
@@ -251,11 +256,50 @@ export function getRepoTagMap(): RepoTagMap {
       if (!token || (!domain && !lifecycle)) continue;
       map[token] = { domain: domain || null, lifecycle: lifecycle || null };
     }
+    // Only a map actually read is cached: an unreadable tab is "no tags THIS execution", and
+    // caching that `{}` would stretch one bad read across every execution for six hours.
+    writeMapCache(map);
   } catch (e) {
     console.warn(`Repository tag map unreadable — no tags attached this execution: ${String(e)}`);
   }
   mapMemo = map;
   return map;
+}
+
+// ACROSS EXECUTIONS TOO, in CacheService. Measured in production (PERF_PLAN.md step 1): the tab
+// is ~9,800 rows and cost 1.5–1.7 s in EVERY execution that attached tags — the bootstrap core
+// and every read-model compute — so a cold landing page paid it twice.
+//
+// KEYED ON THE DATA VERSION, the settings cache's argument: `setRepoTagMap` is the only writer
+// of the tab and it bumps the version, then writes the new map under the new key itself. The
+// six-hour TTL bounds only a hand edit of the tab in Sheets. Through serverCache's gzip +
+// chunked store, because a map this size is several times one 100 KB CacheService value.
+// Any cache failure reads the tab, exactly as before this cache existed.
+const MAP_CACHE_TTL_SEC = 21_600;
+
+function mapCacheKey(): string {
+  return "dsRepoTagMap1:" + dataVersion();
+}
+
+function readMapCache(): RepoTagMap | undefined {
+  const t0 = Date.now();
+  try {
+    const got = cacheGetJson(mapCacheKey());
+    const hit = !!got && typeof got === "object" && !Array.isArray(got);
+    console.log(JSON.stringify({ stage: "cache", name: "dsRepoTagMap1", hit, getMs: Date.now() - t0 }));
+    return hit ? (got as RepoTagMap) : undefined;
+  } catch (e) {
+    console.warn(`Repository tag map cache read failed: ${String(e)}`);
+    return undefined;
+  }
+}
+
+function writeMapCache(map: RepoTagMap): void {
+  try {
+    cachePutJson(mapCacheKey(), map, MAP_CACHE_TTL_SEC);
+  } catch (e) {
+    console.warn(`Repository tag map cache write failed: ${String(e)}`);
+  }
 }
 
 /**
@@ -285,6 +329,8 @@ export function setRepoTagMap(map: RepoTagMap): void {
   setProp(PROP_KEYS.repoTagMapKeys, JSON.stringify(configuredTagKeys()));
   mapMemo = { ...map };
   bumpDataVersion();
+  // Under the NEW version's key, so the next execution reads the saved map from the cache.
+  writeMapCache(mapMemo);
 }
 
 /**

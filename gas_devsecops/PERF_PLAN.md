@@ -28,9 +28,10 @@ idea, not the file: `gas_devsecops` has its own `readModels.ts`, `readModelStore
 | Area | Where | State |
 |---|---|---|
 | Quadratic KM | `src/domain/remediation.ts:241` `kmCurve` | **Fixed in step 1** (sort and sweep, `test/kmCurveSweep.test.ts`). Was: same bug as gas/ had. Re-filters both arrays per distinct event time. Used by `kaplanMeier` (`remediation.ts:448`), i.e. the MTTR hero. `kmCurveEntry` (`:282`) is already O(n log n). |
-| Bootstrap | `src/server/api.ts:292` `bootstrap` | **Not cached at all.** Reads the `scans` tab, `loadSettings()`, `ledgerStore.loadBaseRows()` over the whole ledger, and `activeJob()` (`api.ts:378`, the whole `jobs` tab) on every call. |
-| Inline bootstrap | `src/server/main.ts:8` | `inlineBootJson(() => bootstrap())` from #316: **doGet computes the full uncached bootstrap on every page load.** Likely the biggest single cost. |
-| Settings | `src/server/settingsStore.ts:19` `loadSettings` | Reads the `settings` tab every execution (per-execution memo only). |
+| Bootstrap | `src/server/bootCore.ts` | **Cached core in step 2a** (`dsBootCore1`, durable, warmed first; live fields in `api.withLiveBootFields`). Was: not cached at all. Reads the `scans` tab, `loadSettings()`, `ledgerStore.loadBaseRows()` over the whole ledger, and `activeJob()` (`api.ts:378`, the whole `jobs` tab) on every call. |
+| Inline bootstrap | `src/server/main.ts:8` | **`bootstrapIfWarm()` in step 2a** — peeks L1/L2, never computes. Was: doGet computed the full bootstrap on every load (6.4 s warm / 7.1 s cold, measured). |
+| Settings | `src/server/settingsStore.ts` `loadSettings` | **CacheService in step 2b** (`dsSettings1:<dataVersion>`, 6 h, write-through in `saveSettings`, raw dict cached and cleaned on load). Was: read the `settings` tab every execution. |
+| Repository tag map | `src/server/repoTags.ts` `getRepoTagMap` | **CacheService in step 2b** (`dsRepoTagMap1:<dataVersion>`, gzip + chunked, 6 h, write-through in `setRepoTagMap`; an unreadable tab is not cached). Was: `domain_map` tab (~9.8k rows, 1.5–1.7 s) every execution. |
 | Cache key | `src/server/serverCache.ts:29` `KEY_PREFIX = wsk.${BUILD_ID}`, and `currentStamp` (~`:165`) folds BUILD_ID into the L2 stamp | Every deploy cold-starts every read-model. |
 | Namespaces | `readModels.ts`: `dsMttr4`, `dsExecutive2`, `dsRegister2`, `dsSecrets2`, `dsProgram2`, `dsRepos2`, `dsHistory4`, `dsStorage1`; `api.ts`: **`settingsImpact` (no version suffix)** | All but one versioned. |
 | Base rows | `src/server/ledgerStore.ts:691` `loadBaseRows(options)` | Re-derived per call; options vary by `now` / `scope` / `trackingStartByScope`. 13 call sites. |
@@ -59,12 +60,30 @@ otherwise). Read `gas_devsecops/README.md` and `DESIGN.md` before changing serve
 
 Then **stop and ask the user to deploy** and send: one cold load (after a settings save, which bumps DATA_VERSION) and one warm load of the landing page — the doGet log and the landing RPC's log.
 
-## Step 2 — decided by the step-1 numbers (likely all of these)
+## Step 1 numbers (production, 23 Sep 2026, ~28k base rows)
+
+- **doGet** computing bootstrap inline: 7.1 s cold, **6.4 s warm** (never cached) — scans 0.8 s
+  (mostly the spreadsheet open), settings 0.2 s, baseRows 2.2–2.8 s (ledger snapshot 1.9–2.5 s
+  from Drive, 1.96 MB gz; derivation 0.13–0.17 s), repoTags 2.3–2.6 s (`domain_map` tab 1.5–1.7 s,
+  9,776 rows), catalogues 0.4 s, live 0.3 s.
+- **getExecutivePage** cold 7.8 s (re-reads settings, scans, snapshot and `domain_map`; the
+  models' own CPU ~0.9 s + 0.4 s — KM is no longer visible); warm ~1.2 s, of which ~0.85 s is
+  opening the spreadsheet to read settings.
+- Not needed by these numbers: base rows once per execution (one derivation per execution),
+  the active-job display cache (34 ms).
+
+## Step 2 — decided by the step-1 numbers
+
+Order by the numbers above: 2a = item 1 (bootstrap), 2b = item 2 plus a `domain_map` cache
+(same shape: its only writer `repoTags.setRepoTagMap` bumps DATA_VERSION), 2c = item 7
+(snapshot v2), 2d = item 4 (deploy invalidation). Items 3, 5 are not justified by the log;
+item 6 only if a warm reports cut-outs.
+
 
 Order by what the log shows. Expected, in rough order of impact:
 
-1. **Cache the bootstrap core and inline it only when warm.** Split `bootstrap` into a cached core (everything derived from ledger/settings/scans — key on `dataVersion`, give it a versioned namespace like `dsBootCore1`, `durablyCached` if it should survive CacheService's 6 h) and live fields (`activeJob`, hub URL, credentials — never cached). Add `bootstrapIfWarm()` that peeks L1 then L2 and never computes (see `gas/src/server/api.ts` `bootstrapIfWarm`, `readModelStore.durablyPeek`, `serverCache.peekCached`/`primeCached`); point `main.ts` at it. Add the core to the warm, first. Reference: #317.
-2. **Settings cache** in CacheService, key `settings1:<dataVersion>`, TTL 21,600 s, write-through in `saveSettings`, skip dicts over 90k chars, any cache error falls back to the tab. Confirm `saveSettings` is the only writer of the tab and that it bumps the data version. Reference: #321 + #323, specs in `gas/test/requestMemos.test.ts`.
+1. **(2a, done)** **Cache the bootstrap core and inline it only when warm.** Split `bootstrap` into a cached core (everything derived from ledger/settings/scans — key on `dataVersion`, give it a versioned namespace like `dsBootCore1`, `durablyCached` if it should survive CacheService's 6 h) and live fields (`activeJob`, hub URL, credentials — never cached). Add `bootstrapIfWarm()` that peeks L1 then L2 and never computes (see `gas/src/server/api.ts` `bootstrapIfWarm`, `readModelStore.durablyPeek`, `serverCache.peekCached`/`primeCached`); point `main.ts` at it. Add the core to the warm, first. Reference: #317.
+2. **(2b, done, with the `domain_map` cache)** **Settings cache** in CacheService, key `settings1:<dataVersion>`, TTL 21,600 s, write-through in `saveSettings`, skip dicts over 90k chars, any cache error falls back to the tab. Confirm `saveSettings` is the only writer of the tab and that it bumps the data version. Reference: #321 + #323, specs in `gas/test/requestMemos.test.ts`.
 3. **Active job for display**, generation-keyed: `activeJob2:<generation>`, TTL 6 h, every writer of the `jobs` tab sets a fresh generation after its write; display only (guards keep `activeJob()`). Reference: `gas/src/server/jobsStore.ts` `activeJobForDisplay` / `forgetActiveJob` (#325), specs in `gas/test/jobsStore.test.ts` (including the late-stale-write race and the lost-generation case).
 4. **Stop invalidating on deploy.** Replace BUILD_ID in `KEY_PREFIX` and in `currentStamp` with a `CACHE_EPOCH` constant; rename `settingsImpact` → `settingsImpact1` (or whatever suffix the next bump would be); add a spec like `gas/test/cacheNamespaces.test.ts` requiring a version on every namespace and keeping BUILD_ID out of the stamp; update the L2 "deploy moves the stamp" spec to "an epoch bump moves the stamp". Record the convention in root `CLAUDE.md` next to the gas/ line. Reference: #322.
 5. **Base rows once per execution**, if the log shows repeated derivations: memoize per (state object, options) and hand out shallow copies — callers annotate rows in place. Bypass the memo for an explicit `now`. Reference: #318.
