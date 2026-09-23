@@ -385,6 +385,28 @@ set (`registerRowsModel`'s `groupBy` / `groupValue`).
 The CSV export now also honours the header's **domain** view. It used to honour only the
 project view, so an export taken under a domain scope returned the whole register.
 
+## Links to Wiz
+
+Every place a finding is drawn now leads to Wiz (`gas_shared/ui/wizLinks.js`):
+
+- **Tables.** A **Wiz ↗** cell on each row opens the finding in the console, in a new tab.
+  It is Wiz's own `portalUrl`, stored as `portal_url` and re-checked by `safeWizUrl` at
+  render time.
+- **Finding sheet.** **Open in Wiz** is the sheet's primary action. A **Wiz CVE page** row
+  links the CVE to Wiz's public vulnerability database, which covers exploit status and
+  mitigation.
+- **CVE groups.** When the findings table is grouped by CVE, each group links to the same
+  database page.
+
+The register **never builds a console URL.** The console's filtered-view links use an
+undocumented hash format, and a link that silently opens the wrong view is worse than none.
+A row with no stored link draws no link rather than a dead one. The CVE page is built only
+from an id matching `CVE-YYYY-NNNN…`, onto a fixed public origin.
+
+In this register only **SCA** rows carry a console link. The SAST (`sastFindings`) and secrets
+(`secretInstances`) queries have no confirmed `portalUrl`. Adding one to them needs checking
+against a live tenant with the probe first (see **The probe**).
+
 ## Development
 
 ```

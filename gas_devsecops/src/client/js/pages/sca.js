@@ -29,6 +29,7 @@ import { bootstrapCached, listJoin, listSplit, navigate, swrCall } from "../../.
 import { chartUnavailable, loadCharts } from "../../../../../gas_shared/ui/chartsLoader.js";
 import { PROVENANCE_LABEL, populationLine, provenance } from "./registerModel.js";
 import { findingRowLabel, openFindingSheet } from "./findingSheet.js";
+import { wizLinkColumn } from "../../../../../gas_shared/ui/wizLinks.js";
 import {
   DEFAULT_PAGE_SIZE, absent, absentText, axisBar, axisSegments, boundedDays, chartTable,
   chartTableModel, closeActiveSheet, dataTable, days1, el, emptyState, errorState, figureCard,
@@ -1562,6 +1563,8 @@ function paintSca(host, vm, filters) {
           key: "age_days", label: "Age", className: "num", sortable: true,
           cell: (r) => days1(r.age_days),
         },
+        // Wiz's own link to the finding — sca is the one register whose query carries it.
+        wizLinkColumn((r) => r.identifier),
       ],
     }),
   ));

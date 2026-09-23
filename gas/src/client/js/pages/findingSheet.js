@@ -63,6 +63,7 @@ import {
 // and putting it there would make every page that wants a button import the Wiz vocabulary.
 // gas_shared/shell/appbar.js reaches for its hubUrl twin the same way, one directory up.
 import { safeWizUrl } from "../../../../../gas_shared/wizUrl.js";
+import { wizCveUrl, wizOpenButton } from "../../../../../gas_shared/ui/wizLinks.js";
 
 /* ------------------------------------------------------------------ value formatting */
 
@@ -164,6 +165,12 @@ function identitySection(r) {
         "Opens this finding in the Wiz console, in a new tab. The link is the one Wiz "
         + "reports for the finding; the register does not build it.",
         { kind: "link", href: wiz }) : null,
+      // Wiz's PUBLIC page for the CVE — the exploitability write-up the tenant link does not
+      // carry. Built from a strictly-patterned id onto a fixed origin (ui/wizLinks.js).
+      wizCveUrl(r.cve) ? row("Wiz CVE page", "Exploitability & mitigation",
+        "Wiz's public vulnerability database entry for this CVE: exploit status, affected "
+        + "technologies and mitigation. Public, not your tenant.",
+        { kind: "link", href: wizCveUrl(r.cve) }) : null,
     ].filter(Boolean),
   };
 }
@@ -342,8 +349,11 @@ export function openFindingSheet(r, opts) {
     // the shared component rather than a preference: `openSheet` only appends its toolbar
     // to the header when `rail` is set (gas_shared/ui/sheet.js), so a flat finding sheet
     // passing headerActions would build the buttons and never show them.
-    if (model.copies.length) {
-      body.append(el("div", { class: "finding-actions" },
+    // "Open in Wiz" LEADS the action row: the register says which finding, Wiz is where it
+    // is acted on. Absent — not disabled — when the record holds no link (ui/wizLinks.js).
+    const wizBtn = wizOpenButton(r);
+    if (wizBtn || model.copies.length) {
+      body.append(el("div", { class: "finding-actions" }, wizBtn,
         ...model.copies.map((c) => copyButton(() => c.text, { label: c.label, title: c.title }))));
     }
     for (const section of model.sections) {

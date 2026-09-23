@@ -20,6 +20,8 @@ import { sevBadge, sevSegmentBar, sevKeyRow } from "./severity.js";
 import { sparkline } from "./sparkline.js";
 import { fmtDate } from "./format.js";
 import { tipAnchor } from "./tip.js";
+import { wizCveUrl } from "./wizLinks.js";
+import { uiIcon } from "./uiIcons.js";
 import {
   groupLine, mttrHeroView, scopeLabel, scopeSentence, secondaryStats, sevMttrRows, summarySeries,
 } from "./scopedViewModel.js";
@@ -370,7 +372,18 @@ export async function renderScopedFindings(main, params, spec) {
   function groupValueCell(g) {
     if (g.raw === null || g.raw === undefined || g.raw === "") return el("span", { class: "muted" }, "(none)");
     const col = pick(spec.columns).find((c) => c.key === state.groupBy);
-    return col && col.cell ? col.cell({ [state.groupBy]: g.raw }) : String(g.raw);
+    const label = col && col.cell ? col.cell({ [state.groupBy]: g.raw }) : String(g.raw);
+    // A CVE group links to Wiz's page for that CVE — one place to read how it is exploited
+    // before opening its findings. Stops propagation: the row itself toggles the group.
+    const cveHref = wizCveUrl(typeof g.raw === "string" ? g.raw : "");
+    if (!cveHref) return label;
+    return el("span", { class: "scoped-group-label" },
+      label,
+      el("a", {
+        class: "wiz-link", href: cveHref, target: "_blank", rel: "noopener noreferrer",
+        "aria-label": `${g.raw} in the Wiz vulnerability database (new tab)`,
+        onclick: (e) => e.stopPropagation(),
+      }, "Wiz CVE", uiIcon("external", 12)));
   }
 
   /** One opened group: its own server-paged, server-sorted rows. Built once per open. */

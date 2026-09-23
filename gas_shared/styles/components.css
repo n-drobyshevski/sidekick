@@ -2343,3 +2343,18 @@ input[type="range"].cut-hist__range {
 @media (max-width: 640px) { .page-header.page-header--mttr { grid-template-columns: 1fr; } }
 .scoped-trend__head { display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap; }
 .scoped-summary > .scoped-section:first-of-type { margin-top: calc(-1 * var(--space-3)); }
+
+/* Links out to Wiz (ui/wizLinks.js): quiet until hovered, always underlined on focus. */
+.wiz-link {
+  display: inline-flex; align-items: center; gap: 3px; white-space: nowrap;
+  font-size: var(--fs-label); color: var(--accent-text); text-decoration: none;
+}
+.wiz-link:hover, .wiz-link:focus-visible { text-decoration: underline; }
+.scoped-group-label { display: inline-flex; align-items: center; gap: var(--space-2); }
+/* An <a> (it opens a new tab) wearing base.css's `.btn` shell, filled like `button.primary`:
+   the sheet's primary action, ahead of the outline copy buttons. */
+.btn.wiz-open {
+  display: inline-flex; align-items: center; gap: var(--space-1); text-decoration: none;
+  background: var(--graphite); color: var(--on-graphite); border: none;
+}
+.btn.wiz-open:hover { background: var(--graphite-hover); color: var(--on-graphite); }

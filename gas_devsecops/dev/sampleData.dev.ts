@@ -352,10 +352,16 @@ function buildScaSpecs(): ScaSpec[] {
 const SCA_SPECS = buildScaSpecs();
 
 /** One raw sca node, shaped exactly like a `vulnerabilityFindings` connection node. */
+// A plausible Wiz console link per sca finding, so the "Wiz" links show in the harness. Built
+// with join("/"): the dev bundle is checked for bare double slashes like any other.
+const DEV_WIZ_PORTAL = ["https:", "", "app.wiz.io", ""].join("/");
+
 function scaRawNode(spec: ScaSpec, scanTs: string, resolved: boolean): Rec {
   const repo = spec.repoOverride ?? spec.repo;
   return {
     id: spec.id,
+    portalUrl: DEV_WIZ_PORTAL + "explorer/vulnerability-findings#~(entity~(~'" + spec.id
+      + "*2cSECURITY_TOOL_FINDING))",
     name: spec.name,
     detailedName: spec.detailedName,
     severity: spec.severity,

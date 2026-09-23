@@ -37,6 +37,7 @@ import { registerDiagnosticsContract } from "../../gas_shared/test/contracts/dia
 import { registerParityContract } from "../../gas_shared/test/contracts/parity.js";
 import { registerScopeContract } from "../../gas_shared/test/contracts/scope.js";
 import { registerScopedViewContract } from "../../gas_shared/test/contracts/scopedView.js";
+import { registerWizLinksContract } from "../../gas_shared/test/contracts/wizLinks.js";
 import { ratio, registerTokenContract } from "../../gas_shared/test/contracts/tokens.js";
 import { registerZScaleContract } from "../../gas_shared/test/contracts/zscale.js";
 import { registerRelativeAgeContract } from "../../gas_shared/test/contracts/relativeAge.js";
@@ -522,3 +523,6 @@ registerSettingsReadoutsContract({
 
 // The scoped viewer's shared model, over this register's dimensions: domain + support group.
 registerScopedViewContract({ describe, it, expect, dims: ["d", "g"] });
+
+// Links out to Wiz: the finding's own console URL, and the public CVE page.
+registerWizLinksContract({ describe, it, expect });

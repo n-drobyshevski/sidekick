@@ -18,6 +18,7 @@ import {
   fixLabel, PROVENANCE_LABEL, provenance, REGISTER_DEFAULT_DIR, REGISTER_DEFAULT_SORT,
 } from "./pages/registerModel.js";
 import { findingRowLabel, openFindingSheet } from "./pages/findingSheet.js";
+import { wizLinkColumn } from "../../../../gas_shared/ui/wizLinks.js";
 
 const SEV_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
 
@@ -45,6 +46,8 @@ const FINDING_COLUMNS = [
   { key: "internet_exposed", label: "Reachable", sortable: true, cell: (r) => triCell(r.internet_exposed) },
   { key: "age_days", label: "Age", className: "num", sortable: true, cell: (r) => days(r.age_days) },
   { key: "status", label: "State", sortable: true, cell: (r) => PROVENANCE_LABEL[provenance(r)] },
+  // Straight to the finding in Wiz, where the owning team acts on it.
+  wizLinkColumn((r) => r.cve),
 ];
 
 // The two routes' rail marks, on the entries themselves: the manifest's ROUTE_ICONS is held to

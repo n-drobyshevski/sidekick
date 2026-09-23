@@ -50,6 +50,7 @@ import {
 import { PROVENANCE, PROVENANCE_HELP, PROVENANCE_LABEL, REGISTERS, provenance } from "./registerModel.js";
 // NOT through ../ui.js, which is the design system's barrel — a URL rule is not a component.
 import { safeWizUrl } from "../../../../../gas_shared/wizUrl.js";
+import { wizCveUrl, wizOpenButton } from "../../../../../gas_shared/ui/wizLinks.js";
 
 /* ------------------------------------------------------------------ value formatting */
 
@@ -111,6 +112,16 @@ function wizRow(r) {
   return row("Wiz", "Open in Wiz",
     "Opens this finding in the Wiz console. The link is the one Wiz reports for the "
     + "finding; the register does not build it.",
+    { kind: "link", href });
+}
+
+/** Wiz's public page for the CVE, when the identifier is one (a GHSA id gets no row). */
+function wizCveRow(id) {
+  const href = wizCveUrl(id);
+  if (!href) return null;
+  return row("Wiz CVE page", "Exploitability & mitigation",
+    "Wiz's public vulnerability database entry for this CVE: exploit status, affected "
+    + "technologies and mitigation. Public, not your tenant.",
     { kind: "link", href });
 }
 
@@ -210,6 +221,7 @@ function scaSections(r, reg) {
         // sca only, and no row at all when there is no link — see gas/'s finding sheet for
         // why this one absence is not drawn as a dash like every other one in this sheet.
         wizRow(r),
+        wizCveRow(r.identifier),
       ].filter(Boolean),
     },
     clockSection(r, { age: true, mttr: true }),
@@ -466,8 +478,11 @@ export function openFindingSheet(scope, r, opts) {
     // finding sheet passing headerActions would build the buttons and never show them. A
     // finding is one flat fact and takes no section rail (root DESIGN.md), so the actions
     // row goes at the top of the body where it is the first thing after the identity.
-    if (model.copies.length) {
-      body.append(el("div", { class: "finding-actions" },
+    // "Open in Wiz" LEADS the action row: the register says which finding, Wiz is where it
+    // is acted on. Absent — not disabled — when the record holds no link (ui/wizLinks.js).
+    const wizBtn = wizOpenButton(r);
+    if (wizBtn || model.copies.length) {
+      body.append(el("div", { class: "finding-actions" }, wizBtn,
         ...model.copies.map((c) => copyButton(() => c.text, { label: c.label, title: c.title }))));
     }
     for (const section of model.sections) {

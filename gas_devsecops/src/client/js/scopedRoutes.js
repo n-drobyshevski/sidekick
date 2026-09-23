@@ -14,6 +14,7 @@ import { fmtDate, sevBadge, triCell } from "./ui.js";
 import { epssPct, textCell, yesNo } from "./pages/sca.js";
 import { PROVENANCE_LABEL, provenance, REGISTER_ORDER, REGISTERS } from "./pages/registerModel.js";
 import { findingRowLabel, openFindingSheet } from "./pages/findingSheet.js";
+import { wizLinkColumn } from "../../../../gas_shared/ui/wizLinks.js";
 
 const SEV_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
 
@@ -43,6 +44,8 @@ function groupableFor(kind) {
 
 function columnsFor(kind) {
   const reg = REGISTERS[kind] || REGISTERS.sca;
+  // Only sca rows carry Wiz's finding link (the sast and secrets queries have no portalUrl).
+  const wiz = kind === "sca" ? [wizLinkColumn((r) => r.identifier)] : [];
   return reg.columns.map((c) => ({
     key: c.key,
     label: c.label,
@@ -51,7 +54,7 @@ function columnsFor(kind) {
     cell: c.kind === "provenance"
       ? (r) => PROVENANCE_LABEL[provenance(r)]
       : (r) => (CELL[c.kind] || CELL.text)(r[c.key]),
-  }));
+  })).concat(wiz);
 }
 
 // The two routes' rail marks, on the entries themselves: the manifest's ROUTE_ICONS is held to

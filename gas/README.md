@@ -1052,6 +1052,24 @@ availability. Grouping runs on the server over the whole filtered set (`groupBy`
 `groupValue` on `getRegisterRows`, `gas_shared/domain/rowGroups.ts`), worst severity first.
 Each group expands into its own paged rows.
 
+### Links to Wiz
+
+Every place a finding is drawn now leads to Wiz (`gas_shared/ui/wizLinks.js`):
+
+- **Tables.** A **Wiz ↗** cell on each row opens the finding in the console, in a new tab.
+  It is Wiz's own `portalUrl`, stored as `portal_url` and re-checked by `safeWizUrl` at
+  render time.
+- **Finding sheet.** **Open in Wiz** is the sheet's primary action. A **Wiz CVE page** row
+  links the CVE to Wiz's public vulnerability database, which covers exploit status and
+  mitigation.
+- **CVE groups.** When the findings table is grouped by CVE, each group links to the same
+  database page.
+
+The register **never builds a console URL.** The console's filtered-view links use an
+undocumented hash format, and a link that silently opens the wrong view is worse than none.
+A row with no stored link draws no link rather than a dead one. The CVE page is built only
+from an id matching `CVE-YYYY-NNNN…`, onto a fixed public origin.
+
 ### The entry screen
 
 An allowed caller does not land straight in the dashboard. `welcome.gate()`
