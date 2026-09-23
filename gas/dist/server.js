@@ -6478,7 +6478,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "c229d80bb5bc" : "dev";
+  var BUILD_ID = true ? "60e5c6c4ce38" : "dev";
   var CACHE_EPOCH = "1";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
@@ -7046,28 +7046,43 @@ var Server = (() => {
     var _a;
     return (_a = listJobs().find((j) => !isTerminalPhase(j.phase))) != null ? _a : null;
   }
-  var ACTIVE_JOB_CACHE_KEY = "activeJob1";
-  var ACTIVE_JOB_CACHE_TTL_SEC = 60;
+  var ACTIVE_JOB_GEN_KEY = "activeJobGen";
+  var ACTIVE_JOB_CACHE_PREFIX = "activeJob2:";
+  var ACTIVE_JOB_CACHE_TTL_SEC = 21600;
+  function newGeneration() {
+    return String(Date.now()) + "-" + Math.floor(Math.random() * 1e9);
+  }
   function activeJobForDisplay() {
+    let key = null;
     try {
-      const raw = CacheService.getScriptCache().get(ACTIVE_JOB_CACHE_KEY);
+      const cache = CacheService.getScriptCache();
+      let gen = cache.get(ACTIVE_JOB_GEN_KEY);
+      if (!gen) {
+        gen = newGeneration();
+        cache.put(ACTIVE_JOB_GEN_KEY, gen, ACTIVE_JOB_CACHE_TTL_SEC);
+      }
+      key = ACTIVE_JOB_CACHE_PREFIX + gen;
+      const raw = cache.get(key);
       if (raw !== null) return JSON.parse(raw);
     } catch (e) {
       console.warn(`Active-job cache read failed: ${e}`);
+      key = null;
     }
     const job = activeJob();
-    try {
-      CacheService.getScriptCache().put(ACTIVE_JOB_CACHE_KEY, JSON.stringify(job), ACTIVE_JOB_CACHE_TTL_SEC);
-    } catch (e) {
-      console.warn(`Active-job cache write failed: ${e}`);
+    if (key) {
+      try {
+        CacheService.getScriptCache().put(key, JSON.stringify(job), ACTIVE_JOB_CACHE_TTL_SEC);
+      } catch (e) {
+        console.warn(`Active-job cache write failed: ${e}`);
+      }
     }
     return job;
   }
   function forgetActiveJob() {
     try {
-      CacheService.getScriptCache().remove(ACTIVE_JOB_CACHE_KEY);
+      CacheService.getScriptCache().put(ACTIVE_JOB_GEN_KEY, newGeneration(), ACTIVE_JOB_CACHE_TTL_SEC);
     } catch (e) {
-      console.warn(`Active-job cache drop failed: ${e}`);
+      console.warn(`Active-job cache generation bump failed: ${e}`);
     }
   }
 
