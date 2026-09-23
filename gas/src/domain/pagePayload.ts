@@ -51,6 +51,10 @@ export function execMttrSlice(mttr: unknown): Rec | null {
     remediation: km
       ? { km: { median: km["median"], medianLowerBound: km["medianLowerBound"] } }
       : {},
+    // O1b: the present/unobserved split behind the hero's "Still open" count. Four scalars —
+    // `backlogSplitView` (pages/_backlog.js) is what turns them into the hero's line and
+    // caption — so this rides whole rather than earning its own narrowing function.
+    backlog: m["backlog"] ?? null,
   };
 }
 
@@ -265,7 +269,13 @@ export function oldestOpenSlice(insights: unknown, view: string): Rec {
     ? ((insights as Rec)["oldest"] as Rec | undefined)
     : undefined;
   const rows = oldest ? oldest[known] : undefined;
-  return { view: known, rows: Array.isArray(rows) ? rows : [] };
+  // O1b: the same `unobserved` count on every view — `insights.oldestOpen` sets it aside
+  // BEFORE ranking (see its own `openAge`), so it does not vary with which of the three
+  // rankings the panel is showing. Carried here rather than left for the eager `insights`
+  // payload because this drawer is the only reader of `oldest` at all (see the block comment
+  // above), and the panel's footer link to the cold zone needs it whichever view is open.
+  const unobserved = oldest && typeof oldest["unobserved"] === "number" ? oldest["unobserved"] : 0;
+  return { view: known, rows: Array.isArray(rows) ? rows : [], unobserved };
 }
 
 /**

@@ -51,8 +51,9 @@
 
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  clear, collapsibleSection, dataTable, disclosure, el, emptyState, errorState, fmtCount,
-  fmtDate, fmtDateTime, fmtDays, fmtSpan, heroStat, num, pageHeader, pluralize, relativeAge,
+  clear, collapsibleSection, dataTable, denomNote, disclosure, el, emptyState, errorState,
+  fmtCount, fmtDate, fmtDateTime, fmtDays, fmtSpan, heroLines, heroStat, num, pageHeader,
+  pluralize, relativeAge,
   scopeBar, sectionLabel, sevKeyRow, sevSegmentBar, skeleton, statRow, statusPill, tipLabel,
   FINE_UNITS, unitRow, unitScale,
   absent, days1,
@@ -64,6 +65,11 @@ import {
 // could describe the same estimate differently. It lives on the page that owns the clock.
 import { kmHalfLifeView } from "./mttr.js";
 import { groupCutNote } from "./_groupSplit.js";
+// THE PRESENT/UNOBSERVED SPLIT IS IMPORTED, NOT REPEATED — same reason as the half-life above.
+// `backlogSplitView` is `mttr.backlog`'s one sentence shape, shared with `pages/mttr.js` and
+// `pages/overview.js` so the hero, the aging charts and the open-count strip all describe one
+// blind spot in one voice.
+import { backlogSplitView } from "./_backlog.js";
 // `findEntry` READS THE BOOK'S OWN "fix-next" LINES so the heading's tip can carry BOTH the
 // ranking rule and what a click does, in one trigger — see `renderFixNext`'s own comment on
 // why `linkNote` moved off the surface and onto here rather than growing a second `?`.
@@ -113,6 +119,14 @@ export function executiveHeroView(payload) {
       + " · " + fmtCount(resolved) + " resolved · " + fmtCount(open) + " still open"
     : "No lifecycles tracked yet.";
 
+  // The present/unobserved split behind "still open" above — `open` already counts both;
+  // this names how much of it the scanner has stopped answering for. NEVER FOLDED INTO THE
+  // QUALIFIER: it is its own line (`renderHero` draws it through `heroLines`), because "still
+  // open" and "unobserved" are different claims and gluing them into one sentence is exactly
+  // what this package exists to stop happening. Hides cleanly (`show: false`) when there is
+  // nothing unobserved.
+  const split = backlogSplitView(mttr && mttr.backlog);
+
   return {
     measured: half.measured,
     value: half.value,
@@ -122,6 +136,8 @@ export function executiveHeroView(payload) {
     resolved,
     open,
     qualifier,
+    backlogLine: split.line,
+    backlogCaption: split.caption,
   };
 }
 
@@ -1092,13 +1108,28 @@ export async function renderExecutive(main, _params, ctx) {
 
     // NO `route`: the h1 is in the title block appended once at the top of renderExecutive.
     heroHost.append(pageHeader({
-      hero: heroStat("Remediation half-life", view.value, view.qualifier, heroHelp(view)),
+      hero: heroStat(
+        "Remediation half-life",
+        view.value,
+        // NEVER FOLDED IN. `heroLines` draws the qualifier and the backlog split as two
+        // separate `.hero-line`s — "still open" leads, unchanged, and the present/unobserved
+        // split sits beside it rather than inside its sentence. `heroLines` drops the second
+        // line outright when there is nothing unobserved, so a register with no blind spot
+        // reads exactly as it did before this package.
+        heroLines(view.qualifier, view.backlogLine),
+        heroHelp(view),
+      ),
       aside: renderMovement(payload),
       // "Tracked 0 · Resolved 0 · Still open 0" is three zeros over a ledger nobody has read.
       // The hero's own "Not measured" and its qualifier already carry the honest version, and
       // the panel above names what the counts wait on.
       stats: first && first.show ? [] : stats,
     }));
+    // THE SHARED CAPTION, ON THE SURFACE — an honesty statement about what "unobserved" means
+    // here (not resolved, not silence), not an explanation of a number already on screen, so it
+    // stays out of any tip. Null (nothing unobserved, or the split has not loaded yet) prints
+    // nothing.
+    if (view.backlogCaption) heroHost.append(denomNote(view.backlogCaption));
     heroHost.append(curveNote());
   }
 

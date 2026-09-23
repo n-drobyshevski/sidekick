@@ -21,6 +21,7 @@ import {
   baseRows,
   emptyState,
   latestScan,
+  newestFlatScanBySeverity,
   persistFlatScan as coreFlat,
   persistGroupedScan as coreGrouped,
   scansAsc,
@@ -333,8 +334,16 @@ export function persistGroupedScan(
 const readPayloadForRow = (row: ScanRow): unknown | null =>
   archive.readScanPayload(row.raw_ref);
 
+/**
+ * Every base row, carrying a REAL `observed` (see `BaseRow`), not the "undecidable, so
+ * observed" default `baseRows` falls back to with no third argument. This is the ONE place
+ * that reads `newestFlatScanBySeverity` for the purpose — every one of this function's many
+ * callers gets a correct `observed` / `seen_age_days` with no plumbing of its own, the same
+ * way every caller of `loadState()` gets a correct `scans` array with no plumbing of its own.
+ */
 export function loadBaseRows(now?: number): BaseRow[] {
-  return baseRows(loadState(), now);
+  const state = loadState();
+  return baseRows(state, now, newestFlatScanBySeverity(state.scans));
 }
 
 // Ceiling on how many reconstructed (synthetic pre-scan) points get a full KM-median build in
@@ -363,6 +372,11 @@ export function loadTrend(
   const base = (baseOverride ?? baseRows(state)).map((r) => ({
     severity: r.severity,
     first_seen: r.first_seen,
+    // Feeds `trend.censoredAsOf`: `withKmMedian` (below) right-censors a still-open-as-of-d
+    // row at the earlier of `d` and this, not at `d` alone — the same last-sighting cap
+    // `ledgerCore.seen_age_days` applies at "now", replayed at every historical point instead
+    // of only today, so the hero's KM figure and this trend line describe one estimate.
+    last_seen: r.last_seen,
     resolved_at: r.resolved_at,
     mttr_days: r.mttr_days,
     // actionable_from feeds the actionable-clock open-past-SLA plus the SLA-burn / cohort-

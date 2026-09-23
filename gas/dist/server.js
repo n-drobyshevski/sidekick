@@ -512,7 +512,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "723eb7e2c6b7" : "dev";
+  var BUILD_ID = true ? "d481294fe124" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -3817,6 +3817,14 @@ var Server = (() => {
     }
     return Object.keys(mapping).length ? mapping : null;
   }
+  function rowReachesScan(row, newest) {
+    if (present(row.last_scan_id)) {
+      return present(newest.scan_id) && String(row.last_scan_id) === String(newest.scan_id);
+    }
+    const newestTs = parseTs(newest.ts);
+    const lastSeen = parseTs(row.last_seen);
+    return newestTs !== null && lastSeen !== null && lastSeen >= newestTs;
+  }
   function newestFlatScanBySeverity(scans) {
     const remaining = new Set(SEVERITY_ORDER);
     const out = {};
@@ -3940,7 +3948,7 @@ var Server = (() => {
   var DAY_MS3 = 864e5;
   var COMPACTED_ASSET2 = "(compacted)";
   var ROLLOUT_MS = parseTs(REMEDIATION_ROLLOUT_ISO);
-  function baseRows(state, now) {
+  function baseRows(state, now, newestScanBySeverity2 = {}) {
     var _a;
     const nowMs = now != null ? now : Date.now();
     const out = [];
@@ -3953,6 +3961,10 @@ var Server = (() => {
       const fixAvailMs = parseTs(fixAvailableAt);
       const actionableMs = fixAvailMs === null ? null : first === null ? fixAvailMs : Math.max(first, fixAvailMs);
       const actionableFrom = actionableMs === null ? null : toIso(actionableMs);
+      const newest = newestScanBySeverity2[normalizeSeverity(row.severity)];
+      const observed = !newest || rowReachesScan(row, newest);
+      const last = parseTs(row.last_seen);
+      const seenAgeDays = open && first !== null && last !== null ? (last - first) / DAY_MS3 : null;
       return {
         ...row,
         mttr_days: first !== null && resolved !== null ? (resolved - first) / DAY_MS3 : null,
@@ -3961,7 +3973,9 @@ var Server = (() => {
         actionable_from: actionableFrom,
         mttr_actionable_days: resolved !== null && actionableMs !== null ? (resolved - actionableMs) / DAY_MS3 : null,
         actionable_age_days: open && actionableMs !== null ? (nowMs - actionableMs) / DAY_MS3 : null,
-        awaiting_vendor_fix: open && fixAvailableAt === null
+        awaiting_vendor_fix: open && fixAvailableAt === null,
+        observed,
+        seen_age_days: seenAgeDays
       };
     };
     for (const row of Object.values(state.ledger)) out.push(withDerived(row));
@@ -4100,17 +4114,8 @@ var Server = (() => {
         continue;
       }
       const rows = (_a = acc.rowsBySeverity.get(sev2)) != null ? _a : [];
-      const newestTs = parseTs(newest.ts);
       for (const row of rows) {
-        if (!blank(row.last_scan_id)) {
-          if (!blank(newest.scan_id) && String(row.last_scan_id) === String(newest.scan_id)) {
-            observed = true;
-            break;
-          }
-          continue;
-        }
-        const lastSeen = parseTs(row.last_seen);
-        if (newestTs !== null && lastSeen !== null && lastSeen >= newestTs) {
+        if (rowReachesScan(row, newest)) {
           observed = true;
           break;
         }
@@ -4697,7 +4702,7 @@ var Server = (() => {
   }
   function openAge(row) {
     if (!isOpen2(row.status)) return null;
-    const a = row.age_days;
+    const a = row.observed ? row.age_days : row.seen_age_days;
     return typeof a === "number" && Number.isFinite(a) ? a : null;
   }
   function mttrPercentiles(rows) {
@@ -4821,7 +4826,13 @@ var Server = (() => {
     const perSev = {};
     let totalOpen = 0;
     let totalBreached = 0;
+    let unobserved = 0;
     for (const row of rows) {
+      if (!isOpen2(row.status)) continue;
+      if (!row.observed) {
+        unobserved += 1;
+        continue;
+      }
       const age = openAge(row);
       if (age === null) continue;
       const s = normalizeSeverity(row.severity);
@@ -4843,7 +4854,8 @@ var Server = (() => {
         open: totalOpen,
         breached: totalBreached,
         pct: totalOpen ? totalBreached / totalOpen * 100 : null
-      }
+      },
+      unobserved
     };
   }
   function openPastSlaFromRecords(records, now) {
@@ -4867,7 +4879,9 @@ var Server = (() => {
       severity: r.severity,
       status: r.status,
       mttr_days: r.mttr_actionable_days,
-      age_days: r.actionable_age_days
+      age_days: r.actionable_age_days,
+      observed: r.observed,
+      seen_age_days: r.seen_age_days
     }));
   }
   function awaitingVendorFix(rows) {
@@ -4921,7 +4935,9 @@ var Server = (() => {
         severity: row.severity,
         status: obs.event ? "RESOLVED" : "OPEN",
         mttr_days: obs.event ? obs.t : null,
-        age_days: obs.event ? null : obs.t
+        age_days: obs.event ? null : obs.t,
+        observed: true,
+        seen_age_days: null
       });
     }
     return out;
@@ -5057,6 +5073,9 @@ var Server = (() => {
   function awaitingFixAsOf(firstMs, resolvedMs, fixAvailMs, d) {
     const openAsOfD = firstMs !== null && firstMs <= d && (resolvedMs === null || resolvedMs > d);
     return openAsOfD && (fixAvailMs === null || fixAvailMs > d);
+  }
+  function censoredAsOf(d, lastSeenMs) {
+    return lastSeenMs !== null && lastSeenMs < d ? lastSeenMs : d;
   }
   function trendFromFrames(scans, base, severities = null, opts = {}) {
     var _a;
@@ -5250,6 +5269,7 @@ var Server = (() => {
       const known = inGroup.has(value);
       return {
         first: parseTs(r["first_seen"]),
+        last: parseTs(r["last_seen"]),
         resolvedAt: parseTs(r["resolved_at"]),
         mttr: typeof r["mttr_days"] === "number" && !Number.isNaN(r["mttr_days"]) ? r["mttr_days"] : null,
         fixAvail: parseTs(r["fix_available_at"]),
@@ -5273,7 +5293,7 @@ var Server = (() => {
           }
         } else if (r.first !== null && r.first <= ts.ms) {
           if (hideNoFix && awaitingFixAsOf(r.first, r.resolvedAt, r.fixAvail, ts.ms)) continue;
-          ((_f = times[_e = r.group]) != null ? _f : times[_e] = []).push((ts.ms - r.first) / DAY_MS6);
+          ((_f = times[_e = r.group]) != null ? _f : times[_e] = []).push((censoredAsOf(ts.ms, r.last) - r.first) / DAY_MS6);
         }
       }
       const byGroup = {};
@@ -5339,6 +5359,7 @@ var Server = (() => {
     }
     const parsed = rows.map((r) => ({
       first: parseTs(r["first_seen"]),
+      last: parseTs(r["last_seen"]),
       resolvedAt: parseTs(r["resolved_at"]),
       mttr: typeof r["mttr_days"] === "number" && !Number.isNaN(r["mttr_days"]) ? r["mttr_days"] : null,
       fixAvail: parseTs(r["fix_available_at"])
@@ -5359,7 +5380,7 @@ var Server = (() => {
             }
           } else if (r.first !== null && r.first <= d) {
             if (hideNoFix && awaitingFixAsOf(r.first, r.resolvedAt, r.fixAvail, d)) continue;
-            times.push((d - r.first) / DAY_MS6);
+            times.push((censoredAsOf(d, r.last) - r.first) / DAY_MS6);
           }
         }
         med = kmMedianFromCurve(kmCurve(events, times));
@@ -5391,7 +5412,8 @@ var Server = (() => {
       const first = parseTs(r["first_seen"]);
       if (first !== null && first <= d) {
         if (hideNoFix && awaitingFixAsOf(first, resolvedAt, parseTs(r["fix_available_at"]), d)) continue;
-        times.push((d - first) / DAY_MS6);
+        const last = parseTs(r["last_seen"]);
+        times.push((censoredAsOf(d, last) - first) / DAY_MS6);
       }
     }
     const med = kmMedianFromCurve(kmCurve(events, times));
@@ -6397,17 +6419,22 @@ var Server = (() => {
     return out;
   }
   function ageBuckets(rows) {
-    const { perKey, totalOpen } = ageBucketsBy(
+    const { perKey, totalOpen, unobserved } = ageBucketsBy(
       rows,
       (r) => normalizeSeverity(r.severity)
     );
-    return { perSev: perKey, totalOpen };
+    return { perSev: perKey, totalOpen, unobserved };
   }
   function ageBucketsBy(rows, keyOf) {
     const perKey = {};
     let totalOpen = 0;
+    let unobserved = 0;
     for (const row of rows) {
       if (!isOpen3(row.status)) continue;
+      if (!row.observed) {
+        unobserved += 1;
+        continue;
+      }
       const age = row.age_days;
       if (typeof age !== "number" || !Number.isFinite(age)) continue;
       const bucket = age <= AGE_BUCKET_EDGES[0] ? 0 : age <= AGE_BUCKET_EDGES[1] ? 1 : age <= AGE_BUCKET_EDGES[2] ? 2 : 3;
@@ -6416,7 +6443,7 @@ var Server = (() => {
       perKey[k][bucket] += 1;
       totalOpen += 1;
     }
-    return { perKey, totalOpen };
+    return { perKey, totalOpen, unobserved };
   }
   function slaEdgeBucket(severity) {
     const target = SLA_TARGETS[normalizeSeverity(severity)];
@@ -6430,9 +6457,14 @@ var Server = (() => {
   function agingDistribution(rows) {
     const perSev = {};
     let unaged = 0;
+    let unobserved = 0;
     let totalOpen = 0;
     for (const row of rows) {
       if (!isOpen3(row.status)) continue;
+      if (!row.observed) {
+        unobserved += 1;
+        continue;
+      }
       const s = normalizeSeverity(row.severity);
       if (!perSev[s]) perSev[s] = [0, 0, 0, 0];
       const age = row.age_days;
@@ -6457,6 +6489,7 @@ var Server = (() => {
       labels: [...AGE_BUCKET_LABELS],
       perSev,
       unaged,
+      unobserved,
       totalOpen,
       slaEdge,
       slaTargets,
@@ -6466,6 +6499,7 @@ var Server = (() => {
   var AGED_OPEN_EDGE = AGE_BUCKET_EDGES[2];
   function openAge2(row) {
     if (!isOpen3(row.status)) return null;
+    if (!row.observed) return null;
     const age = row.age_days;
     return typeof age === "number" && Number.isFinite(age) ? age : null;
   }
@@ -6532,7 +6566,37 @@ var Server = (() => {
       byDomain: rankGroups2(rows, (r) => {
         var _a;
         return String((_a = r._domain) != null ? _a : "");
-      }, topN)
+      }, topN),
+      unobserved: rows.filter((r) => isOpen3(r.status) && !r.observed).length
+    };
+  }
+  function backlogSplit(rows) {
+    var _a;
+    let observed = 0;
+    let unobserved = 0;
+    const assets = /* @__PURE__ */ new Set();
+    let sinceMs = null;
+    let sinceIso = null;
+    for (const row of rows) {
+      if (!isOpen3(row.status)) continue;
+      if (row.observed) {
+        observed += 1;
+        continue;
+      }
+      unobserved += 1;
+      const assetKey2 = (_a = row.asset_id) != null ? _a : row.asset_name;
+      if (assetKey2 !== null && assetKey2 !== void 0) assets.add(String(assetKey2));
+      const seen2 = parseTs(row.last_seen);
+      if (seen2 !== null && (sinceMs === null || seen2 > sinceMs)) {
+        sinceMs = seen2;
+        sinceIso = row.last_seen;
+      }
+    }
+    return {
+      observed,
+      unobserved,
+      unobservedAssets: assets.size,
+      unobservedSince: sinceIso
     };
   }
   function movement(baseRows2, latestFlatScan, scanCount) {
@@ -6941,7 +7005,7 @@ var Server = (() => {
 
   // src/domain/pagePayload.ts
   function execMttrSlice(mttr) {
-    var _a, _b;
+    var _a, _b, _c;
     if (!mttr || typeof mttr !== "object") return null;
     const m = mttr;
     const overall = (_a = m["overall"]) != null ? _a : {};
@@ -6949,7 +7013,11 @@ var Server = (() => {
     return {
       rowCount: m["rowCount"],
       overall: { resolved: overall["resolved"], open: overall["open"] },
-      remediation: km ? { km: { median: km["median"], medianLowerBound: km["medianLowerBound"] } } : {}
+      remediation: km ? { km: { median: km["median"], medianLowerBound: km["medianLowerBound"] } } : {},
+      // O1b: the present/unobserved split behind the hero's "Still open" count. Four scalars —
+      // `backlogSplitView` (pages/_backlog.js) is what turns them into the hero's line and
+      // caption — so this rides whole rather than earning its own narrowing function.
+      backlog: (_c = m["backlog"]) != null ? _c : null
     };
   }
   function execGroupSlice(byGroup) {
@@ -7037,7 +7105,8 @@ var Server = (() => {
     const known = OLDEST_VIEWS.includes(view) ? view : "findings";
     const oldest = insights && typeof insights === "object" ? insights["oldest"] : void 0;
     const rows = oldest ? oldest[known] : void 0;
-    return { view: known, rows: Array.isArray(rows) ? rows : [] };
+    const unobserved = oldest && typeof oldest["unobserved"] === "number" ? oldest["unobserved"] : 0;
+    return { view: known, rows: Array.isArray(rows) ? rows : [], unobserved };
   }
   function mttrGroupTableSlice(byGroup) {
     var _a;
@@ -7876,7 +7945,8 @@ var Server = (() => {
   }
   var readPayloadForRow = (row) => readScanPayload(row.raw_ref);
   function loadBaseRows(now) {
-    return baseRows(loadState(), now);
+    const state = loadState();
+    return baseRows(state, now, newestFlatScanBySeverity(state.scans));
   }
   var KM_TREND_MAX_RECONSTRUCTED = 48;
   function loadTrend(severities = null, showNoFix = true, baseOverride) {
@@ -7885,6 +7955,11 @@ var Server = (() => {
     const base = (baseOverride != null ? baseOverride : baseRows(state)).map((r) => ({
       severity: r.severity,
       first_seen: r.first_seen,
+      // Feeds `trend.censoredAsOf`: `withKmMedian` (below) right-censors a still-open-as-of-d
+      // row at the earlier of `d` and this, not at `d` alone — the same last-sighting cap
+      // `ledgerCore.seen_age_days` applies at "now", replayed at every historical point instead
+      // of only today, so the hero's KM figure and this trend line describe one estimate.
+      last_seen: r.last_seen,
       resolved_at: r.resolved_at,
       mttr_days: r.mttr_days,
       // actionable_from feeds the actionable-clock open-past-SLA plus the SLA-burn / cohort-
@@ -10301,7 +10376,11 @@ var Server = (() => {
       ),
       // Movement's Persisting is filtered (it's derived from these base rows); New/Resolved/
       // Reopened come from scan-wide reconcile deltas and stay scan-wide (see movement()).
-      movement: movement(baseVisible, latestFlat, loadScanRows().length)
+      movement: movement(baseVisible, latestFlat, loadScanRows().length),
+      // The open backlog split present-vs-unobserved, over the SAME baseVisible every block
+      // above reads — the one aggregate a hero stat or a KPI band reads instead of re-deriving
+      // the split from `aging.unobserved` or `oldest.unobserved`'s shape.
+      backlog: backlogSplit(baseVisible)
     };
   }
   function exposedVulnKeys(recsVisible, exposureKnown) {
@@ -10338,7 +10417,12 @@ var Server = (() => {
         RISK_TIER_ORDER,
         { severities, hideNoFix: !showNoFix, includeOther: false }
       ),
-      agingTier: { perTier: agingTier.perKey, totalOpen: agingTier.totalOpen },
+      agingTier: {
+        perTier: agingTier.perKey,
+        totalOpen: agingTier.totalOpen,
+        // Same population `aging` (severity-keyed, below) sets aside — one filter, read twice.
+        unobserved: agingTier.unobserved
+      },
       concentration: concentration(recsVisible, ["asset", "cve", "supportGroup", "os"], 5),
       pastSla: openPastSla(actionableView(baseVisible)),
       medianOpenAge: openAgeMedian(baseVisible)
@@ -10371,7 +10455,15 @@ var Server = (() => {
       // which reads as a register with nothing to do rather than as a cache miss. The key is
       // unchanged: both new figures are computed from `baseVisible`, the risk rule and the scan
       // log, every one of which the existing key already covers.
-      "insights7",
+      // "insights7" → "insights8": `aging` / `oldest` / `agingTier` now measure the OBSERVED
+      // backlog only and each publish the `unobserved` count they set aside (`agingTier` reads
+      // `insights.ageBucketsBy` directly, the same filter `aging` gets through `ageBuckets`); the
+      // payload also gained `backlog` (the aggregate present/unobserved split). A stale insights7
+      // entry has none of it, and `aging`/`oldest`/`agingTier` on it still count rows this
+      // version excludes — a fatter, WRONG backlog figure on THREE surfaces, not merely a
+      // missing one. The key is unchanged: `observed` comes off `baseVisible` rows themselves,
+      // already covered by the existing key's fields.
+      "insights8",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
@@ -10792,7 +10884,8 @@ var Server = (() => {
       vendorLatency: latencySummary(latencyRows, "detection"),
       disclosureLatency: latencySummary(latencyRows, "disclosure")
     };
-    return { perSev, overall, slaPct, oldestDays, rowCount: rows.length, remediation };
+    const backlog = backlogSplit(remRows);
+    return { perSev, overall, slaPct, oldestDays, rowCount: rows.length, remediation, backlog };
   }
   function programData(p) {
     var _a, _b;
@@ -11069,7 +11162,16 @@ var Server = (() => {
       // on every censored severity, and the whole aging section would render its "no open
       // findings to age yet" empty state over a register with a backlog. An absent section
       // reads as a measurement — "there is nothing here" — rather than as a cache age.
-      "mttr10",
+      // "mttr10" → "mttr11": the backlog split. `km` / `kmPerSev` / `kmFull` now censor an
+      // unobserved open row at its last sighting instead of at today (a changed VALUE, not just
+      // a changed shape — see `remediation.openAge`); `aging` and both `openPastSla` /
+      // `openPastSlaActionable` now measure the observed backlog only and each publish the
+      // `unobserved` count they set aside; the payload also gained `backlog` (the aggregate
+      // present/unobserved split). A stale mttr10 entry reports different KM statistics and a
+      // fatter, WRONG open-past-SLA than this version computes for the SAME rows — not a
+      // missing-field gap a reader could shrug off, an outright disagreement. The key is
+      // unchanged: `observed` / `seen_age_days` come off the base rows themselves.
+      "mttr11",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
@@ -11096,8 +11198,14 @@ var Server = (() => {
       // "mttrTrend5" → "mttrTrend6": the reconstructed trend now scopes to the active domain /
       // Support group (was always whole-register); key gains domain + supportGroup so scopes cache
       // apart.
+      // "mttrTrend6" → "mttrTrend7": `km_median_days` now right-censors a still-open-as-of-d row
+      // at `min(d, last_seen)` instead of `d` itself (trend.censoredAsOf) — a row the scanner had
+      // already lost sight of by d no longer reads as open all the way to d. Same VALUE change as
+      // the hero's KM figures got from `BaseRow.observed`/`seen_age_days`; this is `durablyCached`
+      // (no TTL), so a stale mttrTrend6 entry would otherwise disagree with the hero forever, not
+      // just for an hour. The key is unchanged: `last_seen` comes off the same base rows.
       durablyCached(
-        "mttrTrend6",
+        "mttrTrend7",
         {
           domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
           supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
@@ -11191,7 +11299,16 @@ var Server = (() => {
       // by-asset split, so this entry is only ever reached with BOTH scopes empty. `supportGroup`
       // stays in the key anyway, matching the inert filter it keys: an entry that can only be
       // reached one way is not a reason to make it wrong for the other.
-      "mttrByDomain14",
+      //
+      // "mttrByDomain14" → "mttrByDomain15": `kmMedian` / `p90` (read off `kaplanMeier(rem)`) and
+      // `openPastSla` (read off `openPastSla(actionableView(rem))`) now censor / set aside an
+      // unobserved open row instead of treating it exactly like an observed one — a changed
+      // VALUE, same shape. `trend.kmPoints` (read off `kmMedianByGroupTrend`) moves the same way,
+      // capping a still-open row's censored age at its last sighting when the replay date is
+      // later than that (trend.censoredAsOf) — the table and the trend chart beside it must
+      // describe one estimate. Bump so a stale entry does not keep reporting the pre-split
+      // numbers on either.
+      "mttrByDomain15",
       {
         supportGroup: String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : ""),
         severities: readSeverities(p),
@@ -11207,7 +11324,10 @@ var Server = (() => {
       // "mttrBySupportGroup1" → "mttrBySupportGroup2": the payload dropped its always-zero
       // `excluded` block and the `domain` scope now resolves tag-first, so the rows a domain
       // scope selects can differ. Bump so no stale entry survives the persistent dataVersion.
-      "mttrBySupportGroup2",
+      // "mttrBySupportGroup2" → "mttrBySupportGroup3": same backlog-split value change as
+      // "mttrByDomain15" — `kmMedian` / `p90` / `openPastSla` now treat an unobserved open row
+      // differently from an observed one. Bump for the same reason.
+      "mttrBySupportGroup3",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
@@ -11230,7 +11350,11 @@ var Server = (() => {
       // `domain` is omitted and, unlike the by-domain entry's omission, needs no caveat at all:
       // `cachedMttrGroupSplit` reaches this only with `supportGroup` non-empty, `scopeKinds()`
       // makes the two scopes mutually exclusive, and `mttrByAssetData` reads no `domain` at all.
-      "mttrByAsset1",
+      //
+      // "mttrByAsset1" → "mttrByAsset2": same backlog-split value change as "mttrByDomain15" —
+      // `kmMedian` / `p90` / `openPastSla` now treat an unobserved open row differently from an
+      // observed one. Bump for the same reason.
+      "mttrByAsset2",
       {
         supportGroup: String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : ""),
         severities: readSeverities(p),
@@ -11694,7 +11818,12 @@ var Server = (() => {
   var cachedExecutiveWeekTrend = (p) => {
     var _a, _b;
     return cached(
-      "execWeekTrend",
+      // "execWeekTrend" → "execWeekTrend2": both `current` and `previous` (kmMedianAsOf) now
+      // right-censor a still-open-as-of-d row at `min(d, last_seen)` instead of `d` itself
+      // (trend.censoredAsOf) — the same value change `mttrTrend7` got. A stale entry would
+      // compare two badge points built the OLD way against a hero that already reads the new
+      // one, for up to an hour after deploy.
+      "execWeekTrend2",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),

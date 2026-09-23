@@ -36,7 +36,10 @@ const FULL_MTTR = {
     pctiles: { overall: { p50: 12, p90: 88 } },
     buckets: { "0-7": 4, "8-30": 11 },
     km: {
-      curve: Array.from({ length: 52 }, (_, i) => ({ t: i, s: 1 - i / 104 })),
+      // One point per distinct event time (the module header's own words for how this scales
+      // with the register) — 200 here, not the old 52, so the "order of magnitude" cut below
+      // stays meaningful now that the slice also carries the backlog split's four scalars.
+      curve: Array.from({ length: 200 }, (_, i) => ({ t: i, s: 1 - i / 400 })),
       median: null,
       medianLowerBound: 118.4,
       mean: 63.2,
@@ -56,17 +59,29 @@ const FULL_MTTR = {
     openPastSlaActionable: { CRITICAL: 2 },
     awaiting: { CRITICAL: 1 },
   },
+  // O1b: the present/unobserved split behind the hero's "Still open" count.
+  backlog: {
+    observed: 2532, unobserved: 2630, unobservedAssets: 113, unobservedSince: "2026-08-12",
+  },
 };
 
-describe("execMttrSlice — the hero's four numbers, and nothing else", () => {
-  it("ships exactly rowCount, overall.{resolved,open} and km.{median,medianLowerBound}", () => {
+describe("execMttrSlice — the hero's four numbers, plus the backlog split", () => {
+  it("ships rowCount, overall.{resolved,open}, km.{median,medianLowerBound} and backlog", () => {
     const out = execMttrSlice(FULL_MTTR)!;
-    expect(Object.keys(out).sort()).toEqual(["overall", "remediation", "rowCount"]);
+    expect(Object.keys(out).sort()).toEqual(["backlog", "overall", "remediation", "rowCount"]);
     expect(Object.keys(out.overall as object).sort()).toEqual(["open", "resolved"]);
     expect(Object.keys(out.remediation as object)).toEqual(["km"]);
     expect((out.remediation as { km: object }).km).toEqual({
       median: null, medianLowerBound: 118.4,
     });
+    expect(out.backlog).toEqual(FULL_MTTR.backlog);
+  });
+
+  // Four scalars — `backlogSplitView` (pages/_backlog.js) is what turns them into the hero's
+  // line and caption, so this rides whole rather than earning its own narrowing function.
+  it("leaves backlog null rather than absent when the payload carries none", () => {
+    const out = execMttrSlice({ rowCount: 0, overall: {}, remediation: {} })!;
+    expect(out.backlog).toBeNull();
   });
 
   // The whole point: the curves are the payload, and they scale with the register.
@@ -88,10 +103,13 @@ describe("execMttrSlice — the hero's four numbers, and nothing else", () => {
     const out = execMttrSlice(FULL_MTTR) as {
       rowCount: number; overall: { resolved: number; open: number };
       remediation: { km: { median: number | null; medianLowerBound: number | null } };
+      backlog: { observed: number; unobserved: number } | null;
     };
     expect(out.rowCount).toBe(99);
     expect(out.overall.open).toBe(67);
     expect(out.remediation.km.medianLowerBound).toBe(118.4);
+    expect(out.backlog?.observed).toBe(2532);
+    expect(out.backlog?.unobserved).toBe(2630);
   });
 
   // fmtKmMedian renders "—" for a missing estimate, and reaches it through `remediation?.km`.
@@ -346,13 +364,17 @@ describe("overviewInsightsSlice — everything except the drawer's rows", () => 
   });
 });
 
-describe("oldestOpenSlice — one view, and the view it answers for", () => {
+describe("oldestOpenSlice — one view, the view it answers for, and the unobserved count", () => {
   const INSIGHTS = {
-    oldest: { findings: [{ cve: "CVE-1" }], byAsset: [{ key: "vm" }], bySupportGroup: [], byDomain: [] },
+    oldest: {
+      findings: [{ cve: "CVE-1" }], byAsset: [{ key: "vm" }], bySupportGroup: [], byDomain: [],
+      unobserved: 2630,
+    },
   };
 
   it("returns the requested view", () => {
-    expect(oldestOpenSlice(INSIGHTS, "byAsset")).toEqual({ view: "byAsset", rows: [{ key: "vm" }] });
+    expect(oldestOpenSlice(INSIGHTS, "byAsset"))
+      .toEqual({ view: "byAsset", rows: [{ key: "vm" }], unobserved: 2630 });
   });
 
   // The echo is load-bearing: the toggle can be clicked again mid-flight, and the panel drops
@@ -366,9 +388,26 @@ describe("oldestOpenSlice — one view, and the view it answers for", () => {
     expect(oldestOpenSlice(INSIGHTS, "").rows).toEqual([{ cve: "CVE-1" }]);
   });
 
+  // The SAME count on every view — `insights.oldestOpen` sets it aside before ranking, so it
+  // does not vary with which of the three rankings the panel is showing.
+  it("carries the same unobserved count whichever view is requested", () => {
+    expect(oldestOpenSlice(INSIGHTS, "byAsset").unobserved).toBe(2630);
+    expect(oldestOpenSlice(INSIGHTS, "byDomain").unobserved).toBe(2630);
+  });
+
+  // A register with no blind spot looks exactly as it did before this package: zero, not
+  // absent, so the panel's footer link never has to guess between the two.
+  it("defaults to zero when the payload carries no unobserved count", () => {
+    expect(oldestOpenSlice(
+      { oldest: { findings: [], byAsset: [], bySupportGroup: [], byDomain: [] } },
+      "byAsset",
+    ).unobserved).toBe(0);
+  });
+
   it("returns an empty row set rather than throwing on a payload with no oldest block", () => {
-    expect(oldestOpenSlice({ flatScan: false }, "findings")).toEqual({ view: "findings", rows: [] });
-    expect(oldestOpenSlice(null, "byAsset")).toEqual({ view: "byAsset", rows: [] });
+    expect(oldestOpenSlice({ flatScan: false }, "findings"))
+      .toEqual({ view: "findings", rows: [], unobserved: 0 });
+    expect(oldestOpenSlice(null, "byAsset")).toEqual({ view: "byAsset", rows: [], unobserved: 0 });
   });
 });
 
@@ -529,23 +568,23 @@ describe("the insights cache namespace moves when the payload's shape does", () 
    *  above them, which names every prior namespace on purpose and must keep doing so. */
   const active = [...API.matchAll(/^\s*"(insights\d+)",$/gm)].map((m) => m[1]);
 
-  it("names insights7, exactly once, as the namespace it caches under", () => {
-    expect(active).toEqual(["insights7"]);
+  it("names insights8, exactly once, as the namespace it caches under", () => {
+    expect(active).toEqual(["insights8"]);
   });
 
-  it("no longer caches under insights6", () => {
-    expect(active).not.toContain("insights6");
+  it("no longer caches under insights7", () => {
+    expect(active).not.toContain("insights7");
     // ...while the transition stays DOCUMENTED, which is the whole convention: the comment
     // block above the literal is the change log, and losing the line would lose the reason.
-    expect(API).toContain(String.raw`"insights6" → "insights7"`);
+    expect(API).toContain(String.raw`"insights7" → "insights8"`);
   });
 
   it("the bump line says what changed and why a stale entry is not merely fat", () => {
-    const idx = API.indexOf(String.raw`"insights6" → "insights7"`);
+    const idx = API.indexOf(String.raw`"insights7" → "insights8"`);
     expect(idx).toBeGreaterThan(-1);
     const note = API.slice(idx, idx + 900);
-    expect(note).toContain("fixNext");
-    expect(note).toContain("movementOpen");
+    expect(note).toContain("unobserved");
+    expect(note).toContain("backlog");
   });
 });
 

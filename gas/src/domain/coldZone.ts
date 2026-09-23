@@ -158,7 +158,7 @@ import {
   isOpenStatus,
   type ColdZoneMode,
 } from "./config";
-import type { BaseRow } from "./ledgerCore";
+import { rowReachesScan, type BaseRow, type NewestScan } from "./ledgerCore";
 import { classifyRisk, type RiskClass, type RiskRow, type RiskRule } from "./program";
 import { normalizeSeverity } from "./severity";
 import { parseTs, present, toIso } from "./util";
@@ -200,11 +200,13 @@ export type ColdRow = RiskRow &
     | "last_scan_id"
   > & { _supportGroup?: unknown };
 
-/** The newest FLAT scan that covered one severity — what "the scanner still sees this" tests against. */
-export interface NewestScan {
-  scan_id: string | null;
-  ts: string | number | Date | null;
-}
+/**
+ * The newest FLAT scan that covered one severity — what "the scanner still sees this" tests
+ * against. Defined in `ledgerCore.ts` beside `rowReachesScan`, the row-level predicate both
+ * this module's `isObserved` and `ledgerCore.baseRows`'s per-row `observed` field are built
+ * from; re-exported here so nothing that already writes `coldZone.NewestScan` has to change.
+ */
+export type { NewestScan };
 
 export interface ColdZoneOptions {
   /** The evaluation instant. An option, never `Date.now()` — this module is pure. */
@@ -656,11 +658,11 @@ function foldRow(acc: AssetAcc, row: ColdRow, risk: RiskClass): void {
  * PER SEVERITY, and observed if ANY severity reaches its own newest flat scan — a
  * CRITICAL-only sweep must not mark every HIGH row of a perfectly healthy asset as vanished,
  * which is the same rule `reconcile` applies when it decides whether an absence is a
- * resolution. The primary test is `last_scan_id === newestScanBySeverity[sev].scan_id`; a
- * blank `last_scan_id` falls back to `last_seen >= newest.ts`, because an older ledger row can
- * carry the sighting without the scan id. A severity with rows but NO scan on record is
- * undecidable and resolves to observed — and is named in `severities_without_scan`, so the
- * reader knows which way the doubt fell.
+ * resolution. The per-row test itself is `rowReachesScan` (`ledgerCore.ts`) — ONE DEFINITION
+ * OF "DID WE SEE IT", shared with `baseRows`'s row-level `observed` field, so this asset-level
+ * verdict and that row-level one can never quietly disagree about what a sighting is. A
+ * severity with rows but NO scan on record is undecidable and resolves to observed — and is
+ * named in `severities_without_scan`, so the reader knows which way the doubt fell.
  */
 function isObserved(
   acc: AssetAcc,
@@ -676,17 +678,8 @@ function isObserved(
       continue;
     }
     const rows = acc.rowsBySeverity.get(sev) ?? [];
-    const newestTs = parseTs(newest.ts);
     for (const row of rows) {
-      if (!blank(row.last_scan_id)) {
-        if (!blank(newest.scan_id) && String(row.last_scan_id) === String(newest.scan_id)) {
-          observed = true;
-          break;
-        }
-        continue;
-      }
-      const lastSeen = parseTs(row.last_seen);
-      if (newestTs !== null && lastSeen !== null && lastSeen >= newestTs) {
+      if (rowReachesScan(row, newest)) {
         observed = true;
         break;
       }

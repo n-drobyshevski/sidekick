@@ -23,9 +23,14 @@ import {
   type KMPoint,
 } from "../src/domain/remediation";
 
-/** A resolved row at `mttr_days = t` — the shape kaplanMeier reads for an event. */
+/**
+ * A resolved row at `mttr_days = t` — the shape kaplanMeier reads for an event.
+ * `observed`/`seen_age_days` ride along only to satisfy `RemediationRow`'s shape: a RESOLVED
+ * row never reaches `openAge`'s observed branch (see `resolvedMttr` gating), so they are
+ * inert here.
+ */
 function resolved(t: number) {
-  return { severity: "CRITICAL", status: "RESOLVED", mttr_days: t, age_days: null };
+  return { severity: "CRITICAL", status: "RESOLVED", mttr_days: t, age_days: null, observed: true, seen_age_days: null };
 }
 
 describe("the crossing epsilon, on CLAUDE.md's own example", () => {

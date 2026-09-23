@@ -22,9 +22,16 @@ const DAY_MS = 86_400_000;
 // no-fix. Shared by recordNoFix so the frame predicate agrees with the ledger derivation.
 const ROLLOUT_MS = parseTs(REMEDIATION_ROLLOUT_ISO);
 
-// Ledger rows carry all remediation signal in these four columns; every function here
-// reads only this projection.
-type RemediationRow = Pick<BaseRow, "severity" | "status" | "mttr_days" | "age_days">;
+// Ledger rows carry all remediation signal in these six columns; every function here reads
+// only this projection. `observed` / `seen_age_days` ride along for exactly one reason: the
+// censoring clock below. A clock projection that does not carry the ledger's own `observed`
+// forces `observed: true` explicitly (see `latencyView`) rather than leaving the field
+// undefined — undefined reads as unobserved (falsy), which would silently censor every row
+// at `seen_age_days` instead of the clock's own time.
+type RemediationRow = Pick<
+  BaseRow,
+  "severity" | "status" | "mttr_days" | "age_days" | "observed" | "seen_age_days"
+>;
 
 // Time-to-resolve histogram edges (days) and their five bucket labels — bucketed with
 // `<=` edges, the same convention as insights.ageBuckets. Shape is drop-in for
@@ -44,10 +51,14 @@ function resolvedMttr(row: RemediationRow): number | null {
   return typeof m === "number" && Number.isFinite(m) ? m : null;
 }
 
-// An open row's age, or null when resolved / missing an age_days sample.
+// An open row's age for the CENSORING clock — `age_days` while the asset is still observed,
+// or `seen_age_days` (open time WHILE WE COULD STILL SEE IT) once the scanner has lost it, so
+// a stale row is censored at its last sighting rather than at today (KM's correct treatment of
+// a censored observation — see the module header and `kaplanMeier`). Null when resolved or
+// when the selected field has no finite sample.
 function openAge(row: RemediationRow): number | null {
   if (!isOpen(row.status)) return null;
-  const a = row.age_days;
+  const a = row.observed ? row.age_days : row.seen_age_days;
   return typeof a === "number" && Number.isFinite(a) ? a : null;
 }
 
@@ -318,20 +329,40 @@ export interface OpenSlaOverall {
 export interface OpenPastSla {
   perSev: Record<string, OpenSlaSev>;
   overall: OpenSlaOverall;
+  /**
+   * Open rows excluded because the asset was not present at the newest scan of the row's own
+   * severity (`BaseRow.observed`) — the same population `insights.ageBuckets` and
+   * `agingDistribution` set aside. A breach determination needs a live reading; an unobserved
+   * row's SLA status cannot be confirmed either way, so it is counted apart rather than scored
+   * as either in-SLA or breached.
+   */
+  unobserved: number;
 }
 
 /**
  * Open findings already older than their severity's SLA target — the aged backlog the
- * resolved-only "In SLA %" never scores. Over open rows with a finite age_days, breached
- * iff `age_days > SLA_TARGETS[sev]` (strict `>`, the dual of the in-SLA `d <= target`).
- * A severity with no target (e.g. UNKNOWN) gets `target: null` and never breaches. `pct`
- * is null only when `open === 0` (no open sample to score).
+ * resolved-only "In SLA %" never scores. Over OBSERVED open rows with a finite age_days,
+ * breached iff `age_days > SLA_TARGETS[sev]` (strict `>`, the dual of the in-SLA
+ * `d <= target`). A severity with no target (e.g. UNKNOWN) gets `target: null` and never
+ * breaches. `pct` is null only when `open === 0` (no open sample to score).
+ *
+ * UNOBSERVED ROWS ARE EXCLUDED BEFORE `openAge` IS EVEN CALLED, not by its return value: once
+ * a row is unobserved, `openAge` reads `seen_age_days` instead of `age_days` (see its own
+ * header) and that is very often a FINITE number, so `age === null` can no longer be read as
+ * "not open" here — it is `!row.observed` that decides exclusion, checked directly against the
+ * one field every consumer of this split reads the same way.
  */
 export function openPastSla(rows: RemediationRow[]): OpenPastSla {
   const perSev: Record<string, OpenSlaSev> = {};
   let totalOpen = 0;
   let totalBreached = 0;
+  let unobserved = 0;
   for (const row of rows) {
+    if (!isOpen(row.status)) continue;
+    if (!row.observed) {
+      unobserved += 1;
+      continue;
+    }
     const age = openAge(row);
     if (age === null) continue;
     const s = normalizeSeverity(row.severity);
@@ -354,6 +385,7 @@ export function openPastSla(rows: RemediationRow[]): OpenPastSla {
       breached: totalBreached,
       pct: totalOpen ? (totalBreached / totalOpen) * 100 : null,
     },
+    unobserved,
   };
 }
 
@@ -392,15 +424,27 @@ export function openPastSlaFromRecords(records: Rec[], now?: number): number {
  * actionable fields, so they drop out of every clock here automatically (a resolved row
  * with no fix ever observed likewise has a null mttr_actionable_days) while still counting
  * in awaitingVendorFix / the open backlog.
+ *
+ * `observed` PASSES THROUGH UNCHANGED — whether the scanner still sees the asset is a fact
+ * about the ROW, not about which clock is being read off it, so `openPastSla` over this view
+ * sets aside exactly the same rows the from-detection view does. `seen_age_days` also passes
+ * through as-is: it is the from-detection open span, a conservative (if not clock-exact)
+ * substitute for "how long this was actionable while still observed" — the actionable clock
+ * has no analogous field of its own, and inventing one is outside what this package changes.
  */
 export function actionableView(
-  rows: Pick<BaseRow, "severity" | "status" | "mttr_actionable_days" | "actionable_age_days">[],
+  rows: Pick<
+    BaseRow,
+    "severity" | "status" | "mttr_actionable_days" | "actionable_age_days" | "observed" | "seen_age_days"
+  >[],
 ): RemediationRow[] {
   return rows.map((r) => ({
     severity: r.severity,
     status: r.status,
     mttr_days: r.mttr_actionable_days,
     age_days: r.actionable_age_days,
+    observed: r.observed,
+    seen_age_days: r.seen_age_days,
   }));
 }
 
@@ -557,6 +601,15 @@ function latencyObservation(
  * closed before any fix appeared is therefore projected as "OPEN" even though it is
  * resolved — it is censored, not an event, and the projection has to say so in the only
  * vocabulary the estimator reads.
+ *
+ * `observed: true`, ALWAYS, and deliberately not the row's real value. This clock's `age_days`
+ * is not the ledger's open-time span at all — it is `latencyObservation`'s own `t` (a wait
+ * measured from `origin`, censored at `nowMs` per its own docstring above) — so branching it
+ * through `openAge`'s `observed ? age_days : seen_age_days` split would compare a detection-
+ * clock duration against a latency-clock one. Forcing `observed: true` keeps `openAge` reading
+ * `age_days` unconditionally here, i.e. exactly what this clock has always measured; the
+ * scanner-visibility split stays scoped to the from-detection and actionable clocks, whose
+ * `age_days` IS the ledger's own span.
  */
 export function latencyView(
   rows: LatencyRow[],
@@ -573,6 +626,8 @@ export function latencyView(
       status: obs.event ? "RESOLVED" : "OPEN",
       mttr_days: obs.event ? obs.t : null,
       age_days: obs.event ? null : obs.t,
+      observed: true,
+      seen_age_days: null,
     });
   }
   return out;

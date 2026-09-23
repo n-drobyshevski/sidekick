@@ -138,6 +138,49 @@ describe("the hero refuses a confident zero for a figure nobody could compute", 
     expect(none.pct).toBeNull();
     expect(none.denominator).toBe(0);
   });
+
+  // O1a's `openPastSla()` excludes an unobserved row before it is even scored as breached or
+  // not, so this stat's own denominator (380) moved under a reader who was not looking at it
+  // specifically — the hero's own split note above it does not say THIS number is the one it
+  // qualifies. Real numbers from the live ledger this package was written against.
+  it("the Past SLA stat carries the present/unobserved split beside its own base", () => {
+    const view = overviewHeroView(fullPayload({
+      backlog: {
+        observed: 2532, unobserved: 2630, unobservedAssets: 113, unobservedSince: "2026-08-12",
+      },
+    }), registerFirstRunView(520, true, "t"));
+    const past = view.stats.find((s) => s.name === "Past SLA");
+    // ON THE SURFACE — joins the sub-line the rate's own base already carries.
+    expect(past.sub).toBe(
+      "past it, on the vendor-fix clock · 2,532 present · 2,630 unobserved since 2026-08-12",
+    );
+    // ONE LEVEL DOWN — the shared caption, appended to the tip.
+    expect(past.lines).toContain(
+      "2,630 findings on 113 assets have not been in a scan since 2026-08-12. Counted apart: "
+      + "the scanner has not answered for them, which is not the same as nobody fixing them.",
+    );
+    // `denominatorLabel` is untouched — it is a DIFFERENT base (open findings on the clock)
+    // from the register-wide backlog split, and the two must not be spliced into one figure.
+    expect(past.denominatorLabel).toBe("of 380 on the clock");
+  });
+
+  it("the Past SLA stat hides the split cleanly when nothing is unobserved", () => {
+    const view = overviewHeroView(fullPayload({
+      backlog: { observed: 412, unobserved: 0, unobservedAssets: 0, unobservedSince: null },
+    }), registerFirstRunView(520, true, "t"));
+    const past = view.stats.find((s) => s.name === "Past SLA");
+    expect(past.sub).toBe("past it, on the vendor-fix clock");
+    expect(past.lines).toEqual([
+      "On the vendor-fix clock, matching the MTTR page.",
+      "A finding with no patch yet is not a breach: its clock has not started.",
+    ]);
+  });
+
+  it("the Past SLA stat hides the split when the payload carries no backlog block at all", () => {
+    const view = overviewHeroView(fullPayload(), registerFirstRunView(520, true, "t"));
+    const past = view.stats.find((s) => s.name === "Past SLA");
+    expect(past.sub).toBe("past it, on the vendor-fix clock");
+  });
 });
 
 // =========================================================================================

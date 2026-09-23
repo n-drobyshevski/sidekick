@@ -102,7 +102,13 @@ import { getExecutivePage, getMttrByDomainTrend, getMttrPage } from "../src/serv
 //  Fixture
 // --------------------------------------------------------------------------------------- //
 
-/** One finding on an asset. Open unless `resolved_at` says otherwise. */
+/**
+ * One finding on an asset. Open unless `resolved_at` says otherwise. `observed: true` by
+ * default — this file's own specs never assert on `kmMedian` / `openPastSla` / `p90` (it tests
+ * dimension routing and cache keys, not the backlog split), but leaving the field unset would
+ * silently run `remediationGroups`' `kaplanMeier` / `openPastSla` over an all-unobserved
+ * population here for no reason a reader of this file would see.
+ */
 function row(over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     vuln_key: "k",
@@ -125,6 +131,8 @@ function row(over: Record<string, unknown> = {}): Record<string, unknown> {
     has_kev: false,
     has_exploit: false,
     epss: 0,
+    observed: true,
+    seen_age_days: null,
     ...over,
   };
 }
@@ -342,7 +350,7 @@ describe("compacted episodes", () => {
 // --------------------------------------------------------------------------------------- //
 
 describe("the by-asset cache entry", () => {
-  const assetKeys = () => H.keys.filter((k) => k.ns === "mttrByAsset1");
+  const assetKeys = () => H.keys.filter((k) => k.ns === "mttrByAsset2");
 
   beforeEach(() => {
     H.base = [...openOn("host-01", 2), ...openOn("host-02", 1)];
@@ -398,8 +406,8 @@ describe("the by-asset cache entry", () => {
   it("is the only split computed under a support-group scope", () => {
     split({ supportGroup: "Platform SRE" });
     const namespaces = H.keys.map((k) => k.ns);
-    expect(namespaces).toContain("mttrByAsset1");
-    expect(namespaces).not.toContain("mttrByDomain14");
-    expect(namespaces).not.toContain("mttrBySupportGroup2");
+    expect(namespaces).toContain("mttrByAsset2");
+    expect(namespaces).not.toContain("mttrByDomain15");
+    expect(namespaces).not.toContain("mttrBySupportGroup3");
   });
 });
