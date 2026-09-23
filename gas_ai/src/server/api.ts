@@ -456,7 +456,7 @@ export function bootstrap(_p?: unknown): ApiResult {
 
 // The core's cache name, shared by `bootstrap` and `bootstrapIfWarm` so the inline path can only
 // ever peek at the entry the RPC path reads and the warm writes.
-const BOOT_CORE = "bootstrapCore";
+const BOOT_CORE = "bootstrapCore1";
 
 /**
  * The bootstrap envelope, but only when its core is already cached — doGet's inline path
@@ -761,7 +761,7 @@ export function getGraph(p?: unknown): ApiResult {
     // the CacheService fetch — no Sheets or Drive I/O at all. Seed resolution
     // and settings defaults live INSIDE the compute; they only change when the
     // data version bumps, and the version is part of the key.
-    return durablyCached("getGraph", graphCacheParams(params), () => {
+    return durablyCached("getGraph1", graphCacheParams(params), () => {
       const doc = viewGraphDoc();
       if (!doc) return { empty: true };
       const options = resolveGraphParams(params, {
@@ -819,7 +819,7 @@ export function getQueryVocabulary(p?: unknown): ApiResult {
     ? (raw as QueryKind)
     : null;
   return run(() =>
-    durablyCached("queryVocabulary", { kind }, () => {
+    durablyCached("queryVocabulary1", { kind }, () => {
       const doc = viewGraphDoc();
       if (!doc) {
         return { empty: true, kinds: [], stepsFrom: {}, valuesFor: {}, fieldsFor: {}, shortcuts: [] };
@@ -882,7 +882,7 @@ export function runGraphQuery(p?: unknown): ApiResult {
     // cache entry and their own Sheets read.
     // `retired` rides outside the cache key on purpose: it is a property of the REQUEST,
     // and two spellings of one query must still share a cache entry.
-    const answer = cached("graphQuery", { query, columns, view, maxNodes }, () => {
+    const answer = cached("graphQuery1", { query, columns, view, maxNodes }, () => {
       const doc = viewGraphDoc();
       if (!doc) return { empty: true };
       const result = runQuery(doc, query, { columns });
@@ -1601,7 +1601,7 @@ function postureFailCount(kpis: Rec): number | null {
  */
 export function getAssetOptions(_p?: unknown): ApiResult {
   return run(() =>
-    durablyCached("assetOptions", null, () => ({
+    durablyCached("assetOptions1", null, () => ({
       rows: [...viewAssets()]
         .sort((a, b) =>
           Number(b.openIssues ?? 0) - Number(a.openIssues ?? 0)
@@ -1630,7 +1630,7 @@ export function getAssetDetail(p?: unknown): ApiResult {
   return run(() => {
     const id = String(((p ?? {}) as Rec)["id"] ?? "");
     // Cached: opening the same detail sheet twice must not re-read Drive+Sheets.
-    return cached("getAssetDetail", { id }, () => {
+    return cached("getAssetDetail1", { id }, () => {
       // Raw, like the rest of this handler — see the header. A by-id sheet is register-wide.
       const doc = syncStore.loadGraphDoc();
       if (!doc) return null;
@@ -1859,7 +1859,7 @@ export function getConfigFindings(p?: unknown): ApiResult {
     );
     const page = Math.max(0, Number(params["page"]) || 0);
 
-    const model = durablyCached("configModel", null, configModel) as ReturnType<typeof configModel>;
+    const model = durablyCached("configModel1", null, configModel) as ReturnType<typeof configModel>;
     // `pageSize`, `sort` and `dir` used to be echoed back here and had no reader: the client
     // holds its own copy of all three in `query`. THE REST OF THIS PAYLOAD IS DELIBERATELY
     // LEFT ALONE even though config.js dereferences only `rows`, `totals` and `scopeLoss`,
@@ -1917,7 +1917,7 @@ export function getConfigFindings(p?: unknown): ApiResult {
 export function getConfigFindingDetail(p?: unknown): ApiResult {
   return run(() => {
     const id = String(((p ?? {}) as Rec)["id"] ?? "");
-    return cached("getConfigFindingDetail", { id }, () => {
+    return cached("getConfigFindingDetail1", { id }, () => {
       // Raw, not viewFindings(): a lookup BY ID is already a specific answer. Someone
       // following a bookmark or a shared link should see the row, not a "not found" that
       // reads as deleted. Lists narrow; links do not break.
@@ -2014,7 +2014,7 @@ function fetchScopedPosture(
   frameworkId: string,
   projectId: string,
 ): { posture: PostureRow[]; frameworkPolicies: FrameworkPolicyRow[]; fetchedAt: string } {
-  return cached("compliancePostureScoped", { frameworkId, projectId }, () => {
+  return cached("compliancePostureScoped1", { frameworkId, projectId }, () => {
     const page = wizClientAi.fetchSingleObject("securityFramework", {
       query: Q_COMPLIANCE_POSTURE,
       extraVariables: {
@@ -2123,7 +2123,7 @@ function cachedComplianceModel(): Rec {
     // reader — neither client caller even sends the param, and the page opens on a linked
     // framework from its own hash. With the echo gone the response does not vary by it, so
     // keeping it in the key would fragment one entry into N identical copies.
-    return cached("getCompliance", { projectView, domainView }, () => {
+    return cached("getCompliance1", { projectView, domainView }, () => {
       const storedPosture = syncStore.loadPosture();
       const catalogue = syncStore.loadFrameworks();
       const selected = settingsStore.getSelectedFrameworks(() => catalogue);
@@ -2335,7 +2335,7 @@ export function expandAsset(p?: unknown): ApiResult {
     // otherwise the tenant-wide answer keeps being served for a scope that no longer asks
     // for it.
     const projectId = projectScope()?.[0] ?? null;
-    return cached("expandAsset", { id, projectId }, () => {
+    return cached("expandAsset1", { id, projectId }, () => {
       const slots = flattenSlots(AGENT_EXPANSION);
       const page = wizClientAi.fetchGraphSearchPage({
         query: Q_AGENT_EXPANSION,
@@ -2559,7 +2559,7 @@ export function getIssueDetail(p?: unknown): ApiResult {
  * `getCombosDigest` resolve THIS entry; neither recomputes a leaner one.
  */
 function cachedCombos(): Rec {
-  return cached("getToxicCombos", null, () => {
+  return cached("getToxicCombos1", null, () => {
       const issues = openIssues();
       const assetRows = viewAssets();
       const assets = new Map(assetRows.map((a) => [a.id, a]));
@@ -2885,7 +2885,7 @@ export function getProblems(p?: unknown): ApiResult {
     );
     const page = Math.max(0, Number(params["page"]) || 0);
 
-    const model = durablyCached("problemsModel", null, problemsModel) as ProblemsModel;
+    const model = durablyCached("problemsModel1", null, problemsModel) as ProblemsModel;
     const head = {
       // The union invariant's left-hand side — every unresolved issue and every open
       // finding, regardless of the outcome filter or the mode below.
@@ -2960,7 +2960,7 @@ export function getActions(p?: unknown): ApiResult {
     const limitParam = Number(params["limit"]);
     const limit = Number.isFinite(limitParam) && limitParam >= 0 ? Math.floor(limitParam) : undefined;
 
-    const model = durablyCached("problemsModel", null, problemsModel) as ProblemsModel;
+    const model = durablyCached("problemsModel1", null, problemsModel) as ProblemsModel;
     // CACHED UNDER THE SAME VERSION AS THE MODEL IT RANKS. Every other input here came from
     // cache, but `withAutoRemediation` needs the `ai_framework_policies` tab (509 rows), and it
     // was read on every call: 0.87 s of a 1.06 s warm getActions in production, and on a warm
@@ -3005,7 +3005,7 @@ export function cancelSync(p?: unknown): ApiResult {
 }
 
 export function getSyncHistory(_p?: unknown): ApiResult {
-  return run(() => durablyCached("getSyncHistory", null, () => ({
+  return run(() => durablyCached("getSyncHistory1", null, () => ({
     rows: syncStore.syncHistory().reverse(),
   })));
 }
@@ -3342,7 +3342,7 @@ function settingsImpactData(): Rec {
   const configuredIds = settingsStore.getIssueCategories();
   const categoryCube = settingsImpact.buildCategoryCube(openIssues, candidateIds, configuredIds);
 
-  const problems = durablyCached("problemsModel", null, problemsModel) as ProblemsModel;
+  const problems = durablyCached("problemsModel1", null, problemsModel) as ProblemsModel;
   const termCoverage = settingsImpact.termCoverageOf(problems.rows);
 
   // P11: the sparse joint over the rank tuple, built from the SAME `effectiveRankRule()` that
@@ -4239,7 +4239,7 @@ export function pruneToProject(p?: unknown): ApiResult {
 
 export function getStorageStats(_p?: unknown): ApiResult {
   return run(() =>
-    durablyCached("getStorageStats", null, () => ({
+    durablyCached("getStorageStats1", null, () => ({
       cellCount: cellCount(),
       archiveBytes: archiveBytes(),
       rows: {
