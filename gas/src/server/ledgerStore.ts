@@ -146,10 +146,12 @@ function rowToLedger(r: Rec): LedgerRow {
 // inside the same execution (recovery, mutation endpoints) see fresh data.
 let scanRowsMemo: ScanRow[] | undefined;
 let stateMemo: LedgerState | undefined;
+let baseRowsMemo: { state: LedgerState; rows: BaseRow[] } | undefined;
 
 export function invalidateLedgerMemos(): void {
   scanRowsMemo = undefined;
   stateMemo = undefined;
+  baseRowsMemo = undefined;
   // Every ledger write also stales the cross-request derived caches.
   bumpDataVersion();
 }
@@ -341,9 +343,36 @@ const readPayloadForRow = (row: ScanRow): unknown | null =>
  * callers gets a correct `observed` / `seen_age_days` with no plumbing of its own, the same
  * way every caller of `loadState()` gets a correct `scans` array with no plumbing of its own.
  */
+/**
+ * The durable base, derived once per execution and handed out as copies.
+ *
+ * MEMOIZED because it was the single largest cost in the app and it was paid per CALLER, not
+ * per request: `baseRows` re-derives every ledger row (six timestamp parses, a spread, the
+ * observation test) and `getExecutivePage` alone reaches it through five read-models — the warm
+ * through twenty-seven. Keyed on the memoized state object, so `invalidateLedgerMemos()` (every
+ * write path) and a fresh `loadState()` both retire it.
+ *
+ * COPIES, NOT THE MEMO, because callers annotate rows in place — `_domain`, `_bizDomain`,
+ * `risk_tier`, and `_supportGroup`, which one split overwrites with its NONE bucket. Shared
+ * rows would let one read-model's annotations leak into the next one's input, and the answer
+ * would depend on call order. A shallow copy is a fraction of the derivation (measured in node
+ * at 140k rows: ~890 ms to derive vs. a copy several times cheaper), and every annotation is a
+ * top-level field, so shallow is enough.
+ *
+ * An explicit `now` bypasses the memo: the memo's age fields are stamped at the first call's
+ * clock, which is what an execution-scoped read wants and not what a caller asking for a
+ * specific instant does.
+ */
 export function loadBaseRows(now?: number): BaseRow[] {
   const state = loadState();
-  return baseRows(state, now, newestFlatScanBySeverity(state.scans));
+  if (now !== undefined) return baseRows(state, now, newestFlatScanBySeverity(state.scans));
+  if (baseRowsMemo === undefined || baseRowsMemo.state !== state) {
+    const t0 = Date.now();
+    baseRowsMemo = { state, rows: baseRows(state, undefined, newestFlatScanBySeverity(state.scans)) };
+    // Same line shape as entry.js's timedApi_, so the derivation reads beside the RPC it served.
+    console.log(JSON.stringify({ stage: "baseRows", rows: baseRowsMemo.rows.length, ms: Date.now() - t0 }));
+  }
+  return baseRowsMemo.rows.map((r) => ({ ...r }));
 }
 
 // Ceiling on how many reconstructed (synthetic pre-scan) points get a full KM-median build in

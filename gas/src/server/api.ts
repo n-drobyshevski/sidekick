@@ -2153,13 +2153,33 @@ function newestScanBySeverity(): Record<string, coldZone.NewestScan> {
 function coldZoneData(p?: unknown): Rec {
   const domain = String((p as Rec)?.["domain"] ?? "");
   const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
+  // Stage timings go to the execution log: this model was measured at minutes on a cold cache
+  // and the split between loading the base, the support-group join and the profile is the one
+  // thing that says where the next change should go.
+  const t0 = Date.now();
   let rows = scopedBaseRows(domain, supportGroup);
+  const tBase = Date.now();
   supportGroups.attachSupportGroups(rows);
   rows = filterSeverities(rows, readSeverities(p));
   rows = visibleBase(rows);
+  const tJoin = Date.now();
   const rule = settingsStore.getRiskRule().rule;
   const cold = settingsStore.getColdZone();
   const clock = ledgerClock();
+  const profile = coldZone.coldZoneProfile(rows as unknown as coldZone.ColdRow[], {
+    now: clock.asOf,
+    observedFrom: clock.observedFrom,
+    coldAfterDays: cold.coldAfterDays,
+    mode: cold.mode,
+    targetSharePct: cold.targetSharePct,
+    floorDays: cold.floorDays,
+    newestScanBySeverity: newestScanBySeverity(),
+    rule,
+  });
+  console.log(JSON.stringify({
+    stage: "coldZone", rows: rows.length,
+    baseMs: tBase - t0, joinMs: tJoin - tBase, profileMs: Date.now() - tJoin,
+  }));
   return {
     asOf: clock.asOf,
     asOfSource: clock.asOfSource,
@@ -2169,16 +2189,7 @@ function coldZoneData(p?: unknown): Rec {
     // rule produced it rather than leaving the reader to go and look.
     rule,
     ruleSentence: program.ruleSentence(rule),
-    coldZone: coldZone.coldZoneProfile(rows as unknown as coldZone.ColdRow[], {
-      now: clock.asOf,
-      observedFrom: clock.observedFrom,
-      coldAfterDays: cold.coldAfterDays,
-      mode: cold.mode,
-      targetSharePct: cold.targetSharePct,
-      floorDays: cold.floorDays,
-      newestScanBySeverity: newestScanBySeverity(),
-      rule,
-    }),
+    coldZone: profile,
     // Named so the page can state what was excluded before any of this counted.
     toggles: {
       showNoFix: settingsStore.getShowNoFix(),
