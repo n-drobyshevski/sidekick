@@ -1074,3 +1074,62 @@ a stalled tenant. It survived unnoticed because the only sync anyone had run fin
 hops**. `dist/entry.js` wires the real trigger correctly, so no deployment was affected. The
 lookup now resolves across candidate namespaces and, finding none, says what it looked for and
 what `Server` actually has.
+
+# 13. Does this register have the OS register's blind spot? (2026-09-23)
+
+`gas/` was found holding a backlog that was half phantom: 2,630 of 5,174 open rows, on 113
+assets, had not been in a scan for **exactly 42 days** — p50 = p90 = max, which is one event
+around 2026-08-12 rather than wear — while every age and SLA figure counted them as live
+exposure. Before porting that register's fix here, the same question was put to this ledger.
+
+## 13.1 The answer is no, and the numbers are not close
+
+| scope | open | present at the newest covering scan |
+|---|---|---|
+| sca | 21,899 | **100%** |
+| sast | 136 | **100%** |
+| secrets | 1,285 | **100%** |
+
+Zero repositories gone quiet, zero rows stale on a live repository, zero superseded. The
+backlog split `gas/` now carries would be a no-op here today. It was not ported.
+
+Watching since **2026-08-28** — twenty-six days — with scan gaps of p50 1.9 d and max 9.1 d.
+That youth is also why left truncation dominated *here* and barely registered there: Wiz dates
+SCA findings to its June 2025 onboarding, and this register has been looking for under a month.
+
+## 13.2 The one thing that is the same defect wearing different clothes
+
+**296 open rows sit at a (scope, severity) pair no scan has ever covered.** They cannot close
+by disappearance — resolve-by-disappearance is gated on the severities a scan actually
+requested — and they cannot close by API either, because nothing is looking at them. They age
+forever, exactly like an unobserved row in `gas/`, for a different reason: a narrowed severity
+gate rather than a repository that went quiet.
+
+`settingsImpact.strandedOpenCount` already computes this population and the Settings page
+already prints it, and that function's own header describes the mechanism in the same terms.
+What no surface does is exclude them from the age and SLA figures — the correction `gas/`
+received. At 296 of 23,320 open rows (1.3%) that was judged not worth a package. If the
+severity gate narrows further, revisit: the population is whatever sits outside the gate.
+
+## 13.3 The probe, and why it had to know about severities
+
+Measured with a read-only `dsProbeBacklog`, run once and not kept. Two traps it had to respect,
+both already load-bearing in this register:
+
+* **Scans are per scope.** An sca sweep is no evidence about a sast finding.
+* **Scans record which severities they covered** (`sheetsDb.ts` says the column exists for
+  exactly this). A scan that asked only for CRITICAL cannot be evidence that a MEDIUM finding
+  has gone away.
+
+So a row was judged against the newest scan of its scope *that covered its severity*, and a
+(scope, severity) pair with no such scan counted as present. Judging by the newest scan alone
+would have reported those 296 stranded rows as a 296-row blind spot — inventing the finding
+instead of measuring it.
+
+## 13.4 What this register does carry, from the same week
+
+The left-truncation work (delayed entry, the Gebski reliability cut, a fixed 365-day RMST
+horizon, the measurement window, the reconciling accounting block) landed here first, because
+here it was the defect: the MTTR hero read "at least 462 days", which was the oldest open age
+standing in for a median the curve never reached. `gas/README.md` records the OS side, where
+that same correction turned out to be worth 1.3%.

@@ -1,13 +1,6 @@
 // Bundles the TypeScript server code into a single IIFE (global `Server`) that GAS V8
 // can run, and inlines the client JS/CSS into HtmlService partials. `dist/entry.js` and
 // `dist/appsscript.json` are hand-maintained and never overwritten here.
-//
-// So is `dist/probe_mttr_evidence.gs`, and unlike those two it is TEMPORARY: a read-only
-// one-off that answers how much of this register's "resolved" is a finding that was fixed
-// and how much is a whole VM that went away — the question MTTR cannot be trusted without.
-// It rides in dist/ because clasp pushes dist/ and nothing else, it is called by hand from
-// the Apps Script editor, and no shipped code references it. Delete it once the answer is
-// written down.
 import { build } from "esbuild";
 import { buildStamp } from "./buildStamp.mjs";
 import { renderIndexHtml } from "../gas_shared/shell/renderIndex.js";
