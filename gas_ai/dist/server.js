@@ -11591,7 +11591,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "446400f7a635" : "dev";
+  var BUILD_ID = true ? "5d7288a9e440" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -19977,9 +19977,10 @@ var Server = (() => {
       const limitParam = Number(params["limit"]);
       const limit = Number.isFinite(limitParam) && limitParam >= 0 ? Math.floor(limitParam) : void 0;
       const model = durablyCached("problemsModel", null, problemsModel);
-      const fullyRanked = withAutoRemediation(
-        rankActionsByCover(model.rows),
-        loadFrameworkPolicies()
+      const fullyRanked = cached(
+        "actionsRanked1",
+        null,
+        () => withAutoRemediation(rankActionsByCover(model.rows), loadFrameworkPolicies())
       );
       return {
         rows: limit !== void 0 ? fullyRanked.slice(0, limit) : fullyRanked,

@@ -2961,10 +2961,18 @@ export function getActions(p?: unknown): ApiResult {
     const limit = Number.isFinite(limitParam) && limitParam >= 0 ? Math.floor(limitParam) : undefined;
 
     const model = durablyCached("problemsModel", null, problemsModel) as ProblemsModel;
-    const fullyRanked = withAutoRemediation(
-      rankActionsByCover(model.rows),
-      syncStore.loadFrameworkPolicies(),
-    );
+    // CACHED UNDER THE SAME VERSION AS THE MODEL IT RANKS. Every other input here came from
+    // cache, but `withAutoRemediation` needs the `ai_framework_policies` tab (509 rows), and it
+    // was read on every call: 0.87 s of a 1.06 s warm getActions in production, and on a warm
+    // page the first Sheets touch of the execution, which is what opens the spreadsheet. The
+    // tab's only writer is the sync's persist, which commits through `syncStore.commit()` and
+    // bumps DATA_VERSION — the version this key and `problemsModel`'s both carry — and both
+    // functions are pure, so the ranking cannot be stale relative to the model beside it.
+    const fullyRanked = cached(
+      "actionsRanked1",
+      null,
+      () => withAutoRemediation(rankActionsByCover(model.rows), syncStore.loadFrameworkPolicies()),
+    ) as ReturnType<typeof withAutoRemediation>;
 
     return {
       rows: limit !== undefined ? fullyRanked.slice(0, limit) : fullyRanked,
