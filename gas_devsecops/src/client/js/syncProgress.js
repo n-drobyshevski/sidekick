@@ -66,6 +66,25 @@ export function shouldContinuePolling(job) {
   return !!job && !isTerminalPhase(String(job.phase || ""));
 }
 
+/**
+ * What a page load should resume watching, given the bootstrap that arrived with it.
+ *
+ * THE BOOTSTRAP ALREADY ANSWERS "IS A SYNC RUNNING". Its `activeJob` is a live field — computed
+ * in the same execution that served the page (`api.withLiveBootFields`), never cached — and it is
+ * the same `jobSummarySlice(activeJob())` that `api_getJobStatus` with no jobId returns. Asking
+ * that RPC again on every load cost a second GAS execution per page (measured at 2.1 s wall
+ * beside the landing page's own call) to learn nothing new. So a bootstrap that carries the field
+ * decides: `{ ask: false, jobId }`, with `jobId` null when nothing is running. Only a load with no
+ * bootstrap at hand (`ask: true`) still asks the server.
+ */
+export function resumePlan(bootstrap) {
+  if (!bootstrap || typeof bootstrap !== "object" || !("activeJob" in bootstrap)) {
+    return { ask: true, jobId: null };
+  }
+  const job = bootstrap.activeJob;
+  return { ask: false, jobId: shouldContinuePolling(job) && job.job_id ? String(job.job_id) : null };
+}
+
 /** Empty, or the literal strings "null"/"undefined" that a bad round-trip can leave. */
 function cleanError(err) {
   const raw = err == null ? "" : String(err).trim();

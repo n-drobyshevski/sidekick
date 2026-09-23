@@ -11,7 +11,8 @@
 // them leak onto the wire, not merely because today's server never sends them.
 
 import { describe, expect, it, vi } from "vitest";
-import { shouldContinuePolling, syncViewModel, SYNC_SCOPES } from "../src/client/js/syncProgress.js";
+import { readFileSync } from "node:fs";
+import { resumePlan, shouldContinuePolling, syncViewModel, SYNC_SCOPES } from "../src/client/js/syncProgress.js";
 
 const NOW = Date.parse("2026-09-03T12:00:00Z");
 
@@ -333,5 +334,34 @@ describe("a null job renders nothing", () => {
   it("returns null rather than throwing", () => {
     expect(syncViewModel(null, NOW)).toBeNull();
     expect(syncViewModel(undefined, NOW)).toBeNull();
+  });
+});
+
+// A page load used to ask `api_getJobStatus` with no jobId on every load — a second GAS
+// execution (2.1 s wall in production) to learn what the bootstrap that came with the page
+// already carries: the same `jobSummarySlice(activeJob())`, computed live in doGet.
+describe("resumePlan", () => {
+  it("resumes a running job straight from the bootstrap", () => {
+    expect(resumePlan({ activeJob: { job_id: "sync-1", phase: "FETCHING" } }))
+      .toEqual({ ask: false, jobId: "sync-1" });
+  });
+
+  it("resumes nothing, and asks nothing, when the bootstrap says no sync is running", () => {
+    expect(resumePlan({ activeJob: null })).toEqual({ ask: false, jobId: null });
+    expect(resumePlan({ activeJob: { job_id: "sync-1", phase: "DONE" } }))
+      .toEqual({ ask: false, jobId: null });
+  });
+
+  it("asks the server only when there is no bootstrap to read", () => {
+    expect(resumePlan(null)).toEqual({ ask: true, jobId: null });
+    expect(resumePlan({})).toEqual({ ask: true, jobId: null });
+  });
+
+  it("is what app.js consults before any id-less job-status call", () => {
+    const src = readFileSync(new URL("../src/client/js/app.js", import.meta.url), "utf8");
+    const body = src.slice(src.indexOf("async function resumeActiveJob("));
+    const fn = body.slice(0, body.indexOf("\n}\n"));
+    expect(fn.indexOf("resumePlan(")).toBeGreaterThan(-1);
+    expect(fn.indexOf("resumePlan(")).toBeLessThan(fn.indexOf('"api_getJobStatus"'));
   });
 });

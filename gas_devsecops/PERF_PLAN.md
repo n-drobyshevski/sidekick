@@ -1,8 +1,21 @@
-# gas_devsecops performance plan
+# gas_devsecops performance plan — done; kept as the measurement record
 
-Port of the `gas/` performance work (PRs #316–#325, 23 Sep 2026) to `gas_devsecops/`. Written
-at the end of that work, for a fresh session to execute. Delete this file once every step is
-merged or explicitly dropped.
+Port of the `gas/` performance work (PRs #316–#325, 23 Sep 2026) to `gas_devsecops/`, executed
+in PRs #327–#330. **Every step is merged or explicitly dropped** (see "Outcome" below). The file
+stays rather than being deleted because code comments across `src/server/` and `test/` cite its
+step numbers as the source of their measurements.
+
+## Outcome (production, warm load, 23 Sep 2026 22:33)
+
+| | Before (step-1 numbers below) | After |
+|---|---|---|
+| doGet | 6.4 s warm / 7.1 s cold, computing bootstrap inline | **2.2 s**; bootstrap inlined from cache in 525 ms (`dsBootCore1` peek 235 ms + live fields 286 ms), no Sheets reads |
+| getExecutivePage | ~1.2 s server-side, 0.85 s of it opening the spreadsheet | **0.58 s** server-side, `dsMttr4` hit, no Sheets reads |
+| Page-load RPCs | bootstrap + executive + id-less job status | executive only; the running-sync check reads the bootstrap (`syncProgress.resumePlan`, #330) |
+
+Dropped by the numbers: the active-job display cache (34 ms) and base rows once per execution
+(one derivation per execution). Warm continuation: port it from `gas/` only if a
+`trigger_warmReadModels` log shows `Read-model warm: out of budget`.
 
 ## What `gas/` taught us (read this first)
 

@@ -25,7 +25,7 @@ import { configureApp } from "../../../../gas_shared/appConfig.js";
 import { call } from "../../../../gas_shared/api.js";
 import { bootstrapCached, navigate, swrCall } from "../../../../gas_shared/store.js";
 import { createAppShell } from "../../../../gas_shared/shell/appShell.js";
-import { openSyncDetails, renderSyncCard, shouldContinuePolling } from "./syncProgress.js";
+import { openSyncDetails, renderSyncCard, resumePlan, shouldContinuePolling } from "./syncProgress.js";
 import {
   clear, confirmDialog, el, statusPill, syncCaption, tipAnchor, toast,
 } from "./ui.js";
@@ -216,7 +216,7 @@ function renderSyncZone(data) {
   // the reason one started, so this runs once per app lifetime, not once per rebuild.
   if (!resumeChecked) {
     resumeChecked = true;
-    resumeActiveJob();
+    resumeActiveJob(data);
   }
   return zone;
 }
@@ -335,9 +335,16 @@ function watchJob(jobId) {
 }
 
 /** A page LOAD is the only time worth asking whether a sync is already running (a reload
- *  mid-walk, or a second tab) — `getJobStatus` with no jobId returns the server's own
- *  single-flight `activeJob()`, so this resumes the SAME poll a fresh Run click would start. */
-async function resumeActiveJob() {
+ *  mid-walk, or a second tab). The bootstrap that came with the page already answers it from the
+ *  server's own single-flight `activeJob()` (see `resumePlan`), so a running job resumes the SAME
+ *  poll a fresh Run click would start without a second execution; only a load with no bootstrap
+ *  asks `getJobStatus` with no jobId. */
+async function resumeActiveJob(bootData) {
+  const plan = resumePlan(bootData);
+  if (!plan.ask) {
+    if (plan.jobId) watchJob(plan.jobId);
+    return;
+  }
   try {
     const job = await swrCall("api_getJobStatus", {}, () => {});
     if (job && shouldContinuePolling(job)) watchJob(job.job_id);
