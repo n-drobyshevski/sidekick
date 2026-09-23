@@ -350,7 +350,7 @@ describe("compacted episodes", () => {
 // --------------------------------------------------------------------------------------- //
 
 describe("the by-asset cache entry", () => {
-  const assetKeys = () => H.keys.filter((k) => k.ns === "mttrByAsset2");
+  const assetKeys = () => H.keys.filter((k) => k.ns === "mttrByAsset3");
 
   beforeEach(() => {
     H.base = [...openOn("host-01", 2), ...openOn("host-02", 1)];
@@ -406,8 +406,8 @@ describe("the by-asset cache entry", () => {
   it("is the only split computed under a support-group scope", () => {
     split({ supportGroup: "Platform SRE" });
     const namespaces = H.keys.map((k) => k.ns);
-    expect(namespaces).toContain("mttrByAsset2");
-    expect(namespaces).not.toContain("mttrByDomain15");
-    expect(namespaces).not.toContain("mttrBySupportGroup3");
+    expect(namespaces).toContain("mttrByAsset3");
+    expect(namespaces).not.toContain("mttrByDomain16");
+    expect(namespaces).not.toContain("mttrBySupportGroup4");
   });
 });

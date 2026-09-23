@@ -707,7 +707,22 @@ const cachedInsightsData = (p?: unknown) =>
     // version excludes — a fatter, WRONG backlog figure on THREE surfaces, not merely a
     // missing one. The key is unchanged: `observed` comes off `baseVisible` rows themselves,
     // already covered by the existing key's fields.
-    "insights8",
+    // "insights8" → "insights9": `pastSla` (`openPastSla` over `actionableView`) no longer
+    // excludes an unobserved open row outright — it now judges the row on what was actually
+    // seen: a row that had already breached before going quiet is folded into `breached`
+    // (a fact about the past a stale entry silently drops), and a row that had not yet
+    // breached is `unknown`, a new key a stale insights8 entry does not carry at all. A stale
+    // entry both UNDERCOUNTS breaches and lacks the field the aging headline now reads. The
+    // key is unchanged: `observed` / `seen_age_days` come off the same base rows.
+    // "insights9" → "insights10": `fixNext` (the Executive front door's ranked list) judges an
+    // unobserved open row the same way now — `pastSla` there reads `seen_age_days` in place of
+    // `actionable_age_days` once unobserved, so a row that already breached before going quiet
+    // still ranks late (tier 2/3), and one that had not yet breached moves from `insideSla`
+    // (a claim a stale entry was making with nothing to back it) into a new `unranked.unknown`
+    // count a stale insights9 entry does not carry. A stale entry both mis-states a claim and
+    // lacks the key `executive.js` now reads unconditionally off `unranked`. The key is
+    // unchanged: same base rows, same fields.
+    "insights10",
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
@@ -1306,7 +1321,9 @@ function mttrData(p?: unknown): Rec {
   };
   // The open backlog split present-vs-unobserved, over the same `remRows` every block in
   // `remediation` above measures — the one aggregate the hero's open count reads instead of
-  // re-deriving the split from `remediation.aging.unobserved` or `.openPastSla.unobserved`.
+  // re-deriving the split from `remediation.aging.unobserved` (`openPastSla` no longer carries
+  // an equivalent register-wide count of its own — see its `unknown`, a differently-scoped
+  // per-severity/-overall figure: rows still open but unconfirmed, not every unobserved row).
   const backlog = insights.backlogSplit(remRows as unknown as Parameters<typeof insights.backlogSplit>[0]);
   return { perSev, overall, slaPct, oldestDays, rowCount: rows.length, remediation, backlog };
 }
@@ -1717,7 +1734,13 @@ const cachedMttrData = (p?: unknown) =>
     // fatter, WRONG open-past-SLA than this version computes for the SAME rows — not a
     // missing-field gap a reader could shrug off, an outright disagreement. The key is
     // unchanged: `observed` / `seen_age_days` come off the base rows themselves.
-    "mttr11",
+    // "mttr11" → "mttr12": both `openPastSla` / `openPastSlaActionable` now judge an
+    // unobserved open row on what was actually seen instead of excluding it outright — a row
+    // that had already breached before going quiet now counts in `breached` (a stale entry
+    // UNDERCOUNTS it); a row that had not yet breached is `unknown`, a field a stale mttr11
+    // entry does not carry at all. Not a missing-field gap, an outright disagreement on
+    // `breached`. The key is unchanged: same base rows, same fields.
+    "mttr12",
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
@@ -1747,8 +1770,14 @@ const cachedMttrTrendData = (p?: unknown) =>
   // the hero's KM figures got from `BaseRow.observed`/`seen_age_days`; this is `durablyCached`
   // (no TTL), so a stale mttrTrend6 entry would otherwise disagree with the hero forever, not
   // just for an hour. The key is unchanged: `last_seen` comes off the same base rows.
+  // "mttrTrend7" → "mttrTrend8": `open_past_sla` (`withOpenPastSla`) now right-censors a row's
+  // CONSUMED time at `censoredAsOf(d, last_seen)` too, the same cap `km_median_days` got in
+  // mttrTrend7 — a row already gone quiet by a replay date `d` no longer reads as breaching
+  // just because `d` moved on without it. Points also gained `open_past_sla_unknown`. This is
+  // `durablyCached` (no TTL), so a stale mttrTrend7 entry would overstate the past-SLA line
+  // forever, not just for an hour, and never carry the new key at all.
   durablyCached(
-    "mttrTrend7",
+    "mttrTrend8",
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
@@ -1851,7 +1880,11 @@ const cachedMttrByDomainData = (p?: unknown) =>
     // later than that (trend.censoredAsOf) — the table and the trend chart beside it must
     // describe one estimate. Bump so a stale entry does not keep reporting the pre-split
     // numbers on either.
-    "mttrByDomain15",
+    // "mttrByDomain15" → "mttrByDomain16": `openPastSla` no longer sets an unobserved row aside
+    // outright — a row that had already breached before going quiet now folds into `breached`
+    // (a stale entry UNDERCOUNTS it) and one that had not yet breached is `unknown`, a key a
+    // stale entry does not carry. Bump so a stale entry stops reporting the undercount.
+    "mttrByDomain16",
     {
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
       severities: readSeverities(p),
@@ -1871,7 +1904,10 @@ const cachedMttrBySupportGroupData = (p?: unknown) =>
     // "mttrBySupportGroup2" → "mttrBySupportGroup3": same backlog-split value change as
     // "mttrByDomain15" — `kmMedian` / `p90` / `openPastSla` now treat an unobserved open row
     // differently from an observed one. Bump for the same reason.
-    "mttrBySupportGroup3",
+    // "mttrBySupportGroup3" → "mttrBySupportGroup4": same `openPastSla` three-way change as
+    // "mttrByDomain16" — an unobserved row that already breached now counts as breached instead
+    // of being set aside, and `unknown` is a new key. Bump for the same reason.
+    "mttrBySupportGroup4",
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
@@ -1899,7 +1935,10 @@ const cachedMttrByAssetData = (p?: unknown) =>
     // "mttrByAsset1" → "mttrByAsset2": same backlog-split value change as "mttrByDomain15" —
     // `kmMedian` / `p90` / `openPastSla` now treat an unobserved open row differently from an
     // observed one. Bump for the same reason.
-    "mttrByAsset2",
+    // "mttrByAsset2" → "mttrByAsset3": same `openPastSla` three-way change as "mttrByDomain16"
+    // — an unobserved row that already breached now counts as breached instead of being set
+    // aside, and `unknown` is a new key. Bump for the same reason.
+    "mttrByAsset3",
     {
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
       severities: readSeverities(p),

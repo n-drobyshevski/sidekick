@@ -45,17 +45,27 @@
 // on. Using `age_days` would report a finding that was vendor-blocked for three months and
 // patchable for two days as three months late, which is a breach nobody could have prevented.
 //
+// AN SLA WINDOW IS JUDGED ON WHAT WE ACTUALLY SAW — the same decision `remediation.openPastSla`
+// implements. `actionable_age_days` keeps growing with wall-clock time even after the scanner
+// has stopped returning a row, so reading it unconditionally would eventually call a row LATE
+// on the strength of nothing but the calendar. `pastSla` (below) reads `actionable_age_days`
+// while the row is `observed` and `seen_age_days` — the from-detection open span, the same
+// conservative substitute `remediation.actionableView` documents for this clock — once it is
+// not. A row that already blew its window while still visible IS late, still, on tier 2 or 3:
+// that is a fact about the past and losing sight of it does not undo it. A row that had NOT yet
+// breached at its last sighting is neither late nor inside SLA — see `unknown` below.
+//
 // ------------------------------------------------------------------------------------ //
 //  THE UNRANKED ACCOUNTING IS THE OTHER HALF OF THE LIST
 // ------------------------------------------------------------------------------------ //
 //
 // A top-8 with no denominator is a list that quietly deletes the backlog: it looks the same
 // whether four findings were left out or four thousand. Every OPEN row lands in exactly one
-// place — a tier, or one of four named reasons — and
+// place — a tier, or one of five named reasons — and
 //
-//     ranked + noFix + unclassified + insideSla + other === openTotal
+//     ranked + noFix + unclassified + insideSla + other + unknown === openTotal
 //
-// holds by construction. The four reasons:
+// holds by construction. The five reasons:
 //
 //   noFix         `awaiting_vendor_fix` — OPEN with no fix available yet. Waiting on a vendor
 //                 is not a slow team, so these are excluded from the list and COUNTED, never
@@ -66,12 +76,20 @@
 //                 exploit signals were NEVER CAPTURED. This is not "no exploit exists"; it is
 //                 "nobody looked", and it gets its own count for the same reason
 //                 `riskTierStats.unclassified` does.
-//   insideSla     Measured, and still within its severity's window. A positive statement, and
-//                 a claim — which is why an unmeasurable age never lands here.
+//   insideSla     OBSERVED, and still within its severity's window on the clock it actually
+//                 ran. A positive statement, and a claim — which is why an unmeasurable age,
+//                 and an unobserved row that has not yet breached, never land here.
 //   other         The residue, deliberately: no readable actionable age, or a severity with no
 //                 SLA target at all, or past SLA with the signals captured and none of them
 //                 clearing a tier's bar. Anything unaccounted for shows up as a number a
 //                 reader can ask about rather than being absorbed into a reassuring bucket.
+//   unknown       UNOBSERVED, and not yet past target at its LAST SIGHTING. We cannot say
+//                 whether it went on to breach after the scanner stopped returning it, so it is
+//                 counted and named apart — never folded into `insideSla`, because "we did not
+//                 look" is not a claim that the window was met. Tested only where a row would
+//                 otherwise have landed in `insideSla`: a row that already breached before
+//                 going quiet is `late`, not `unknown` (see `pastSla` below), and a row awaiting
+//                 a vendor fix is `noFix` regardless of whether anyone is still watching it.
 //
 // `Number(null)` IS 0 AND IT IS FINITE, so every age and every target is refused BEFORE any
 // cast (CLAUDE.md's third recurrence of this). `has_kev` / `has_exploit` are TRI-STATE and a
@@ -88,13 +106,18 @@ import { normalizeSeverity } from "./severity";
 export const FIX_NEXT_LIMIT = 8;
 
 export type FixNextTier = 1 | 2 | 3;
-export type UnrankedReason = "noFix" | "unclassified" | "insideSla" | "other";
+export type UnrankedReason = "noFix" | "unclassified" | "insideSla" | "other" | "unknown";
 
 /**
  * What this ranking reads. `_supportGroup` and `_domain` are SERVER-ATTACHED (api.ts's
  * `insightsData` runs `attachSupportGroups` and `resolveDomainName` over the base rows before
  * any aggregation), never native ledger columns — declared here as `unknown` for exactly that
  * reason, so nothing in this module can assume they arrived.
+ *
+ * `observed` / `seen_age_days` are threaded the same way `remediation.actionableView` threads
+ * them onto its own row projection — this module reads its OWN base rows directly rather than
+ * through that projection (it needs `has_kev`/`has_exploit`/`epss`/owner fields `actionableView`
+ * does not carry), but the consumed-time substitution is the identical one.
  */
 export type FixNextRow = Pick<
   BaseRow,
@@ -102,6 +125,7 @@ export type FixNextRow = Pick<
   | "has_kev" | "has_exploit" | "epss"
   | "fix_available_at" | "awaiting_vendor_fix"
   | "actionable_age_days" | "age_days"
+  | "observed" | "seen_age_days"
   | "asset_name" | "subscription_name"
 > & { _supportGroup?: unknown; _domain?: unknown };
 
@@ -137,6 +161,8 @@ export interface FixNextUnranked {
   unclassified: number;
   insideSla: number;
   other: number;
+  /** Unobserved, and not yet past target at its last sighting — see the module header. */
+  unknown: number;
 }
 
 export interface FixNextResult {
@@ -198,12 +224,20 @@ function text(v: unknown): string | null {
 /**
  * Past its severity's SLA window on the ACTIONABLE clock, or `null` when that cannot be
  * decided. Strict `>`, matching `insights.triageFunnel` and `remediation.openPastSla` — a
- * finding ON its due date is in SLA. Null for a row with no readable actionable age or a
- * severity carrying no target: both are "not measured", and this register does not render a
- * not-measured as a false.
+ * finding ON its due date is in SLA.
+ *
+ * CONSUMED TIME IS `actionable_age_days` WHILE THE ROW IS OBSERVED, `seen_age_days` ONCE IT IS
+ * NOT — the same split `remediation.openAge` reads, so a row that already blew its window while
+ * still visible returns `true` here (a fact about the past `pastSla` does not un-know), while a
+ * row that has simply been running the clock unobserved since without yet crossing it returns
+ * `false` — `classify` is what turns that `false` into `insideSla` or `unknown` depending on
+ * which one it was, because `pastSla` alone cannot say (see its own call site).
+ *
+ * Null for a row with no readable consumed age or a severity carrying no target: both are "not
+ * measured", and this register does not render a not-measured as a false.
  */
 function pastSla(row: FixNextRow, targets: Record<string, number>): boolean | null {
-  const age = finite(row.actionable_age_days);
+  const age = finite(row.observed ? row.actionable_age_days : row.seen_age_days);
   if (age === null) return null;
   const target = finite(targets[normalizeSeverity(row.severity)]);
   if (target === null) return null;
@@ -235,7 +269,11 @@ function classify(
 
   const late = pastSla(row, targets);
   if (late === null) return { reason: "other" };
-  if (!late) return { reason: "insideSla" };
+  // `pastSla` returning `false` means "not past target on the clock it actually ran" — which is
+  // a claim ("inside SLA") only when the row is OBSERVED. An unobserved row that had not yet
+  // breached at its last sighting cannot be told apart from one that breached the day after the
+  // scanner stopped looking, so it earns its own reason rather than a claim nobody can back.
+  if (!late) return row.observed ? { reason: "insideSla" } : { reason: "unknown" };
 
   const fixed = hasFix(row);
   if (fixed && (row.has_kev === true || row.has_exploit === true)) return { tier: 2 };
@@ -290,7 +328,9 @@ export function fixNext(rows: readonly FixNextRow[], opts: FixNextOptions): FixN
   const exposureKnown = opts.exposureKnown === true;
 
   const tiers: Record<"1" | "2" | "3", number> = { 1: 0, 2: 0, 3: 0 };
-  const unranked: FixNextUnranked = { noFix: 0, unclassified: 0, insideSla: 0, other: 0 };
+  const unranked: FixNextUnranked = {
+    noFix: 0, unclassified: 0, insideSla: 0, other: 0, unknown: 0,
+  };
   const buckets = new Map<string, Bucket>();
   let openTotal = 0;
   let ranked = 0;

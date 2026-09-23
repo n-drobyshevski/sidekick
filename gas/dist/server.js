@@ -512,7 +512,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "d481294fe124" : "dev";
+  var BUILD_ID = true ? "3c8110beab3a" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -4559,7 +4559,7 @@ var Server = (() => {
     return s === "" ? null : s;
   }
   function pastSla(row, targets) {
-    const age = finite(row.actionable_age_days);
+    const age = finite(row.observed ? row.actionable_age_days : row.seen_age_days);
     if (age === null) return null;
     const target = finite(targets[normalizeSeverity(row.severity)]);
     if (target === null) return null;
@@ -4575,7 +4575,7 @@ var Server = (() => {
     if (row.awaiting_vendor_fix === true) return { reason: "noFix" };
     const late = pastSla(row, targets);
     if (late === null) return { reason: "other" };
-    if (!late) return { reason: "insideSla" };
+    if (!late) return row.observed ? { reason: "insideSla" } : { reason: "unknown" };
     const fixed = hasFix(row);
     if (fixed && (row.has_kev === true || row.has_exploit === true)) return { tier: 2 };
     if (fixed && normalizeSeverity(row.severity) === "CRITICAL") return { tier: 3 };
@@ -4596,7 +4596,13 @@ var Server = (() => {
     const exposedKeys = (_b = opts.exposedKeys) != null ? _b : /* @__PURE__ */ new Set();
     const exposureKnown = opts.exposureKnown === true;
     const tiers = { 1: 0, 2: 0, 3: 0 };
-    const unranked = { noFix: 0, unclassified: 0, insideSla: 0, other: 0 };
+    const unranked = {
+      noFix: 0,
+      unclassified: 0,
+      insideSla: 0,
+      other: 0,
+      unknown: 0
+    };
     const buckets = /* @__PURE__ */ new Map();
     let openTotal = 0;
     let ranked = 0;
@@ -4826,23 +4832,26 @@ var Server = (() => {
     const perSev = {};
     let totalOpen = 0;
     let totalBreached = 0;
-    let unobserved = 0;
+    let totalUnknown = 0;
     for (const row of rows) {
       if (!isOpen2(row.status)) continue;
-      if (!row.observed) {
-        unobserved += 1;
-        continue;
-      }
       const age = openAge(row);
       if (age === null) continue;
       const s = normalizeSeverity(row.severity);
       const target = (_a = SLA_TARGETS[s]) != null ? _a : null;
-      const stat = (_b = perSev[s]) != null ? _b : perSev[s] = { open: 0, breached: 0, pct: null, target };
-      stat.open += 1;
-      totalOpen += 1;
-      if (target !== null && age > target) {
+      const stat = (_b = perSev[s]) != null ? _b : perSev[s] = { open: 0, breached: 0, unknown: 0, pct: null, target };
+      const breached = target !== null && age > target;
+      if (breached) {
         stat.breached += 1;
+        stat.open += 1;
         totalBreached += 1;
+        totalOpen += 1;
+      } else if (row.observed) {
+        stat.open += 1;
+        totalOpen += 1;
+      } else {
+        stat.unknown += 1;
+        totalUnknown += 1;
       }
     }
     for (const stat of Object.values(perSev)) {
@@ -4853,9 +4862,9 @@ var Server = (() => {
       overall: {
         open: totalOpen,
         breached: totalBreached,
+        unknown: totalUnknown,
         pct: totalOpen ? totalBreached / totalOpen * 100 : null
-      },
-      unobserved
+      }
     };
   }
   function openPastSlaFromRecords(records, now) {
@@ -5427,21 +5436,30 @@ var Server = (() => {
     }
     const parsed = rows.map((r) => ({
       origin: parseTs(r[fromField]),
+      last: parseTs(r["last_seen"]),
       resolvedAt: parseTs(r["resolved_at"]),
       sev: normalizeSeverity(r["severity"])
     }));
     return points.map((p) => {
       const d = parseTs(p.date);
       let breached = 0;
+      let unknown = 0;
       if (d !== null) {
         for (const r of parsed) {
           const open = r.origin !== null && r.origin <= d && (r.resolvedAt === null || r.resolvedAt > d);
           if (!open) continue;
           const target = SLA_TARGETS[r.sev];
-          if (target !== void 0 && (d - r.origin) / DAY_MS6 > target) breached += 1;
+          if (target === void 0) continue;
+          const censoredMs = censoredAsOf(d, r.last);
+          const consumed = (censoredMs - r.origin) / DAY_MS6;
+          if (consumed > target) {
+            breached += 1;
+          } else if (r.last !== null && r.last < d) {
+            unknown += 1;
+          }
         }
       }
-      return { ...p, open_past_sla: breached };
+      return { ...p, open_past_sla: breached, open_past_sla_unknown: unknown };
     });
   }
   function slaDeadlineRows(base, severities) {
@@ -10463,7 +10481,22 @@ var Server = (() => {
       // version excludes — a fatter, WRONG backlog figure on THREE surfaces, not merely a
       // missing one. The key is unchanged: `observed` comes off `baseVisible` rows themselves,
       // already covered by the existing key's fields.
-      "insights8",
+      // "insights8" → "insights9": `pastSla` (`openPastSla` over `actionableView`) no longer
+      // excludes an unobserved open row outright — it now judges the row on what was actually
+      // seen: a row that had already breached before going quiet is folded into `breached`
+      // (a fact about the past a stale entry silently drops), and a row that had not yet
+      // breached is `unknown`, a new key a stale insights8 entry does not carry at all. A stale
+      // entry both UNDERCOUNTS breaches and lacks the field the aging headline now reads. The
+      // key is unchanged: `observed` / `seen_age_days` come off the same base rows.
+      // "insights9" → "insights10": `fixNext` (the Executive front door's ranked list) judges an
+      // unobserved open row the same way now — `pastSla` there reads `seen_age_days` in place of
+      // `actionable_age_days` once unobserved, so a row that already breached before going quiet
+      // still ranks late (tier 2/3), and one that had not yet breached moves from `insideSla`
+      // (a claim a stale entry was making with nothing to back it) into a new `unranked.unknown`
+      // count a stale insights9 entry does not carry. A stale entry both mis-states a claim and
+      // lacks the key `executive.js` now reads unconditionally off `unranked`. The key is
+      // unchanged: same base rows, same fields.
+      "insights10",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
@@ -11171,7 +11204,13 @@ var Server = (() => {
       // fatter, WRONG open-past-SLA than this version computes for the SAME rows — not a
       // missing-field gap a reader could shrug off, an outright disagreement. The key is
       // unchanged: `observed` / `seen_age_days` come off the base rows themselves.
-      "mttr11",
+      // "mttr11" → "mttr12": both `openPastSla` / `openPastSlaActionable` now judge an
+      // unobserved open row on what was actually seen instead of excluding it outright — a row
+      // that had already breached before going quiet now counts in `breached` (a stale entry
+      // UNDERCOUNTS it); a row that had not yet breached is `unknown`, a field a stale mttr11
+      // entry does not carry at all. Not a missing-field gap, an outright disagreement on
+      // `breached`. The key is unchanged: same base rows, same fields.
+      "mttr12",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
@@ -11204,8 +11243,14 @@ var Server = (() => {
       // the hero's KM figures got from `BaseRow.observed`/`seen_age_days`; this is `durablyCached`
       // (no TTL), so a stale mttrTrend6 entry would otherwise disagree with the hero forever, not
       // just for an hour. The key is unchanged: `last_seen` comes off the same base rows.
+      // "mttrTrend7" → "mttrTrend8": `open_past_sla` (`withOpenPastSla`) now right-censors a row's
+      // CONSUMED time at `censoredAsOf(d, last_seen)` too, the same cap `km_median_days` got in
+      // mttrTrend7 — a row already gone quiet by a replay date `d` no longer reads as breaching
+      // just because `d` moved on without it. Points also gained `open_past_sla_unknown`. This is
+      // `durablyCached` (no TTL), so a stale mttrTrend7 entry would overstate the past-SLA line
+      // forever, not just for an hour, and never carry the new key at all.
       durablyCached(
-        "mttrTrend7",
+        "mttrTrend8",
         {
           domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
           supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
@@ -11308,7 +11353,11 @@ var Server = (() => {
       // later than that (trend.censoredAsOf) — the table and the trend chart beside it must
       // describe one estimate. Bump so a stale entry does not keep reporting the pre-split
       // numbers on either.
-      "mttrByDomain15",
+      // "mttrByDomain15" → "mttrByDomain16": `openPastSla` no longer sets an unobserved row aside
+      // outright — a row that had already breached before going quiet now folds into `breached`
+      // (a stale entry UNDERCOUNTS it) and one that had not yet breached is `unknown`, a key a
+      // stale entry does not carry. Bump so a stale entry stops reporting the undercount.
+      "mttrByDomain16",
       {
         supportGroup: String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : ""),
         severities: readSeverities(p),
@@ -11327,7 +11376,10 @@ var Server = (() => {
       // "mttrBySupportGroup2" → "mttrBySupportGroup3": same backlog-split value change as
       // "mttrByDomain15" — `kmMedian` / `p90` / `openPastSla` now treat an unobserved open row
       // differently from an observed one. Bump for the same reason.
-      "mttrBySupportGroup3",
+      // "mttrBySupportGroup3" → "mttrBySupportGroup4": same `openPastSla` three-way change as
+      // "mttrByDomain16" — an unobserved row that already breached now counts as breached instead
+      // of being set aside, and `unknown` is a new key. Bump for the same reason.
+      "mttrBySupportGroup4",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
@@ -11354,7 +11406,10 @@ var Server = (() => {
       // "mttrByAsset1" → "mttrByAsset2": same backlog-split value change as "mttrByDomain15" —
       // `kmMedian` / `p90` / `openPastSla` now treat an unobserved open row differently from an
       // observed one. Bump for the same reason.
-      "mttrByAsset2",
+      // "mttrByAsset2" → "mttrByAsset3": same `openPastSla` three-way change as "mttrByDomain16"
+      // — an unobserved row that already breached now counts as breached instead of being set
+      // aside, and `unknown` is a new key. Bump for the same reason.
+      "mttrByAsset3",
       {
         supportGroup: String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : ""),
         severities: readSeverities(p),

@@ -1656,7 +1656,7 @@ export async function renderMttr(main, _params, ctx) {
       aside: trendAside(halfLifeTrendPoints(trends)),
       stats: [
         slaStatRow(overallSla, prev, scoped),
-        pastSlaStatRow(openPastSla, prev, scoped, view.backlogLine, view.backlogCaption),
+        pastSlaStatRow(openPastSla, prev, scoped, view.backlogCaption),
         p90StatRow(overallKmP90 !== undefined ? overallKmP90 : overallPctiles?.p90, km),
         openAgeStatRow(mttr, prev, scoped),
         ...(awaiting && awaiting.overall !== null && awaiting.overall !== undefined
@@ -1815,22 +1815,24 @@ export async function renderMttr(main, _params, ctx) {
    * "Open past SLA" — the COUNT, with its share of the open backlog as the meter.
    *
    * TWO DIFFERENT DENOMINATORS SIT IN THIS STRIP and mixing them is the mistake this shape
-   * stops. "In SLA" is taken over RESOLVED findings; this one is taken over OPEN findings — of
-   * the ones still running, how many have already blown it. A single "SLA %" over everything
-   * would be neither, and the two sub-lines name their own base for that reason.
+   * stops. "In SLA" is taken over RESOLVED findings; this one is taken over OPEN findings whose
+   * SLA status is actually KNOWABLE — `openPastSla`'s `breached + on-the-clock` — of the ones
+   * still running, how many have already blown it. A single "SLA %" over everything would be
+   * neither, and the two sub-lines name their own base for that reason.
    */
-  // `backlogLine` / `backlogCaption` are the hero's own split (`view.backlogLine` /
-  // `view.backlogCaption`, `mttrHeroView`'s reading of `mttr.backlog`) — REUSED HERE, NOT
-  // RECOMPUTED. O1a's `openPastSla()` now excludes an unobserved row before it is even scored
-  // as breached or not (see remediation.ts), so this count moved under a reader who was not
-  // looking at this figure specifically — the exact thing this package exists to prevent. Same
-  // `_backlog.js` shape as the two aging sections: the compact line joins the sub-line that
-  // already states the rate's own base, and the caption sits one level down on the tip.
-  function pastSlaStatRow(openPastSla, prev, scoped, backlogLine, backlogCaption) {
+  // `backlogCaption` is the hero's own split explanation (`view.backlogCaption`,
+  // `mttrHeroView`'s reading of `mttr.backlog`) — REUSED HERE, NOT RECOMPUTED, as general
+  // context for why a blind spot exists at all. The population LINE itself (`view.backlogLine`,
+  // "N present · M unobserved since <date>") stays on the hero, drawn once, so it is not
+  // repeated here. O1c's `openPastSla()` now gives this stat its OWN precise count instead —
+  // `unknown`: unobserved rows that had not yet breached at their last sighting, counted apart
+  // from both "breached" and the rate's own "on the clock" base, never folded into either.
+  function pastSlaStatRow(openPastSla, prev, scoped, backlogCaption) {
     const open = num(openPastSla && openPastSla.open, 0);
     const breached = num(openPastSla && openPastSla.breached);
+    const unknown = num(openPastSla && openPastSla.unknown, 0);
     const rate = rateView(
-      openPastSla && openPastSla.pct, open, fmtCount(open) + " open",
+      openPastSla && openPastSla.pct, open, fmtCount(open) + " on the clock",
       "no finding is open",
     );
     const chip = !scoped && prev && prev.open_past_sla !== null
@@ -1842,13 +1844,17 @@ export async function renderMttr(main, _params, ctx) {
       "Open past SLA",
       chip ? el("span", {}, value, chip) : value,
       (rate.baseEmpty ? rate.emptyLabel : rate.text + " of " + rate.denominatorLabel)
-        + (backlogLine ? " · " + backlogLine : ""),
+        + (unknown ? " · " + fmtCount(unknown) + " unknown" : ""),
       meterPctFor(rate),
       {
         term: "sla-target",
         lines: [
           "Taken over what is still RUNNING: of what is open, the share past target.",
           "Unlike In SLA, an aged-out open CRITICAL counts here.",
+          ...(unknown
+            ? ["Unobserved findings that had not yet breached by their last sighting are "
+              + "unknown, never in-SLA — we cannot say what happened after we stopped looking."]
+            : []),
           ...(backlogCaption ? [backlogCaption] : []),
         ],
       },
@@ -2508,16 +2514,23 @@ export async function renderMttr(main, _params, ctx) {
    * per-group table with a denominator sentence under every cell buys a reader nothing the
    * parenthetical does not already give. This table is five rows of severity, where the base
    * genuinely differs per row and the meter is what makes the column comparable at a glance.
+   *
+   * `o.unknown` — unobserved rows at this severity that had not yet breached at their last
+   * sighting (`openPastSla`'s three-way split, unlike `open`/`breached` this is per-severity so
+   * it CAN attach to the row it qualifies, unlike the register-wide `unobserved` count this
+   * table used to point at the column tip instead).
    */
   function pastSlaCell(o) {
     if (!o || o.open === null || o.open === undefined) return absent();
     const open = num(o.open, 0);
-    const rate = rateView(o.pct, open, fmtCount(open) + " open", "no finding is open here");
+    const unknown = num(o.unknown, 0);
+    const rate = rateView(o.pct, open, fmtCount(open) + " on the clock", "no finding is open here");
     return el("span", { class: "rate-with-meter" },
       el("span", { class: "num" }, fmtCount(num(o.breached, 0))),
       el("span", { class: "small muted" }, " (" + rate.text + ") "),
       rateMeter(rate),
-      denominatorNode(rate));
+      denominatorNode(rate),
+      unknown ? el("span", { class: "small muted" }, " · " + fmtCount(unknown) + " unknown") : null);
   }
 
   function renderSla(mttr) {
@@ -2526,11 +2539,11 @@ export async function renderMttr(main, _params, ctx) {
     // so it always matches the severities feeding the hero and trend above.
     const sevs = boot.palette.order.filter((s) => mttr.perSev[s] && sevScope.includes(s));
     if (!sevs.length) return;
-    // O1a's `openPastSla()` now excludes an unobserved row per severity too, and this table
-    // carries no per-severity split to attach to any one cell (`OpenPastSla.unobserved` is a
-    // single register-wide count) — so the caveat joins the "Open past SLA" column's own tip,
-    // the same place this table already sends a column's definition rather than a paragraph
-    // under the table ("A column heading is asked once", below).
+    // O1c's `openPastSla()` gives each severity its own `unknown` count now (`pastSlaCell`
+    // attaches it directly to the cell it qualifies), so this general backlog caption is kept
+    // only as background on WHY a blind spot can exist at all — it joins the "Open past SLA"
+    // column's own tip, the same place this table already sends a column's definition rather
+    // than a paragraph under the table ("A column heading is asked once", below).
     const split = backlogSplitView(mttr.backlog);
 
     slaHost.append(sectionLabel("Remediation by severity", { term: "sla-band" }));
