@@ -27,14 +27,19 @@ var Server = (() => {
     include: () => include
   });
 
-  // src/server/main.ts
-  function doGet(_e) {
-    const template = HtmlService.createTemplateFromFile("index");
-    return template.evaluate().setTitle("Wiz Sidekick").addMetaTag("viewport", "width=device-width, initial-scale=1").setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);
-  }
-  function include(filename) {
-    return HtmlService.createHtmlOutputFromFile(filename).getContent();
-  }
+  // src/server/api.ts
+  var api_exports = {};
+  __export(api_exports, {
+    bootstrap: () => bootstrap,
+    getAccess: () => getAccess,
+    getUrls: () => getUrls,
+    saveAccess: () => saveAccess,
+    saveAdmins: () => saveAdmins,
+    saveUrls: () => saveUrls
+  });
+
+  // ../gas_shared/server/buildInfo.ts
+  var BUILD_ID = true ? "9e9a7e30c908" : "dev";
 
   // src/server/access.ts
   var access_exports = {};
@@ -312,20 +317,6 @@ var Server = (() => {
     return at >= 0 ? ownerEmail().slice(at + 1).toLowerCase() : "";
   }
 
-  // src/server/api.ts
-  var api_exports = {};
-  __export(api_exports, {
-    bootstrap: () => bootstrap,
-    getAccess: () => getAccess,
-    getUrls: () => getUrls,
-    saveAccess: () => saveAccess,
-    saveAdmins: () => saveAdmins,
-    saveUrls: () => saveUrls
-  });
-
-  // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "38f67c6912ff" : "dev";
-
   // src/server/urls.ts
   var TILE_ORDER = ["os", "ai", "devsecops"];
   var URL_PROP = {
@@ -478,6 +469,36 @@ var Server = (() => {
       }
       return after;
     });
+  }
+
+  // ../gas_shared/server/inlineBoot.ts
+  var UNSAFE = /[<>&/'`\u2028\u2029]/g;
+  function inlineJson(value) {
+    const json = JSON.stringify(value);
+    if (json === void 0) return "";
+    return json.replace(UNSAFE, (c) => c === "/" ? "\\/" : "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"));
+  }
+  function inlineBootJson(bootstrap2) {
+    const t0 = Date.now();
+    try {
+      const res = bootstrap2();
+      if (!res || res.ok !== true) return "";
+      return inlineJson(res);
+    } catch (_e) {
+      return "";
+    } finally {
+      console.log(JSON.stringify({ api: "bootstrap", inline: true, ms: Date.now() - t0 }));
+    }
+  }
+
+  // src/server/main.ts
+  function doGet(_e) {
+    const template = HtmlService.createTemplateFromFile("index");
+    template.bootJson = inlineBootJson(() => bootstrap());
+    return template.evaluate().setTitle("Wiz Sidekick").addMetaTag("viewport", "width=device-width, initial-scale=1").setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);
+  }
+  function include(filename) {
+    return HtmlService.createHtmlOutputFromFile(filename).getContent();
   }
   return __toCommonJS(index_exports);
 })();

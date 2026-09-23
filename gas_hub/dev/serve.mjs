@@ -83,6 +83,9 @@ async function composeIndex() {
   // Function replacements: the minified client bundle contains `$` sequences that a
   // string replacement would mis-interpret as `$&`/`$1` patterns and corrupt.
   html = html.replace(/<\?!=\s*include\('styles'\);?\s*\?>/, () => styles);
+  // The dev shim has no doGet to render the bootstrap slot, so it ships empty and store.js
+  // falls back to the api_bootstrap RPC — the same path a failed inline bootstrap takes.
+  html = html.replace(/<\?!=\s*bootJson\s*\?>/, "");
   html = html.replace(
     /<\?!=\s*include\('js_app'\);?\s*\?>/,
     () => [

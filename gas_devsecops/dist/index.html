@@ -127,6 +127,8 @@ p.removeChild(w)})()
         <noscript>Wiz Sidekick DevSecOps requires JavaScript.</noscript>
       </div>
     </div>
+    <!-- The bootstrap envelope doGet computed (gas_shared/server/inlineBoot.ts); store.js reads it once. -->
+    <script type="application/json" id="boot-data"><?!= bootJson ?></script>
     <?!= include('js_app'); ?>
   </body>
 </html>

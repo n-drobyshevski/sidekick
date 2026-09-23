@@ -5,8 +5,32 @@ import { appConfig } from "./appConfig.js";
 import { call } from "./api.js";
 
 let bootstrapData = null;
+let inlineTaken = false;
+
+/**
+ * The bootstrap envelope doGet rendered into the page (gas_shared/server/inlineBoot.ts), read
+ * ONCE and then removed from the DOM: it is the state of the world at page load, so it may
+ * answer the first bootstrap() only — a forced refresh after a mutation must ask the server.
+ * Anything short of an `{ok:true}` envelope (no block, an empty slot, the dev harness's
+ * unrendered scriptlet) returns null and the caller falls back to the RPC.
+ */
+function takeInlineBootstrap() {
+  if (inlineTaken || typeof document === "undefined") return null;
+  inlineTaken = true;
+  const node = document.getElementById("boot-data");
+  if (!node) return null;
+  if (node.parentNode) node.parentNode.removeChild(node);
+  try {
+    const env = JSON.parse(node.textContent);
+    return env && env.ok === true ? env.data : null;
+  } catch {
+    return null;
+  }
+}
 
 export async function bootstrap(force) {
+  const inline = takeInlineBootstrap();
+  if (!bootstrapData && !force && inline) bootstrapData = inline;
   if (!bootstrapData || force) bootstrapData = await call("api_bootstrap");
   return bootstrapData;
 }

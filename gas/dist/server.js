@@ -33,392 +33,125 @@ var Server = (() => {
     wizDiagnostic: () => wizDiagnostic
   });
 
-  // src/server/main.ts
-  function doGet(_e) {
-    const template = HtmlService.createTemplateFromFile("index");
-    return template.evaluate().setTitle("Wiz Sidekick OS").addMetaTag("viewport", "width=device-width, initial-scale=1").setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);
-  }
-  function include(filename) {
-    return HtmlService.createHtmlOutputFromFile(filename).getContent();
-  }
-
-  // src/server/access.ts
-  var access_exports = {};
-  __export(access_exports, {
-    PRODUCT: () => PRODUCT,
-    accountChooserUrl: () => accountChooserUrl,
-    assertAllowed: () => assertAllowed,
-    canEditAdmins: () => canEditAdmins,
-    canEditUsers: () => canEditUsers,
-    check: () => check,
-    contactMailto: () => contactMailto,
-    currentAdmins: () => currentAdmins,
-    currentUsers: () => currentUsers,
-    decide: () => decide,
-    deniedHtml: () => deniedHtml,
-    deniedPage: () => deniedPage,
-    denyResult: () => denyResult,
-    isOwner: () => isOwner,
-    ownerDomain: () => ownerDomain,
-    ownerEmail: () => ownerEmail,
-    parseAllowlist: () => parseAllowlist,
-    serviceUrl: () => serviceUrl
+  // src/server/api.ts
+  var api_exports = {};
+  __export(api_exports, {
+    backfillEpisodeTags: () => backfillEpisodeTags2,
+    bootstrap: () => bootstrap,
+    cancelScan: () => cancelScan2,
+    clearRecentErrors: () => clearRecentErrors,
+    compact: () => compact,
+    deleteScans: () => deleteScans2,
+    exportMigrationBundle: () => exportMigrationBundle,
+    getAccess: () => getAccess,
+    getAttribution: () => getAttribution,
+    getChartsBundle: () => getChartsBundle,
+    getColdZonePage: () => getColdZonePage,
+    getDomains: () => getDomains3,
+    getExecutivePage: () => getExecutivePage,
+    getExportCoverageCsv: () => getExportCoverageCsv,
+    getExportCsv: () => getExportCsv,
+    getExportRawUrl: () => getExportRawUrl,
+    getGroupTrend: () => getGroupTrend,
+    getGrouping: () => getGrouping,
+    getInsights: () => getInsights,
+    getJobStatus: () => getJobStatus,
+    getMttr: () => getMttr,
+    getMttrByDomainTrend: () => getMttrByDomainTrend,
+    getMttrPage: () => getMttrPage,
+    getMttrTrend: () => getMttrTrend,
+    getOldestOpen: () => getOldestOpen,
+    getProgramPage: () => getProgramPage,
+    getPurgeStatus: () => getPurgeStatus,
+    getRecentErrors: () => getRecentErrors,
+    getRegisterRows: () => getRegisterRows,
+    getReport: () => getReport,
+    getRiskBackfillStatus: () => getRiskBackfillStatus,
+    getRiskCohort: () => getRiskCohort,
+    getScanHistory: () => getScanHistory,
+    getSettings: () => getSettings,
+    getSettingsImpact: () => getSettingsImpact,
+    getStorageStats: () => getStorageStats,
+    importAbort: () => importAbort,
+    importBegin: () => importBegin,
+    importFinalize: () => importFinalize,
+    importMigration: () => importMigration,
+    importShard: () => importShard,
+    importStatus: () => importStatus,
+    previewDomains: () => previewDomains,
+    previewMaintenance: () => previewMaintenance2,
+    pruneEpisodes: () => pruneEpisodes2,
+    refreshSupportGroups: () => refreshSupportGroups2,
+    resetLedger: () => resetLedger2,
+    runScan: () => runScan,
+    saveAccess: () => saveAccess,
+    saveAdmins: () => saveAdmins,
+    saveDomains: () => saveDomains,
+    saveHubUrl: () => saveHubUrl,
+    saveSettings: () => saveSettings2,
+    setAutoCompact: () => setAutoCompact2,
+    setIncludeEol: () => setIncludeEol2,
+    setRetention: () => setRetention,
+    setRetentionSettings: () => setRetentionSettings,
+    setRiskRule: () => setRiskRule2,
+    setSeverities: () => setSeverities,
+    setShowNoFix: () => setShowNoFix2,
+    startRiskBackfill: () => startRiskBackfill,
+    startSeverityPurge: () => startSeverityPurge2,
+    trimHistory: () => trimHistory2,
+    warmReadModels: () => warmReadModels,
+    warmReadModelsScheduled: () => warmReadModelsScheduled
   });
 
-  // src/server/pageShell.ts
-  var MARK_COMPACT_VIEWBOX = "12.2 8.4 52.7 74";
-  var MARK_COMPACT_RATIO = 52.7 / 74;
-  var MARK_ORBIT = "M47.64 80.58A32.1 32.1 0 0 1 17.83 52.04M19.82 36.92A32.1 32.1 0 0 1 54.21 16.76";
-  var MARK_ORBIT_WIDTH = 2.41;
-  var MARK_NODES = [[17.22, 44.33, 4.41], [45.96, 16.55, 7.56]];
-  var MARK_SHIELD = "M48.56 29.88C52.79 34.78 58.69 37.87 64.33 37.81C64.44 45.48 63.64 48.51 62.11 51.96C61.32 54.62 56.36 61.55 48.56 64.18C40.76 61.55 35.8 54.62 35.01 51.96C33.48 48.51 32.68 45.48 32.79 37.81C38.43 37.87 44.33 34.78 48.56 29.88Z";
-  var MARK_CHECK = "M42.3 48.81 46.19 52.7 54.89 43.99";
-  var MARK_CHECK_WIDTH = 3.04;
-  function brandMarkSvg(height) {
-    const width = Math.round(height * MARK_COMPACT_RATIO * 100) / 100;
-    const nodes = MARK_NODES.map(
-      (n) => '<circle cx="' + n[0] + '" cy="' + n[1] + '" r="' + n[2] + '" fill="#0a0a0a"/>'
-    ).join("");
-    return [
-      '<svg class="brand-mark" viewBox="' + MARK_COMPACT_VIEWBOX + '"',
-      ' width="' + width + '" height="' + height + '" focusable="false" aria-hidden="true">',
-      '<path d="' + MARK_ORBIT + '" fill="none" stroke="#0a0a0a" stroke-width="' + MARK_ORBIT_WIDTH,
-      '" stroke-linecap="round"/>',
-      nodes,
-      '<path d="' + MARK_SHIELD + '" fill="#0a0a0a"/>',
-      '<path d="' + MARK_CHECK + '" fill="none" stroke="#ffffff" stroke-width="' + MARK_CHECK_WIDTH,
-      '" stroke-linecap="round" stroke-linejoin="round"/>',
-      "</svg>"
-    ].join("");
-  }
-  function escapeHtml(s) {
-    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-  }
-  function primaryAction(href, label) {
-    return '<a class="btn" target="_top" href="' + escapeHtml(href) + '">' + escapeHtml(label) + "</a>";
-  }
-  function secondaryAction(href, label) {
-    return '<a class="alt" target="_top" href="' + escapeHtml(href) + '">' + escapeHtml(label) + "</a>";
-  }
-  function cardPage(spec) {
-    const body = spec.paragraphs.map((p) => "<p>" + p + "</p>").join("");
-    const actions = spec.actions ? '<div class="actions">' + spec.actions + "</div>" : "";
-    return [
-      '<!DOCTYPE html><html><head><meta charset="utf-8">',
-      // Every link on these pages has to break out of the HtmlService sandbox iframe; the app's
-      // own index.html carries the same base tag for the same reason.
-      '<base target="_top">',
-      '<meta name="viewport" content="width=device-width, initial-scale=1">',
-      "<title>" + escapeHtml(spec.title) + "</title><style>",
-      "*{box-sizing:border-box}",
-      "body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;",
-      "background:#f8fafc;color:#0a0a0a;",
-      "font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}",
-      ".card{max-width:32rem;margin:24px;padding:32px;background:#fff;border:1px solid #e2e8f0;",
-      "border-radius:14px;box-shadow:0 1px 2px rgba(10,10,10,.06)}",
-      ".lockup{display:flex;align-items:center;gap:8px;margin:0 0 16px}",
-      // Mirrors .appbar-name in styles.css (600 / 1rem / -0.02em) so the wordmark is the same
-      // object here as in the header, not a near-miss of it.
-      ".lockup span{font-weight:600;font-size:1rem;letter-spacing:-0.02em;color:#0a0a0a;",
-      "white-space:nowrap}",
-      ".brand-mark{display:block;flex:0 0 auto}",
-      "h1{font-size:20px;line-height:1.3;margin:0 0 12px;font-weight:650}",
-      "p{margin:0 0 8px;font-size:14px;line-height:1.6;color:#334155}",
-      ".actions{margin-top:24px;display:flex;align-items:center;gap:20px;flex-wrap:wrap}",
-      // Graphite, not the blue accent: DESIGN.md keeps Signal Blue for data, focus and links, and
-      // fills the one committing action with the neutral near-black.
-      ".btn{display:inline-flex;align-items:center;min-height:36px;padding:6px 14px;",
-      "border-radius:8px;background:#0a0a0a;color:#fafafa;font-size:14px;font-weight:500;",
-      "text-decoration:none}",
-      ".btn:hover{background:#27272a}",
-      "a{color:#2563eb}",
-      // Never remove: CLAUDE.md names the focus-ring rules load-bearing, and these pages are
-      // reachable by keyboard only.
-      "a:focus-visible{outline:2px solid #2563eb;outline-offset:2px;border-radius:4px}",
-      '</style></head><body><main class="card">',
-      // The same lockup as the app header — mark then wordmark — so the door and the room
-      // behind it are recognisably one product.
-      '<div class="lockup">' + brandMarkSvg(22) + "<span>" + escapeHtml(spec.eyebrow) + "</span></div>",
-      "<h1>" + escapeHtml(spec.heading) + "</h1>",
-      body,
-      actions,
-      "</main></body></html>"
-    ].join("");
-  }
-
-  // src/server/props.ts
-  var PROP_KEYS = {
-    wizApiToken: "WIZ_API_TOKEN",
-    wizClientId: "WIZ_CLIENT_ID",
-    wizClientSecret: "WIZ_CLIENT_SECRET",
-    wizAuthUrl: "WIZ_AUTH_URL",
-    wizApiUrl: "WIZ_API_URL",
-    wizProjectIdV2: "WIZ_PROJECT_ID_V2",
-    wizSupportGroupTagKey: "WIZ_SUPPORT_GROUP_TAG_KEY",
-    wizDomainTagKey: "WIZ_DOMAIN_TAG_KEY",
-    // Who may use the web app, on top of the deployment's domain fence. Comma-, semicolon- or
-    // whitespace-separated addresses; see access.ts. UNSET MEANS OWNER-ONLY, not "everyone" —
-    // the guard fails closed, and the owner is allowed by identity rather than by this list.
-    allowedUsers: "ALLOWED_USERS",
-    // Who may EDIT the list above from Settings → Access, on top of the owner (who always may).
-    // Unset means owner-only, like its sibling. Admins are allowed into the app by being admins,
-    // and deliberately CANNOT edit this property — see access.ts for why the tier stops here.
-    allowedAdmins: "ALLOWED_ADMINS",
-    // The /exec URL of the hub launcher (gas_hub), pasted from its Deploy > Manage deployments,
-    // or set from Settings > System. A PROPERTY RATHER THAN CODE for the platform's reason, not
-    // a preference: `ScriptApp.getService().getUrl()` answers for this deployment only and there
-    // is no API that hands one script project another's web-app URL, so somebody has to paste
-    // it. Unset (or blank) is legal and means the header simply carries no hub button — see
-    // server/hubUrl.ts, which owns the shape of the value and refuses anything that is neither a
-    // script.google.com URL nor a loopback dev-harness one.
-    urlHub: "URL_HUB",
-    ledgerSpreadsheetId: "LEDGER_SPREADSHEET_ID",
-    archiveFolderId: "ARCHIVE_FOLDER_ID",
-    // The warm schedule setup() last installed. A ClockTrigger exposes no hour, minute or
-    // timezone, so this is the only way a later edit to the schedule can be detected and
-    // reconciled rather than silently ignored on an existing deployment.
-    warmTriggerSchedule: "WARM_TRIGGER_SCHEDULE"
+  // src/domain/config.ts
+  var SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
+  var SEVERITY_COLORS = {
+    CRITICAL: "#dc2626",
+    HIGH: "#ea580c",
+    MEDIUM: "#d97706",
+    LOW: "#2563eb",
+    INFO: "#64748b",
+    UNKNOWN: "#475569"
   };
-  var DEFAULT_WIZ_AUTH_URL = "https://auth.app.wiz.io/oauth/token";
-  var DEFAULT_SUPPORT_GROUP_TAG_KEY = "Wiz/provisioning";
-  function getProp(key) {
-    return PropertiesService.getScriptProperties().getProperty(key);
-  }
-  function requireProp(key) {
-    const v = getProp(key);
-    if (!v) {
-      throw new Error(`Missing Script Property ${key} \u2014 run setup() or set it in Project Settings > Script Properties.`);
-    }
-    return v;
-  }
-  function setProp(key, value) {
-    PropertiesService.getScriptProperties().setProperty(key, value);
-  }
-  function deleteProp(key) {
-    PropertiesService.getScriptProperties().deleteProperty(key);
-  }
-  function resolveWizAuthMode(token, clientId, clientSecret) {
-    if (token && token.trim()) return "token";
-    if (clientId && clientSecret) return "oauth";
-    return null;
-  }
-  function hasWizCredentials() {
-    return Boolean(getProp(PROP_KEYS.wizApiUrl)) && resolveWizAuthMode(
-      getProp(PROP_KEYS.wizApiToken),
-      getProp(PROP_KEYS.wizClientId),
-      getProp(PROP_KEYS.wizClientSecret)
-    ) !== null;
-  }
-
-  // src/server/access.ts
-  var PRODUCT = "Wiz Sidekick OS";
-  var DENIAL_MESSAGE = {
-    anonymous: "This app can't identify your Google account. It only recognizes accounts signed in to the same Google Workspace domain as the app.",
-    "not-listed": "Your account isn't on this app's access list."
+  var SLA_TARGETS = {
+    CRITICAL: 7,
+    HIGH: 14,
+    MEDIUM: 30,
+    LOW: 90,
+    INFO: 180
   };
-  function parseAllowlist(raw) {
-    if (!raw) return [];
-    const seen2 = {};
-    const out = [];
-    for (const part of raw.split(/[,;\s]+/)) {
-      const email = part.trim().toLowerCase();
-      if (!email || seen2[email]) continue;
-      seen2[email] = true;
-      out.push(email);
-    }
-    return out;
+  var EPSS_PRIORITY_THRESHOLD = 0.1;
+  var SELECTABLE_SEVERITIES = SEVERITY_ORDER.filter((s) => s !== "UNKNOWN");
+  var DEFAULT_FETCH_SEVERITIES = ["CRITICAL", "HIGH"];
+  var DEFAULT_DISPLAY_SEVERITIES = ["CRITICAL", "HIGH"];
+  var API_SEVERITY_VALUES = {
+    CRITICAL: "CRITICAL",
+    HIGH: "HIGH",
+    MEDIUM: "MEDIUM",
+    LOW: "LOW",
+    INFO: "INFORMATIONAL"
+  };
+  var RESOLVED_STATUSES = /* @__PURE__ */ new Set(["RESOLVED", "REMEDIATED", "FIXED", "CLOSED"]);
+  function isOpenStatus(status) {
+    return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
   }
-  function decide(active, owner, raw, adminsRaw) {
-    const email = (active || "").trim();
-    const key = email.toLowerCase();
-    if (!key) return { allowed: false, email: "", reason: "anonymous" };
-    const ownerKey = (owner || "").trim().toLowerCase();
-    if (ownerKey && ownerKey === key) return { allowed: true, email, reason: "owner" };
-    if (parseAllowlist(adminsRaw != null ? adminsRaw : null).indexOf(key) >= 0) {
-      return { allowed: true, email, reason: "admin" };
-    }
-    return parseAllowlist(raw).indexOf(key) >= 0 ? { allowed: true, email, reason: "listed" } : { allowed: false, email, reason: "not-listed" };
-  }
-  var memo;
-  function check() {
-    if (memo === void 0) {
-      memo = decide(
-        Session.getActiveUser().getEmail(),
-        Session.getEffectiveUser().getEmail(),
-        getProp(PROP_KEYS.allowedUsers),
-        getProp(PROP_KEYS.allowedAdmins)
-      );
-    }
-    return memo;
-  }
-  function logDenial(op, d) {
-    console.log(JSON.stringify({ access: "denied", op, reason: d.reason, email: d.email }));
-  }
-  function denyResult(op) {
-    const d = check();
-    if (d.allowed) return null;
-    logDenial(op, d);
-    const env = {
-      ok: false,
-      error: DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"],
-      errorKind: "forbidden"
-    };
-    const who = ownerEmail().trim();
-    if (who) {
-      env.contact = who;
-      env.contactUrl = contactMailto(who);
-    }
-    return env;
-  }
-  function assertAllowed(op) {
-    const d = check();
-    if (d.allowed) return;
-    logDenial(op, d);
-    throw new Error(DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"]);
-  }
-  function contactMailto(email) {
-    return "mailto:" + email.trim() + "?subject=" + encodeURIComponent("Access to " + PRODUCT);
-  }
-  function deniedHtml(d, switchUrl, contact) {
-    const detail = d.email ? "You're signed in as <strong>" + escapeHtml(d.email) + "</strong>." : "This app can't see which Google account you're signed in as, which happens when the account isn't in the same Google Workspace domain as the app.";
-    const who = (contact || "").trim();
-    const ask = who ? 'If you think you should have access, contact <a href="' + escapeHtml(contactMailto(who)) + '">' + escapeHtml(who) + "</a>." : (
-      // No owner address resolved — never render "contact:" with nothing after it.
-      "If you think you should have access, ask whoever runs this dashboard to add you."
-    );
-    return cardPage({
-      title: PRODUCT,
-      eyebrow: PRODUCT,
-      heading: "You don't have access to this app.",
-      paragraphs: [detail, ask],
-      actions: switchUrl ? secondaryAction(switchUrl, "Switch Google account") : ""
-    });
-  }
-  function deniedPage() {
-    const d = check();
-    if (d.allowed) return null;
-    logDenial("doGet", d);
-    return HtmlService.createHtmlOutput(deniedHtml(d, accountChooserUrl(), ownerEmail())).setTitle(PRODUCT).addMetaTag("viewport", "width=device-width, initial-scale=1");
-  }
-  function serviceUrl() {
-    try {
-      return ScriptApp.getService().getUrl() || null;
-    } catch (_e) {
-      return null;
-    }
-  }
-  function accountChooserUrl() {
-    const url = serviceUrl();
-    return url ? "https://accounts.google.com/AccountChooser?continue=" + encodeURIComponent(url) : null;
-  }
-  function ownerEmail() {
-    return Session.getEffectiveUser().getEmail() || "";
-  }
-  function isOwner() {
-    return check().reason === "owner";
-  }
-  function canEditUsers() {
-    const r = check().reason;
-    return r === "owner" || r === "admin";
-  }
-  function canEditAdmins() {
-    return isOwner();
-  }
-  function currentUsers() {
-    return parseAllowlist(getProp(PROP_KEYS.allowedUsers));
-  }
-  function currentAdmins() {
-    return parseAllowlist(getProp(PROP_KEYS.allowedAdmins));
-  }
-  function ownerDomain() {
-    const at = ownerEmail().lastIndexOf("@");
-    return at >= 0 ? ownerEmail().slice(at + 1).toLowerCase() : "";
-  }
-
-  // src/server/welcome.ts
-  var welcome_exports = {};
-  __export(welcome_exports, {
-    ENTER_PARAM: () => ENTER_PARAM,
-    ENTRY_TTL_SEC: () => ENTRY_TTL_SEC,
-    gate: () => gate,
-    welcomeHtml: () => welcomeHtml
-  });
-
-  // ../gas_shared/domain/sha1.ts
-  function utf8Bytes(s) {
-    const out = [];
-    for (let i = 0; i < s.length; i++) {
-      let c = s.charCodeAt(i);
-      if (c < 128) {
-        out.push(c);
-      } else if (c < 2048) {
-        out.push(192 | c >> 6, 128 | c & 63);
-      } else if (c >= 55296 && c <= 56319 && i + 1 < s.length) {
-        const c2 = s.charCodeAt(++i);
-        const cp = 65536 + (c - 55296 << 10) + (c2 - 56320);
-        out.push(
-          240 | cp >> 18,
-          128 | cp >> 12 & 63,
-          128 | cp >> 6 & 63,
-          128 | cp & 63
-        );
-      } else {
-        out.push(224 | c >> 12, 128 | c >> 6 & 63, 128 | c & 63);
-      }
-    }
-    return out;
-  }
-  function rotl(n, b) {
-    return (n << b | n >>> 32 - b) >>> 0;
-  }
-  function sha1Hex(input) {
-    const bytes = utf8Bytes(input);
-    const bitLen = bytes.length * 8;
-    bytes.push(128);
-    while (bytes.length % 64 !== 56) bytes.push(0);
-    const hi = Math.floor(bitLen / 4294967296);
-    bytes.push(hi >>> 24 & 255, hi >>> 16 & 255, hi >>> 8 & 255, hi & 255);
-    bytes.push(bitLen >>> 24 & 255, bitLen >>> 16 & 255, bitLen >>> 8 & 255, bitLen & 255);
-    let h0 = 1732584193, h1 = 4023233417, h2 = 2562383102, h3 = 271733878, h4 = 3285377520;
-    const w = new Array(80);
-    for (let block = 0; block < bytes.length; block += 64) {
-      for (let i = 0; i < 16; i++) {
-        w[i] = (bytes[block + i * 4] << 24 | bytes[block + i * 4 + 1] << 16 | bytes[block + i * 4 + 2] << 8 | bytes[block + i * 4 + 3]) >>> 0;
-      }
-      for (let i = 16; i < 80; i++) {
-        w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
-      }
-      let a = h0, b = h1, c = h2, d = h3, e = h4;
-      for (let i = 0; i < 80; i++) {
-        let f, k;
-        if (i < 20) {
-          f = b & c | ~b & d;
-          k = 1518500249;
-        } else if (i < 40) {
-          f = b ^ c ^ d;
-          k = 1859775393;
-        } else if (i < 60) {
-          f = b & c | b & d | c & d;
-          k = 2400959708;
-        } else {
-          f = b ^ c ^ d;
-          k = 3395469782;
-        }
-        const t = rotl(a, 5) + f + e + k + w[i] >>> 0;
-        e = d;
-        d = c;
-        c = rotl(b, 30);
-        b = a;
-        a = t;
-      }
-      h0 = h0 + a >>> 0;
-      h1 = h1 + b >>> 0;
-      h2 = h2 + c >>> 0;
-      h3 = h3 + d >>> 0;
-      h4 = h4 + e >>> 0;
-    }
-    return [h0, h1, h2, h3, h4].map((x) => x.toString(16).padStart(8, "0")).join("");
-  }
+  var DISAPPEARANCE_RESOLUTION = "scan_ts";
+  var REMEDIATION_ROLLOUT_ISO = "2026-07-01T00:00:00Z";
+  var DEFAULT_RETENTION_DAYS = 180;
+  var RETENTION_MIN_DAYS = 30;
+  var MIN_UNSEALED_FLAT_SCANS = 2;
+  var RESOLUTION_DISAPPEARED = "disappeared";
+  var DEFAULT_COLD_AFTER_DAYS = 90;
+  var COLD_AFTER_DAYS_MIN = 7;
+  var COLD_AFTER_DAYS_MAX = 365;
+  var COLD_ZONE_MODES = ["fixed", "relative"];
+  var DEFAULT_COLD_ZONE_MODE = "fixed";
+  var DEFAULT_COLD_TARGET_SHARE_PCT = 20;
+  var COLD_TARGET_SHARE_PCT_MIN = 1;
+  var COLD_TARGET_SHARE_PCT_MAX = 50;
+  var DEFAULT_COLD_FLOOR_DAYS = 14;
+  var COLD_FLOOR_DAYS_MIN = 1;
+  var COLD_FLOOR_DAYS_MAX = COLD_AFTER_DAYS_MAX;
 
   // src/domain/util.ts
   function present(v) {
@@ -490,2210 +223,6 @@ var Server = (() => {
   function median(values) {
     return quantile(values, 0.5);
   }
-
-  // src/domain/domainTag.ts
-  var DEFAULT_DOMAIN_TAG_KEY = "Wiz/Domain";
-  function domainOfTags(tags, key = DEFAULT_DOMAIN_TAG_KEY) {
-    const want = key.trim().toLowerCase();
-    if (!want || !tags) return null;
-    for (const [k, v] of Object.entries(tags)) {
-      if (String(k).trim().toLowerCase() !== want) continue;
-      if (!present(v)) continue;
-      const value = String(v).trim();
-      if (value) return value;
-    }
-    return null;
-  }
-  function resolveDomainTagKey(configured) {
-    const k = (configured != null ? configured : "").trim();
-    return k || DEFAULT_DOMAIN_TAG_KEY;
-  }
-
-  // src/server/serverCache.ts
-  var VERSION_PROP = "DATA_VERSION";
-  var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "3c8110beab3a" : "dev";
-  var CHUNK_CHARS = 9e4;
-  var DEFAULT_TTL_SEC = 21600;
-  function dataVersion() {
-    var _a;
-    return (_a = getProp(VERSION_PROP)) != null ? _a : "0";
-  }
-  function domainTagStamp() {
-    return sha1Hex(resolveDomainTagKey(getProp(PROP_KEYS.wizDomainTagKey))).slice(0, 8);
-  }
-  var versionStamp;
-  function stamp() {
-    if (versionStamp === void 0) {
-      versionStamp = `${BUILD_ID}.${dataVersion()}.${domainTagStamp()}`;
-    }
-    return versionStamp;
-  }
-  function bumpDataVersion() {
-    const now = Date.now();
-    const prev = Number(dataVersion());
-    setProp(VERSION_PROP, String(Number.isFinite(prev) && prev >= now ? prev + 1 : now));
-    versionStamp = void 0;
-  }
-  function paramsHash(params) {
-    return sha1Hex(JSON.stringify(params != null ? params : null)).slice(0, 12);
-  }
-  function cacheKey(name, params, version) {
-    return `${KEY_PREFIX}:${version}:${name}:${paramsHash(params)}`;
-  }
-  function currentStamp() {
-    return stamp();
-  }
-  function splitChunks(s, size = CHUNK_CHARS) {
-    const out = [];
-    for (let i = 0; i < s.length; i += size) out.push(s.slice(i, i + size));
-    return out.length ? out : [""];
-  }
-  function cachePutJson(key, value, ttlSec = DEFAULT_TTL_SEC, chunkChars = CHUNK_CHARS) {
-    const json = JSON.stringify(value);
-    const gz = Utilities.gzip(Utilities.newBlob(json, "application/json"));
-    const packed = Utilities.base64Encode(gz.getBytes());
-    const chunks = splitChunks(packed, chunkChars);
-    const entries = { [`${key}:m`]: String(chunks.length) };
-    chunks.forEach((c, i) => {
-      entries[`${key}:${i}`] = c;
-    });
-    CacheService.getScriptCache().putAll(entries, ttlSec);
-  }
-  function cacheGetJson(key) {
-    const cache = CacheService.getScriptCache();
-    const meta = cache.get(`${key}:m`);
-    if (!meta) return void 0;
-    const n = Number(meta);
-    if (!Number.isInteger(n) || n < 1) return void 0;
-    const names = [];
-    for (let i = 0; i < n; i++) names.push(`${key}:${i}`);
-    const got = cache.getAll(names);
-    let packed = "";
-    for (const name of names) {
-      const chunk = got[name];
-      if (chunk === void 0 || chunk === null) return void 0;
-      packed += chunk;
-    }
-    const bytes = Utilities.base64Decode(packed);
-    const json = Utilities.ungzip(
-      Utilities.newBlob(bytes, "application/x-gzip")
-    ).getDataAsString("UTF-8");
-    return JSON.parse(json);
-  }
-  function cached(name, params, compute, ttlSec = DEFAULT_TTL_SEC) {
-    let key = null;
-    try {
-      key = cacheKey(name, params, stamp());
-      const hit = cacheGetJson(key);
-      if (hit !== void 0) return hit;
-    } catch (e) {
-      console.warn(`Cache read failed for ${name}: ${e}`);
-      key = null;
-    }
-    const value = compute();
-    if (key) {
-      try {
-        cachePutJson(key, value, ttlSec);
-      } catch (e) {
-        console.warn(`Cache write failed for ${name}: ${e}`);
-      }
-    }
-    return value;
-  }
-
-  // src/server/welcome.ts
-  var ENTRY_TTL_SEC = 21600;
-  var ENTER_PARAM = "enter";
-  function markerKey(email) {
-    return "entered:" + paramsHash(email.trim().toLowerCase());
-  }
-  function markEntered(email) {
-    try {
-      CacheService.getScriptCache().put(markerKey(email), "1", ENTRY_TTL_SEC);
-    } catch (e) {
-      console.warn("entry marker write failed: " + e);
-    }
-  }
-  function hasEntered(email) {
-    try {
-      return CacheService.getScriptCache().get(markerKey(email)) !== null;
-    } catch (e) {
-      console.warn("entry marker read failed: " + e);
-      return true;
-    }
-  }
-  function welcomeHtml(email, continueUrl, switchUrl) {
-    return cardPage({
-      title: PRODUCT,
-      eyebrow: PRODUCT,
-      heading: "You're signed in.",
-      paragraphs: [
-        "This dashboard will open as <strong>" + escapeHtml(email) + "</strong>.",
-        "If that isn't the account you meant to use, switch before you continue \u2014 the register you see depends on which account opens it."
-      ],
-      actions: primaryAction(continueUrl, "Continue") + (switchUrl ? secondaryAction(switchUrl, "Switch Google account") : "")
-    });
-  }
-  function gate(e) {
-    const email = check().email;
-    if (!email) return null;
-    if (e && e.parameter && e.parameter[ENTER_PARAM]) {
-      markEntered(email);
-      return null;
-    }
-    if (hasEntered(email)) {
-      markEntered(email);
-      return null;
-    }
-    const url = serviceUrl();
-    if (!url) return null;
-    const continueUrl = url + (url.indexOf("?") >= 0 ? "&" : "?") + ENTER_PARAM + "=1";
-    return HtmlService.createHtmlOutput(welcomeHtml(email, continueUrl, accountChooserUrl())).setTitle(PRODUCT).addMetaTag("viewport", "width=device-width, initial-scale=1");
-  }
-
-  // src/server/errorLog.ts
-  var KEY = "RECENT_ERRORS";
-  var MAX_ENTRIES = 25;
-  var MAX_MESSAGE_LEN = 500;
-  var MAX_BLOB_CHARS = 8500;
-  function truncate(s) {
-    return s.length > MAX_MESSAGE_LEN ? s.slice(0, MAX_MESSAGE_LEN) + "\u2026" : s;
-  }
-  function recentErrors() {
-    const raw = getProp(KEY);
-    if (!raw) return [];
-    try {
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      return parsed.filter((e) => Boolean(e) && typeof e === "object" && !Array.isArray(e)).map((e) => {
-        var _a, _b, _c, _d;
-        return {
-          ts: String((_a = e["ts"]) != null ? _a : ""),
-          op: String((_b = e["op"]) != null ? _b : "api"),
-          kind: String((_c = e["kind"]) != null ? _c : "error"),
-          message: String((_d = e["message"]) != null ? _d : "")
-        };
-      });
-    } catch {
-      return [];
-    }
-  }
-  function recordError(op, err, kind = "error", now) {
-    try {
-      const message = err instanceof Error ? err.message : typeof err === "string" ? err : String(err);
-      const entry = { ts: nowIso(now), op, kind, message: truncate(message) };
-      const next = [entry, ...recentErrors()].slice(0, MAX_ENTRIES);
-      let blob = JSON.stringify(next);
-      while (next.length > 1 && blob.length > MAX_BLOB_CHARS) {
-        next.pop();
-        blob = JSON.stringify(next);
-      }
-      setProp(KEY, blob);
-    } catch {
-    }
-  }
-  function clearErrors() {
-    deleteProp(KEY);
-  }
-
-  // src/server/archiveStore.ts
-  var SUBFOLDERS = [
-    "scans",
-    "obs",
-    "checkpoints",
-    "snapshots",
-    "backups",
-    "imports",
-    "exports",
-    // Durable read-model cache (readModelStore.ts). Created on demand by subfolder(), so a
-    // deployment that never re-runs setup() still self-heals on the first write.
-    "readmodels"
-  ];
-  var recordedFailures = /* @__PURE__ */ new Set();
-  function noteDriveFailure(label, e) {
-    console.warn(`${label}: ${e}`);
-    if (recordedFailures.has(label)) return;
-    recordedFailures.add(label);
-    recordError(label, e, "error");
-  }
-  function rootFolder() {
-    return DriveApp.getFolderById(requireProp(PROP_KEYS.archiveFolderId));
-  }
-  function findChild(parent, name) {
-    const it = parent.getFoldersByName(name);
-    return it.hasNext() ? it.next() : null;
-  }
-  function childFolder(parent, name) {
-    var _a;
-    return (_a = findChild(parent, name)) != null ? _a : parent.createFolder(name);
-  }
-  function subfolder(name) {
-    return childFolder(rootFolder(), name);
-  }
-  function findSubfolder(name) {
-    try {
-      return findChild(rootFolder(), name);
-    } catch (e) {
-      noteDriveFailure(`archiveRead:${name}`, e);
-      return null;
-    }
-  }
-  function readGzJsonIn(folder, name, label = "archiveRead") {
-    if (!folder) return null;
-    try {
-      const files = folder.getFilesByName(name);
-      return files.hasNext() ? parseGzBlob(files.next().getBlob()) : null;
-    } catch (e) {
-      noteDriveFailure(label, e);
-      return null;
-    }
-  }
-  function ensureFolders(rootId) {
-    const root = rootId ? DriveApp.getFolderById(rootId) : rootFolder();
-    for (const name of SUBFOLDERS) childFolder(root, name);
-    return root.getId();
-  }
-  function safeName(id) {
-    return id.replace(/[^0-9A-Za-z._-]/g, "") || "scan";
-  }
-  function writeGzJson(folder, name, payload) {
-    const json = JSON.stringify(payload);
-    const blob = Utilities.gzip(Utilities.newBlob(json, "application/json"), name);
-    const existing = folder.getFilesByName(name);
-    while (existing.hasNext()) existing.next().setTrashed(true);
-    return folder.createFile(blob);
-  }
-  function readGzJsonFile(fileId) {
-    try {
-      const file = DriveApp.getFileById(fileId);
-      return parseGzBlob(file.getBlob());
-    } catch (e) {
-      console.warn(`Unreadable Drive file ${fileId}: ${e}`);
-      return null;
-    }
-  }
-  function parseGzBlob(blob) {
-    try {
-      const bytes = blob.getBytes();
-      const isGzip = bytes.length > 2 && (bytes[0] & 255) === 31 && (bytes[1] & 255) === 139;
-      const text2 = isGzip ? Utilities.ungzip(blob).getDataAsString("UTF-8") : blob.getDataAsString("UTF-8");
-      return JSON.parse(text2);
-    } catch (e) {
-      console.warn(`Failed to parse archive blob: ${e}`);
-      return null;
-    }
-  }
-  function scanFolder(scanId) {
-    return childFolder(subfolder("scans"), safeName(scanId));
-  }
-  function findScanFolder(scanId) {
-    const scans = findSubfolder("scans");
-    if (!scans) return null;
-    try {
-      return findChild(scans, safeName(scanId));
-    } catch (e) {
-      noteDriveFailure("archiveRead:scans", e);
-      return null;
-    }
-  }
-  function writeScanPage(scanId, pageNumber, payload) {
-    const name = `page-${String(pageNumber).padStart(4, "0")}.json.gz`;
-    return writeGzJson(scanFolder(scanId), name, payload).getId();
-  }
-  function readScanPage(scanId, pageNumber) {
-    const name = `page-${String(pageNumber).padStart(4, "0")}.json.gz`;
-    return readGzJsonIn(findScanFolder(scanId), name, "archiveRead:page");
-  }
-  function writeSlimRecords(scanId, records) {
-    return writeGzJson(scanFolder(scanId), "slim.json.gz", records).getId();
-  }
-  function readSlimRecords(scanId) {
-    const parsed = readGzJsonIn(findScanFolder(scanId), "slim.json.gz", "archiveRead:slim");
-    return Array.isArray(parsed) ? parsed : null;
-  }
-  var FRAME_NAME = "frame-v1.json.gz";
-  function writeFrame(scanId, records) {
-    return writeGzJson(scanFolder(scanId), FRAME_NAME, records).getId();
-  }
-  function readFrame(scanId) {
-    const parsed = readGzJsonIn(findScanFolder(scanId), FRAME_NAME, "archiveRead:frame");
-    return Array.isArray(parsed) ? parsed : null;
-  }
-  var PAGE_RUNS_NAME = "pageruns.json.gz";
-  function writePageRuns(scanId, runs) {
-    writeGzJson(scanFolder(scanId), PAGE_RUNS_NAME, runs);
-  }
-  function readPageRuns(scanId) {
-    const parsed = readGzJsonIn(findScanFolder(scanId), PAGE_RUNS_NAME, "archiveRead:pageRuns");
-    return Array.isArray(parsed) ? parsed : null;
-  }
-  function readScanPayload(scanRef) {
-    if (!scanRef) return null;
-    let folder;
-    try {
-      folder = DriveApp.getFolderById(scanRef);
-    } catch {
-      return null;
-    }
-    const pages = [];
-    try {
-      const files = folder.getFiles();
-      while (files.hasNext()) {
-        const f = files.next();
-        const name = f.getName();
-        if (!/^page-\d+\.json(\.gz)?$/.test(name)) continue;
-        const payload = parseGzBlob(f.getBlob());
-        if (payload === null) return null;
-        pages.push({ name, payload });
-      }
-    } catch (e) {
-      noteDriveFailure("archiveRead:scanPayload", e);
-      return null;
-    }
-    if (!pages.length) return null;
-    pages.sort((a, b) => a.name < b.name ? -1 : 1);
-    return pages.map((p) => p.payload);
-  }
-  function scanArchiveBytes(scanRef, obsRef) {
-    let total = 0;
-    if (scanRef) {
-      try {
-        const files = DriveApp.getFolderById(scanRef).getFiles();
-        while (files.hasNext()) total += files.next().getSize();
-      } catch {
-      }
-    }
-    if (obsRef) {
-      try {
-        total += DriveApp.getFileById(obsRef).getSize();
-      } catch {
-      }
-    }
-    return total;
-  }
-  function trashScanArchive(scanRef) {
-    if (!scanRef) return;
-    try {
-      DriveApp.getFolderById(scanRef).setTrashed(true);
-    } catch (e) {
-      console.warn(`Couldn't trash scan archive ${scanRef}: ${e}`);
-    }
-  }
-  function writeObservations(scanId, observations) {
-    return writeGzJson(subfolder("obs"), `obs-${safeName(scanId)}.json.gz`, observations).getId();
-  }
-  function readObservations(obsRef) {
-    if (!obsRef) return [];
-    const parsed = readGzJsonFile(obsRef);
-    return Array.isArray(parsed) ? parsed : [];
-  }
-  function trashFile(fileId) {
-    if (!fileId) return;
-    try {
-      DriveApp.getFileById(fileId).setTrashed(true);
-    } catch (e) {
-      console.warn(`Couldn't trash file ${fileId}: ${e}`);
-    }
-  }
-  function writeCheckpoint(compactionId, checkpoint) {
-    return writeGzJson(
-      subfolder("checkpoints"),
-      `checkpoint-${safeName(compactionId)}.json.gz`,
-      checkpoint
-    ).getId();
-  }
-  function readCheckpoint(ref) {
-    var _a, _b, _c;
-    if (!ref) return null;
-    const parsed = readGzJsonFile(ref);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    const obj = parsed;
-    if (Array.isArray(obj["parts"])) {
-      const ledger = [];
-      for (const partId of obj["parts"]) {
-        const part = readGzJsonFile(partId);
-        if (Array.isArray(part)) for (const row of part) ledger.push(row);
-      }
-      return {
-        version: Number((_a = obj["version"]) != null ? _a : 1),
-        floor_scan_id: (_b = obj["floor_scan_id"]) != null ? _b : null,
-        floor_ts: (_c = obj["floor_ts"]) != null ? _c : null,
-        ledger
-      };
-    }
-    return parsed;
-  }
-  var CHECKPOINT_PART_ROWS = 2e4;
-  function rewriteCheckpoint(compactionId, prevRef, checkpoint) {
-    var _a;
-    const prev = prevRef ? readGzJsonFile(prevRef) : null;
-    const prevParts = prev && typeof prev === "object" && !Array.isArray(prev) ? prev["parts"] : null;
-    if (!Array.isArray(prevParts)) return writeCheckpoint(compactionId, checkpoint);
-    const rows = (_a = checkpoint.ledger) != null ? _a : [];
-    const partIds = [];
-    for (let i = 0, idx = 0; i < rows.length; i += CHECKPOINT_PART_ROWS, idx += 1) {
-      partIds.push(writeCheckpointPart(compactionId, idx, rows.slice(i, i + CHECKPOINT_PART_ROWS)));
-    }
-    const ref = writeCheckpointManifest(compactionId, {
-      version: checkpoint.version,
-      floor_scan_id: checkpoint.floor_scan_id,
-      floor_ts: checkpoint.floor_ts,
-      parts: partIds
-    });
-    for (const id of prevParts) {
-      if (typeof id === "string" && !partIds.includes(id)) trashFile(id);
-    }
-    return ref;
-  }
-  function listScanPageNumbers(scanRef) {
-    if (!scanRef) return [];
-    let folder;
-    try {
-      folder = DriveApp.getFolderById(scanRef);
-    } catch {
-      return [];
-    }
-    const nums = [];
-    try {
-      const files = folder.getFiles();
-      while (files.hasNext()) {
-        const m = /^page-(\d+)\.json(\.gz)?$/.exec(files.next().getName());
-        if (m) nums.push(Number(m[1]));
-      }
-    } catch (e) {
-      noteDriveFailure("archiveRead:pageNumbers", e);
-      return [];
-    }
-    return nums.sort((a, b) => a - b);
-  }
-  function trashPageRuns(scanId) {
-    try {
-      const folder = findScanFolder(scanId);
-      const files = folder ? folder.getFilesByName(PAGE_RUNS_NAME) : null;
-      while (files && files.hasNext()) files.next().setTrashed(true);
-    } catch (e) {
-      console.warn(`Couldn't trash page runs for ${scanId}: ${e}`);
-    }
-  }
-  var SNAPSHOT_NAME = "ledger-snapshot.json.gz";
-  function writeLedgerSnapshot(state) {
-    const snap = { version: 1, ledger: state.ledger, episodes: state.episodes };
-    writeGzJson(subfolder("snapshots"), SNAPSHOT_NAME, snap);
-  }
-  function readLedgerSnapshot() {
-    const parsed = readGzJsonIn(findSubfolder("snapshots"), SNAPSHOT_NAME, "archiveRead:snapshot");
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    const snap = parsed;
-    return snap.ledger && snap.episodes ? snap : null;
-  }
-  function writeJournal(jobId, state) {
-    return writeGzJson(subfolder("backups"), `backup-${safeName(jobId)}.json.gz`, state).getId();
-  }
-  function readJournal(ref) {
-    if (!ref) return null;
-    const parsed = readGzJsonFile(ref);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    const st = parsed;
-    return st.scans && st.ledger && st.episodes ? st : null;
-  }
-  function writeMigrationExport(name, bundle) {
-    const file = writeGzJson(subfolder("exports"), name, bundle);
-    return { name, url: file.getDownloadUrl(), bytes: file.getSize() };
-  }
-  function listNames(folder) {
-    const dir = findSubfolder(folder);
-    if (!dir) return [];
-    const out = [];
-    try {
-      const files = dir.getFiles();
-      while (files.hasNext()) out.push(files.next().getName());
-    } catch (e) {
-      noteDriveFailure(`archiveRead:${folder}`, e);
-      return [];
-    }
-    return out;
-  }
-  function trashNamed(folder, name) {
-    const dir = findSubfolder(folder);
-    if (!dir) return;
-    const files = dir.getFilesByName(name);
-    while (files.hasNext()) files.next().setTrashed(true);
-  }
-  function trashLedgerSnapshot() {
-    const dir = findSubfolder("snapshots");
-    if (!dir) return;
-    const files = dir.getFilesByName(SNAPSHOT_NAME);
-    while (files.hasNext()) files.next().setTrashed(true);
-  }
-  function importFolder(sessionId) {
-    return childFolder(subfolder("imports"), safeName(sessionId));
-  }
-  function findImportFolder(sessionId) {
-    const imports = findSubfolder("imports");
-    if (!imports) return null;
-    try {
-      return findChild(imports, safeName(sessionId));
-    } catch (e) {
-      noteDriveFailure("archiveRead:imports", e);
-      return null;
-    }
-  }
-  function writeImportManifest(sessionId, manifest) {
-    return writeGzJson(importFolder(sessionId), "manifest.json.gz", manifest).getId();
-  }
-  function readImportManifest(sessionId) {
-    return readGzJsonIn(findImportFolder(sessionId), "manifest.json.gz", "archiveRead:imports");
-  }
-  function stageShard(sessionId, index, payload) {
-    const name = `shard-${String(index + 1).padStart(4, "0")}.json.gz`;
-    return writeGzJson(importFolder(sessionId), name, payload).getId();
-  }
-  function writeCheckpointPart(compactionId, index, rows) {
-    const name = `checkpoint-${safeName(compactionId)}-part-${String(index + 1).padStart(4, "0")}.json.gz`;
-    return writeGzJson(subfolder("checkpoints"), name, rows).getId();
-  }
-  function writeCheckpointManifest(compactionId, manifest) {
-    return writeGzJson(
-      subfolder("checkpoints"),
-      `checkpoint-${safeName(compactionId)}.json.gz`,
-      manifest
-    ).getId();
-  }
-  function trashImportSession(sessionId) {
-    try {
-      importFolder(sessionId).setTrashed(true);
-    } catch (e) {
-      console.warn(`trashImportSession(${sessionId}): ${e}`);
-    }
-  }
-
-  // src/server/sheetsDb.ts
-  var TABS = {
-    scans: "scans",
-    vulnLedger: "vuln_ledger",
-    episodes: "resolved_episodes",
-    compactions: "compactions",
-    settings: "settings",
-    supportGroupMap: "support_group_map",
-    mttrHistory: "mttr_history",
-    schemaMeta: "schema_meta",
-    jobs: "jobs"
-  };
-  var TAB_HEADERS = {
-    [TABS.scans]: [
-      "scan_id",
-      "ts",
-      "mode",
-      "shape",
-      "total",
-      "new_count",
-      "resolved_count",
-      "reopened_count",
-      "raw_ref",
-      "obs_ref",
-      "severities",
-      "sealed"
-    ],
-    [TABS.vulnLedger]: [
-      "vuln_key",
-      "cve",
-      "severity",
-      "asset_id",
-      "asset_name",
-      "asset_type",
-      "cloud",
-      "first_seen",
-      "last_seen",
-      "status",
-      "resolved_at",
-      "resolution_src",
-      "reopened_count",
-      "first_scan_id",
-      "last_scan_id",
-      "subscription_name",
-      "subscription_ext_id",
-      "tags_json",
-      "fix_date",
-      "fix_observed_at",
-      "has_kev",
-      "has_exploit",
-      "epss",
-      "risk_observed_at",
-      // Wiz's own console link. LAST, which is where `ensureHeaders` appends a newly-added
-      // column on an existing deployment — so a sheet created by this version and a sheet
-      // healed into it end up with the same column order rather than two orders that only
-      // agree by luck. (Writes map by the headers READ OFF THE SHEET, not by this list, so
-      // the orders never have to match each other — but a reader comparing two deployments
-      // should not have to discover that.)
-      "portal_url"
-    ],
-    [TABS.episodes]: [
-      "vuln_key",
-      "cve",
-      "severity",
-      "first_seen",
-      "resolved_at",
-      "resolution_src",
-      "reopened_count",
-      "compaction_id",
-      "superseded_by_scan",
-      "fix_date",
-      "fix_observed_at",
-      "has_kev",
-      "has_exploit",
-      "epss",
-      "risk_observed_at",
-      // The resource's tag bag, carried through compaction so a sealed episode keeps the
-      // `Wiz/Domain` tag its domain is read from. See the comment on EpisodeRow.
-      "tags_json"
-    ],
-    [TABS.compactions]: [
-      "compaction_id",
-      "ts",
-      "floor_scan_id",
-      "floor_ts",
-      "scans_sealed",
-      "episodes_created",
-      "observations_pruned",
-      "archive_bytes_freed",
-      "db_bytes_freed",
-      "checkpoint_ref"
-    ],
-    [TABS.settings]: ["key", "value_json"],
-    // One tiny row per subscription-identity → support-group entry. Deliberately NOT a single
-    // JSON blob in a settings cell: a large map (hundreds of subscriptions × several identity
-    // tokens each) overflows the ~50k-char Sheets per-cell limit and the whole write throws.
-    [TABS.supportGroupMap]: ["token", "group"],
-    [TABS.mttrHistory]: [
-      "date",
-      "median_days",
-      "resolved",
-      "open",
-      "total",
-      "sla_pct",
-      "oldest_open_days",
-      "open_past_sla"
-    ],
-    [TABS.schemaMeta]: ["version"],
-    [TABS.jobs]: [
-      "job_id",
-      "kind",
-      "phase",
-      "scan_id",
-      "cursor",
-      "page",
-      "findings_so_far",
-      "page_size",
-      "total_count",
-      "params_json",
-      "journal_ref",
-      "error",
-      "started_at",
-      "updated_at"
-    ]
-  };
-  var SCHEMA_VERSION = 2;
-  var spreadsheetCache = null;
-  function ledgerSpreadsheet() {
-    if (spreadsheetCache === null) {
-      spreadsheetCache = SpreadsheetApp.openById(requireProp(PROP_KEYS.ledgerSpreadsheetId));
-    }
-    return spreadsheetCache;
-  }
-  function sheet(tab) {
-    const sh = ledgerSpreadsheet().getSheetByName(tab);
-    if (!sh) throw new Error(`Missing tab ${tab} \u2014 run setup().`);
-    return sh;
-  }
-  function ensureTabs(ss) {
-    ss.setSpreadsheetTimeZone("Etc/UTC");
-    for (const [tab, headers] of Object.entries(TAB_HEADERS)) {
-      let sh = ss.getSheetByName(tab);
-      if (!sh) {
-        sh = ss.insertSheet(tab);
-        sh.getRange(1, 1, sh.getMaxRows(), sh.getMaxColumns()).setNumberFormat("@");
-        sh.getRange(1, 1, 1, headers.length).setValues([headers]);
-        sh.setFrozenRows(1);
-      } else {
-        ensureHeaders(sh, headers);
-      }
-    }
-    const dflt = ss.getSheetByName("Sheet1");
-    if (dflt && ss.getSheets().length > 1) ss.deleteSheet(dflt);
-  }
-  function ensureHeaders(sh, headers) {
-    const width = Math.max(sh.getLastColumn(), 1);
-    const existing = sh.getRange(1, 1, 1, width).getValues()[0].map(String).filter((h) => h !== "");
-    const missing = headers.filter((h) => !existing.includes(h));
-    if (missing.length) {
-      sh.getRange(1, existing.length + 1, 1, missing.length).setValues([missing]);
-    }
-  }
-  function ensureTab(tab) {
-    const ss = ledgerSpreadsheet();
-    const headers = TAB_HEADERS[tab];
-    if (!headers) throw new Error(`No headers defined for tab ${tab}.`);
-    const found = ss.getSheetByName(tab);
-    if (found) {
-      ensureHeaders(found, headers);
-      return;
-    }
-    const sh = ss.insertSheet(tab);
-    sh.getRange(1, 1, sh.getMaxRows(), sh.getMaxColumns()).setNumberFormat("@");
-    sh.getRange(1, 1, 1, headers.length).setValues([headers]);
-    sh.setFrozenRows(1);
-  }
-  function fromCell(v) {
-    if (v === "" || v === null || v === void 0) return null;
-    if (v instanceof Date) {
-      return new Date(Math.floor(v.getTime() / 1e3) * 1e3).toISOString().replace(".000Z", "Z");
-    }
-    return v;
-  }
-  function toCell(v) {
-    if (v === null || v === void 0) return "";
-    return v;
-  }
-  function mapRows(headers, values) {
-    const out = [];
-    for (const value of values) {
-      const row = {};
-      let empty = true;
-      for (let j = 0; j < headers.length; j++) {
-        if (!headers[j]) continue;
-        const v = fromCell(value[j]);
-        row[headers[j]] = v;
-        if (v !== null) empty = false;
-      }
-      if (!empty) out.push(row);
-    }
-    return out;
-  }
-  function readAll(tab) {
-    const sh = sheet(tab);
-    const lastRow = sh.getLastRow();
-    const lastCol = sh.getLastColumn();
-    if (lastRow < 2 || lastCol < 1) return [];
-    const values = sh.getRange(1, 1, lastRow, lastCol).getValues();
-    return mapRows(values[0].map(String), values.slice(1));
-  }
-  function readTail(tab, n) {
-    const sh = sheet(tab);
-    const lastRow = sh.getLastRow();
-    const lastCol = sh.getLastColumn();
-    if (lastRow < 2 || lastCol < 1) return [];
-    const headers = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
-    const first = Math.max(2, lastRow - n + 1);
-    const values = sh.getRange(first, 1, lastRow - first + 1, lastCol).getValues();
-    return mapRows(headers, values);
-  }
-  function overwrite(tab, rows) {
-    const sh = sheet(tab);
-    const lastCol = Math.max(sh.getLastColumn(), 1);
-    const headers = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String).filter(Boolean);
-    const lastRow = sh.getLastRow();
-    if (lastRow > 1) sh.getRange(2, 1, lastRow - 1, lastCol).clearContent();
-    if (!rows.length) return;
-    const grid = rows.map((r) => headers.map((h) => toCell(r[h])));
-    const range = sh.getRange(2, 1, grid.length, headers.length);
-    range.setNumberFormat("@");
-    range.setValues(grid);
-  }
-  function appendRows(tab, rows) {
-    if (!rows.length) return;
-    const sh = sheet(tab);
-    const lastCol = Math.max(sh.getLastColumn(), 1);
-    const headers = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String).filter(Boolean);
-    const grid = rows.map((r) => headers.map((h) => toCell(r[h])));
-    const range = sh.getRange(sh.getLastRow() + 1, 1, grid.length, headers.length);
-    range.setNumberFormat("@");
-    range.setValues(grid);
-  }
-  function dataRowCount(tab) {
-    return Math.max(0, sheet(tab).getLastRow() - 1);
-  }
-  function truncateAfter(tab, keepDataRows) {
-    const sh = sheet(tab);
-    const lastRow = sh.getLastRow();
-    const firstToClear = keepDataRows + 2;
-    if (lastRow >= firstToClear) {
-      const lastCol = Math.max(sh.getLastColumn(), 1);
-      sh.getRange(firstToClear, 1, lastRow - firstToClear + 1, lastCol).clearContent();
-    }
-  }
-  var SHRINK_SPARE_ROWS = 200;
-  function shrinkTab(tab, keepSpare = SHRINK_SPARE_ROWS) {
-    const sh = sheet(tab);
-    const needed = Math.max(sh.getLastRow(), 1) + Math.max(keepSpare, 0);
-    const max = sh.getMaxRows();
-    if (max > needed) sh.deleteRows(needed + 1, max - needed);
-  }
-  function updateWhere(tab, keyColumn, keyValue, patch) {
-    const sh = sheet(tab);
-    const lastRow = sh.getLastRow();
-    const lastCol = sh.getLastColumn();
-    if (lastRow < 2) return false;
-    const values = sh.getRange(1, 1, lastRow, lastCol).getValues();
-    const headers = values[0].map(String);
-    const keyIdx = headers.indexOf(keyColumn);
-    if (keyIdx < 0) return false;
-    for (let i = 1; i < values.length; i++) {
-      if (fromCell(values[i][keyIdx]) === keyValue) {
-        const rowVals = values[i].slice();
-        for (const [k, v] of Object.entries(patch)) {
-          const idx = headers.indexOf(k);
-          if (idx >= 0) rowVals[idx] = toCell(v);
-        }
-        sh.getRange(i + 1, 1, 1, lastCol).setValues([rowVals]);
-        return true;
-      }
-    }
-    return false;
-  }
-  function cellUsage() {
-    const tabs = ledgerSpreadsheet().getSheets().map((sh) => {
-      const rows = sh.getMaxRows();
-      const cols = sh.getMaxColumns();
-      return { name: sh.getName(), rows, cols, cells: rows * cols };
-    });
-    return { total: tabs.reduce((acc, t) => acc + t.cells, 0), tabs };
-  }
-
-  // src/server/setup.ts
-  var SPREADSHEET_NAME = "Wiz Sidekick OS Ledger";
-  var FOLDER_NAME = "wiz-sidekick";
-  var DAILY_TRIGGER_HANDLER = "trigger_dailyScan";
-  var DAILY_TRIGGER_HOUR = 5;
-  var WARM_TRIGGER_HANDLER = "trigger_warmReadModels";
-  var WARM_READY_BY_HOURS = [9, 13, 17];
-  var WARM_TRIGGER_TZ = "Europe/Paris";
-  var WARM_TRIGGER_NEAR_MINUTE = 30;
-  var WARM_TRIGGER_HOURS = WARM_READY_BY_HOURS.map((h) => (h + 23) % 24);
-  function warmScheduleSignature() {
-    return `${WARM_TRIGGER_TZ}|${WARM_TRIGGER_HOURS.join(",")}@${WARM_TRIGGER_NEAR_MINUTE}`;
-  }
-  function setup() {
-    const notes = [];
-    let ssId = getProp(PROP_KEYS.ledgerSpreadsheetId);
-    let ss;
-    if (ssId) {
-      ss = SpreadsheetApp.openById(ssId);
-      notes.push(`spreadsheet: existing ${ssId}`);
-    } else {
-      ss = SpreadsheetApp.create(SPREADSHEET_NAME);
-      ssId = ss.getId();
-      setProp(PROP_KEYS.ledgerSpreadsheetId, ssId);
-      notes.push(`spreadsheet: created ${ssId}`);
-    }
-    ensureTabs(ss);
-    let folderId = getProp(PROP_KEYS.archiveFolderId);
-    if (!folderId) {
-      folderId = DriveApp.createFolder(FOLDER_NAME).getId();
-      setProp(PROP_KEYS.archiveFolderId, folderId);
-      notes.push(`archive folder: created ${folderId}`);
-    } else {
-      notes.push(`archive folder: existing ${folderId}`);
-    }
-    ensureFolders(folderId);
-    if (!getProp(PROP_KEYS.wizAuthUrl)) setProp(PROP_KEYS.wizAuthUrl, DEFAULT_WIZ_AUTH_URL);
-    if (!getProp(PROP_KEYS.allowedUsers)) {
-      const owner = ownerEmail();
-      if (owner) {
-        setProp(PROP_KEYS.allowedUsers, owner);
-        notes.push(`allowlist: seeded with owner ${owner}`);
-      } else {
-        notes.push("allowlist: not seeded (owner email unavailable)");
-      }
-    } else {
-      notes.push("allowlist: already set, left as-is");
-    }
-    const existing = ScriptApp.getProjectTriggers().filter(
-      (t) => t.getHandlerFunction() === DAILY_TRIGGER_HANDLER
-    );
-    if (!existing.length) {
-      ScriptApp.newTrigger(DAILY_TRIGGER_HANDLER).timeBased().everyDays(1).atHour(DAILY_TRIGGER_HOUR).create();
-      notes.push(`daily trigger: installed (${DAILY_TRIGGER_HOUR}:00 script-local)`);
-    } else {
-      notes.push("daily trigger: already installed");
-    }
-    const warmExisting = ScriptApp.getProjectTriggers().filter(
-      (t) => t.getHandlerFunction() === WARM_TRIGGER_HANDLER
-    );
-    const wantSchedule = warmScheduleSignature();
-    if (warmExisting.length === WARM_TRIGGER_HOURS.length && getProp(PROP_KEYS.warmTriggerSchedule) === wantSchedule) {
-      notes.push(`warm trigger: already installed (${wantSchedule})`);
-    } else {
-      for (const t of warmExisting) ScriptApp.deleteTrigger(t);
-      for (const hour of WARM_TRIGGER_HOURS) {
-        ScriptApp.newTrigger(WARM_TRIGGER_HANDLER).timeBased().everyDays(1).atHour(hour).nearMinute(WARM_TRIGGER_NEAR_MINUTE).inTimezone(WARM_TRIGGER_TZ).create();
-      }
-      setProp(PROP_KEYS.warmTriggerSchedule, wantSchedule);
-      notes.push(
-        `warm trigger: installed ${WARM_TRIGGER_HOURS.length}x daily, warm by ${WARM_READY_BY_HOURS.map((h) => `${h}:00`).join(", ")} ${WARM_TRIGGER_TZ}` + (warmExisting.length ? ` (replaced ${warmExisting.length})` : "")
-      );
-    }
-    const missing = [
-      PROP_KEYS.wizClientId,
-      PROP_KEYS.wizClientSecret,
-      PROP_KEYS.wizApiUrl,
-      PROP_KEYS.wizProjectIdV2
-    ].filter((k) => !getProp(k));
-    if (missing.length) {
-      notes.push(`NOTE: set Script Properties for live scans: ${missing.join(", ")} (without them the app runs dry-run only)`);
-    }
-    return notes.join("\n");
-  }
-
-  // src/domain/config.ts
-  var SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
-  var SEVERITY_COLORS = {
-    CRITICAL: "#dc2626",
-    HIGH: "#ea580c",
-    MEDIUM: "#d97706",
-    LOW: "#2563eb",
-    INFO: "#64748b",
-    UNKNOWN: "#475569"
-  };
-  var SLA_TARGETS = {
-    CRITICAL: 7,
-    HIGH: 14,
-    MEDIUM: 30,
-    LOW: 90,
-    INFO: 180
-  };
-  var EPSS_PRIORITY_THRESHOLD = 0.1;
-  var SELECTABLE_SEVERITIES = SEVERITY_ORDER.filter((s) => s !== "UNKNOWN");
-  var DEFAULT_FETCH_SEVERITIES = ["CRITICAL", "HIGH"];
-  var DEFAULT_DISPLAY_SEVERITIES = ["CRITICAL", "HIGH"];
-  var API_SEVERITY_VALUES = {
-    CRITICAL: "CRITICAL",
-    HIGH: "HIGH",
-    MEDIUM: "MEDIUM",
-    LOW: "LOW",
-    INFO: "INFORMATIONAL"
-  };
-  var RESOLVED_STATUSES = /* @__PURE__ */ new Set(["RESOLVED", "REMEDIATED", "FIXED", "CLOSED"]);
-  function isOpenStatus(status) {
-    return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
-  }
-  var DISAPPEARANCE_RESOLUTION = "scan_ts";
-  var REMEDIATION_ROLLOUT_ISO = "2026-07-01T00:00:00Z";
-  var DEFAULT_RETENTION_DAYS = 180;
-  var RETENTION_MIN_DAYS = 30;
-  var MIN_UNSEALED_FLAT_SCANS = 2;
-  var RESOLUTION_DISAPPEARED = "disappeared";
-  var DEFAULT_COLD_AFTER_DAYS = 90;
-  var COLD_AFTER_DAYS_MIN = 7;
-  var COLD_AFTER_DAYS_MAX = 365;
-  var COLD_ZONE_MODES = ["fixed", "relative"];
-  var DEFAULT_COLD_ZONE_MODE = "fixed";
-  var DEFAULT_COLD_TARGET_SHARE_PCT = 20;
-  var COLD_TARGET_SHARE_PCT_MIN = 1;
-  var COLD_TARGET_SHARE_PCT_MAX = 50;
-  var DEFAULT_COLD_FLOOR_DAYS = 14;
-  var COLD_FLOOR_DAYS_MIN = 1;
-  var COLD_FLOOR_DAYS_MAX = COLD_AFTER_DAYS_MAX;
-
-  // src/domain/severity.ts
-  function normalizeSeverity(sev2) {
-    if (typeof sev2 !== "string") return "UNKNOWN";
-    const s = sev2.toUpperCase().trim();
-    if (s === "INFORMATIONAL" || s === "INFO") return "INFO";
-    return SEVERITY_ORDER.includes(s) ? s : "UNKNOWN";
-  }
-  function effectiveSeverity(rec) {
-    const candidates = ["severity", "vendorSeverity", "nvdSeverity"];
-    for (const source of candidates) {
-      const sev2 = normalizeSeverity(rec[source]);
-      if (sev2 !== "UNKNOWN") return { severity: sev2, source };
-    }
-    return { severity: "UNKNOWN", source: null };
-  }
-  function countBySeverity(records) {
-    var _a;
-    if (!records.length || !records.some((r) => "severity" in r)) return {};
-    const counts = {};
-    for (const rec of records) {
-      const sev2 = normalizeSeverity(rec["severity"]);
-      counts[sev2] = ((_a = counts[sev2]) != null ? _a : 0) + 1;
-    }
-    return counts;
-  }
-
-  // src/domain/compaction.ts
-  var CHECKPOINT_VERSION = 1;
-  function serializeSeverities(sevs) {
-    if (sevs === null || sevs === void 0) return null;
-    const vals = /* @__PURE__ */ new Set();
-    for (const s of sevs) {
-      if (typeof s === "string") {
-        const n = normalizeSeverity(s);
-        if (SELECTABLE_SEVERITIES.includes(n)) vals.add(n);
-      }
-    }
-    if (!vals.size || vals.size === SELECTABLE_SEVERITIES.length) return null;
-    const ordered = SEVERITY_ORDER.filter((s) => vals.has(s));
-    return `[${ordered.map((s) => JSON.stringify(s)).join(", ")}]`;
-  }
-  function parseSeverities(text2) {
-    if (typeof text2 !== "string" || !text2) return null;
-    let vals;
-    try {
-      vals = JSON.parse(text2);
-    } catch {
-      return null;
-    }
-    if (!Array.isArray(vals)) return null;
-    const chosen = new Set(
-      vals.filter((v) => typeof v === "string").map(normalizeSeverity)
-    );
-    const out = SEVERITY_ORDER.filter((s) => chosen.has(s));
-    return out.length ? out : null;
-  }
-  function selectSealCandidates(rows, cutoffMs) {
-    const flatIds = rows.filter((r) => r.shape === "flat").map((r) => r.scan_id);
-    const protectedIds = new Set(flatIds.slice(-MIN_UNSEALED_FLAT_SCANS));
-    const candidates = [];
-    for (const r of rows) {
-      if (protectedIds.has(r.scan_id)) break;
-      const ts = parseTs(r.ts);
-      if (ts === null || ts > cutoffMs) break;
-      candidates.push(r);
-    }
-    return candidates;
-  }
-  function statsEqual(a, b) {
-    if (isMissing(a) && isMissing(b)) return true;
-    if (a !== null && b !== null && typeof a === "object" && typeof b === "object" && !Array.isArray(a) && !Array.isArray(b)) {
-      const ka = Object.keys(a);
-      const kb = Object.keys(b);
-      if (ka.length !== kb.length || !ka.every((k) => kb.includes(k))) return false;
-      return ka.every((k) => statsEqual(a[k], b[k]));
-    }
-    if (Array.isArray(a) && Array.isArray(b)) {
-      return a.length === b.length && a.every((x, i) => statsEqual(x, b[i]));
-    }
-    return a === b;
-  }
-  function isMissing(v) {
-    return v === null || v === void 0 || typeof v === "number" && Number.isNaN(v);
-  }
-
-  // src/domain/program.ts
-  var DAY_MS = 864e5;
-  function isOpen(status) {
-    return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
-  }
-  var DEFAULT_RISK_RULE = {
-    kev: true,
-    exploit: true,
-    epss: true,
-    epssThreshold: EPSS_PRIORITY_THRESHOLD
-  };
-  function ruleIsEmpty(rule) {
-    return !rule.kev && !rule.exploit && !rule.epss;
-  }
-  function ruleSentence(rule) {
-    const parts = [];
-    if (rule.kev) parts.push("CISA KEV");
-    if (rule.exploit) parts.push("public exploit");
-    if (rule.epss) parts.push("EPSS >= " + rule.epssThreshold.toFixed(2));
-    return parts.length ? parts.join(" or ") : "no signal enabled";
-  }
-  function seen(row, rule) {
-    return {
-      kev: !rule.kev || row.has_kev != null,
-      exploit: !rule.exploit || row.has_exploit != null,
-      epss: !rule.epss || typeof row.epss === "number" && Number.isFinite(row.epss)
-    };
-  }
-  function firedSignals(row, rule) {
-    const out = [];
-    if (rule.kev && row.has_kev === true) out.push("kev");
-    if (rule.exploit && row.has_exploit === true) out.push("exploit");
-    if (rule.epss && typeof row.epss === "number" && Number.isFinite(row.epss) && row.epss >= rule.epssThreshold) {
-      out.push("epss");
-    }
-    return out;
-  }
-  function classifyRisk(row, rule) {
-    if (ruleIsEmpty(rule)) return "unknown";
-    if (firedSignals(row, rule).length) return "high";
-    const s = seen(row, rule);
-    if (!s.kev || !s.exploit || !s.epss) return "unknown";
-    return "low";
-  }
-  var RISK_TIER_ORDER = ["kev", "exploit", "epss", "none", "unknown"];
-  function riskTier(row, rule) {
-    const cls = classifyRisk(row, rule);
-    if (cls !== "high") return cls === "low" ? "none" : "unknown";
-    const fired = firedSignals(row, rule);
-    if (fired.includes("kev")) return "kev";
-    if (fired.includes("exploit")) return "exploit";
-    return "epss";
-  }
-  var NO_RATE = { point: null, lo: null, hi: null };
-  function pct(num, den) {
-    return den > 0 ? num / den * 100 : null;
-  }
-  function emptyMatrix() {
-    return {
-      tp: 0,
-      fp: 0,
-      fn: 0,
-      tn: 0,
-      unknownRemediated: 0,
-      unknownOpen: 0,
-      classified: 0,
-      unknown: 0,
-      total: 0,
-      remediated: 0,
-      open: 0,
-      highRisk: 0,
-      notHighRisk: 0,
-      coverage: NO_RATE,
-      efficiency: NO_RATE,
-      prevalence: null,
-      signalCoveragePct: null
-    };
-  }
-  function finalize(m) {
-    m.classified = m.tp + m.fp + m.fn + m.tn;
-    m.unknown = m.unknownRemediated + m.unknownOpen;
-    m.total = m.classified + m.unknown;
-    m.remediated = m.tp + m.fp + m.unknownRemediated;
-    m.open = m.fn + m.tn + m.unknownOpen;
-    m.highRisk = m.tp + m.fn;
-    m.notHighRisk = m.fp + m.tn;
-    m.coverage = {
-      point: pct(m.tp, m.tp + m.fn),
-      lo: pct(m.tp, m.tp + m.fn + m.unknownOpen),
-      hi: pct(m.tp + m.unknownRemediated, m.tp + m.unknownRemediated + m.fn)
-    };
-    m.efficiency = {
-      point: pct(m.tp, m.tp + m.fp),
-      lo: pct(m.tp, m.tp + m.fp + m.unknownRemediated),
-      hi: pct(m.tp + m.unknownRemediated, m.tp + m.fp + m.unknownRemediated)
-    };
-    m.prevalence = pct(m.highRisk, m.classified);
-    m.signalCoveragePct = pct(m.classified, m.total);
-    return m;
-  }
-  function tally(m, row, rule) {
-    const open = isOpen(row.status);
-    switch (classifyRisk(row, rule)) {
-      case "high":
-        if (open) m.fn += 1;
-        else m.tp += 1;
-        break;
-      case "low":
-        if (open) m.tn += 1;
-        else m.fp += 1;
-        break;
-      default:
-        if (open) m.unknownOpen += 1;
-        else m.unknownRemediated += 1;
-    }
-  }
-  function confusionMatrix(rows, rule) {
-    const m = emptyMatrix();
-    for (const row of rows) tally(m, row, rule);
-    return finalize(m);
-  }
-  function confusionBySeverity(rows, rule) {
-    var _a;
-    const bySev = {};
-    const overall = emptyMatrix();
-    for (const row of rows) {
-      const s = normalizeSeverity(row.severity);
-      const m = (_a = bySev[s]) != null ? _a : bySev[s] = emptyMatrix();
-      tally(m, row, rule);
-      tally(overall, row, rule);
-    }
-    const perSev = {};
-    for (const s of SEVERITY_ORDER) if (bySev[s]) perSev[s] = finalize(bySev[s]);
-    return { perSev, overall: finalize(overall) };
-  }
-  function signalBreakdown(rows, rule) {
-    const out = {
-      kev: 0,
-      exploit: 0,
-      epss: 0,
-      anyOf: 0,
-      kevMissing: 0,
-      exploitMissing: 0,
-      epssMissing: 0
-    };
-    for (const row of rows) {
-      const fired = firedSignals(row, rule);
-      if (fired.length) out.anyOf += 1;
-      for (const f of fired) out[f] += 1;
-      if (rule.kev && row.has_kev == null) out.kevMissing += 1;
-      if (rule.exploit && row.has_exploit == null) out.exploitMissing += 1;
-      if (rule.epss && !(typeof row.epss === "number" && Number.isFinite(row.epss))) {
-        out.epssMissing += 1;
-      }
-    }
-    return out;
-  }
-  function ruleSensitivity(rows, active) {
-    const subsets = [
-      { label: "KEV", kev: true, exploit: false, epss: false },
-      { label: "Exploit", kev: false, exploit: true, epss: false },
-      { label: "EPSS", kev: false, exploit: false, epss: true },
-      { label: "KEV or exploit", kev: true, exploit: true, epss: false },
-      { label: "KEV or EPSS", kev: true, exploit: false, epss: true },
-      { label: "Exploit or EPSS", kev: false, exploit: true, epss: true },
-      { label: "All three", kev: true, exploit: true, epss: true }
-    ];
-    return subsets.map((s) => {
-      const rule = { ...s, epssThreshold: active.epssThreshold };
-      const m = confusionMatrix(rows, rule);
-      return {
-        label: s.label,
-        rule,
-        active: rule.kev === active.kev && rule.exploit === active.exploit && rule.epss === active.epss,
-        coverage: m.coverage.point,
-        efficiency: m.efficiency.point,
-        highRisk: m.highRisk,
-        unknown: m.unknown
-      };
-    });
-  }
-  var NET_CAPACITY_BAND_PCT = 2;
-  function monthKey(ms) {
-    const d = new Date(ms);
-    return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0");
-  }
-  function monthStartMs(key) {
-    const [y, m] = key.split("-").map(Number);
-    return Date.UTC(y, m - 1, 1);
-  }
-  function nextMonthKey(key) {
-    const [y, m] = key.split("-").map(Number);
-    return m === 12 ? y + 1 + "-01" : y + "-" + String(m + 1).padStart(2, "0");
-  }
-  function verdictOf(netPct) {
-    if (netPct === null || Math.abs(netPct) <= NET_CAPACITY_BAND_PCT) return "keeping-up";
-    return netPct > 0 ? "gaining" : "falling-behind";
-  }
-  function capacityByMonth(rows, scans, options) {
-    var _a, _b, _c, _d;
-    const nowMs = (_a = options.now) != null ? _a : Date.now();
-    const rule = options.rule;
-    const parsed = [];
-    for (const row of rows) {
-      if (options.highRiskOnly && classifyRisk(row, rule) !== "high") continue;
-      const first = parseTs(row.first_seen);
-      if (first === null) continue;
-      parsed.push({ first, resolved: parseTs(row.resolved_at) });
-    }
-    const flatScanMs = scans.filter((s) => s["shape"] !== "grouped").map((s) => parseTs(s["ts"])).filter((t) => t !== null);
-    const firstScanMs = flatScanMs.length ? minNum(flatScanMs) : null;
-    const scanClosedByMonth = {};
-    for (const s of scans) {
-      if (s["shape"] === "grouped") continue;
-      const t = parseTs(s["ts"]);
-      if (t === null) continue;
-      if (firstScanMs !== null && t === firstScanMs) continue;
-      const k = monthKey(t);
-      scanClosedByMonth[k] = ((_b = scanClosedByMonth[k]) != null ? _b : 0) + Number((_c = s["resolved_count"]) != null ? _c : 0);
-    }
-    if (!parsed.length) {
-      return {
-        months: [],
-        mmcrMean: null,
-        oneInN: null,
-        closedPerMonthMean: null,
-        netTotal: 0,
-        verdict: null,
-        monthsCounted: 0
-      };
-    }
-    const earliest = minNum(parsed.map((p) => p.first));
-    const months = [];
-    const lastKey = monthKey(nowMs);
-    for (let key = monthKey(earliest); ; key = nextMonthKey(key)) {
-      const start = monthStartMs(key);
-      const end = monthStartMs(nextMonthKey(key));
-      let openAtStart = 0;
-      let opened = 0;
-      let closed = 0;
-      for (const p of parsed) {
-        if (p.first < start && (p.resolved === null || p.resolved >= start)) openAtStart += 1;
-        if (p.first >= start && p.first < end) opened += 1;
-        if (p.resolved !== null && p.resolved >= start && p.resolved < end) closed += 1;
-      }
-      const netPct = openAtStart > 0 ? (closed - opened) / openAtStart * 100 : null;
-      months.push({
-        month: key,
-        openAtStart,
-        opened,
-        closed,
-        mmcr: openAtStart > 0 ? closed / openAtStart * 100 : null,
-        net: closed - opened,
-        netPct,
-        verdict: verdictOf(netPct),
-        // The first month is partial only in the sense that the register begins mid-month; it
-        // still fully observes its own closures, so only the current month is excluded.
-        partial: key === lastKey,
-        reconstructed: firstScanMs === null || end <= firstScanMs,
-        scanClosed: (_d = scanClosedByMonth[key]) != null ? _d : null
-      });
-      if (key === lastKey) break;
-      if (months.length > 600) break;
-    }
-    const counted = months.filter((m) => !m.partial && !m.reconstructed && m.mmcr !== null);
-    const mmcrMean = counted.length ? counted.reduce((a, m) => a + m.mmcr, 0) / counted.length : null;
-    const closedPerMonthMean = counted.length ? counted.reduce((a, m) => a + m.closed, 0) / counted.length : null;
-    const netTotal = months.reduce((a, m) => a + m.net, 0);
-    const netPctOverall = counted.length ? counted.reduce((a, m) => {
-      var _a2;
-      return a + ((_a2 = m.netPct) != null ? _a2 : 0);
-    }, 0) / counted.length : null;
-    const trimmed = options.maxMonths !== void 0 && months.length > options.maxMonths ? months.slice(months.length - options.maxMonths) : months;
-    return {
-      months: trimmed,
-      mmcrMean,
-      oneInN: mmcrMean !== null && mmcrMean > 0 ? 100 / mmcrMean : null,
-      closedPerMonthMean,
-      netTotal,
-      verdict: counted.length ? verdictOf(netPctOverall) : null,
-      monthsCounted: counted.length
-    };
-  }
-  var HINDCAST_SCANS_CAP = 24;
-  function capacityRowsAsOf(rows, asOfMs) {
-    const out = [];
-    for (const row of rows) {
-      const first = parseTs(row.first_seen);
-      if (first === null || first > asOfMs) continue;
-      const resolved = parseTs(row.resolved_at);
-      out.push(resolved !== null && resolved > asOfMs ? { ...row, resolved_at: null } : row);
-    }
-    return out;
-  }
-  function capacityHindcast(rows, scans, options) {
-    var _a, _b, _c;
-    const cap = (_a = options.scansCap) != null ? _a : HINDCAST_SCANS_CAP;
-    const horizonMs = (_b = options.now) != null ? _b : Date.now();
-    const asOfMs = scans.filter((s) => s["shape"] !== "grouped").map((s) => parseTs(s["ts"])).filter((t) => t !== null).sort((a, b) => b - a).slice(0, cap);
-    const dated = rows.map((r) => ({
-      ...r,
-      first_seen: parseTs(r.first_seen),
-      resolved_at: parseTs(r.resolved_at)
-    }));
-    const realised = capacityByMonth(dated, scans, { ...options, maxMonths: void 0 });
-    const netByMonth = {};
-    for (const m of realised.months) netByMonth[m.month] = m.netPct;
-    const out = [];
-    for (const ts of asOfMs) {
-      const followKey = nextMonthKey(monthKey(ts));
-      if (monthStartMs(nextMonthKey(followKey)) > horizonMs) continue;
-      const scansUpTo = scans.filter((s) => {
-        const t = parseTs(s["ts"]);
-        return t !== null && t <= ts;
-      });
-      const verdict = capacityByMonth(capacityRowsAsOf(dated, ts), scansUpTo, {
-        ...options,
-        now: ts,
-        maxMonths: void 0
-      }).verdict;
-      const realisedNetPct = (_c = netByMonth[followKey]) != null ? _c : null;
-      out.push({
-        // Finite by construction — `parseTs` refused everything that was not a real timestamp.
-        asOf: toIso(ts),
-        verdict,
-        realisedNetPct,
-        agreed: agreedWith(verdict, realisedNetPct)
-      });
-    }
-    return {
-      rows: out,
-      comparable: out.filter((r) => r.agreed !== null).length,
-      // "Falling behind" and then the ground was GAINED — graded by the same `verdictOf` the
-      // page's own pill uses, so "a gain" cannot mean one thing here and another there.
-      counterperformative: out.filter(
-        (r) => r.verdict === "falling-behind" && r.realisedNetPct !== null && verdictOf(r.realisedNetPct) === "gaining"
-      ).length,
-      scansConsidered: asOfMs.length,
-      scansCap: cap
-    };
-  }
-  function agreedWith(verdict, netPct) {
-    if (verdict === null || netPct === null) return null;
-    return verdictOf(netPct) === verdict;
-  }
-  function observationWindowDays(rows, now) {
-    const nowMs = now != null ? now : Date.now();
-    const firsts = rows.map((r) => parseTs(r.first_seen)).filter((t) => t !== null);
-    if (!firsts.length) return null;
-    return (nowMs - minNum(firsts)) / DAY_MS;
-  }
-  function addCount(total, v, refused) {
-    if (typeof v !== "number" || !Number.isFinite(v)) {
-      refused.n += 1;
-      return total;
-    }
-    return total + v;
-  }
-  function inWindow(t, sinceMs, untilMs) {
-    return t !== null && t > sinceMs && t <= untilMs;
-  }
-  function movementDecomposition(rows, scans, window) {
-    var _a;
-    const sinceMs = parseTs(window.since);
-    const untilMs = parseTs(window.until);
-    if (sinceMs === null || untilMs === null || !(sinceMs < untilMs)) {
-      throw new Error(
-        "movementDecomposition: the window endpoints must be two parseable instants, since before until \u2014 got " + JSON.stringify(window)
-      );
-    }
-    const refused = { n: 0 };
-    let arrivals = 0;
-    let reopened = 0;
-    let scansInWindow = 0;
-    let skippedScans = 0;
-    let newestTs = null;
-    let newestScan = null;
-    for (const s of scans) {
-      if (s["shape"] === "grouped") continue;
-      const t = parseTs(s["ts"]);
-      if (t === null) {
-        skippedScans += 1;
-        continue;
-      }
-      if (!inWindow(t, sinceMs, untilMs)) continue;
-      scansInWindow += 1;
-      arrivals = addCount(arrivals, s["new_count"], refused);
-      reopened = addCount(reopened, s["reopened_count"], refused);
-      if (newestTs === null || t > newestTs) {
-        newestTs = t;
-        newestScan = s;
-      }
-    }
-    const gate2 = newestScan ? parseSeverities(newestScan["severities"]) : null;
-    const gateSet = gate2 && gate2.length ? new Set(gate2) : null;
-    let observed = 0;
-    let bounded = 0;
-    let unattributed = 0;
-    let outsideGate = 0;
-    let openAtSince = 0;
-    let openAtUntil = 0;
-    let unplacedRows = 0;
-    for (const row of rows) {
-      const first = parseTs(row.first_seen);
-      const resolved = parseTs(row.resolved_at);
-      if (inWindow(resolved, sinceMs, untilMs)) {
-        const src = String((_a = row.resolution_src) != null ? _a : "").trim().toLowerCase();
-        if (src === "api") observed += 1;
-        else if (src === "disappeared") bounded += 1;
-        else unattributed += 1;
-      }
-      if (gateSet && isOpen(row.status) && !gateSet.has(normalizeSeverity(row.severity))) {
-        outsideGate += 1;
-      }
-      if (first === null) {
-        unplacedRows += 1;
-        continue;
-      }
-      if (first <= sinceMs && (resolved === null || resolved > sinceMs)) openAtSince += 1;
-      if (first <= untilMs && (resolved === null || resolved > untilMs)) openAtUntil += 1;
-    }
-    const netChange = openAtUntil - openAtSince;
-    const identityGap = netChange - (arrivals - observed - bounded + reopened);
-    return {
-      arrivals,
-      observed,
-      bounded,
-      reopened,
-      outsideGate,
-      netChange,
-      measured: observed,
-      administrative: bounded,
-      unattributed,
-      identityGap,
-      identityHolds: identityGap === 0,
-      scansInWindow,
-      skippedScans,
-      partialCounts: refused.n,
-      unplacedRows,
-      sinceMs,
-      untilMs
-    };
-  }
-  function movementWindowScans(scans, minDays) {
-    const flat = scans.filter((s) => s["shape"] !== "grouped").map((s) => parseTs(s["ts"])).filter((t) => t !== null).sort((a, b) => a - b);
-    if (!flat.length) return { since: null, until: null, days: null, reason: "noScans" };
-    const until = flat[flat.length - 1];
-    const spanDays = Math.round((until - flat[0]) / DAY_MS * 10) / 10;
-    if (flat.length === 1) return { since: null, until, days: 0, reason: "oneScan" };
-    const cutoff = until - minDays * DAY_MS;
-    for (let i = flat.length - 2; i >= 0; i -= 1) {
-      const t = flat[i];
-      if (t <= cutoff) {
-        return { since: t, until, days: Math.round((until - t) / DAY_MS * 10) / 10, reason: null };
-      }
-    }
-    return { since: null, until, days: spanDays, reason: "tooClose" };
-  }
-
-  // src/domain/settingsLogic.ts
-  function canonicalSeverities(values, defaults) {
-    if (!Array.isArray(values)) return [...defaults];
-    const chosen = new Set(
-      values.filter((v) => typeof v === "string").map(normalizeSeverity).filter((s) => SELECTABLE_SEVERITIES.includes(s))
-    );
-    if (!chosen.size) return [...defaults];
-    return SEVERITY_ORDER.filter((s) => chosen.has(s));
-  }
-  function getFetchSeverities(settings) {
-    return canonicalSeverities(settings["fetch_severities"], DEFAULT_FETCH_SEVERITIES);
-  }
-  function getDisplaySeverities(settings) {
-    const fetch = getFetchSeverities(settings);
-    const disp = canonicalSeverities(settings["display_severities"], DEFAULT_DISPLAY_SEVERITIES);
-    const clamped = disp.filter((s) => fetch.includes(s));
-    return clamped.length ? clamped : fetch;
-  }
-  function withFetchSeverities(settings, sevs) {
-    const d = { ...settings };
-    const fetch = canonicalSeverities(sevs, DEFAULT_FETCH_SEVERITIES);
-    d["fetch_severities"] = fetch;
-    const disp = canonicalSeverities(d["display_severities"], fetch);
-    const clamped = disp.filter((s) => fetch.includes(s));
-    d["display_severities"] = clamped.length ? clamped : [...fetch];
-    return d;
-  }
-  function withDisplaySeverities(settings, sevs) {
-    const d = { ...settings };
-    const fetch = canonicalSeverities(d["fetch_severities"], DEFAULT_FETCH_SEVERITIES);
-    const disp = canonicalSeverities(sevs, DEFAULT_DISPLAY_SEVERITIES);
-    const clamped = disp.filter((s) => fetch.includes(s));
-    d["display_severities"] = clamped.length ? clamped : [...fetch];
-    return d;
-  }
-  function getRetentionDays(settings) {
-    const raw = "retention_days" in settings ? settings["retention_days"] : DEFAULT_RETENTION_DAYS;
-    if (raw === null) return null;
-    const n = typeof raw === "number" ? Math.trunc(raw) : parseInt(String(raw), 10);
-    if (Number.isNaN(n)) return DEFAULT_RETENTION_DAYS;
-    return Math.max(n, RETENTION_MIN_DAYS);
-  }
-  function withRetentionDays(settings, days) {
-    const d = { ...settings };
-    d["retention_days"] = days === null ? null : Math.max(Math.trunc(days), RETENTION_MIN_DAYS);
-    return d;
-  }
-  function numericOrNull(v) {
-    if (typeof v === "number") return Number.isFinite(v) ? v : null;
-    if (typeof v === "string" && v.trim() !== "") {
-      const n = Number(v);
-      return Number.isFinite(n) ? n : null;
-    }
-    return null;
-  }
-  function getColdAfterDays(settings) {
-    const n = numericOrNull(settings["cold_after_days"]);
-    if (n === null) return DEFAULT_COLD_AFTER_DAYS;
-    return Math.min(COLD_AFTER_DAYS_MAX, Math.max(COLD_AFTER_DAYS_MIN, Math.floor(n)));
-  }
-  function withColdAfterDays(settings, days) {
-    return { ...settings, cold_after_days: getColdAfterDays({ cold_after_days: days }) };
-  }
-  function getColdZoneMode(settings) {
-    const v = settings["cold_zone_mode"];
-    if (typeof v !== "string") return DEFAULT_COLD_ZONE_MODE;
-    const m = v.trim().toLowerCase();
-    return COLD_ZONE_MODES.includes(m) ? m : DEFAULT_COLD_ZONE_MODE;
-  }
-  function withColdZoneMode(settings, mode) {
-    return { ...settings, cold_zone_mode: getColdZoneMode({ cold_zone_mode: mode }) };
-  }
-  function getColdTargetSharePct(settings) {
-    const n = numericOrNull(settings["cold_target_share_pct"]);
-    if (n === null) return DEFAULT_COLD_TARGET_SHARE_PCT;
-    return Math.min(COLD_TARGET_SHARE_PCT_MAX, Math.max(COLD_TARGET_SHARE_PCT_MIN, Math.floor(n)));
-  }
-  function withColdTargetSharePct(settings, pct2) {
-    return {
-      ...settings,
-      cold_target_share_pct: getColdTargetSharePct({ cold_target_share_pct: pct2 })
-    };
-  }
-  function getColdFloorDays(settings) {
-    const n = numericOrNull(settings["cold_floor_days"]);
-    if (n === null) return DEFAULT_COLD_FLOOR_DAYS;
-    return Math.min(COLD_FLOOR_DAYS_MAX, Math.max(COLD_FLOOR_DAYS_MIN, Math.floor(n)));
-  }
-  function withColdFloorDays(settings, days) {
-    return { ...settings, cold_floor_days: getColdFloorDays({ cold_floor_days: days }) };
-  }
-  function effectiveColdZoneSettings(settings) {
-    const s = settings != null ? settings : {};
-    return {
-      mode: getColdZoneMode(s),
-      coldAfterDays: getColdAfterDays(s),
-      targetSharePct: getColdTargetSharePct(s),
-      floorDays: getColdFloorDays(s)
-    };
-  }
-  function getAutoCompact(settings) {
-    const val = "auto_compact" in settings ? settings["auto_compact"] : true;
-    return typeof val === "boolean" ? val : true;
-  }
-  function withAutoCompact(settings, enabled) {
-    return { ...settings, auto_compact: Boolean(enabled) };
-  }
-  function getShowNoFix(settings) {
-    const val = "show_no_fix" in settings ? settings["show_no_fix"] : true;
-    return typeof val === "boolean" ? val : true;
-  }
-  function withShowNoFix(settings, enabled) {
-    return { ...settings, show_no_fix: Boolean(enabled) };
-  }
-  function getIncludeEol(settings) {
-    const val = "include_eol" in settings ? settings["include_eol"] : true;
-    return typeof val === "boolean" ? val : true;
-  }
-  function withIncludeEol(settings, enabled) {
-    return { ...settings, include_eol: Boolean(enabled) };
-  }
-  function getRiskRule(settings) {
-    var _a;
-    const raw = settings["risk_rule"];
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-      return { version: 0, rule: { ...DEFAULT_RISK_RULE } };
-    }
-    const r = raw;
-    let version = 0;
-    const v = Number((_a = r["version"]) != null ? _a : 0);
-    if (Number.isFinite(v)) version = Math.max(Math.trunc(v), 0);
-    const stored = r["rule"];
-    if (!stored || typeof stored !== "object" || Array.isArray(stored)) {
-      return { version, rule: { ...DEFAULT_RISK_RULE } };
-    }
-    return { version, rule: cleanRiskRule(stored) };
-  }
-  function cleanRiskRule(raw) {
-    const bool = (key) => {
-      const v = raw[key];
-      return typeof v === "boolean" ? v : DEFAULT_RISK_RULE[key];
-    };
-    const t = Number(raw["epssThreshold"]);
-    return {
-      kev: bool("kev"),
-      exploit: bool("exploit"),
-      epss: bool("epss"),
-      epssThreshold: Number.isFinite(t) ? Math.min(1, Math.max(0, t)) : DEFAULT_RISK_RULE.epssThreshold
-    };
-  }
-  function withRiskRule(settings, rule) {
-    const current = getRiskRule(settings);
-    const clean2 = cleanRiskRule(
-      rule && typeof rule === "object" && !Array.isArray(rule) ? rule : {}
-    );
-    return { ...settings, risk_rule: { version: current.version + 1, rule: clean2 } };
-  }
-  function cleanDomainItems(items) {
-    if (!Array.isArray(items)) return [];
-    return items.filter(
-      (item) => item !== null && typeof item === "object" && !Array.isArray(item) && typeof item["name"] === "string" && item["name"].trim() !== ""
-    );
-  }
-  function getDomains(settings) {
-    var _a;
-    const raw = settings["domains"];
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { version: 0, items: [] };
-    const r = raw;
-    let version = 0;
-    const v = Number((_a = r["version"]) != null ? _a : 0);
-    if (Number.isFinite(v)) version = Math.max(Math.trunc(v), 0);
-    return { version, items: cleanDomainItems(r["items"]) };
-  }
-  function withDomains(settings, items) {
-    const current = getDomains(settings);
-    return {
-      ...settings,
-      domains: { version: current.version + 1, items: cleanDomainItems(items) }
-    };
-  }
-  function cleanStringMap(map) {
-    const out = {};
-    if (!map || typeof map !== "object" || Array.isArray(map)) return out;
-    for (const [k, v] of Object.entries(map)) {
-      if (typeof k === "string" && k !== "" && typeof v === "string" && v !== "") {
-        out[k] = v;
-      }
-    }
-    return out;
-  }
-  function getSupportGroupMap(settings) {
-    var _a;
-    const raw = settings["support_group_map"];
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { version: 0, map: {} };
-    const r = raw;
-    let version = 0;
-    const v = Number((_a = r["version"]) != null ? _a : 0);
-    if (Number.isFinite(v)) version = Math.max(Math.trunc(v), 0);
-    return { version, map: cleanStringMap(r["map"]) };
-  }
-  function apiSeverityFilter(severities) {
-    const sevs = canonicalSeverities(severities, DEFAULT_FETCH_SEVERITIES);
-    if (new Set(sevs).size === SELECTABLE_SEVERITIES.length) return null;
-    return sevs.map((s) => API_SEVERITY_VALUES[s]);
-  }
-  function applySettingsPatch(settings, patch) {
-    let d = settings;
-    if ("fetchSeverities" in patch) d = withFetchSeverities(d, patch["fetchSeverities"]);
-    if ("displaySeverities" in patch) d = withDisplaySeverities(d, patch["displaySeverities"]);
-    if ("showNoFix" in patch) d = withShowNoFix(d, Boolean(patch["showNoFix"]));
-    if ("includeEol" in patch) d = withIncludeEol(d, Boolean(patch["includeEol"]));
-    if ("riskRule" in patch) d = withRiskRule(d, patch["riskRule"]);
-    if ("retentionDays" in patch) {
-      const raw = patch["retentionDays"];
-      d = withRetentionDays(d, raw === null || raw === void 0 ? null : Number(raw));
-    }
-    if ("autoCompact" in patch) d = withAutoCompact(d, Boolean(patch["autoCompact"]));
-    if ("coldZoneMode" in patch) d = withColdZoneMode(d, patch["coldZoneMode"]);
-    if ("coldAfterDays" in patch) d = withColdAfterDays(d, patch["coldAfterDays"]);
-    if ("coldTargetSharePct" in patch) d = withColdTargetSharePct(d, patch["coldTargetSharePct"]);
-    if ("coldFloorDays" in patch) d = withColdFloorDays(d, patch["coldFloorDays"]);
-    return d;
-  }
-
-  // src/server/wizQuery.ts
-  var QUERY = "\n    query VulnerabilityFindingsTable($filterBy: VulnerabilityFindingFilters, $first: Int, $after: String, $orderBy: VulnerabilityFindingOrder = {direction: DESC, field: CREATED_AT}, $includeRelatedIssueAnalytics: Boolean = false, $includeRelatedSourceMappedIssueAnalytics: Boolean = false, $includeTotalCount: Boolean = false, $includePostureIssues: Boolean = false, $fetchPrivilegedActionRequests: Boolean = false) {\n      vulnerabilityFindings(\n        filterBy: $filterBy\n        first: $first\n        after: $after\n        orderBy: $orderBy\n      ) {\n        nodes {\n          ...VulnerabilityFindingFragment\n          ...DuplicateFindingBadge\n          transitivity\n          rootComponent {\n            name\n          }\n          isHighProfileThreat\n          vendorSeverity\n          nvdSeverity\n          weightedSeverity\n          hasExploit\n          usedInCodeResult\n          hasCisaKevExploit\n          cisaKevReleaseDate\n          cisaKevDueDate\n          score\n          epssSeverity\n          epssPercentile\n          epssProbability\n          categories\n          hasInitialAccessPotential\n          isClientSide\n          affectedBySettings\n          codeLibraryLanguage\n          exploitabilityValidationStatus\n          cvssv2 {\n            attackVector\n            attackComplexity\n            confidentialityImpact\n            integrityImpact\n            privilegesRequired\n            userInteractionRequired\n            vectorString\n            scope\n          }\n          cvssv3 {\n            attackVector\n            attackComplexity\n            confidentialityImpact\n            integrityImpact\n            privilegesRequired\n            userInteractionRequired\n            vectorString\n            scope\n          }\n          effectiveAvailabilityImpact\n          cnaScore\n          vendorScore\n          relatedIssueAnalytics @include(if: $includeRelatedIssueAnalytics) {\n            ...VulnerabilityFindingRelatedIssueAnalyticsFragment\n          }\n          relatedSourceMappedIssueAnalytics @include(if: $includeRelatedSourceMappedIssueAnalytics) {\n            ...VulnerabilityFindingRelatedIssueAnalyticsFragment\n          }\n          postureIssues @include(if: $includePostureIssues) {\n            ...PostureIssuePopoverListRecord\n          }\n          privilegedActionRequests @include(if: $fetchPrivilegedActionRequests) {\n            ...PendingUpdateVulnerabilityFindingStatusRequest\n          }\n        }\n        pageInfo {\n          hasNextPage\n          endCursor\n        }\n        totalCount @include(if: $includeTotalCount)\n      }\n    }\n   \n        fragment VulnerabilityFindingFragment on VulnerabilityFinding {\n      id\n      portalUrl\n      name\n      detailedName\n      description\n      severity\n      status\n      fixedVersion\n      detectionMethod\n      firstDetectedAt\n      firstDetectedAtSource\n      lastDetectedAt\n      resolvedAt\n      validatedInRuntime\n      runtimeValidationResult\n      reachability\n      hasTriggerableRemediation\n      remediationPullRequestAvailable\n      dataSourceName\n      fixDate\n      fixDateBefore\n      publishedDate\n      version\n      versionResolutionPrimarySource {\n        type\n        version\n      }\n      isOperatingSystemEndOfLife\n      recommendedVersion\n      locationPath\n      artifactType {\n        ...SBOMArtifactTypeFragment\n      }\n      projects {\n        id\n        name\n        slug\n        isFolder\n      }\n      ignoreRules {\n        id\n      }\n      note {\n        id\n        text\n      }\n      layerMetadata {\n        id\n        details\n        isBaseLayer\n        layerHash\n      }\n      vulnerableAsset {\n        ... on VulnerableAssetBase {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          externalId\n          providerUniqueId\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetVirtualMachine {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystem\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          imageName\n          imageId\n          imageNativeType\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          computeInstanceGroup {\n            id\n            externalId\n            name\n            replicaCount\n            tags\n          }\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetServerless {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetContainerImage {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          repository {\n            vertexId\n            name\n          }\n          registry {\n            vertexId\n            name\n          }\n          scanSource\n          executionControllers {\n            ...VulnerableAssetExecutionControllerDetails\n          }\n          graphEntity {\n            ...VulnerabilityContainerImageGraphEntityExecutionContext\n          }\n          nativeType\n          tagReferences\n          imageTags\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetContainer {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          executionControllers {\n            ...VulnerableAssetExecutionControllerDetails\n          }\n          nativeType\n          isUsedOnPrem\n        }\n        ... on VulnerableAssetRepositoryBranch {\n          id\n          type\n          name\n          cloudPlatform\n          repositoryId\n          repositoryName\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetIde {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetEndpoint {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetPaaSResource {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetVirtualMachineImage {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetNetworkAddress {\n          subscriptionId\n          subscriptionName\n          subscriptionExternalId\n          tags\n          address\n          addressType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetCommon {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetDevice {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n          operatingSystem\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n        }\n      }\n      sourceMappedCodeFindings {\n        id\n        remediationPullRequestAvailable\n      }\n    }\n   \n\n\n        fragment SBOMArtifactTypeFragment on SBOMArtifactType {\n      group\n      codeLibraryLanguage\n      osPackageManager\n      hostedTechnology {\n        id\n        name\n        icon\n      }\n      plugin\n      custom\n      ciComponent\n    }\n   \n\n\n        fragment VulnerabilityFindingOperatingSystemDistribution on Technology {\n      id\n      name\n      icon\n    }\n   \n\n\n        fragment VulnerableAssetExecutionControllerDetails on VulnerableAssetExecutionController {\n      id\n      entityType\n      externalId\n      providerUniqueId\n      name\n      subscriptionExternalId\n      subscriptionId\n      subscriptionName\n      ancestors {\n        id\n        name\n        entityType\n        externalId\n        providerUniqueId\n      }\n    }\n   \n\n\n        fragment VulnerabilityContainerImageGraphEntityExecutionContext on GraphEntity {\n      id\n      providerUniqueId\n      type\n      containerImageExecutionContextAnalyticsV3 {\n        totalResourceCount\n        nativeType {\n          nativeType\n          count\n        }\n      }\n    }\n   \n\n\n        fragment DuplicateFindingBadge on VulnerabilityFinding {\n      id\n      origin\n      duplicateOf {\n        id\n        name\n        origin\n        vulnerableAsset {\n          ... on VulnerableAssetBase {\n            id\n            name\n          }\n        }\n      }\n    }\n   \n\n\n        fragment VulnerabilityFindingRelatedIssueAnalyticsFragment on VulnerabilityFindingRelatedIssueAnalytics {\n      issueCount\n      informationalSeverityCount\n      lowSeverityCount\n      mediumSeverityCount\n      highSeverityCount\n      criticalSeverityCount\n    }\n   \n\n\n        fragment PostureIssuePopoverListRecord on PostureIssue {\n      id\n      name\n      type\n      entity {\n        providerUniqueId\n        id\n        type\n      }\n    }\n   \n\n\n        fragment PendingUpdateVulnerabilityFindingStatusRequest on PrivilegedActionRequest {\n      ...PendingStatusRequestBanner\n      ...PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams\n    }\n   \n\n\n        fragment PendingStatusRequestBanner on PrivilegedActionRequest {\n      id\n      type\n      status\n      createdAt\n      createdBy {\n        id\n        name\n        email\n      }\n      params {\n        ... on PrivilegedActionRequestUpdateIssueStatusParams {\n          issueStatus: status\n        }\n        ... on PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams {\n          findingStatus: status\n        }\n        ... on PrivilegedActionRequestCreateIgnoreRuleParams {\n          ignoreRuleName: name\n        }\n      }\n    }\n   \n\n\n        fragment PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams on PrivilegedActionRequest {\n      id\n      params {\n        ... on PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams {\n          status\n        }\n      }\n      subject {\n        ... on VulnerabilityFinding {\n          id\n          status\n        }\n      }\n    }\n";
-  var BASE_VARIABLES = {
-    "orderBy": {
-      "field": "RELATED_ISSUE_SEVERITY",
-      "direction": "DESC"
-    },
-    "includeRelatedIssueAnalytics": false,
-    "includeRelatedSourceMappedIssueAnalytics": false,
-    "includeTotalCount": false,
-    "includePostureIssues": false,
-    "fetchPrivilegedActionRequests": false,
-    "first": 500,
-    "filterBy": {
-      "projectIdV2": {
-        "equals": [
-          "1dfea0cf-834f-5522-b797-bee5aaf09251"
-        ]
-      },
-      "assetType": [
-        "VIRTUAL_MACHINE"
-      ],
-      "detectionMethod": [
-        "OS"
-      ],
-      "status": [
-        "OPEN",
-        "RESOLVED"
-      ],
-      "detailedNameV2": {
-        "notEquals": [
-          "openssl",
-          "python",
-          "vim"
-        ]
-      },
-      "assetIsRepresentativeResource": false
-    }
-  };
-  var PAGE_SIZE = 500;
-  var PAGE_SIZE_FALLBACK = 250;
-  var MAX_PAGES = 1e3;
-
-  // src/server/wizClient.ts
-  var BASE_FILTER_WORDS = [
-    "one Wiz project",
-    // projectIdV2
-    "virtual machines only",
-    // assetType
-    "OS-level detections",
-    // detectionMethod
-    "openssl, python and vim excluded",
-    // detailedNameV2.notEquals
-    "no representative-resource stand-ins"
-    // assetIsRepresentativeResource
-  ];
-  var WizQueryError = class extends Error {
-  };
-  var WizDeltaFilterError = class extends WizQueryError {
-  };
-  var TOKEN_CACHE_KEY = "wiz_token";
-  function getToken(forceRefresh = false) {
-    var _a, _b;
-    const staticToken = getProp(PROP_KEYS.wizApiToken);
-    if (staticToken && staticToken.trim()) return staticToken.trim();
-    const cache = CacheService.getScriptCache();
-    if (!forceRefresh) {
-      const cached2 = cache.get(TOKEN_CACHE_KEY);
-      if (cached2) return cached2;
-    }
-    const authUrl = (_a = getProp(PROP_KEYS.wizAuthUrl)) != null ? _a : DEFAULT_WIZ_AUTH_URL;
-    const response = UrlFetchApp.fetch(authUrl, {
-      method: "post",
-      contentType: "application/x-www-form-urlencoded",
-      payload: {
-        grant_type: "client_credentials",
-        audience: "wiz-api",
-        client_id: requireProp(PROP_KEYS.wizClientId),
-        client_secret: requireProp(PROP_KEYS.wizClientSecret)
-      },
-      muteHttpExceptions: true
-    });
-    if (response.getResponseCode() !== 200) {
-      throw new WizQueryError(
-        `Wiz token request failed (${response.getResponseCode()}): ` + response.getContentText().slice(0, 500)
-      );
-    }
-    const body = JSON.parse(response.getContentText());
-    const token = body["access_token"];
-    if (typeof token !== "string" || !token) {
-      throw new WizQueryError("Wiz token response carried no access_token.");
-    }
-    const expiresIn = Number((_b = body["expires_in"]) != null ? _b : 3600);
-    const ttl = Math.max(60, Math.min(Math.trunc(expiresIn) - 300, 21600));
-    cache.put(TOKEN_CACHE_KEY, token, ttl);
-    return token;
-  }
-  function baseVariables() {
-    return JSON.parse(JSON.stringify(BASE_VARIABLES));
-  }
-  function buildVariables(options = {}) {
-    var _a, _b;
-    const vars = baseVariables();
-    const filterBy = vars["filterBy"];
-    const projectId = getProp(PROP_KEYS.wizProjectIdV2);
-    if (projectId) filterBy["projectIdV2"] = { equals: [projectId] };
-    const sevFilter = options.severities === void 0 ? null : apiSeverityFilter(options.severities);
-    if (sevFilter) filterBy["severity"] = sevFilter;
-    for (const [k, v] of Object.entries((_a = options.extraFilterBy) != null ? _a : {})) filterBy[k] = v;
-    vars["first"] = (_b = options.first) != null ? _b : PAGE_SIZE;
-    if (options.after) vars["after"] = options.after;
-    vars["includeTotalCount"] = Boolean(options.includeTotalCount);
-    return vars;
-  }
-  function queryPage(variables, isDeltaFetch = false) {
-    var _a, _b, _c, _d;
-    const apiUrl = requireProp(PROP_KEYS.wizApiUrl);
-    let token = getToken();
-    let lastError = "";
-    for (let attempt = 0; attempt < 4; attempt++) {
-      const response = UrlFetchApp.fetch(apiUrl, {
-        method: "post",
-        contentType: "application/json",
-        headers: { Authorization: `Bearer ${token}` },
-        payload: JSON.stringify({ query: QUERY, variables }),
-        muteHttpExceptions: true
-      });
-      const code = response.getResponseCode();
-      if (code === 401 && attempt === 0 && !getProp(PROP_KEYS.wizApiToken)) {
-        token = getToken(true);
-        continue;
-      }
-      if (code === 429 || code >= 500) {
-        lastError = `HTTP ${code}`;
-        Utilities.sleep(1e3 * Math.pow(2, attempt));
-        continue;
-      }
-      if (code !== 200) {
-        const hint = code === 401 && getProp(PROP_KEYS.wizApiToken) ? " \u2014 WIZ_API_TOKEN was rejected; it may have expired. Refresh it, or set WIZ_CLIENT_ID/WIZ_CLIENT_SECRET for auto-refresh." : "";
-        throw new WizQueryError(
-          `Wiz query failed (HTTP ${code})${hint}: ${response.getContentText().slice(0, 500)}`
-        );
-      }
-      const body = JSON.parse(response.getContentText());
-      const data = body["data"];
-      const connection = data == null ? void 0 : data["vulnerabilityFindings"];
-      if (!connection) {
-        const errors = JSON.stringify((_a = body["errors"]) != null ? _a : body).slice(0, 500);
-        if (isDeltaFetch) {
-          throw new WizDeltaFilterError(`Wiz rejected the incremental filter: ${errors}`);
-        }
-        throw new WizQueryError(`Wiz response carried no findings connection: ${errors}`);
-      }
-      const pageInfo = (_b = connection["pageInfo"]) != null ? _b : {};
-      const rawTotal = connection["totalCount"];
-      return {
-        nodes: (_c = connection["nodes"]) != null ? _c : [],
-        hasNextPage: Boolean(pageInfo["hasNextPage"]),
-        endCursor: (_d = pageInfo["endCursor"]) != null ? _d : null,
-        totalCount: typeof rawTotal === "number" ? rawTotal : null
-      };
-    }
-    throw new WizQueryError(`Wiz query failed after retries (${lastError}).`);
-  }
-  function gqlPost(query, variables) {
-    var _a;
-    const apiUrl = requireProp(PROP_KEYS.wizApiUrl);
-    let token = getToken();
-    let lastError = "";
-    for (let attempt = 0; attempt < 4; attempt++) {
-      const response = UrlFetchApp.fetch(apiUrl, {
-        method: "post",
-        contentType: "application/json",
-        headers: { Authorization: `Bearer ${token}` },
-        payload: JSON.stringify({ query, variables }),
-        muteHttpExceptions: true
-      });
-      const code = response.getResponseCode();
-      if (code === 401 && attempt === 0 && !getProp(PROP_KEYS.wizApiToken)) {
-        token = getToken(true);
-        continue;
-      }
-      if (code === 429 || code >= 500) {
-        lastError = `HTTP ${code}`;
-        Utilities.sleep(1e3 * Math.pow(2, attempt));
-        continue;
-      }
-      if (code !== 200) {
-        throw new WizQueryError(
-          `Wiz query failed (HTTP ${code}): ${response.getContentText().slice(0, 500)}`
-        );
-      }
-      const body = JSON.parse(response.getContentText());
-      const data = body["data"];
-      if (!data) {
-        const errors = JSON.stringify((_a = body["errors"]) != null ? _a : body).slice(0, 500);
-        throw new WizQueryError(`Wiz response carried no data: ${errors}`);
-      }
-      return data;
-    }
-    throw new WizQueryError(`Wiz query failed after retries (${lastError}).`);
-  }
-  function parseGraphSearchPage(data) {
-    var _a, _b, _c;
-    const connection = data["graphSearch"];
-    if (!connection) {
-      throw new WizQueryError("Wiz response carried no graphSearch connection.");
-    }
-    const pageInfo = (_a = connection["pageInfo"]) != null ? _a : {};
-    return {
-      nodes: (_b = connection["nodes"]) != null ? _b : [],
-      hasNextPage: Boolean(pageInfo["hasNextPage"]),
-      endCursor: (_c = pageInfo["endCursor"]) != null ? _c : null
-    };
-  }
-  function graphSearchPage(query, variables, fallbackFirst) {
-    try {
-      return parseGraphSearchPage(gqlPost(query, variables));
-    } catch (e) {
-      const first = Number(variables["first"]);
-      const smaller = fallbackFirst != null ? fallbackFirst : Number.isFinite(first) ? Math.max(1, Math.floor(first / 2)) : NaN;
-      if (!Number.isFinite(smaller) || !(smaller < first)) throw e;
-      return parseGraphSearchPage(gqlPost(query, { ...variables, first: smaller }));
-    }
-  }
-  function fetchPage(options) {
-    var _a;
-    const common = {
-      severities: options.severities,
-      extraFilterBy: options.extraFilterBy,
-      after: (_a = options.cursor) != null ? _a : null,
-      includeTotalCount: options.pageNumber === 0
-    };
-    const isDelta = Boolean(options.extraFilterBy && Object.keys(options.extraFilterBy).length);
-    try {
-      return queryPage(buildVariables({ ...common, first: PAGE_SIZE }), isDelta);
-    } catch (e) {
-      if (e instanceof WizDeltaFilterError) throw e;
-      return queryPage(buildVariables({ ...common, first: PAGE_SIZE_FALLBACK }), isDelta);
-    }
-  }
-
-  // ../gas_shared/domain/wizUrl.ts
-  var PORTAL_PREFIXES = [
-    ["https:", "", "app.wiz.io", ""].join("/"),
-    ["https:", "", "app.wiz.us", ""].join("/")
-  ];
-  function isLegal(url) {
-    return PORTAL_PREFIXES.some((prefix) => url.indexOf(prefix) === 0);
-  }
-  function normalizeWizUrl(raw) {
-    if (typeof raw !== "string") return null;
-    const url = raw.trim();
-    if (!url) return null;
-    return isLegal(url) ? url : null;
-  }
-
-  // src/server/diagnostics.ts
-  function preview(value) {
-    if (!value || !value.trim()) return "(unset)";
-    const v = value.trim();
-    if (v.length <= 10) return `${v.length} chars`;
-    return `${v.length} chars, ${v.slice(0, 4)}\u2026${v.slice(-4)}`;
-  }
-  function secretPreview(value) {
-    return value && value.trim() ? `(set, ${value.trim().length} chars)` : "(unset)";
-  }
-  function wizDiagnostic() {
-    var _a, _b;
-    const lines = [];
-    const log = (m) => {
-      lines.push(m);
-      console.log(m);
-    };
-    const apiUrl = getProp(PROP_KEYS.wizApiUrl);
-    const authUrl = (_a = getProp(PROP_KEYS.wizAuthUrl)) != null ? _a : DEFAULT_WIZ_AUTH_URL;
-    const token = getProp(PROP_KEYS.wizApiToken);
-    const clientId = getProp(PROP_KEYS.wizClientId);
-    const clientSecret = getProp(PROP_KEYS.wizClientSecret);
-    const projectId = getProp(PROP_KEYS.wizProjectIdV2);
-    const mode = resolveWizAuthMode(token, clientId, clientSecret);
-    log("=== Wiz diagnostic ===");
-    log(`WIZ_API_URL:        ${apiUrl || "(unset!)"}`);
-    log(`Auth mode:          ${mode != null ? mode : "(none)"}`);
-    log(`WIZ_API_TOKEN:      ${preview(token)}`);
-    log(`WIZ_CLIENT_ID:      ${preview(clientId)}`);
-    log(`WIZ_CLIENT_SECRET:  ${secretPreview(clientSecret)}`);
-    if (mode === "oauth") log(`WIZ_AUTH_URL:       ${authUrl}`);
-    log(`WIZ_PROJECT_ID_V2:  ${projectId || "(unset \u2014 querying all projects)"}`);
-    if (!apiUrl) {
-      log("FAIL: WIZ_API_URL is required, e.g. https://api.<region>.app.wiz.io/graphql.");
-      return lines.join("\n");
-    }
-    if (mode === null) {
-      log(
-        "FAIL: no usable credentials \u2014 the app runs in dry-run mode. Set WIZ_API_TOKEN, or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET."
-      );
-      return lines.join("\n");
-    }
-    let bearer = "";
-    try {
-      bearer = getToken(true);
-      log(
-        mode === "token" ? `Step 1 OK: using raw WIZ_API_TOKEN (${preview(bearer)}).` : `Step 1 OK: OAuth exchange minted an access token (${preview(bearer)}).`
-      );
-    } catch (e) {
-      log(`Step 1 FAIL: could not obtain a token \u2014 ${e.message}`);
-      log(
-        mode === "oauth" ? "\u2192 The token endpoint rejected the client credentials. Verify WIZ_CLIENT_ID / WIZ_CLIENT_SECRET (regenerate the service account in Wiz), and that WIZ_AUTH_URL matches the auth host shown on the service-account page." : "\u2192 WIZ_API_TOKEN is unusable. A Wiz GraphQL service account gives a client id + secret, not a durable token; use WIZ_CLIENT_ID / WIZ_CLIENT_SECRET."
-      );
-      return lines.join("\n");
-    }
-    let firstNode = null;
-    try {
-      const page = queryPage(buildVariables({ first: 1 }));
-      firstNode = (_b = page.nodes[0]) != null ? _b : null;
-      log(`Step 2 OK: query succeeded \u2014 ${page.nodes.length} finding(s) on page 1.`);
-    } catch (e) {
-      const msg = e.message;
-      log(`Step 2 FAIL: the query was rejected \u2014 ${msg}`);
-      if (/HTTP 401|HTTP 403|Unauthorized/i.test(msg)) {
-        log(
-          "\u2192 401/403/Unauthorized: the token was not accepted (expired, invalid, or minted for a different tenant). Confirm the service account targets this tenant."
-        );
-      } else if (/HTTP 404/i.test(msg)) {
-        log(
-          "\u2192 404: WIZ_API_URL host/path is wrong \u2014 it must be https://api.<region>.app.wiz.io/graphql for your tenant's region."
-        );
-      } else {
-        log(
-          '\u2192 If the body names a field (e.g. "Cannot query field"), the service account lacks permission for it or the tenant schema differs.'
-        );
-      }
-      return lines.join("\n");
-    }
-    if (firstNode === null) {
-      log(
-        "Step 3 SKIPPED: the query returned no findings, so there was no row to read a Wiz console link off. Not a failure \u2014 widen the severity filter or the project and re-run if you want this checked."
-      );
-    } else {
-      const raw = firstNode["portalUrl"];
-      const usable = normalizeWizUrl(raw);
-      if (usable) {
-        log(`Step 3 OK: findings carry a Wiz console link (${usable}).`);
-      } else if (typeof raw === "string" && raw.trim()) {
-        log(
-          `Step 3 WARN: this tenant returned a portalUrl the register will not link to \u2014 ${raw.trim()}`
-        );
-        log(
-          "\u2192 The finding sheet shows no Wiz row for it. Links are allowed only on the Wiz consoles (app.wiz.io / app.wiz.us); see gas_shared/domain/wizUrl.ts for why the list is a security boundary rather than a typo-catcher, and widen it there if your tenant is genuinely served from another host."
-        );
-      } else {
-        log("Step 3 WARN: the query worked but this finding carried no portalUrl.");
-        log(
-          "\u2192 The finding sheet will show no Wiz row for findings like it. If EVERY finding is like this, the tenant is not populating the field and there is nothing to link to; the register states that rather than guessing a URL."
-        );
-      }
-    }
-    log("=== All checks passed. Live scans should work. ===");
-    return lines.join("\n");
-  }
-
-  // src/server/api.ts
-  var api_exports = {};
-  __export(api_exports, {
-    backfillEpisodeTags: () => backfillEpisodeTags2,
-    bootstrap: () => bootstrap,
-    cancelScan: () => cancelScan2,
-    clearRecentErrors: () => clearRecentErrors,
-    compact: () => compact,
-    deleteScans: () => deleteScans2,
-    exportMigrationBundle: () => exportMigrationBundle,
-    getAccess: () => getAccess,
-    getAttribution: () => getAttribution,
-    getChartsBundle: () => getChartsBundle,
-    getColdZonePage: () => getColdZonePage,
-    getDomains: () => getDomains3,
-    getExecutivePage: () => getExecutivePage,
-    getExportCoverageCsv: () => getExportCoverageCsv,
-    getExportCsv: () => getExportCsv,
-    getExportRawUrl: () => getExportRawUrl,
-    getGroupTrend: () => getGroupTrend,
-    getGrouping: () => getGrouping,
-    getInsights: () => getInsights,
-    getJobStatus: () => getJobStatus,
-    getMttr: () => getMttr,
-    getMttrByDomainTrend: () => getMttrByDomainTrend,
-    getMttrPage: () => getMttrPage,
-    getMttrTrend: () => getMttrTrend,
-    getOldestOpen: () => getOldestOpen,
-    getProgramPage: () => getProgramPage,
-    getPurgeStatus: () => getPurgeStatus,
-    getRecentErrors: () => getRecentErrors,
-    getRegisterRows: () => getRegisterRows,
-    getReport: () => getReport,
-    getRiskBackfillStatus: () => getRiskBackfillStatus,
-    getRiskCohort: () => getRiskCohort,
-    getScanHistory: () => getScanHistory,
-    getSettings: () => getSettings,
-    getSettingsImpact: () => getSettingsImpact,
-    getStorageStats: () => getStorageStats,
-    importAbort: () => importAbort,
-    importBegin: () => importBegin,
-    importFinalize: () => importFinalize,
-    importMigration: () => importMigration,
-    importShard: () => importShard,
-    importStatus: () => importStatus,
-    previewDomains: () => previewDomains,
-    previewMaintenance: () => previewMaintenance2,
-    pruneEpisodes: () => pruneEpisodes2,
-    refreshSupportGroups: () => refreshSupportGroups2,
-    resetLedger: () => resetLedger2,
-    runScan: () => runScan,
-    saveAccess: () => saveAccess,
-    saveAdmins: () => saveAdmins,
-    saveDomains: () => saveDomains,
-    saveHubUrl: () => saveHubUrl,
-    saveSettings: () => saveSettings2,
-    setAutoCompact: () => setAutoCompact2,
-    setIncludeEol: () => setIncludeEol2,
-    setRetention: () => setRetention,
-    setRetentionSettings: () => setRetentionSettings,
-    setRiskRule: () => setRiskRule2,
-    setSeverities: () => setSeverities,
-    setShowNoFix: () => setShowNoFix2,
-    startRiskBackfill: () => startRiskBackfill,
-    startSeverityPurge: () => startSeverityPurge2,
-    trimHistory: () => trimHistory2,
-    warmReadModels: () => warmReadModels,
-    warmReadModelsScheduled: () => warmReadModelsScheduled
-  });
 
   // src/domain/domainRules.ts
   var UNASSIGNED = "Unassigned";
@@ -2970,6 +499,24 @@ var Server = (() => {
     return Object.values(recordTags(record)).some((v) => present(v));
   }
 
+  // src/domain/domainTag.ts
+  var DEFAULT_DOMAIN_TAG_KEY = "Wiz/Domain";
+  function domainOfTags(tags, key = DEFAULT_DOMAIN_TAG_KEY) {
+    const want = key.trim().toLowerCase();
+    if (!want || !tags) return null;
+    for (const [k, v] of Object.entries(tags)) {
+      if (String(k).trim().toLowerCase() !== want) continue;
+      if (!present(v)) continue;
+      const value = String(v).trim();
+      if (value) return value;
+    }
+    return null;
+  }
+  function resolveDomainTagKey(configured) {
+    const k = (configured != null ? configured : "").trim();
+    return k || DEFAULT_DOMAIN_TAG_KEY;
+  }
+
   // src/domain/resolveDomain.ts
   var NOT_ATTRIBUTABLE = "Not attributable";
   function resolveDomain(record, compiled, tagKey = DEFAULT_DOMAIN_TAG_KEY) {
@@ -2998,6 +545,32 @@ var Server = (() => {
     }
     out.push(UNASSIGNED, NOT_ATTRIBUTABLE);
     return out;
+  }
+
+  // src/domain/severity.ts
+  function normalizeSeverity(sev2) {
+    if (typeof sev2 !== "string") return "UNKNOWN";
+    const s = sev2.toUpperCase().trim();
+    if (s === "INFORMATIONAL" || s === "INFO") return "INFO";
+    return SEVERITY_ORDER.includes(s) ? s : "UNKNOWN";
+  }
+  function effectiveSeverity(rec) {
+    const candidates = ["severity", "vendorSeverity", "nvdSeverity"];
+    for (const source of candidates) {
+      const sev2 = normalizeSeverity(rec[source]);
+      if (sev2 !== "UNKNOWN") return { severity: sev2, source };
+    }
+    return { severity: "UNKNOWN", source: null };
+  }
+  function countBySeverity(records) {
+    var _a;
+    if (!records.length || !records.some((r) => "severity" in r)) return {};
+    const counts = {};
+    for (const rec of records) {
+      const sev2 = normalizeSeverity(rec["severity"]);
+      counts[sev2] = ((_a = counts[sev2]) != null ? _a : 0) + 1;
+    }
+    return counts;
   }
 
   // src/domain/attribution.ts
@@ -3392,8 +965,84 @@ var Server = (() => {
     return out.slice(0, topN);
   }
 
+  // ../gas_shared/domain/sha1.ts
+  function utf8Bytes(s) {
+    const out = [];
+    for (let i = 0; i < s.length; i++) {
+      let c = s.charCodeAt(i);
+      if (c < 128) {
+        out.push(c);
+      } else if (c < 2048) {
+        out.push(192 | c >> 6, 128 | c & 63);
+      } else if (c >= 55296 && c <= 56319 && i + 1 < s.length) {
+        const c2 = s.charCodeAt(++i);
+        const cp = 65536 + (c - 55296 << 10) + (c2 - 56320);
+        out.push(
+          240 | cp >> 18,
+          128 | cp >> 12 & 63,
+          128 | cp >> 6 & 63,
+          128 | cp & 63
+        );
+      } else {
+        out.push(224 | c >> 12, 128 | c >> 6 & 63, 128 | c & 63);
+      }
+    }
+    return out;
+  }
+  function rotl(n, b) {
+    return (n << b | n >>> 32 - b) >>> 0;
+  }
+  function sha1Hex(input) {
+    const bytes = utf8Bytes(input);
+    const bitLen = bytes.length * 8;
+    bytes.push(128);
+    while (bytes.length % 64 !== 56) bytes.push(0);
+    const hi = Math.floor(bitLen / 4294967296);
+    bytes.push(hi >>> 24 & 255, hi >>> 16 & 255, hi >>> 8 & 255, hi & 255);
+    bytes.push(bitLen >>> 24 & 255, bitLen >>> 16 & 255, bitLen >>> 8 & 255, bitLen & 255);
+    let h0 = 1732584193, h1 = 4023233417, h2 = 2562383102, h3 = 271733878, h4 = 3285377520;
+    const w = new Array(80);
+    for (let block = 0; block < bytes.length; block += 64) {
+      for (let i = 0; i < 16; i++) {
+        w[i] = (bytes[block + i * 4] << 24 | bytes[block + i * 4 + 1] << 16 | bytes[block + i * 4 + 2] << 8 | bytes[block + i * 4 + 3]) >>> 0;
+      }
+      for (let i = 16; i < 80; i++) {
+        w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+      }
+      let a = h0, b = h1, c = h2, d = h3, e = h4;
+      for (let i = 0; i < 80; i++) {
+        let f, k;
+        if (i < 20) {
+          f = b & c | ~b & d;
+          k = 1518500249;
+        } else if (i < 40) {
+          f = b ^ c ^ d;
+          k = 1859775393;
+        } else if (i < 60) {
+          f = b & c | b & d | c & d;
+          k = 2400959708;
+        } else {
+          f = b ^ c ^ d;
+          k = 3395469782;
+        }
+        const t = rotl(a, 5) + f + e + k + w[i] >>> 0;
+        e = d;
+        d = c;
+        c = rotl(b, 30);
+        b = a;
+        a = t;
+      }
+      h0 = h0 + a >>> 0;
+      h1 = h1 + b >>> 0;
+      h2 = h2 + c >>> 0;
+      h3 = h3 + d >>> 0;
+      h4 = h4 + e >>> 0;
+    }
+    return [h0, h1, h2, h3, h4].map((x) => x.toString(16).padStart(8, "0")).join("");
+  }
+
   // src/domain/metrics.ts
-  var DAY_MS2 = 864e5;
+  var DAY_MS = 864e5;
   function findCol(columns, ...candidates) {
     const lower = columns.map((c) => c.toLowerCase());
     for (const cand of candidates) {
@@ -3434,8 +1083,8 @@ var Server = (() => {
     var _a;
     if (!work.length) return { perSev: {}, overall: {} };
     const nowMs = now != null ? now : Date.now();
-    const mttrDays = (r) => r.resolved !== null && r.firstSeen !== null ? (r.resolved - r.firstSeen) / DAY_MS2 : null;
-    const ageDays = (r) => r.firstSeen !== null ? (nowMs - r.firstSeen) / DAY_MS2 : null;
+    const mttrDays = (r) => r.resolved !== null && r.firstSeen !== null ? (r.resolved - r.firstSeen) / DAY_MS : null;
+    const ageDays = (r) => r.firstSeen !== null ? (nowMs - r.firstSeen) / DAY_MS : null;
     const perSev = {};
     for (const sev2 of SEVERITY_ORDER) {
       const sub = work.filter((r) => r.sev === sev2);
@@ -3517,6 +1166,80 @@ var Server = (() => {
       resolved: parseTs(r["resolved_at"])
     }));
     return summarize(work, opts.now);
+  }
+
+  // src/domain/compaction.ts
+  var CHECKPOINT_VERSION = 1;
+  function serializeSeverities(sevs) {
+    if (sevs === null || sevs === void 0) return null;
+    const vals = /* @__PURE__ */ new Set();
+    for (const s of sevs) {
+      if (typeof s === "string") {
+        const n = normalizeSeverity(s);
+        if (SELECTABLE_SEVERITIES.includes(n)) vals.add(n);
+      }
+    }
+    if (!vals.size || vals.size === SELECTABLE_SEVERITIES.length) return null;
+    const ordered = SEVERITY_ORDER.filter((s) => vals.has(s));
+    return `[${ordered.map((s) => JSON.stringify(s)).join(", ")}]`;
+  }
+  function parseSeverities(text2) {
+    if (typeof text2 !== "string" || !text2) return null;
+    let vals;
+    try {
+      vals = JSON.parse(text2);
+    } catch {
+      return null;
+    }
+    if (!Array.isArray(vals)) return null;
+    const chosen = new Set(
+      vals.filter((v) => typeof v === "string").map(normalizeSeverity)
+    );
+    const out = SEVERITY_ORDER.filter((s) => chosen.has(s));
+    return out.length ? out : null;
+  }
+  function selectSealCandidates(rows, cutoffMs) {
+    const flatIds = rows.filter((r) => r.shape === "flat").map((r) => r.scan_id);
+    const protectedIds = new Set(flatIds.slice(-MIN_UNSEALED_FLAT_SCANS));
+    const candidates = [];
+    for (const r of rows) {
+      if (protectedIds.has(r.scan_id)) break;
+      const ts = parseTs(r.ts);
+      if (ts === null || ts > cutoffMs) break;
+      candidates.push(r);
+    }
+    return candidates;
+  }
+  function statsEqual(a, b) {
+    if (isMissing(a) && isMissing(b)) return true;
+    if (a !== null && b !== null && typeof a === "object" && typeof b === "object" && !Array.isArray(a) && !Array.isArray(b)) {
+      const ka = Object.keys(a);
+      const kb = Object.keys(b);
+      if (ka.length !== kb.length || !ka.every((k) => kb.includes(k))) return false;
+      return ka.every((k) => statsEqual(a[k], b[k]));
+    }
+    if (Array.isArray(a) && Array.isArray(b)) {
+      return a.length === b.length && a.every((x, i) => statsEqual(x, b[i]));
+    }
+    return a === b;
+  }
+  function isMissing(v) {
+    return v === null || v === void 0 || typeof v === "number" && Number.isNaN(v);
+  }
+
+  // ../gas_shared/domain/wizUrl.ts
+  var PORTAL_PREFIXES = [
+    ["https:", "", "app.wiz.io", ""].join("/"),
+    ["https:", "", "app.wiz.us", ""].join("/")
+  ];
+  function isLegal(url) {
+    return PORTAL_PREFIXES.some((prefix) => url.indexOf(prefix) === 0);
+  }
+  function normalizeWizUrl(raw) {
+    if (typeof raw !== "string") return null;
+    const url = raw.trim();
+    if (!url) return null;
+    return isLegal(url) ? url : null;
   }
 
   // src/domain/reconcile.ts
@@ -3945,7 +1668,7 @@ var Server = (() => {
   function reinsertScanRow(state, row) {
     state.scans.push({ ...row });
   }
-  var DAY_MS3 = 864e5;
+  var DAY_MS2 = 864e5;
   var COMPACTED_ASSET2 = "(compacted)";
   var ROLLOUT_MS = parseTs(REMEDIATION_ROLLOUT_ISO);
   function baseRows(state, now, newestScanBySeverity2 = {}) {
@@ -3964,15 +1687,15 @@ var Server = (() => {
       const newest = newestScanBySeverity2[normalizeSeverity(row.severity)];
       const observed = !newest || rowReachesScan(row, newest);
       const last = parseTs(row.last_seen);
-      const seenAgeDays = open && first !== null && last !== null ? (last - first) / DAY_MS3 : null;
+      const seenAgeDays = open && first !== null && last !== null ? (last - first) / DAY_MS2 : null;
       return {
         ...row,
-        mttr_days: first !== null && resolved !== null ? (resolved - first) / DAY_MS3 : null,
-        age_days: resolved === null && first !== null ? (nowMs - first) / DAY_MS3 : null,
+        mttr_days: first !== null && resolved !== null ? (resolved - first) / DAY_MS2 : null,
+        age_days: resolved === null && first !== null ? (nowMs - first) / DAY_MS2 : null,
         fix_available_at: fixAvailableAt,
         actionable_from: actionableFrom,
-        mttr_actionable_days: resolved !== null && actionableMs !== null ? (resolved - actionableMs) / DAY_MS3 : null,
-        actionable_age_days: open && actionableMs !== null ? (nowMs - actionableMs) / DAY_MS3 : null,
+        mttr_actionable_days: resolved !== null && actionableMs !== null ? (resolved - actionableMs) / DAY_MS2 : null,
+        actionable_age_days: open && actionableMs !== null ? (nowMs - actionableMs) / DAY_MS2 : null,
         awaiting_vendor_fix: open && fixAvailableAt === null,
         observed,
         seen_age_days: seenAgeDays
@@ -4020,6 +1743,465 @@ var Server = (() => {
       );
     }
     return out;
+  }
+
+  // src/domain/program.ts
+  var DAY_MS3 = 864e5;
+  function isOpen(status) {
+    return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
+  }
+  var DEFAULT_RISK_RULE = {
+    kev: true,
+    exploit: true,
+    epss: true,
+    epssThreshold: EPSS_PRIORITY_THRESHOLD
+  };
+  function ruleIsEmpty(rule) {
+    return !rule.kev && !rule.exploit && !rule.epss;
+  }
+  function ruleSentence(rule) {
+    const parts = [];
+    if (rule.kev) parts.push("CISA KEV");
+    if (rule.exploit) parts.push("public exploit");
+    if (rule.epss) parts.push("EPSS >= " + rule.epssThreshold.toFixed(2));
+    return parts.length ? parts.join(" or ") : "no signal enabled";
+  }
+  function seen(row, rule) {
+    return {
+      kev: !rule.kev || row.has_kev != null,
+      exploit: !rule.exploit || row.has_exploit != null,
+      epss: !rule.epss || typeof row.epss === "number" && Number.isFinite(row.epss)
+    };
+  }
+  function firedSignals(row, rule) {
+    const out = [];
+    if (rule.kev && row.has_kev === true) out.push("kev");
+    if (rule.exploit && row.has_exploit === true) out.push("exploit");
+    if (rule.epss && typeof row.epss === "number" && Number.isFinite(row.epss) && row.epss >= rule.epssThreshold) {
+      out.push("epss");
+    }
+    return out;
+  }
+  function classifyRisk(row, rule) {
+    if (ruleIsEmpty(rule)) return "unknown";
+    if (firedSignals(row, rule).length) return "high";
+    const s = seen(row, rule);
+    if (!s.kev || !s.exploit || !s.epss) return "unknown";
+    return "low";
+  }
+  var RISK_TIER_ORDER = ["kev", "exploit", "epss", "none", "unknown"];
+  function riskTier(row, rule) {
+    const cls = classifyRisk(row, rule);
+    if (cls !== "high") return cls === "low" ? "none" : "unknown";
+    const fired = firedSignals(row, rule);
+    if (fired.includes("kev")) return "kev";
+    if (fired.includes("exploit")) return "exploit";
+    return "epss";
+  }
+  var NO_RATE = { point: null, lo: null, hi: null };
+  function pct(num, den) {
+    return den > 0 ? num / den * 100 : null;
+  }
+  function emptyMatrix() {
+    return {
+      tp: 0,
+      fp: 0,
+      fn: 0,
+      tn: 0,
+      unknownRemediated: 0,
+      unknownOpen: 0,
+      classified: 0,
+      unknown: 0,
+      total: 0,
+      remediated: 0,
+      open: 0,
+      highRisk: 0,
+      notHighRisk: 0,
+      coverage: NO_RATE,
+      efficiency: NO_RATE,
+      prevalence: null,
+      signalCoveragePct: null
+    };
+  }
+  function finalize(m) {
+    m.classified = m.tp + m.fp + m.fn + m.tn;
+    m.unknown = m.unknownRemediated + m.unknownOpen;
+    m.total = m.classified + m.unknown;
+    m.remediated = m.tp + m.fp + m.unknownRemediated;
+    m.open = m.fn + m.tn + m.unknownOpen;
+    m.highRisk = m.tp + m.fn;
+    m.notHighRisk = m.fp + m.tn;
+    m.coverage = {
+      point: pct(m.tp, m.tp + m.fn),
+      lo: pct(m.tp, m.tp + m.fn + m.unknownOpen),
+      hi: pct(m.tp + m.unknownRemediated, m.tp + m.unknownRemediated + m.fn)
+    };
+    m.efficiency = {
+      point: pct(m.tp, m.tp + m.fp),
+      lo: pct(m.tp, m.tp + m.fp + m.unknownRemediated),
+      hi: pct(m.tp + m.unknownRemediated, m.tp + m.fp + m.unknownRemediated)
+    };
+    m.prevalence = pct(m.highRisk, m.classified);
+    m.signalCoveragePct = pct(m.classified, m.total);
+    return m;
+  }
+  function tally(m, row, rule) {
+    const open = isOpen(row.status);
+    switch (classifyRisk(row, rule)) {
+      case "high":
+        if (open) m.fn += 1;
+        else m.tp += 1;
+        break;
+      case "low":
+        if (open) m.tn += 1;
+        else m.fp += 1;
+        break;
+      default:
+        if (open) m.unknownOpen += 1;
+        else m.unknownRemediated += 1;
+    }
+  }
+  function confusionMatrix(rows, rule) {
+    const m = emptyMatrix();
+    for (const row of rows) tally(m, row, rule);
+    return finalize(m);
+  }
+  function confusionBySeverity(rows, rule) {
+    var _a;
+    const bySev = {};
+    const overall = emptyMatrix();
+    for (const row of rows) {
+      const s = normalizeSeverity(row.severity);
+      const m = (_a = bySev[s]) != null ? _a : bySev[s] = emptyMatrix();
+      tally(m, row, rule);
+      tally(overall, row, rule);
+    }
+    const perSev = {};
+    for (const s of SEVERITY_ORDER) if (bySev[s]) perSev[s] = finalize(bySev[s]);
+    return { perSev, overall: finalize(overall) };
+  }
+  function signalBreakdown(rows, rule) {
+    const out = {
+      kev: 0,
+      exploit: 0,
+      epss: 0,
+      anyOf: 0,
+      kevMissing: 0,
+      exploitMissing: 0,
+      epssMissing: 0
+    };
+    for (const row of rows) {
+      const fired = firedSignals(row, rule);
+      if (fired.length) out.anyOf += 1;
+      for (const f of fired) out[f] += 1;
+      if (rule.kev && row.has_kev == null) out.kevMissing += 1;
+      if (rule.exploit && row.has_exploit == null) out.exploitMissing += 1;
+      if (rule.epss && !(typeof row.epss === "number" && Number.isFinite(row.epss))) {
+        out.epssMissing += 1;
+      }
+    }
+    return out;
+  }
+  function ruleSensitivity(rows, active) {
+    const subsets = [
+      { label: "KEV", kev: true, exploit: false, epss: false },
+      { label: "Exploit", kev: false, exploit: true, epss: false },
+      { label: "EPSS", kev: false, exploit: false, epss: true },
+      { label: "KEV or exploit", kev: true, exploit: true, epss: false },
+      { label: "KEV or EPSS", kev: true, exploit: false, epss: true },
+      { label: "Exploit or EPSS", kev: false, exploit: true, epss: true },
+      { label: "All three", kev: true, exploit: true, epss: true }
+    ];
+    return subsets.map((s) => {
+      const rule = { ...s, epssThreshold: active.epssThreshold };
+      const m = confusionMatrix(rows, rule);
+      return {
+        label: s.label,
+        rule,
+        active: rule.kev === active.kev && rule.exploit === active.exploit && rule.epss === active.epss,
+        coverage: m.coverage.point,
+        efficiency: m.efficiency.point,
+        highRisk: m.highRisk,
+        unknown: m.unknown
+      };
+    });
+  }
+  var NET_CAPACITY_BAND_PCT = 2;
+  function monthKey(ms) {
+    const d = new Date(ms);
+    return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0");
+  }
+  function monthStartMs(key) {
+    const [y, m] = key.split("-").map(Number);
+    return Date.UTC(y, m - 1, 1);
+  }
+  function nextMonthKey(key) {
+    const [y, m] = key.split("-").map(Number);
+    return m === 12 ? y + 1 + "-01" : y + "-" + String(m + 1).padStart(2, "0");
+  }
+  function verdictOf(netPct) {
+    if (netPct === null || Math.abs(netPct) <= NET_CAPACITY_BAND_PCT) return "keeping-up";
+    return netPct > 0 ? "gaining" : "falling-behind";
+  }
+  function capacityByMonth(rows, scans, options) {
+    var _a, _b, _c, _d;
+    const nowMs = (_a = options.now) != null ? _a : Date.now();
+    const rule = options.rule;
+    const parsed = [];
+    for (const row of rows) {
+      if (options.highRiskOnly && classifyRisk(row, rule) !== "high") continue;
+      const first = parseTs(row.first_seen);
+      if (first === null) continue;
+      parsed.push({ first, resolved: parseTs(row.resolved_at) });
+    }
+    const flatScanMs = scans.filter((s) => s["shape"] !== "grouped").map((s) => parseTs(s["ts"])).filter((t) => t !== null);
+    const firstScanMs = flatScanMs.length ? minNum(flatScanMs) : null;
+    const scanClosedByMonth = {};
+    for (const s of scans) {
+      if (s["shape"] === "grouped") continue;
+      const t = parseTs(s["ts"]);
+      if (t === null) continue;
+      if (firstScanMs !== null && t === firstScanMs) continue;
+      const k = monthKey(t);
+      scanClosedByMonth[k] = ((_b = scanClosedByMonth[k]) != null ? _b : 0) + Number((_c = s["resolved_count"]) != null ? _c : 0);
+    }
+    if (!parsed.length) {
+      return {
+        months: [],
+        mmcrMean: null,
+        oneInN: null,
+        closedPerMonthMean: null,
+        netTotal: 0,
+        verdict: null,
+        monthsCounted: 0
+      };
+    }
+    const earliest = minNum(parsed.map((p) => p.first));
+    const months = [];
+    const lastKey = monthKey(nowMs);
+    for (let key = monthKey(earliest); ; key = nextMonthKey(key)) {
+      const start = monthStartMs(key);
+      const end = monthStartMs(nextMonthKey(key));
+      let openAtStart = 0;
+      let opened = 0;
+      let closed = 0;
+      for (const p of parsed) {
+        if (p.first < start && (p.resolved === null || p.resolved >= start)) openAtStart += 1;
+        if (p.first >= start && p.first < end) opened += 1;
+        if (p.resolved !== null && p.resolved >= start && p.resolved < end) closed += 1;
+      }
+      const netPct = openAtStart > 0 ? (closed - opened) / openAtStart * 100 : null;
+      months.push({
+        month: key,
+        openAtStart,
+        opened,
+        closed,
+        mmcr: openAtStart > 0 ? closed / openAtStart * 100 : null,
+        net: closed - opened,
+        netPct,
+        verdict: verdictOf(netPct),
+        // The first month is partial only in the sense that the register begins mid-month; it
+        // still fully observes its own closures, so only the current month is excluded.
+        partial: key === lastKey,
+        reconstructed: firstScanMs === null || end <= firstScanMs,
+        scanClosed: (_d = scanClosedByMonth[key]) != null ? _d : null
+      });
+      if (key === lastKey) break;
+      if (months.length > 600) break;
+    }
+    const counted = months.filter((m) => !m.partial && !m.reconstructed && m.mmcr !== null);
+    const mmcrMean = counted.length ? counted.reduce((a, m) => a + m.mmcr, 0) / counted.length : null;
+    const closedPerMonthMean = counted.length ? counted.reduce((a, m) => a + m.closed, 0) / counted.length : null;
+    const netTotal = months.reduce((a, m) => a + m.net, 0);
+    const netPctOverall = counted.length ? counted.reduce((a, m) => {
+      var _a2;
+      return a + ((_a2 = m.netPct) != null ? _a2 : 0);
+    }, 0) / counted.length : null;
+    const trimmed = options.maxMonths !== void 0 && months.length > options.maxMonths ? months.slice(months.length - options.maxMonths) : months;
+    return {
+      months: trimmed,
+      mmcrMean,
+      oneInN: mmcrMean !== null && mmcrMean > 0 ? 100 / mmcrMean : null,
+      closedPerMonthMean,
+      netTotal,
+      verdict: counted.length ? verdictOf(netPctOverall) : null,
+      monthsCounted: counted.length
+    };
+  }
+  var HINDCAST_SCANS_CAP = 24;
+  function capacityRowsAsOf(rows, asOfMs) {
+    const out = [];
+    for (const row of rows) {
+      const first = parseTs(row.first_seen);
+      if (first === null || first > asOfMs) continue;
+      const resolved = parseTs(row.resolved_at);
+      out.push(resolved !== null && resolved > asOfMs ? { ...row, resolved_at: null } : row);
+    }
+    return out;
+  }
+  function capacityHindcast(rows, scans, options) {
+    var _a, _b, _c;
+    const cap = (_a = options.scansCap) != null ? _a : HINDCAST_SCANS_CAP;
+    const horizonMs = (_b = options.now) != null ? _b : Date.now();
+    const asOfMs = scans.filter((s) => s["shape"] !== "grouped").map((s) => parseTs(s["ts"])).filter((t) => t !== null).sort((a, b) => b - a).slice(0, cap);
+    const dated = rows.map((r) => ({
+      ...r,
+      first_seen: parseTs(r.first_seen),
+      resolved_at: parseTs(r.resolved_at)
+    }));
+    const realised = capacityByMonth(dated, scans, { ...options, maxMonths: void 0 });
+    const netByMonth = {};
+    for (const m of realised.months) netByMonth[m.month] = m.netPct;
+    const out = [];
+    for (const ts of asOfMs) {
+      const followKey = nextMonthKey(monthKey(ts));
+      if (monthStartMs(nextMonthKey(followKey)) > horizonMs) continue;
+      const scansUpTo = scans.filter((s) => {
+        const t = parseTs(s["ts"]);
+        return t !== null && t <= ts;
+      });
+      const verdict = capacityByMonth(capacityRowsAsOf(dated, ts), scansUpTo, {
+        ...options,
+        now: ts,
+        maxMonths: void 0
+      }).verdict;
+      const realisedNetPct = (_c = netByMonth[followKey]) != null ? _c : null;
+      out.push({
+        // Finite by construction — `parseTs` refused everything that was not a real timestamp.
+        asOf: toIso(ts),
+        verdict,
+        realisedNetPct,
+        agreed: agreedWith(verdict, realisedNetPct)
+      });
+    }
+    return {
+      rows: out,
+      comparable: out.filter((r) => r.agreed !== null).length,
+      // "Falling behind" and then the ground was GAINED — graded by the same `verdictOf` the
+      // page's own pill uses, so "a gain" cannot mean one thing here and another there.
+      counterperformative: out.filter(
+        (r) => r.verdict === "falling-behind" && r.realisedNetPct !== null && verdictOf(r.realisedNetPct) === "gaining"
+      ).length,
+      scansConsidered: asOfMs.length,
+      scansCap: cap
+    };
+  }
+  function agreedWith(verdict, netPct) {
+    if (verdict === null || netPct === null) return null;
+    return verdictOf(netPct) === verdict;
+  }
+  function observationWindowDays(rows, now) {
+    const nowMs = now != null ? now : Date.now();
+    const firsts = rows.map((r) => parseTs(r.first_seen)).filter((t) => t !== null);
+    if (!firsts.length) return null;
+    return (nowMs - minNum(firsts)) / DAY_MS3;
+  }
+  function addCount(total, v, refused) {
+    if (typeof v !== "number" || !Number.isFinite(v)) {
+      refused.n += 1;
+      return total;
+    }
+    return total + v;
+  }
+  function inWindow(t, sinceMs, untilMs) {
+    return t !== null && t > sinceMs && t <= untilMs;
+  }
+  function movementDecomposition(rows, scans, window) {
+    var _a;
+    const sinceMs = parseTs(window.since);
+    const untilMs = parseTs(window.until);
+    if (sinceMs === null || untilMs === null || !(sinceMs < untilMs)) {
+      throw new Error(
+        "movementDecomposition: the window endpoints must be two parseable instants, since before until \u2014 got " + JSON.stringify(window)
+      );
+    }
+    const refused = { n: 0 };
+    let arrivals = 0;
+    let reopened = 0;
+    let scansInWindow = 0;
+    let skippedScans = 0;
+    let newestTs = null;
+    let newestScan = null;
+    for (const s of scans) {
+      if (s["shape"] === "grouped") continue;
+      const t = parseTs(s["ts"]);
+      if (t === null) {
+        skippedScans += 1;
+        continue;
+      }
+      if (!inWindow(t, sinceMs, untilMs)) continue;
+      scansInWindow += 1;
+      arrivals = addCount(arrivals, s["new_count"], refused);
+      reopened = addCount(reopened, s["reopened_count"], refused);
+      if (newestTs === null || t > newestTs) {
+        newestTs = t;
+        newestScan = s;
+      }
+    }
+    const gate2 = newestScan ? parseSeverities(newestScan["severities"]) : null;
+    const gateSet = gate2 && gate2.length ? new Set(gate2) : null;
+    let observed = 0;
+    let bounded = 0;
+    let unattributed = 0;
+    let outsideGate = 0;
+    let openAtSince = 0;
+    let openAtUntil = 0;
+    let unplacedRows = 0;
+    for (const row of rows) {
+      const first = parseTs(row.first_seen);
+      const resolved = parseTs(row.resolved_at);
+      if (inWindow(resolved, sinceMs, untilMs)) {
+        const src = String((_a = row.resolution_src) != null ? _a : "").trim().toLowerCase();
+        if (src === "api") observed += 1;
+        else if (src === "disappeared") bounded += 1;
+        else unattributed += 1;
+      }
+      if (gateSet && isOpen(row.status) && !gateSet.has(normalizeSeverity(row.severity))) {
+        outsideGate += 1;
+      }
+      if (first === null) {
+        unplacedRows += 1;
+        continue;
+      }
+      if (first <= sinceMs && (resolved === null || resolved > sinceMs)) openAtSince += 1;
+      if (first <= untilMs && (resolved === null || resolved > untilMs)) openAtUntil += 1;
+    }
+    const netChange = openAtUntil - openAtSince;
+    const identityGap = netChange - (arrivals - observed - bounded + reopened);
+    return {
+      arrivals,
+      observed,
+      bounded,
+      reopened,
+      outsideGate,
+      netChange,
+      measured: observed,
+      administrative: bounded,
+      unattributed,
+      identityGap,
+      identityHolds: identityGap === 0,
+      scansInWindow,
+      skippedScans,
+      partialCounts: refused.n,
+      unplacedRows,
+      sinceMs,
+      untilMs
+    };
+  }
+  function movementWindowScans(scans, minDays) {
+    const flat = scans.filter((s) => s["shape"] !== "grouped").map((s) => parseTs(s["ts"])).filter((t) => t !== null).sort((a, b) => a - b);
+    if (!flat.length) return { since: null, until: null, days: null, reason: "noScans" };
+    const until = flat[flat.length - 1];
+    const spanDays = Math.round((until - flat[0]) / DAY_MS3 * 10) / 10;
+    if (flat.length === 1) return { since: null, until, days: 0, reason: "oneScan" };
+    const cutoff = until - minDays * DAY_MS3;
+    for (let i = flat.length - 2; i >= 0; i -= 1) {
+      const t = flat[i];
+      if (t <= cutoff) {
+        return { since: t, until, days: Math.round((until - t) / DAY_MS3 * 10) / 10, reason: null };
+      }
+    }
+    return { since: null, until, days: spanDays, reason: "tooClose" };
   }
 
   // src/domain/coldZone.ts
@@ -7314,6 +5496,486 @@ var Server = (() => {
     return (r) => orNull(r[column]);
   }
 
+  // src/server/props.ts
+  var PROP_KEYS = {
+    wizApiToken: "WIZ_API_TOKEN",
+    wizClientId: "WIZ_CLIENT_ID",
+    wizClientSecret: "WIZ_CLIENT_SECRET",
+    wizAuthUrl: "WIZ_AUTH_URL",
+    wizApiUrl: "WIZ_API_URL",
+    wizProjectIdV2: "WIZ_PROJECT_ID_V2",
+    wizSupportGroupTagKey: "WIZ_SUPPORT_GROUP_TAG_KEY",
+    wizDomainTagKey: "WIZ_DOMAIN_TAG_KEY",
+    // Who may use the web app, on top of the deployment's domain fence. Comma-, semicolon- or
+    // whitespace-separated addresses; see access.ts. UNSET MEANS OWNER-ONLY, not "everyone" —
+    // the guard fails closed, and the owner is allowed by identity rather than by this list.
+    allowedUsers: "ALLOWED_USERS",
+    // Who may EDIT the list above from Settings → Access, on top of the owner (who always may).
+    // Unset means owner-only, like its sibling. Admins are allowed into the app by being admins,
+    // and deliberately CANNOT edit this property — see access.ts for why the tier stops here.
+    allowedAdmins: "ALLOWED_ADMINS",
+    // The /exec URL of the hub launcher (gas_hub), pasted from its Deploy > Manage deployments,
+    // or set from Settings > System. A PROPERTY RATHER THAN CODE for the platform's reason, not
+    // a preference: `ScriptApp.getService().getUrl()` answers for this deployment only and there
+    // is no API that hands one script project another's web-app URL, so somebody has to paste
+    // it. Unset (or blank) is legal and means the header simply carries no hub button — see
+    // server/hubUrl.ts, which owns the shape of the value and refuses anything that is neither a
+    // script.google.com URL nor a loopback dev-harness one.
+    urlHub: "URL_HUB",
+    ledgerSpreadsheetId: "LEDGER_SPREADSHEET_ID",
+    archiveFolderId: "ARCHIVE_FOLDER_ID",
+    // The warm schedule setup() last installed. A ClockTrigger exposes no hour, minute or
+    // timezone, so this is the only way a later edit to the schedule can be detected and
+    // reconciled rather than silently ignored on an existing deployment.
+    warmTriggerSchedule: "WARM_TRIGGER_SCHEDULE"
+  };
+  var DEFAULT_WIZ_AUTH_URL = "https://auth.app.wiz.io/oauth/token";
+  var DEFAULT_SUPPORT_GROUP_TAG_KEY = "Wiz/provisioning";
+  function getProp(key) {
+    return PropertiesService.getScriptProperties().getProperty(key);
+  }
+  function requireProp(key) {
+    const v = getProp(key);
+    if (!v) {
+      throw new Error(`Missing Script Property ${key} \u2014 run setup() or set it in Project Settings > Script Properties.`);
+    }
+    return v;
+  }
+  function setProp(key, value) {
+    PropertiesService.getScriptProperties().setProperty(key, value);
+  }
+  function deleteProp(key) {
+    PropertiesService.getScriptProperties().deleteProperty(key);
+  }
+  function resolveWizAuthMode(token, clientId, clientSecret) {
+    if (token && token.trim()) return "token";
+    if (clientId && clientSecret) return "oauth";
+    return null;
+  }
+  function hasWizCredentials() {
+    return Boolean(getProp(PROP_KEYS.wizApiUrl)) && resolveWizAuthMode(
+      getProp(PROP_KEYS.wizApiToken),
+      getProp(PROP_KEYS.wizClientId),
+      getProp(PROP_KEYS.wizClientSecret)
+    ) !== null;
+  }
+
+  // src/server/errorLog.ts
+  var KEY = "RECENT_ERRORS";
+  var MAX_ENTRIES = 25;
+  var MAX_MESSAGE_LEN = 500;
+  var MAX_BLOB_CHARS = 8500;
+  function truncate(s) {
+    return s.length > MAX_MESSAGE_LEN ? s.slice(0, MAX_MESSAGE_LEN) + "\u2026" : s;
+  }
+  function recentErrors() {
+    const raw = getProp(KEY);
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter((e) => Boolean(e) && typeof e === "object" && !Array.isArray(e)).map((e) => {
+        var _a, _b, _c, _d;
+        return {
+          ts: String((_a = e["ts"]) != null ? _a : ""),
+          op: String((_b = e["op"]) != null ? _b : "api"),
+          kind: String((_c = e["kind"]) != null ? _c : "error"),
+          message: String((_d = e["message"]) != null ? _d : "")
+        };
+      });
+    } catch {
+      return [];
+    }
+  }
+  function recordError(op, err, kind = "error", now) {
+    try {
+      const message = err instanceof Error ? err.message : typeof err === "string" ? err : String(err);
+      const entry = { ts: nowIso(now), op, kind, message: truncate(message) };
+      const next = [entry, ...recentErrors()].slice(0, MAX_ENTRIES);
+      let blob = JSON.stringify(next);
+      while (next.length > 1 && blob.length > MAX_BLOB_CHARS) {
+        next.pop();
+        blob = JSON.stringify(next);
+      }
+      setProp(KEY, blob);
+    } catch {
+    }
+  }
+  function clearErrors() {
+    deleteProp(KEY);
+  }
+
+  // src/server/archiveStore.ts
+  var SUBFOLDERS = [
+    "scans",
+    "obs",
+    "checkpoints",
+    "snapshots",
+    "backups",
+    "imports",
+    "exports",
+    // Durable read-model cache (readModelStore.ts). Created on demand by subfolder(), so a
+    // deployment that never re-runs setup() still self-heals on the first write.
+    "readmodels"
+  ];
+  var recordedFailures = /* @__PURE__ */ new Set();
+  function noteDriveFailure(label, e) {
+    console.warn(`${label}: ${e}`);
+    if (recordedFailures.has(label)) return;
+    recordedFailures.add(label);
+    recordError(label, e, "error");
+  }
+  function rootFolder() {
+    return DriveApp.getFolderById(requireProp(PROP_KEYS.archiveFolderId));
+  }
+  function findChild(parent, name) {
+    const it = parent.getFoldersByName(name);
+    return it.hasNext() ? it.next() : null;
+  }
+  function childFolder(parent, name) {
+    var _a;
+    return (_a = findChild(parent, name)) != null ? _a : parent.createFolder(name);
+  }
+  function subfolder(name) {
+    return childFolder(rootFolder(), name);
+  }
+  function findSubfolder(name) {
+    try {
+      return findChild(rootFolder(), name);
+    } catch (e) {
+      noteDriveFailure(`archiveRead:${name}`, e);
+      return null;
+    }
+  }
+  function readGzJsonIn(folder, name, label = "archiveRead") {
+    if (!folder) return null;
+    try {
+      const files = folder.getFilesByName(name);
+      return files.hasNext() ? parseGzBlob(files.next().getBlob()) : null;
+    } catch (e) {
+      noteDriveFailure(label, e);
+      return null;
+    }
+  }
+  function ensureFolders(rootId) {
+    const root = rootId ? DriveApp.getFolderById(rootId) : rootFolder();
+    for (const name of SUBFOLDERS) childFolder(root, name);
+    return root.getId();
+  }
+  function safeName(id) {
+    return id.replace(/[^0-9A-Za-z._-]/g, "") || "scan";
+  }
+  function writeGzJson(folder, name, payload) {
+    const json = JSON.stringify(payload);
+    const blob = Utilities.gzip(Utilities.newBlob(json, "application/json"), name);
+    const existing = folder.getFilesByName(name);
+    while (existing.hasNext()) existing.next().setTrashed(true);
+    return folder.createFile(blob);
+  }
+  function readGzJsonFile(fileId) {
+    try {
+      const file = DriveApp.getFileById(fileId);
+      return parseGzBlob(file.getBlob());
+    } catch (e) {
+      console.warn(`Unreadable Drive file ${fileId}: ${e}`);
+      return null;
+    }
+  }
+  function parseGzBlob(blob) {
+    try {
+      const bytes = blob.getBytes();
+      const isGzip = bytes.length > 2 && (bytes[0] & 255) === 31 && (bytes[1] & 255) === 139;
+      const text2 = isGzip ? Utilities.ungzip(blob).getDataAsString("UTF-8") : blob.getDataAsString("UTF-8");
+      return JSON.parse(text2);
+    } catch (e) {
+      console.warn(`Failed to parse archive blob: ${e}`);
+      return null;
+    }
+  }
+  function scanFolder(scanId) {
+    return childFolder(subfolder("scans"), safeName(scanId));
+  }
+  function findScanFolder(scanId) {
+    const scans = findSubfolder("scans");
+    if (!scans) return null;
+    try {
+      return findChild(scans, safeName(scanId));
+    } catch (e) {
+      noteDriveFailure("archiveRead:scans", e);
+      return null;
+    }
+  }
+  function writeScanPage(scanId, pageNumber, payload) {
+    const name = `page-${String(pageNumber).padStart(4, "0")}.json.gz`;
+    return writeGzJson(scanFolder(scanId), name, payload).getId();
+  }
+  function readScanPage(scanId, pageNumber) {
+    const name = `page-${String(pageNumber).padStart(4, "0")}.json.gz`;
+    return readGzJsonIn(findScanFolder(scanId), name, "archiveRead:page");
+  }
+  function writeSlimRecords(scanId, records) {
+    return writeGzJson(scanFolder(scanId), "slim.json.gz", records).getId();
+  }
+  function readSlimRecords(scanId) {
+    const parsed = readGzJsonIn(findScanFolder(scanId), "slim.json.gz", "archiveRead:slim");
+    return Array.isArray(parsed) ? parsed : null;
+  }
+  var FRAME_NAME = "frame-v1.json.gz";
+  function writeFrame(scanId, records) {
+    return writeGzJson(scanFolder(scanId), FRAME_NAME, records).getId();
+  }
+  function readFrame(scanId) {
+    const parsed = readGzJsonIn(findScanFolder(scanId), FRAME_NAME, "archiveRead:frame");
+    return Array.isArray(parsed) ? parsed : null;
+  }
+  var PAGE_RUNS_NAME = "pageruns.json.gz";
+  function writePageRuns(scanId, runs) {
+    writeGzJson(scanFolder(scanId), PAGE_RUNS_NAME, runs);
+  }
+  function readPageRuns(scanId) {
+    const parsed = readGzJsonIn(findScanFolder(scanId), PAGE_RUNS_NAME, "archiveRead:pageRuns");
+    return Array.isArray(parsed) ? parsed : null;
+  }
+  function readScanPayload(scanRef) {
+    if (!scanRef) return null;
+    let folder;
+    try {
+      folder = DriveApp.getFolderById(scanRef);
+    } catch {
+      return null;
+    }
+    const pages = [];
+    try {
+      const files = folder.getFiles();
+      while (files.hasNext()) {
+        const f = files.next();
+        const name = f.getName();
+        if (!/^page-\d+\.json(\.gz)?$/.test(name)) continue;
+        const payload = parseGzBlob(f.getBlob());
+        if (payload === null) return null;
+        pages.push({ name, payload });
+      }
+    } catch (e) {
+      noteDriveFailure("archiveRead:scanPayload", e);
+      return null;
+    }
+    if (!pages.length) return null;
+    pages.sort((a, b) => a.name < b.name ? -1 : 1);
+    return pages.map((p) => p.payload);
+  }
+  function scanArchiveBytes(scanRef, obsRef) {
+    let total = 0;
+    if (scanRef) {
+      try {
+        const files = DriveApp.getFolderById(scanRef).getFiles();
+        while (files.hasNext()) total += files.next().getSize();
+      } catch {
+      }
+    }
+    if (obsRef) {
+      try {
+        total += DriveApp.getFileById(obsRef).getSize();
+      } catch {
+      }
+    }
+    return total;
+  }
+  function trashScanArchive(scanRef) {
+    if (!scanRef) return;
+    try {
+      DriveApp.getFolderById(scanRef).setTrashed(true);
+    } catch (e) {
+      console.warn(`Couldn't trash scan archive ${scanRef}: ${e}`);
+    }
+  }
+  function writeObservations(scanId, observations) {
+    return writeGzJson(subfolder("obs"), `obs-${safeName(scanId)}.json.gz`, observations).getId();
+  }
+  function readObservations(obsRef) {
+    if (!obsRef) return [];
+    const parsed = readGzJsonFile(obsRef);
+    return Array.isArray(parsed) ? parsed : [];
+  }
+  function trashFile(fileId) {
+    if (!fileId) return;
+    try {
+      DriveApp.getFileById(fileId).setTrashed(true);
+    } catch (e) {
+      console.warn(`Couldn't trash file ${fileId}: ${e}`);
+    }
+  }
+  function writeCheckpoint(compactionId, checkpoint) {
+    return writeGzJson(
+      subfolder("checkpoints"),
+      `checkpoint-${safeName(compactionId)}.json.gz`,
+      checkpoint
+    ).getId();
+  }
+  function readCheckpoint(ref) {
+    var _a, _b, _c;
+    if (!ref) return null;
+    const parsed = readGzJsonFile(ref);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const obj = parsed;
+    if (Array.isArray(obj["parts"])) {
+      const ledger = [];
+      for (const partId of obj["parts"]) {
+        const part = readGzJsonFile(partId);
+        if (Array.isArray(part)) for (const row of part) ledger.push(row);
+      }
+      return {
+        version: Number((_a = obj["version"]) != null ? _a : 1),
+        floor_scan_id: (_b = obj["floor_scan_id"]) != null ? _b : null,
+        floor_ts: (_c = obj["floor_ts"]) != null ? _c : null,
+        ledger
+      };
+    }
+    return parsed;
+  }
+  var CHECKPOINT_PART_ROWS = 2e4;
+  function rewriteCheckpoint(compactionId, prevRef, checkpoint) {
+    var _a;
+    const prev = prevRef ? readGzJsonFile(prevRef) : null;
+    const prevParts = prev && typeof prev === "object" && !Array.isArray(prev) ? prev["parts"] : null;
+    if (!Array.isArray(prevParts)) return writeCheckpoint(compactionId, checkpoint);
+    const rows = (_a = checkpoint.ledger) != null ? _a : [];
+    const partIds = [];
+    for (let i = 0, idx = 0; i < rows.length; i += CHECKPOINT_PART_ROWS, idx += 1) {
+      partIds.push(writeCheckpointPart(compactionId, idx, rows.slice(i, i + CHECKPOINT_PART_ROWS)));
+    }
+    const ref = writeCheckpointManifest(compactionId, {
+      version: checkpoint.version,
+      floor_scan_id: checkpoint.floor_scan_id,
+      floor_ts: checkpoint.floor_ts,
+      parts: partIds
+    });
+    for (const id of prevParts) {
+      if (typeof id === "string" && !partIds.includes(id)) trashFile(id);
+    }
+    return ref;
+  }
+  function listScanPageNumbers(scanRef) {
+    if (!scanRef) return [];
+    let folder;
+    try {
+      folder = DriveApp.getFolderById(scanRef);
+    } catch {
+      return [];
+    }
+    const nums = [];
+    try {
+      const files = folder.getFiles();
+      while (files.hasNext()) {
+        const m = /^page-(\d+)\.json(\.gz)?$/.exec(files.next().getName());
+        if (m) nums.push(Number(m[1]));
+      }
+    } catch (e) {
+      noteDriveFailure("archiveRead:pageNumbers", e);
+      return [];
+    }
+    return nums.sort((a, b) => a - b);
+  }
+  function trashPageRuns(scanId) {
+    try {
+      const folder = findScanFolder(scanId);
+      const files = folder ? folder.getFilesByName(PAGE_RUNS_NAME) : null;
+      while (files && files.hasNext()) files.next().setTrashed(true);
+    } catch (e) {
+      console.warn(`Couldn't trash page runs for ${scanId}: ${e}`);
+    }
+  }
+  var SNAPSHOT_NAME = "ledger-snapshot.json.gz";
+  function writeLedgerSnapshot(state) {
+    const snap = { version: 1, ledger: state.ledger, episodes: state.episodes };
+    writeGzJson(subfolder("snapshots"), SNAPSHOT_NAME, snap);
+  }
+  function readLedgerSnapshot() {
+    const parsed = readGzJsonIn(findSubfolder("snapshots"), SNAPSHOT_NAME, "archiveRead:snapshot");
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const snap = parsed;
+    return snap.ledger && snap.episodes ? snap : null;
+  }
+  function writeJournal(jobId, state) {
+    return writeGzJson(subfolder("backups"), `backup-${safeName(jobId)}.json.gz`, state).getId();
+  }
+  function readJournal(ref) {
+    if (!ref) return null;
+    const parsed = readGzJsonFile(ref);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const st = parsed;
+    return st.scans && st.ledger && st.episodes ? st : null;
+  }
+  function writeMigrationExport(name, bundle) {
+    const file = writeGzJson(subfolder("exports"), name, bundle);
+    return { name, url: file.getDownloadUrl(), bytes: file.getSize() };
+  }
+  function listNames(folder) {
+    const dir = findSubfolder(folder);
+    if (!dir) return [];
+    const out = [];
+    try {
+      const files = dir.getFiles();
+      while (files.hasNext()) out.push(files.next().getName());
+    } catch (e) {
+      noteDriveFailure(`archiveRead:${folder}`, e);
+      return [];
+    }
+    return out;
+  }
+  function trashNamed(folder, name) {
+    const dir = findSubfolder(folder);
+    if (!dir) return;
+    const files = dir.getFilesByName(name);
+    while (files.hasNext()) files.next().setTrashed(true);
+  }
+  function trashLedgerSnapshot() {
+    const dir = findSubfolder("snapshots");
+    if (!dir) return;
+    const files = dir.getFilesByName(SNAPSHOT_NAME);
+    while (files.hasNext()) files.next().setTrashed(true);
+  }
+  function importFolder(sessionId) {
+    return childFolder(subfolder("imports"), safeName(sessionId));
+  }
+  function findImportFolder(sessionId) {
+    const imports = findSubfolder("imports");
+    if (!imports) return null;
+    try {
+      return findChild(imports, safeName(sessionId));
+    } catch (e) {
+      noteDriveFailure("archiveRead:imports", e);
+      return null;
+    }
+  }
+  function writeImportManifest(sessionId, manifest) {
+    return writeGzJson(importFolder(sessionId), "manifest.json.gz", manifest).getId();
+  }
+  function readImportManifest(sessionId) {
+    return readGzJsonIn(findImportFolder(sessionId), "manifest.json.gz", "archiveRead:imports");
+  }
+  function stageShard(sessionId, index, payload) {
+    const name = `shard-${String(index + 1).padStart(4, "0")}.json.gz`;
+    return writeGzJson(importFolder(sessionId), name, payload).getId();
+  }
+  function writeCheckpointPart(compactionId, index, rows) {
+    const name = `checkpoint-${safeName(compactionId)}-part-${String(index + 1).padStart(4, "0")}.json.gz`;
+    return writeGzJson(subfolder("checkpoints"), name, rows).getId();
+  }
+  function writeCheckpointManifest(compactionId, manifest) {
+    return writeGzJson(
+      subfolder("checkpoints"),
+      `checkpoint-${safeName(compactionId)}.json.gz`,
+      manifest
+    ).getId();
+  }
+  function trashImportSession(sessionId) {
+    try {
+      importFolder(sessionId).setTrashed(true);
+    } catch (e) {
+      console.warn(`trashImportSession(${sessionId}): ${e}`);
+    }
+  }
+
   // src/domain/purge.ts
   function severityOf(rec) {
     return effectiveSeverity(rec).severity;
@@ -7625,6 +6287,391 @@ var Server = (() => {
   }
   function checkpointManifest(floorScanId, floorTs, parts) {
     return { version: CHECKPOINT_VERSION, floor_scan_id: floorScanId, floor_ts: floorTs, parts };
+  }
+
+  // src/server/serverCache.ts
+  var VERSION_PROP = "DATA_VERSION";
+  var KEY_PREFIX = "wsk";
+  var BUILD_ID = true ? "a6177de0610e" : "dev";
+  var CHUNK_CHARS = 9e4;
+  var DEFAULT_TTL_SEC = 21600;
+  function dataVersion() {
+    var _a;
+    return (_a = getProp(VERSION_PROP)) != null ? _a : "0";
+  }
+  function domainTagStamp() {
+    return sha1Hex(resolveDomainTagKey(getProp(PROP_KEYS.wizDomainTagKey))).slice(0, 8);
+  }
+  var versionStamp;
+  function stamp() {
+    if (versionStamp === void 0) {
+      versionStamp = `${BUILD_ID}.${dataVersion()}.${domainTagStamp()}`;
+    }
+    return versionStamp;
+  }
+  function bumpDataVersion() {
+    const now = Date.now();
+    const prev = Number(dataVersion());
+    setProp(VERSION_PROP, String(Number.isFinite(prev) && prev >= now ? prev + 1 : now));
+    versionStamp = void 0;
+  }
+  function paramsHash(params) {
+    return sha1Hex(JSON.stringify(params != null ? params : null)).slice(0, 12);
+  }
+  function cacheKey(name, params, version) {
+    return `${KEY_PREFIX}:${version}:${name}:${paramsHash(params)}`;
+  }
+  function currentStamp() {
+    return stamp();
+  }
+  function splitChunks(s, size = CHUNK_CHARS) {
+    const out = [];
+    for (let i = 0; i < s.length; i += size) out.push(s.slice(i, i + size));
+    return out.length ? out : [""];
+  }
+  function cachePutJson(key, value, ttlSec = DEFAULT_TTL_SEC, chunkChars = CHUNK_CHARS) {
+    const json = JSON.stringify(value);
+    const gz = Utilities.gzip(Utilities.newBlob(json, "application/json"));
+    const packed = Utilities.base64Encode(gz.getBytes());
+    const chunks = splitChunks(packed, chunkChars);
+    const entries = { [`${key}:m`]: String(chunks.length) };
+    chunks.forEach((c, i) => {
+      entries[`${key}:${i}`] = c;
+    });
+    CacheService.getScriptCache().putAll(entries, ttlSec);
+  }
+  function cacheGetJson(key) {
+    const cache = CacheService.getScriptCache();
+    const meta = cache.get(`${key}:m`);
+    if (!meta) return void 0;
+    const n = Number(meta);
+    if (!Number.isInteger(n) || n < 1) return void 0;
+    const names = [];
+    for (let i = 0; i < n; i++) names.push(`${key}:${i}`);
+    const got = cache.getAll(names);
+    let packed = "";
+    for (const name of names) {
+      const chunk = got[name];
+      if (chunk === void 0 || chunk === null) return void 0;
+      packed += chunk;
+    }
+    const bytes = Utilities.base64Decode(packed);
+    const json = Utilities.ungzip(
+      Utilities.newBlob(bytes, "application/x-gzip")
+    ).getDataAsString("UTF-8");
+    return JSON.parse(json);
+  }
+  function cached(name, params, compute, ttlSec = DEFAULT_TTL_SEC) {
+    let key = null;
+    try {
+      key = cacheKey(name, params, stamp());
+      const hit = cacheGetJson(key);
+      if (hit !== void 0) return hit;
+    } catch (e) {
+      console.warn(`Cache read failed for ${name}: ${e}`);
+      key = null;
+    }
+    const value = compute();
+    if (key) {
+      try {
+        cachePutJson(key, value, ttlSec);
+      } catch (e) {
+        console.warn(`Cache write failed for ${name}: ${e}`);
+      }
+    }
+    return value;
+  }
+
+  // src/server/sheetsDb.ts
+  var TABS = {
+    scans: "scans",
+    vulnLedger: "vuln_ledger",
+    episodes: "resolved_episodes",
+    compactions: "compactions",
+    settings: "settings",
+    supportGroupMap: "support_group_map",
+    mttrHistory: "mttr_history",
+    schemaMeta: "schema_meta",
+    jobs: "jobs"
+  };
+  var TAB_HEADERS = {
+    [TABS.scans]: [
+      "scan_id",
+      "ts",
+      "mode",
+      "shape",
+      "total",
+      "new_count",
+      "resolved_count",
+      "reopened_count",
+      "raw_ref",
+      "obs_ref",
+      "severities",
+      "sealed"
+    ],
+    [TABS.vulnLedger]: [
+      "vuln_key",
+      "cve",
+      "severity",
+      "asset_id",
+      "asset_name",
+      "asset_type",
+      "cloud",
+      "first_seen",
+      "last_seen",
+      "status",
+      "resolved_at",
+      "resolution_src",
+      "reopened_count",
+      "first_scan_id",
+      "last_scan_id",
+      "subscription_name",
+      "subscription_ext_id",
+      "tags_json",
+      "fix_date",
+      "fix_observed_at",
+      "has_kev",
+      "has_exploit",
+      "epss",
+      "risk_observed_at",
+      // Wiz's own console link. LAST, which is where `ensureHeaders` appends a newly-added
+      // column on an existing deployment — so a sheet created by this version and a sheet
+      // healed into it end up with the same column order rather than two orders that only
+      // agree by luck. (Writes map by the headers READ OFF THE SHEET, not by this list, so
+      // the orders never have to match each other — but a reader comparing two deployments
+      // should not have to discover that.)
+      "portal_url"
+    ],
+    [TABS.episodes]: [
+      "vuln_key",
+      "cve",
+      "severity",
+      "first_seen",
+      "resolved_at",
+      "resolution_src",
+      "reopened_count",
+      "compaction_id",
+      "superseded_by_scan",
+      "fix_date",
+      "fix_observed_at",
+      "has_kev",
+      "has_exploit",
+      "epss",
+      "risk_observed_at",
+      // The resource's tag bag, carried through compaction so a sealed episode keeps the
+      // `Wiz/Domain` tag its domain is read from. See the comment on EpisodeRow.
+      "tags_json"
+    ],
+    [TABS.compactions]: [
+      "compaction_id",
+      "ts",
+      "floor_scan_id",
+      "floor_ts",
+      "scans_sealed",
+      "episodes_created",
+      "observations_pruned",
+      "archive_bytes_freed",
+      "db_bytes_freed",
+      "checkpoint_ref"
+    ],
+    [TABS.settings]: ["key", "value_json"],
+    // One tiny row per subscription-identity → support-group entry. Deliberately NOT a single
+    // JSON blob in a settings cell: a large map (hundreds of subscriptions × several identity
+    // tokens each) overflows the ~50k-char Sheets per-cell limit and the whole write throws.
+    [TABS.supportGroupMap]: ["token", "group"],
+    [TABS.mttrHistory]: [
+      "date",
+      "median_days",
+      "resolved",
+      "open",
+      "total",
+      "sla_pct",
+      "oldest_open_days",
+      "open_past_sla"
+    ],
+    [TABS.schemaMeta]: ["version"],
+    [TABS.jobs]: [
+      "job_id",
+      "kind",
+      "phase",
+      "scan_id",
+      "cursor",
+      "page",
+      "findings_so_far",
+      "page_size",
+      "total_count",
+      "params_json",
+      "journal_ref",
+      "error",
+      "started_at",
+      "updated_at"
+    ]
+  };
+  var SCHEMA_VERSION = 2;
+  var spreadsheetCache = null;
+  function ledgerSpreadsheet() {
+    if (spreadsheetCache === null) {
+      spreadsheetCache = SpreadsheetApp.openById(requireProp(PROP_KEYS.ledgerSpreadsheetId));
+    }
+    return spreadsheetCache;
+  }
+  function sheet(tab) {
+    const sh = ledgerSpreadsheet().getSheetByName(tab);
+    if (!sh) throw new Error(`Missing tab ${tab} \u2014 run setup().`);
+    return sh;
+  }
+  function ensureTabs(ss) {
+    ss.setSpreadsheetTimeZone("Etc/UTC");
+    for (const [tab, headers] of Object.entries(TAB_HEADERS)) {
+      let sh = ss.getSheetByName(tab);
+      if (!sh) {
+        sh = ss.insertSheet(tab);
+        sh.getRange(1, 1, sh.getMaxRows(), sh.getMaxColumns()).setNumberFormat("@");
+        sh.getRange(1, 1, 1, headers.length).setValues([headers]);
+        sh.setFrozenRows(1);
+      } else {
+        ensureHeaders(sh, headers);
+      }
+    }
+    const dflt = ss.getSheetByName("Sheet1");
+    if (dflt && ss.getSheets().length > 1) ss.deleteSheet(dflt);
+  }
+  function ensureHeaders(sh, headers) {
+    const width = Math.max(sh.getLastColumn(), 1);
+    const existing = sh.getRange(1, 1, 1, width).getValues()[0].map(String).filter((h) => h !== "");
+    const missing = headers.filter((h) => !existing.includes(h));
+    if (missing.length) {
+      sh.getRange(1, existing.length + 1, 1, missing.length).setValues([missing]);
+    }
+  }
+  function ensureTab(tab) {
+    const ss = ledgerSpreadsheet();
+    const headers = TAB_HEADERS[tab];
+    if (!headers) throw new Error(`No headers defined for tab ${tab}.`);
+    const found = ss.getSheetByName(tab);
+    if (found) {
+      ensureHeaders(found, headers);
+      return;
+    }
+    const sh = ss.insertSheet(tab);
+    sh.getRange(1, 1, sh.getMaxRows(), sh.getMaxColumns()).setNumberFormat("@");
+    sh.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sh.setFrozenRows(1);
+  }
+  function fromCell(v) {
+    if (v === "" || v === null || v === void 0) return null;
+    if (v instanceof Date) {
+      return new Date(Math.floor(v.getTime() / 1e3) * 1e3).toISOString().replace(".000Z", "Z");
+    }
+    return v;
+  }
+  function toCell(v) {
+    if (v === null || v === void 0) return "";
+    return v;
+  }
+  function mapRows(headers, values) {
+    const out = [];
+    for (const value of values) {
+      const row = {};
+      let empty = true;
+      for (let j = 0; j < headers.length; j++) {
+        if (!headers[j]) continue;
+        const v = fromCell(value[j]);
+        row[headers[j]] = v;
+        if (v !== null) empty = false;
+      }
+      if (!empty) out.push(row);
+    }
+    return out;
+  }
+  function readAll(tab) {
+    const sh = sheet(tab);
+    const lastRow = sh.getLastRow();
+    const lastCol = sh.getLastColumn();
+    if (lastRow < 2 || lastCol < 1) return [];
+    const values = sh.getRange(1, 1, lastRow, lastCol).getValues();
+    return mapRows(values[0].map(String), values.slice(1));
+  }
+  function readTail(tab, n) {
+    const sh = sheet(tab);
+    const lastRow = sh.getLastRow();
+    const lastCol = sh.getLastColumn();
+    if (lastRow < 2 || lastCol < 1) return [];
+    const headers = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
+    const first = Math.max(2, lastRow - n + 1);
+    const values = sh.getRange(first, 1, lastRow - first + 1, lastCol).getValues();
+    return mapRows(headers, values);
+  }
+  function overwrite(tab, rows) {
+    const sh = sheet(tab);
+    const lastCol = Math.max(sh.getLastColumn(), 1);
+    const headers = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String).filter(Boolean);
+    const lastRow = sh.getLastRow();
+    if (lastRow > 1) sh.getRange(2, 1, lastRow - 1, lastCol).clearContent();
+    if (!rows.length) return;
+    const grid = rows.map((r) => headers.map((h) => toCell(r[h])));
+    const range = sh.getRange(2, 1, grid.length, headers.length);
+    range.setNumberFormat("@");
+    range.setValues(grid);
+  }
+  function appendRows(tab, rows) {
+    if (!rows.length) return;
+    const sh = sheet(tab);
+    const lastCol = Math.max(sh.getLastColumn(), 1);
+    const headers = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String).filter(Boolean);
+    const grid = rows.map((r) => headers.map((h) => toCell(r[h])));
+    const range = sh.getRange(sh.getLastRow() + 1, 1, grid.length, headers.length);
+    range.setNumberFormat("@");
+    range.setValues(grid);
+  }
+  function dataRowCount(tab) {
+    return Math.max(0, sheet(tab).getLastRow() - 1);
+  }
+  function truncateAfter(tab, keepDataRows) {
+    const sh = sheet(tab);
+    const lastRow = sh.getLastRow();
+    const firstToClear = keepDataRows + 2;
+    if (lastRow >= firstToClear) {
+      const lastCol = Math.max(sh.getLastColumn(), 1);
+      sh.getRange(firstToClear, 1, lastRow - firstToClear + 1, lastCol).clearContent();
+    }
+  }
+  var SHRINK_SPARE_ROWS = 200;
+  function shrinkTab(tab, keepSpare = SHRINK_SPARE_ROWS) {
+    const sh = sheet(tab);
+    const needed = Math.max(sh.getLastRow(), 1) + Math.max(keepSpare, 0);
+    const max = sh.getMaxRows();
+    if (max > needed) sh.deleteRows(needed + 1, max - needed);
+  }
+  function updateWhere(tab, keyColumn, keyValue, patch) {
+    const sh = sheet(tab);
+    const lastRow = sh.getLastRow();
+    const lastCol = sh.getLastColumn();
+    if (lastRow < 2) return false;
+    const values = sh.getRange(1, 1, lastRow, lastCol).getValues();
+    const headers = values[0].map(String);
+    const keyIdx = headers.indexOf(keyColumn);
+    if (keyIdx < 0) return false;
+    for (let i = 1; i < values.length; i++) {
+      if (fromCell(values[i][keyIdx]) === keyValue) {
+        const rowVals = values[i].slice();
+        for (const [k, v] of Object.entries(patch)) {
+          const idx = headers.indexOf(k);
+          if (idx >= 0) rowVals[idx] = toCell(v);
+        }
+        sh.getRange(i + 1, 1, 1, lastCol).setValues([rowVals]);
+        return true;
+      }
+    }
+    return false;
+  }
+  function cellUsage() {
+    const tabs = ledgerSpreadsheet().getSheets().map((sh) => {
+      const rows = sh.getMaxRows();
+      const cols = sh.getMaxColumns();
+      return { name: sh.getName(), rows, cols, cells: rows * cols };
+    });
+    return { total: tabs.reduce((acc, t) => acc + t.cells, 0), tabs };
   }
 
   // src/server/historyStore.ts
@@ -8508,6 +7555,230 @@ var Server = (() => {
     return plan.result;
   }
 
+  // src/domain/settingsLogic.ts
+  function canonicalSeverities(values, defaults) {
+    if (!Array.isArray(values)) return [...defaults];
+    const chosen = new Set(
+      values.filter((v) => typeof v === "string").map(normalizeSeverity).filter((s) => SELECTABLE_SEVERITIES.includes(s))
+    );
+    if (!chosen.size) return [...defaults];
+    return SEVERITY_ORDER.filter((s) => chosen.has(s));
+  }
+  function getFetchSeverities(settings) {
+    return canonicalSeverities(settings["fetch_severities"], DEFAULT_FETCH_SEVERITIES);
+  }
+  function getDisplaySeverities(settings) {
+    const fetch = getFetchSeverities(settings);
+    const disp = canonicalSeverities(settings["display_severities"], DEFAULT_DISPLAY_SEVERITIES);
+    const clamped = disp.filter((s) => fetch.includes(s));
+    return clamped.length ? clamped : fetch;
+  }
+  function withFetchSeverities(settings, sevs) {
+    const d = { ...settings };
+    const fetch = canonicalSeverities(sevs, DEFAULT_FETCH_SEVERITIES);
+    d["fetch_severities"] = fetch;
+    const disp = canonicalSeverities(d["display_severities"], fetch);
+    const clamped = disp.filter((s) => fetch.includes(s));
+    d["display_severities"] = clamped.length ? clamped : [...fetch];
+    return d;
+  }
+  function withDisplaySeverities(settings, sevs) {
+    const d = { ...settings };
+    const fetch = canonicalSeverities(d["fetch_severities"], DEFAULT_FETCH_SEVERITIES);
+    const disp = canonicalSeverities(sevs, DEFAULT_DISPLAY_SEVERITIES);
+    const clamped = disp.filter((s) => fetch.includes(s));
+    d["display_severities"] = clamped.length ? clamped : [...fetch];
+    return d;
+  }
+  function getRetentionDays(settings) {
+    const raw = "retention_days" in settings ? settings["retention_days"] : DEFAULT_RETENTION_DAYS;
+    if (raw === null) return null;
+    const n = typeof raw === "number" ? Math.trunc(raw) : parseInt(String(raw), 10);
+    if (Number.isNaN(n)) return DEFAULT_RETENTION_DAYS;
+    return Math.max(n, RETENTION_MIN_DAYS);
+  }
+  function withRetentionDays(settings, days) {
+    const d = { ...settings };
+    d["retention_days"] = days === null ? null : Math.max(Math.trunc(days), RETENTION_MIN_DAYS);
+    return d;
+  }
+  function numericOrNull(v) {
+    if (typeof v === "number") return Number.isFinite(v) ? v : null;
+    if (typeof v === "string" && v.trim() !== "") {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    }
+    return null;
+  }
+  function getColdAfterDays(settings) {
+    const n = numericOrNull(settings["cold_after_days"]);
+    if (n === null) return DEFAULT_COLD_AFTER_DAYS;
+    return Math.min(COLD_AFTER_DAYS_MAX, Math.max(COLD_AFTER_DAYS_MIN, Math.floor(n)));
+  }
+  function withColdAfterDays(settings, days) {
+    return { ...settings, cold_after_days: getColdAfterDays({ cold_after_days: days }) };
+  }
+  function getColdZoneMode(settings) {
+    const v = settings["cold_zone_mode"];
+    if (typeof v !== "string") return DEFAULT_COLD_ZONE_MODE;
+    const m = v.trim().toLowerCase();
+    return COLD_ZONE_MODES.includes(m) ? m : DEFAULT_COLD_ZONE_MODE;
+  }
+  function withColdZoneMode(settings, mode) {
+    return { ...settings, cold_zone_mode: getColdZoneMode({ cold_zone_mode: mode }) };
+  }
+  function getColdTargetSharePct(settings) {
+    const n = numericOrNull(settings["cold_target_share_pct"]);
+    if (n === null) return DEFAULT_COLD_TARGET_SHARE_PCT;
+    return Math.min(COLD_TARGET_SHARE_PCT_MAX, Math.max(COLD_TARGET_SHARE_PCT_MIN, Math.floor(n)));
+  }
+  function withColdTargetSharePct(settings, pct2) {
+    return {
+      ...settings,
+      cold_target_share_pct: getColdTargetSharePct({ cold_target_share_pct: pct2 })
+    };
+  }
+  function getColdFloorDays(settings) {
+    const n = numericOrNull(settings["cold_floor_days"]);
+    if (n === null) return DEFAULT_COLD_FLOOR_DAYS;
+    return Math.min(COLD_FLOOR_DAYS_MAX, Math.max(COLD_FLOOR_DAYS_MIN, Math.floor(n)));
+  }
+  function withColdFloorDays(settings, days) {
+    return { ...settings, cold_floor_days: getColdFloorDays({ cold_floor_days: days }) };
+  }
+  function effectiveColdZoneSettings(settings) {
+    const s = settings != null ? settings : {};
+    return {
+      mode: getColdZoneMode(s),
+      coldAfterDays: getColdAfterDays(s),
+      targetSharePct: getColdTargetSharePct(s),
+      floorDays: getColdFloorDays(s)
+    };
+  }
+  function getAutoCompact(settings) {
+    const val = "auto_compact" in settings ? settings["auto_compact"] : true;
+    return typeof val === "boolean" ? val : true;
+  }
+  function withAutoCompact(settings, enabled) {
+    return { ...settings, auto_compact: Boolean(enabled) };
+  }
+  function getShowNoFix(settings) {
+    const val = "show_no_fix" in settings ? settings["show_no_fix"] : true;
+    return typeof val === "boolean" ? val : true;
+  }
+  function withShowNoFix(settings, enabled) {
+    return { ...settings, show_no_fix: Boolean(enabled) };
+  }
+  function getIncludeEol(settings) {
+    const val = "include_eol" in settings ? settings["include_eol"] : true;
+    return typeof val === "boolean" ? val : true;
+  }
+  function withIncludeEol(settings, enabled) {
+    return { ...settings, include_eol: Boolean(enabled) };
+  }
+  function getRiskRule(settings) {
+    var _a;
+    const raw = settings["risk_rule"];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      return { version: 0, rule: { ...DEFAULT_RISK_RULE } };
+    }
+    const r = raw;
+    let version = 0;
+    const v = Number((_a = r["version"]) != null ? _a : 0);
+    if (Number.isFinite(v)) version = Math.max(Math.trunc(v), 0);
+    const stored = r["rule"];
+    if (!stored || typeof stored !== "object" || Array.isArray(stored)) {
+      return { version, rule: { ...DEFAULT_RISK_RULE } };
+    }
+    return { version, rule: cleanRiskRule(stored) };
+  }
+  function cleanRiskRule(raw) {
+    const bool = (key) => {
+      const v = raw[key];
+      return typeof v === "boolean" ? v : DEFAULT_RISK_RULE[key];
+    };
+    const t = Number(raw["epssThreshold"]);
+    return {
+      kev: bool("kev"),
+      exploit: bool("exploit"),
+      epss: bool("epss"),
+      epssThreshold: Number.isFinite(t) ? Math.min(1, Math.max(0, t)) : DEFAULT_RISK_RULE.epssThreshold
+    };
+  }
+  function withRiskRule(settings, rule) {
+    const current = getRiskRule(settings);
+    const clean2 = cleanRiskRule(
+      rule && typeof rule === "object" && !Array.isArray(rule) ? rule : {}
+    );
+    return { ...settings, risk_rule: { version: current.version + 1, rule: clean2 } };
+  }
+  function cleanDomainItems(items) {
+    if (!Array.isArray(items)) return [];
+    return items.filter(
+      (item) => item !== null && typeof item === "object" && !Array.isArray(item) && typeof item["name"] === "string" && item["name"].trim() !== ""
+    );
+  }
+  function getDomains(settings) {
+    var _a;
+    const raw = settings["domains"];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { version: 0, items: [] };
+    const r = raw;
+    let version = 0;
+    const v = Number((_a = r["version"]) != null ? _a : 0);
+    if (Number.isFinite(v)) version = Math.max(Math.trunc(v), 0);
+    return { version, items: cleanDomainItems(r["items"]) };
+  }
+  function withDomains(settings, items) {
+    const current = getDomains(settings);
+    return {
+      ...settings,
+      domains: { version: current.version + 1, items: cleanDomainItems(items) }
+    };
+  }
+  function cleanStringMap(map) {
+    const out = {};
+    if (!map || typeof map !== "object" || Array.isArray(map)) return out;
+    for (const [k, v] of Object.entries(map)) {
+      if (typeof k === "string" && k !== "" && typeof v === "string" && v !== "") {
+        out[k] = v;
+      }
+    }
+    return out;
+  }
+  function getSupportGroupMap(settings) {
+    var _a;
+    const raw = settings["support_group_map"];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { version: 0, map: {} };
+    const r = raw;
+    let version = 0;
+    const v = Number((_a = r["version"]) != null ? _a : 0);
+    if (Number.isFinite(v)) version = Math.max(Math.trunc(v), 0);
+    return { version, map: cleanStringMap(r["map"]) };
+  }
+  function apiSeverityFilter(severities) {
+    const sevs = canonicalSeverities(severities, DEFAULT_FETCH_SEVERITIES);
+    if (new Set(sevs).size === SELECTABLE_SEVERITIES.length) return null;
+    return sevs.map((s) => API_SEVERITY_VALUES[s]);
+  }
+  function applySettingsPatch(settings, patch) {
+    let d = settings;
+    if ("fetchSeverities" in patch) d = withFetchSeverities(d, patch["fetchSeverities"]);
+    if ("displaySeverities" in patch) d = withDisplaySeverities(d, patch["displaySeverities"]);
+    if ("showNoFix" in patch) d = withShowNoFix(d, Boolean(patch["showNoFix"]));
+    if ("includeEol" in patch) d = withIncludeEol(d, Boolean(patch["includeEol"]));
+    if ("riskRule" in patch) d = withRiskRule(d, patch["riskRule"]);
+    if ("retentionDays" in patch) {
+      const raw = patch["retentionDays"];
+      d = withRetentionDays(d, raw === null || raw === void 0 ? null : Number(raw));
+    }
+    if ("autoCompact" in patch) d = withAutoCompact(d, Boolean(patch["autoCompact"]));
+    if ("coldZoneMode" in patch) d = withColdZoneMode(d, patch["coldZoneMode"]);
+    if ("coldAfterDays" in patch) d = withColdAfterDays(d, patch["coldAfterDays"]);
+    if ("coldTargetSharePct" in patch) d = withColdTargetSharePct(d, patch["coldTargetSharePct"]);
+    if ("coldFloorDays" in patch) d = withColdFloorDays(d, patch["coldFloorDays"]);
+    return d;
+  }
+
   // src/server/settingsStore.ts
   var settingsMemo;
   function loadSettings() {
@@ -8638,6 +7909,248 @@ var Server = (() => {
     for (const r of records) {
       const domain = bizDomainOf(r, key);
       if (domain) r["_bizDomain"] = domain;
+    }
+  }
+
+  // src/server/wizQuery.ts
+  var QUERY = "\n    query VulnerabilityFindingsTable($filterBy: VulnerabilityFindingFilters, $first: Int, $after: String, $orderBy: VulnerabilityFindingOrder = {direction: DESC, field: CREATED_AT}, $includeRelatedIssueAnalytics: Boolean = false, $includeRelatedSourceMappedIssueAnalytics: Boolean = false, $includeTotalCount: Boolean = false, $includePostureIssues: Boolean = false, $fetchPrivilegedActionRequests: Boolean = false) {\n      vulnerabilityFindings(\n        filterBy: $filterBy\n        first: $first\n        after: $after\n        orderBy: $orderBy\n      ) {\n        nodes {\n          ...VulnerabilityFindingFragment\n          ...DuplicateFindingBadge\n          transitivity\n          rootComponent {\n            name\n          }\n          isHighProfileThreat\n          vendorSeverity\n          nvdSeverity\n          weightedSeverity\n          hasExploit\n          usedInCodeResult\n          hasCisaKevExploit\n          cisaKevReleaseDate\n          cisaKevDueDate\n          score\n          epssSeverity\n          epssPercentile\n          epssProbability\n          categories\n          hasInitialAccessPotential\n          isClientSide\n          affectedBySettings\n          codeLibraryLanguage\n          exploitabilityValidationStatus\n          cvssv2 {\n            attackVector\n            attackComplexity\n            confidentialityImpact\n            integrityImpact\n            privilegesRequired\n            userInteractionRequired\n            vectorString\n            scope\n          }\n          cvssv3 {\n            attackVector\n            attackComplexity\n            confidentialityImpact\n            integrityImpact\n            privilegesRequired\n            userInteractionRequired\n            vectorString\n            scope\n          }\n          effectiveAvailabilityImpact\n          cnaScore\n          vendorScore\n          relatedIssueAnalytics @include(if: $includeRelatedIssueAnalytics) {\n            ...VulnerabilityFindingRelatedIssueAnalyticsFragment\n          }\n          relatedSourceMappedIssueAnalytics @include(if: $includeRelatedSourceMappedIssueAnalytics) {\n            ...VulnerabilityFindingRelatedIssueAnalyticsFragment\n          }\n          postureIssues @include(if: $includePostureIssues) {\n            ...PostureIssuePopoverListRecord\n          }\n          privilegedActionRequests @include(if: $fetchPrivilegedActionRequests) {\n            ...PendingUpdateVulnerabilityFindingStatusRequest\n          }\n        }\n        pageInfo {\n          hasNextPage\n          endCursor\n        }\n        totalCount @include(if: $includeTotalCount)\n      }\n    }\n   \n        fragment VulnerabilityFindingFragment on VulnerabilityFinding {\n      id\n      portalUrl\n      name\n      detailedName\n      description\n      severity\n      status\n      fixedVersion\n      detectionMethod\n      firstDetectedAt\n      firstDetectedAtSource\n      lastDetectedAt\n      resolvedAt\n      validatedInRuntime\n      runtimeValidationResult\n      reachability\n      hasTriggerableRemediation\n      remediationPullRequestAvailable\n      dataSourceName\n      fixDate\n      fixDateBefore\n      publishedDate\n      version\n      versionResolutionPrimarySource {\n        type\n        version\n      }\n      isOperatingSystemEndOfLife\n      recommendedVersion\n      locationPath\n      artifactType {\n        ...SBOMArtifactTypeFragment\n      }\n      projects {\n        id\n        name\n        slug\n        isFolder\n      }\n      ignoreRules {\n        id\n      }\n      note {\n        id\n        text\n      }\n      layerMetadata {\n        id\n        details\n        isBaseLayer\n        layerHash\n      }\n      vulnerableAsset {\n        ... on VulnerableAssetBase {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          externalId\n          providerUniqueId\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetVirtualMachine {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystem\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          imageName\n          imageId\n          imageNativeType\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          computeInstanceGroup {\n            id\n            externalId\n            name\n            replicaCount\n            tags\n          }\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetServerless {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetContainerImage {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          repository {\n            vertexId\n            name\n          }\n          registry {\n            vertexId\n            name\n          }\n          scanSource\n          executionControllers {\n            ...VulnerableAssetExecutionControllerDetails\n          }\n          graphEntity {\n            ...VulnerabilityContainerImageGraphEntityExecutionContext\n          }\n          nativeType\n          tagReferences\n          imageTags\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetContainer {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          executionControllers {\n            ...VulnerableAssetExecutionControllerDetails\n          }\n          nativeType\n          isUsedOnPrem\n        }\n        ... on VulnerableAssetRepositoryBranch {\n          id\n          type\n          name\n          cloudPlatform\n          repositoryId\n          repositoryName\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetIde {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetEndpoint {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetPaaSResource {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetVirtualMachineImage {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n          hasLimitedInternetExposure\n          hasWideInternetExposure\n          isAccessibleFromVPN\n          isAccessibleFromOtherVnets\n          isAccessibleFromOtherSubscriptions\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetNetworkAddress {\n          subscriptionId\n          subscriptionName\n          subscriptionExternalId\n          tags\n          address\n          addressType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetCommon {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n        }\n        ... on VulnerableAssetDevice {\n          id\n          type\n          name\n          cloudPlatform\n          subscriptionName\n          subscriptionExternalId\n          subscriptionId\n          tags\n          nativeType\n          isUsedOnPrem\n          resourceGroupExternalId\n          operatingSystem\n          operatingSystemDistribution {\n            ...VulnerabilityFindingOperatingSystemDistribution\n          }\n        }\n      }\n      sourceMappedCodeFindings {\n        id\n        remediationPullRequestAvailable\n      }\n    }\n   \n\n\n        fragment SBOMArtifactTypeFragment on SBOMArtifactType {\n      group\n      codeLibraryLanguage\n      osPackageManager\n      hostedTechnology {\n        id\n        name\n        icon\n      }\n      plugin\n      custom\n      ciComponent\n    }\n   \n\n\n        fragment VulnerabilityFindingOperatingSystemDistribution on Technology {\n      id\n      name\n      icon\n    }\n   \n\n\n        fragment VulnerableAssetExecutionControllerDetails on VulnerableAssetExecutionController {\n      id\n      entityType\n      externalId\n      providerUniqueId\n      name\n      subscriptionExternalId\n      subscriptionId\n      subscriptionName\n      ancestors {\n        id\n        name\n        entityType\n        externalId\n        providerUniqueId\n      }\n    }\n   \n\n\n        fragment VulnerabilityContainerImageGraphEntityExecutionContext on GraphEntity {\n      id\n      providerUniqueId\n      type\n      containerImageExecutionContextAnalyticsV3 {\n        totalResourceCount\n        nativeType {\n          nativeType\n          count\n        }\n      }\n    }\n   \n\n\n        fragment DuplicateFindingBadge on VulnerabilityFinding {\n      id\n      origin\n      duplicateOf {\n        id\n        name\n        origin\n        vulnerableAsset {\n          ... on VulnerableAssetBase {\n            id\n            name\n          }\n        }\n      }\n    }\n   \n\n\n        fragment VulnerabilityFindingRelatedIssueAnalyticsFragment on VulnerabilityFindingRelatedIssueAnalytics {\n      issueCount\n      informationalSeverityCount\n      lowSeverityCount\n      mediumSeverityCount\n      highSeverityCount\n      criticalSeverityCount\n    }\n   \n\n\n        fragment PostureIssuePopoverListRecord on PostureIssue {\n      id\n      name\n      type\n      entity {\n        providerUniqueId\n        id\n        type\n      }\n    }\n   \n\n\n        fragment PendingUpdateVulnerabilityFindingStatusRequest on PrivilegedActionRequest {\n      ...PendingStatusRequestBanner\n      ...PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams\n    }\n   \n\n\n        fragment PendingStatusRequestBanner on PrivilegedActionRequest {\n      id\n      type\n      status\n      createdAt\n      createdBy {\n        id\n        name\n        email\n      }\n      params {\n        ... on PrivilegedActionRequestUpdateIssueStatusParams {\n          issueStatus: status\n        }\n        ... on PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams {\n          findingStatus: status\n        }\n        ... on PrivilegedActionRequestCreateIgnoreRuleParams {\n          ignoreRuleName: name\n        }\n      }\n    }\n   \n\n\n        fragment PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams on PrivilegedActionRequest {\n      id\n      params {\n        ... on PrivilegedActionRequestUpdateVulnerabilityFindingStatusParams {\n          status\n        }\n      }\n      subject {\n        ... on VulnerabilityFinding {\n          id\n          status\n        }\n      }\n    }\n";
+  var BASE_VARIABLES = {
+    "orderBy": {
+      "field": "RELATED_ISSUE_SEVERITY",
+      "direction": "DESC"
+    },
+    "includeRelatedIssueAnalytics": false,
+    "includeRelatedSourceMappedIssueAnalytics": false,
+    "includeTotalCount": false,
+    "includePostureIssues": false,
+    "fetchPrivilegedActionRequests": false,
+    "first": 500,
+    "filterBy": {
+      "projectIdV2": {
+        "equals": [
+          "1dfea0cf-834f-5522-b797-bee5aaf09251"
+        ]
+      },
+      "assetType": [
+        "VIRTUAL_MACHINE"
+      ],
+      "detectionMethod": [
+        "OS"
+      ],
+      "status": [
+        "OPEN",
+        "RESOLVED"
+      ],
+      "detailedNameV2": {
+        "notEquals": [
+          "openssl",
+          "python",
+          "vim"
+        ]
+      },
+      "assetIsRepresentativeResource": false
+    }
+  };
+  var PAGE_SIZE = 500;
+  var PAGE_SIZE_FALLBACK = 250;
+  var MAX_PAGES = 1e3;
+
+  // src/server/wizClient.ts
+  var BASE_FILTER_WORDS = [
+    "one Wiz project",
+    // projectIdV2
+    "virtual machines only",
+    // assetType
+    "OS-level detections",
+    // detectionMethod
+    "openssl, python and vim excluded",
+    // detailedNameV2.notEquals
+    "no representative-resource stand-ins"
+    // assetIsRepresentativeResource
+  ];
+  var WizQueryError = class extends Error {
+  };
+  var WizDeltaFilterError = class extends WizQueryError {
+  };
+  var TOKEN_CACHE_KEY = "wiz_token";
+  function getToken(forceRefresh = false) {
+    var _a, _b;
+    const staticToken = getProp(PROP_KEYS.wizApiToken);
+    if (staticToken && staticToken.trim()) return staticToken.trim();
+    const cache = CacheService.getScriptCache();
+    if (!forceRefresh) {
+      const cached2 = cache.get(TOKEN_CACHE_KEY);
+      if (cached2) return cached2;
+    }
+    const authUrl = (_a = getProp(PROP_KEYS.wizAuthUrl)) != null ? _a : DEFAULT_WIZ_AUTH_URL;
+    const response = UrlFetchApp.fetch(authUrl, {
+      method: "post",
+      contentType: "application/x-www-form-urlencoded",
+      payload: {
+        grant_type: "client_credentials",
+        audience: "wiz-api",
+        client_id: requireProp(PROP_KEYS.wizClientId),
+        client_secret: requireProp(PROP_KEYS.wizClientSecret)
+      },
+      muteHttpExceptions: true
+    });
+    if (response.getResponseCode() !== 200) {
+      throw new WizQueryError(
+        `Wiz token request failed (${response.getResponseCode()}): ` + response.getContentText().slice(0, 500)
+      );
+    }
+    const body = JSON.parse(response.getContentText());
+    const token = body["access_token"];
+    if (typeof token !== "string" || !token) {
+      throw new WizQueryError("Wiz token response carried no access_token.");
+    }
+    const expiresIn = Number((_b = body["expires_in"]) != null ? _b : 3600);
+    const ttl = Math.max(60, Math.min(Math.trunc(expiresIn) - 300, 21600));
+    cache.put(TOKEN_CACHE_KEY, token, ttl);
+    return token;
+  }
+  function baseVariables() {
+    return JSON.parse(JSON.stringify(BASE_VARIABLES));
+  }
+  function buildVariables(options = {}) {
+    var _a, _b;
+    const vars = baseVariables();
+    const filterBy = vars["filterBy"];
+    const projectId = getProp(PROP_KEYS.wizProjectIdV2);
+    if (projectId) filterBy["projectIdV2"] = { equals: [projectId] };
+    const sevFilter = options.severities === void 0 ? null : apiSeverityFilter(options.severities);
+    if (sevFilter) filterBy["severity"] = sevFilter;
+    for (const [k, v] of Object.entries((_a = options.extraFilterBy) != null ? _a : {})) filterBy[k] = v;
+    vars["first"] = (_b = options.first) != null ? _b : PAGE_SIZE;
+    if (options.after) vars["after"] = options.after;
+    vars["includeTotalCount"] = Boolean(options.includeTotalCount);
+    return vars;
+  }
+  function queryPage(variables, isDeltaFetch = false) {
+    var _a, _b, _c, _d;
+    const apiUrl = requireProp(PROP_KEYS.wizApiUrl);
+    let token = getToken();
+    let lastError = "";
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const response = UrlFetchApp.fetch(apiUrl, {
+        method: "post",
+        contentType: "application/json",
+        headers: { Authorization: `Bearer ${token}` },
+        payload: JSON.stringify({ query: QUERY, variables }),
+        muteHttpExceptions: true
+      });
+      const code = response.getResponseCode();
+      if (code === 401 && attempt === 0 && !getProp(PROP_KEYS.wizApiToken)) {
+        token = getToken(true);
+        continue;
+      }
+      if (code === 429 || code >= 500) {
+        lastError = `HTTP ${code}`;
+        Utilities.sleep(1e3 * Math.pow(2, attempt));
+        continue;
+      }
+      if (code !== 200) {
+        const hint = code === 401 && getProp(PROP_KEYS.wizApiToken) ? " \u2014 WIZ_API_TOKEN was rejected; it may have expired. Refresh it, or set WIZ_CLIENT_ID/WIZ_CLIENT_SECRET for auto-refresh." : "";
+        throw new WizQueryError(
+          `Wiz query failed (HTTP ${code})${hint}: ${response.getContentText().slice(0, 500)}`
+        );
+      }
+      const body = JSON.parse(response.getContentText());
+      const data = body["data"];
+      const connection = data == null ? void 0 : data["vulnerabilityFindings"];
+      if (!connection) {
+        const errors = JSON.stringify((_a = body["errors"]) != null ? _a : body).slice(0, 500);
+        if (isDeltaFetch) {
+          throw new WizDeltaFilterError(`Wiz rejected the incremental filter: ${errors}`);
+        }
+        throw new WizQueryError(`Wiz response carried no findings connection: ${errors}`);
+      }
+      const pageInfo = (_b = connection["pageInfo"]) != null ? _b : {};
+      const rawTotal = connection["totalCount"];
+      return {
+        nodes: (_c = connection["nodes"]) != null ? _c : [],
+        hasNextPage: Boolean(pageInfo["hasNextPage"]),
+        endCursor: (_d = pageInfo["endCursor"]) != null ? _d : null,
+        totalCount: typeof rawTotal === "number" ? rawTotal : null
+      };
+    }
+    throw new WizQueryError(`Wiz query failed after retries (${lastError}).`);
+  }
+  function gqlPost(query, variables) {
+    var _a;
+    const apiUrl = requireProp(PROP_KEYS.wizApiUrl);
+    let token = getToken();
+    let lastError = "";
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const response = UrlFetchApp.fetch(apiUrl, {
+        method: "post",
+        contentType: "application/json",
+        headers: { Authorization: `Bearer ${token}` },
+        payload: JSON.stringify({ query, variables }),
+        muteHttpExceptions: true
+      });
+      const code = response.getResponseCode();
+      if (code === 401 && attempt === 0 && !getProp(PROP_KEYS.wizApiToken)) {
+        token = getToken(true);
+        continue;
+      }
+      if (code === 429 || code >= 500) {
+        lastError = `HTTP ${code}`;
+        Utilities.sleep(1e3 * Math.pow(2, attempt));
+        continue;
+      }
+      if (code !== 200) {
+        throw new WizQueryError(
+          `Wiz query failed (HTTP ${code}): ${response.getContentText().slice(0, 500)}`
+        );
+      }
+      const body = JSON.parse(response.getContentText());
+      const data = body["data"];
+      if (!data) {
+        const errors = JSON.stringify((_a = body["errors"]) != null ? _a : body).slice(0, 500);
+        throw new WizQueryError(`Wiz response carried no data: ${errors}`);
+      }
+      return data;
+    }
+    throw new WizQueryError(`Wiz query failed after retries (${lastError}).`);
+  }
+  function parseGraphSearchPage(data) {
+    var _a, _b, _c;
+    const connection = data["graphSearch"];
+    if (!connection) {
+      throw new WizQueryError("Wiz response carried no graphSearch connection.");
+    }
+    const pageInfo = (_a = connection["pageInfo"]) != null ? _a : {};
+    return {
+      nodes: (_b = connection["nodes"]) != null ? _b : [],
+      hasNextPage: Boolean(pageInfo["hasNextPage"]),
+      endCursor: (_c = pageInfo["endCursor"]) != null ? _c : null
+    };
+  }
+  function graphSearchPage(query, variables, fallbackFirst) {
+    try {
+      return parseGraphSearchPage(gqlPost(query, variables));
+    } catch (e) {
+      const first = Number(variables["first"]);
+      const smaller = fallbackFirst != null ? fallbackFirst : Number.isFinite(first) ? Math.max(1, Math.floor(first / 2)) : NaN;
+      if (!Number.isFinite(smaller) || !(smaller < first)) throw e;
+      return parseGraphSearchPage(gqlPost(query, { ...variables, first: smaller }));
+    }
+  }
+  function fetchPage(options) {
+    var _a;
+    const common = {
+      severities: options.severities,
+      extraFilterBy: options.extraFilterBy,
+      after: (_a = options.cursor) != null ? _a : null,
+      includeTotalCount: options.pageNumber === 0
+    };
+    const isDelta = Boolean(options.extraFilterBy && Object.keys(options.extraFilterBy).length);
+    try {
+      return queryPage(buildVariables({ ...common, first: PAGE_SIZE }), isDelta);
+    } catch (e) {
+      if (e instanceof WizDeltaFilterError) throw e;
+      return queryPage(buildVariables({ ...common, first: PAGE_SIZE_FALLBACK }), isDelta);
     }
   }
 
@@ -8804,16 +8317,16 @@ var Server = (() => {
   }
 
   // src/server/findings.ts
-  var memo2;
+  var memo;
   function invalidateFrameMemo() {
-    memo2 = void 0;
+    memo = void 0;
   }
   function currentScan() {
-    if (memo2 !== void 0) return memo2;
+    if (memo !== void 0) return memo;
     const row = latestFlatScanRow();
     if (!row) {
-      memo2 = null;
-      return memo2;
+      memo = null;
+      return memo;
     }
     const domains = getDomains2();
     const compiled = compileDomains(domains.items);
@@ -8844,7 +8357,7 @@ var Server = (() => {
       flat["_domain"] = resolved.name;
       flat["_domainSource"] = resolved.source;
     }
-    memo2 = {
+    memo = {
       scanId: row.scan_id,
       ts: row.ts,
       mode: row.mode,
@@ -8853,7 +8366,7 @@ var Server = (() => {
       severities: row.severities,
       records
     };
-    return memo2;
+    return memo;
   }
   function applyFilters(records, f) {
     var _a, _b, _c, _d, _e, _f;
@@ -9073,6 +8586,235 @@ var Server = (() => {
         error: "Execution died mid-write and no journal was found; run a fresh scan."
       });
     }
+  }
+
+  // src/server/access.ts
+  var access_exports = {};
+  __export(access_exports, {
+    PRODUCT: () => PRODUCT,
+    accountChooserUrl: () => accountChooserUrl,
+    assertAllowed: () => assertAllowed,
+    canEditAdmins: () => canEditAdmins,
+    canEditUsers: () => canEditUsers,
+    check: () => check,
+    contactMailto: () => contactMailto,
+    currentAdmins: () => currentAdmins,
+    currentUsers: () => currentUsers,
+    decide: () => decide,
+    deniedHtml: () => deniedHtml,
+    deniedPage: () => deniedPage,
+    denyResult: () => denyResult,
+    isOwner: () => isOwner,
+    ownerDomain: () => ownerDomain,
+    ownerEmail: () => ownerEmail,
+    parseAllowlist: () => parseAllowlist,
+    serviceUrl: () => serviceUrl
+  });
+
+  // src/server/pageShell.ts
+  var MARK_COMPACT_VIEWBOX = "12.2 8.4 52.7 74";
+  var MARK_COMPACT_RATIO = 52.7 / 74;
+  var MARK_ORBIT = "M47.64 80.58A32.1 32.1 0 0 1 17.83 52.04M19.82 36.92A32.1 32.1 0 0 1 54.21 16.76";
+  var MARK_ORBIT_WIDTH = 2.41;
+  var MARK_NODES = [[17.22, 44.33, 4.41], [45.96, 16.55, 7.56]];
+  var MARK_SHIELD = "M48.56 29.88C52.79 34.78 58.69 37.87 64.33 37.81C64.44 45.48 63.64 48.51 62.11 51.96C61.32 54.62 56.36 61.55 48.56 64.18C40.76 61.55 35.8 54.62 35.01 51.96C33.48 48.51 32.68 45.48 32.79 37.81C38.43 37.87 44.33 34.78 48.56 29.88Z";
+  var MARK_CHECK = "M42.3 48.81 46.19 52.7 54.89 43.99";
+  var MARK_CHECK_WIDTH = 3.04;
+  function brandMarkSvg(height) {
+    const width = Math.round(height * MARK_COMPACT_RATIO * 100) / 100;
+    const nodes = MARK_NODES.map(
+      (n) => '<circle cx="' + n[0] + '" cy="' + n[1] + '" r="' + n[2] + '" fill="#0a0a0a"/>'
+    ).join("");
+    return [
+      '<svg class="brand-mark" viewBox="' + MARK_COMPACT_VIEWBOX + '"',
+      ' width="' + width + '" height="' + height + '" focusable="false" aria-hidden="true">',
+      '<path d="' + MARK_ORBIT + '" fill="none" stroke="#0a0a0a" stroke-width="' + MARK_ORBIT_WIDTH,
+      '" stroke-linecap="round"/>',
+      nodes,
+      '<path d="' + MARK_SHIELD + '" fill="#0a0a0a"/>',
+      '<path d="' + MARK_CHECK + '" fill="none" stroke="#ffffff" stroke-width="' + MARK_CHECK_WIDTH,
+      '" stroke-linecap="round" stroke-linejoin="round"/>',
+      "</svg>"
+    ].join("");
+  }
+  function escapeHtml(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function primaryAction(href, label) {
+    return '<a class="btn" target="_top" href="' + escapeHtml(href) + '">' + escapeHtml(label) + "</a>";
+  }
+  function secondaryAction(href, label) {
+    return '<a class="alt" target="_top" href="' + escapeHtml(href) + '">' + escapeHtml(label) + "</a>";
+  }
+  function cardPage(spec) {
+    const body = spec.paragraphs.map((p) => "<p>" + p + "</p>").join("");
+    const actions = spec.actions ? '<div class="actions">' + spec.actions + "</div>" : "";
+    return [
+      '<!DOCTYPE html><html><head><meta charset="utf-8">',
+      // Every link on these pages has to break out of the HtmlService sandbox iframe; the app's
+      // own index.html carries the same base tag for the same reason.
+      '<base target="_top">',
+      '<meta name="viewport" content="width=device-width, initial-scale=1">',
+      "<title>" + escapeHtml(spec.title) + "</title><style>",
+      "*{box-sizing:border-box}",
+      "body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;",
+      "background:#f8fafc;color:#0a0a0a;",
+      "font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}",
+      ".card{max-width:32rem;margin:24px;padding:32px;background:#fff;border:1px solid #e2e8f0;",
+      "border-radius:14px;box-shadow:0 1px 2px rgba(10,10,10,.06)}",
+      ".lockup{display:flex;align-items:center;gap:8px;margin:0 0 16px}",
+      // Mirrors .appbar-name in styles.css (600 / 1rem / -0.02em) so the wordmark is the same
+      // object here as in the header, not a near-miss of it.
+      ".lockup span{font-weight:600;font-size:1rem;letter-spacing:-0.02em;color:#0a0a0a;",
+      "white-space:nowrap}",
+      ".brand-mark{display:block;flex:0 0 auto}",
+      "h1{font-size:20px;line-height:1.3;margin:0 0 12px;font-weight:650}",
+      "p{margin:0 0 8px;font-size:14px;line-height:1.6;color:#334155}",
+      ".actions{margin-top:24px;display:flex;align-items:center;gap:20px;flex-wrap:wrap}",
+      // Graphite, not the blue accent: DESIGN.md keeps Signal Blue for data, focus and links, and
+      // fills the one committing action with the neutral near-black.
+      ".btn{display:inline-flex;align-items:center;min-height:36px;padding:6px 14px;",
+      "border-radius:8px;background:#0a0a0a;color:#fafafa;font-size:14px;font-weight:500;",
+      "text-decoration:none}",
+      ".btn:hover{background:#27272a}",
+      "a{color:#2563eb}",
+      // Never remove: CLAUDE.md names the focus-ring rules load-bearing, and these pages are
+      // reachable by keyboard only.
+      "a:focus-visible{outline:2px solid #2563eb;outline-offset:2px;border-radius:4px}",
+      '</style></head><body><main class="card">',
+      // The same lockup as the app header — mark then wordmark — so the door and the room
+      // behind it are recognisably one product.
+      '<div class="lockup">' + brandMarkSvg(22) + "<span>" + escapeHtml(spec.eyebrow) + "</span></div>",
+      "<h1>" + escapeHtml(spec.heading) + "</h1>",
+      body,
+      actions,
+      "</main></body></html>"
+    ].join("");
+  }
+
+  // src/server/access.ts
+  var PRODUCT = "Wiz Sidekick OS";
+  var DENIAL_MESSAGE = {
+    anonymous: "This app can't identify your Google account. It only recognizes accounts signed in to the same Google Workspace domain as the app.",
+    "not-listed": "Your account isn't on this app's access list."
+  };
+  function parseAllowlist(raw) {
+    if (!raw) return [];
+    const seen2 = {};
+    const out = [];
+    for (const part of raw.split(/[,;\s]+/)) {
+      const email = part.trim().toLowerCase();
+      if (!email || seen2[email]) continue;
+      seen2[email] = true;
+      out.push(email);
+    }
+    return out;
+  }
+  function decide(active, owner, raw, adminsRaw) {
+    const email = (active || "").trim();
+    const key = email.toLowerCase();
+    if (!key) return { allowed: false, email: "", reason: "anonymous" };
+    const ownerKey = (owner || "").trim().toLowerCase();
+    if (ownerKey && ownerKey === key) return { allowed: true, email, reason: "owner" };
+    if (parseAllowlist(adminsRaw != null ? adminsRaw : null).indexOf(key) >= 0) {
+      return { allowed: true, email, reason: "admin" };
+    }
+    return parseAllowlist(raw).indexOf(key) >= 0 ? { allowed: true, email, reason: "listed" } : { allowed: false, email, reason: "not-listed" };
+  }
+  var memo2;
+  function check() {
+    if (memo2 === void 0) {
+      memo2 = decide(
+        Session.getActiveUser().getEmail(),
+        Session.getEffectiveUser().getEmail(),
+        getProp(PROP_KEYS.allowedUsers),
+        getProp(PROP_KEYS.allowedAdmins)
+      );
+    }
+    return memo2;
+  }
+  function logDenial(op, d) {
+    console.log(JSON.stringify({ access: "denied", op, reason: d.reason, email: d.email }));
+  }
+  function denyResult(op) {
+    const d = check();
+    if (d.allowed) return null;
+    logDenial(op, d);
+    const env = {
+      ok: false,
+      error: DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"],
+      errorKind: "forbidden"
+    };
+    const who = ownerEmail().trim();
+    if (who) {
+      env.contact = who;
+      env.contactUrl = contactMailto(who);
+    }
+    return env;
+  }
+  function assertAllowed(op) {
+    const d = check();
+    if (d.allowed) return;
+    logDenial(op, d);
+    throw new Error(DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"]);
+  }
+  function contactMailto(email) {
+    return "mailto:" + email.trim() + "?subject=" + encodeURIComponent("Access to " + PRODUCT);
+  }
+  function deniedHtml(d, switchUrl, contact) {
+    const detail = d.email ? "You're signed in as <strong>" + escapeHtml(d.email) + "</strong>." : "This app can't see which Google account you're signed in as, which happens when the account isn't in the same Google Workspace domain as the app.";
+    const who = (contact || "").trim();
+    const ask = who ? 'If you think you should have access, contact <a href="' + escapeHtml(contactMailto(who)) + '">' + escapeHtml(who) + "</a>." : (
+      // No owner address resolved — never render "contact:" with nothing after it.
+      "If you think you should have access, ask whoever runs this dashboard to add you."
+    );
+    return cardPage({
+      title: PRODUCT,
+      eyebrow: PRODUCT,
+      heading: "You don't have access to this app.",
+      paragraphs: [detail, ask],
+      actions: switchUrl ? secondaryAction(switchUrl, "Switch Google account") : ""
+    });
+  }
+  function deniedPage() {
+    const d = check();
+    if (d.allowed) return null;
+    logDenial("doGet", d);
+    return HtmlService.createHtmlOutput(deniedHtml(d, accountChooserUrl(), ownerEmail())).setTitle(PRODUCT).addMetaTag("viewport", "width=device-width, initial-scale=1");
+  }
+  function serviceUrl() {
+    try {
+      return ScriptApp.getService().getUrl() || null;
+    } catch (_e) {
+      return null;
+    }
+  }
+  function accountChooserUrl() {
+    const url = serviceUrl();
+    return url ? "https://accounts.google.com/AccountChooser?continue=" + encodeURIComponent(url) : null;
+  }
+  function ownerEmail() {
+    return Session.getEffectiveUser().getEmail() || "";
+  }
+  function isOwner() {
+    return check().reason === "owner";
+  }
+  function canEditUsers() {
+    const r = check().reason;
+    return r === "owner" || r === "admin";
+  }
+  function canEditAdmins() {
+    return isOwner();
+  }
+  function currentUsers() {
+    return parseAllowlist(getProp(PROP_KEYS.allowedUsers));
+  }
+  function currentAdmins() {
+    return parseAllowlist(getProp(PROP_KEYS.allowedAdmins));
+  }
+  function ownerDomain() {
+    const at = ownerEmail().lastIndexOf("@");
+    return at >= 0 ? ownerEmail().slice(at + 1).toLowerCase() : "";
   }
 
   // src/server/hubUrl.ts
@@ -12704,6 +12446,283 @@ var Server = (() => {
       }
       return { hubUrl: writeHubUrl(p == null ? void 0 : p.hubUrl) };
     });
+  }
+
+  // ../gas_shared/server/inlineBoot.ts
+  var UNSAFE = /[<>&/'`\u2028\u2029]/g;
+  function inlineJson(value) {
+    const json = JSON.stringify(value);
+    if (json === void 0) return "";
+    return json.replace(UNSAFE, (c) => c === "/" ? "\\/" : "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"));
+  }
+  function inlineBootJson(bootstrap2) {
+    const t0 = Date.now();
+    try {
+      const res = bootstrap2();
+      if (!res || res.ok !== true) return "";
+      return inlineJson(res);
+    } catch (_e) {
+      return "";
+    } finally {
+      console.log(JSON.stringify({ api: "bootstrap", inline: true, ms: Date.now() - t0 }));
+    }
+  }
+
+  // src/server/main.ts
+  function doGet(_e) {
+    const template = HtmlService.createTemplateFromFile("index");
+    template.bootJson = inlineBootJson(() => bootstrap());
+    return template.evaluate().setTitle("Wiz Sidekick OS").addMetaTag("viewport", "width=device-width, initial-scale=1").setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);
+  }
+  function include(filename) {
+    return HtmlService.createHtmlOutputFromFile(filename).getContent();
+  }
+
+  // src/server/welcome.ts
+  var welcome_exports = {};
+  __export(welcome_exports, {
+    ENTER_PARAM: () => ENTER_PARAM,
+    ENTRY_TTL_SEC: () => ENTRY_TTL_SEC,
+    gate: () => gate,
+    welcomeHtml: () => welcomeHtml
+  });
+  var ENTRY_TTL_SEC = 21600;
+  var ENTER_PARAM = "enter";
+  function markerKey(email) {
+    return "entered:" + paramsHash(email.trim().toLowerCase());
+  }
+  function markEntered(email) {
+    try {
+      CacheService.getScriptCache().put(markerKey(email), "1", ENTRY_TTL_SEC);
+    } catch (e) {
+      console.warn("entry marker write failed: " + e);
+    }
+  }
+  function hasEntered(email) {
+    try {
+      return CacheService.getScriptCache().get(markerKey(email)) !== null;
+    } catch (e) {
+      console.warn("entry marker read failed: " + e);
+      return true;
+    }
+  }
+  function welcomeHtml(email, continueUrl, switchUrl) {
+    return cardPage({
+      title: PRODUCT,
+      eyebrow: PRODUCT,
+      heading: "You're signed in.",
+      paragraphs: [
+        "This dashboard will open as <strong>" + escapeHtml(email) + "</strong>.",
+        "If that isn't the account you meant to use, switch before you continue \u2014 the register you see depends on which account opens it."
+      ],
+      actions: primaryAction(continueUrl, "Continue") + (switchUrl ? secondaryAction(switchUrl, "Switch Google account") : "")
+    });
+  }
+  function gate(e) {
+    const email = check().email;
+    if (!email) return null;
+    if (e && e.parameter && e.parameter[ENTER_PARAM]) {
+      markEntered(email);
+      return null;
+    }
+    if (hasEntered(email)) {
+      markEntered(email);
+      return null;
+    }
+    const url = serviceUrl();
+    if (!url) return null;
+    const continueUrl = url + (url.indexOf("?") >= 0 ? "&" : "?") + ENTER_PARAM + "=1";
+    return HtmlService.createHtmlOutput(welcomeHtml(email, continueUrl, accountChooserUrl())).setTitle(PRODUCT).addMetaTag("viewport", "width=device-width, initial-scale=1");
+  }
+
+  // src/server/setup.ts
+  var SPREADSHEET_NAME = "Wiz Sidekick OS Ledger";
+  var FOLDER_NAME = "wiz-sidekick";
+  var DAILY_TRIGGER_HANDLER = "trigger_dailyScan";
+  var DAILY_TRIGGER_HOUR = 5;
+  var WARM_TRIGGER_HANDLER = "trigger_warmReadModels";
+  var WARM_READY_BY_HOURS = [9, 13, 17];
+  var WARM_TRIGGER_TZ = "Europe/Paris";
+  var WARM_TRIGGER_NEAR_MINUTE = 30;
+  var WARM_TRIGGER_HOURS = WARM_READY_BY_HOURS.map((h) => (h + 23) % 24);
+  function warmScheduleSignature() {
+    return `${WARM_TRIGGER_TZ}|${WARM_TRIGGER_HOURS.join(",")}@${WARM_TRIGGER_NEAR_MINUTE}`;
+  }
+  function setup() {
+    const notes = [];
+    let ssId = getProp(PROP_KEYS.ledgerSpreadsheetId);
+    let ss;
+    if (ssId) {
+      ss = SpreadsheetApp.openById(ssId);
+      notes.push(`spreadsheet: existing ${ssId}`);
+    } else {
+      ss = SpreadsheetApp.create(SPREADSHEET_NAME);
+      ssId = ss.getId();
+      setProp(PROP_KEYS.ledgerSpreadsheetId, ssId);
+      notes.push(`spreadsheet: created ${ssId}`);
+    }
+    ensureTabs(ss);
+    let folderId = getProp(PROP_KEYS.archiveFolderId);
+    if (!folderId) {
+      folderId = DriveApp.createFolder(FOLDER_NAME).getId();
+      setProp(PROP_KEYS.archiveFolderId, folderId);
+      notes.push(`archive folder: created ${folderId}`);
+    } else {
+      notes.push(`archive folder: existing ${folderId}`);
+    }
+    ensureFolders(folderId);
+    if (!getProp(PROP_KEYS.wizAuthUrl)) setProp(PROP_KEYS.wizAuthUrl, DEFAULT_WIZ_AUTH_URL);
+    if (!getProp(PROP_KEYS.allowedUsers)) {
+      const owner = ownerEmail();
+      if (owner) {
+        setProp(PROP_KEYS.allowedUsers, owner);
+        notes.push(`allowlist: seeded with owner ${owner}`);
+      } else {
+        notes.push("allowlist: not seeded (owner email unavailable)");
+      }
+    } else {
+      notes.push("allowlist: already set, left as-is");
+    }
+    const existing = ScriptApp.getProjectTriggers().filter(
+      (t) => t.getHandlerFunction() === DAILY_TRIGGER_HANDLER
+    );
+    if (!existing.length) {
+      ScriptApp.newTrigger(DAILY_TRIGGER_HANDLER).timeBased().everyDays(1).atHour(DAILY_TRIGGER_HOUR).create();
+      notes.push(`daily trigger: installed (${DAILY_TRIGGER_HOUR}:00 script-local)`);
+    } else {
+      notes.push("daily trigger: already installed");
+    }
+    const warmExisting = ScriptApp.getProjectTriggers().filter(
+      (t) => t.getHandlerFunction() === WARM_TRIGGER_HANDLER
+    );
+    const wantSchedule = warmScheduleSignature();
+    if (warmExisting.length === WARM_TRIGGER_HOURS.length && getProp(PROP_KEYS.warmTriggerSchedule) === wantSchedule) {
+      notes.push(`warm trigger: already installed (${wantSchedule})`);
+    } else {
+      for (const t of warmExisting) ScriptApp.deleteTrigger(t);
+      for (const hour of WARM_TRIGGER_HOURS) {
+        ScriptApp.newTrigger(WARM_TRIGGER_HANDLER).timeBased().everyDays(1).atHour(hour).nearMinute(WARM_TRIGGER_NEAR_MINUTE).inTimezone(WARM_TRIGGER_TZ).create();
+      }
+      setProp(PROP_KEYS.warmTriggerSchedule, wantSchedule);
+      notes.push(
+        `warm trigger: installed ${WARM_TRIGGER_HOURS.length}x daily, warm by ${WARM_READY_BY_HOURS.map((h) => `${h}:00`).join(", ")} ${WARM_TRIGGER_TZ}` + (warmExisting.length ? ` (replaced ${warmExisting.length})` : "")
+      );
+    }
+    const missing = [
+      PROP_KEYS.wizClientId,
+      PROP_KEYS.wizClientSecret,
+      PROP_KEYS.wizApiUrl,
+      PROP_KEYS.wizProjectIdV2
+    ].filter((k) => !getProp(k));
+    if (missing.length) {
+      notes.push(`NOTE: set Script Properties for live scans: ${missing.join(", ")} (without them the app runs dry-run only)`);
+    }
+    return notes.join("\n");
+  }
+
+  // src/server/diagnostics.ts
+  function preview(value) {
+    if (!value || !value.trim()) return "(unset)";
+    const v = value.trim();
+    if (v.length <= 10) return `${v.length} chars`;
+    return `${v.length} chars, ${v.slice(0, 4)}\u2026${v.slice(-4)}`;
+  }
+  function secretPreview(value) {
+    return value && value.trim() ? `(set, ${value.trim().length} chars)` : "(unset)";
+  }
+  function wizDiagnostic() {
+    var _a, _b;
+    const lines = [];
+    const log = (m) => {
+      lines.push(m);
+      console.log(m);
+    };
+    const apiUrl = getProp(PROP_KEYS.wizApiUrl);
+    const authUrl = (_a = getProp(PROP_KEYS.wizAuthUrl)) != null ? _a : DEFAULT_WIZ_AUTH_URL;
+    const token = getProp(PROP_KEYS.wizApiToken);
+    const clientId = getProp(PROP_KEYS.wizClientId);
+    const clientSecret = getProp(PROP_KEYS.wizClientSecret);
+    const projectId = getProp(PROP_KEYS.wizProjectIdV2);
+    const mode = resolveWizAuthMode(token, clientId, clientSecret);
+    log("=== Wiz diagnostic ===");
+    log(`WIZ_API_URL:        ${apiUrl || "(unset!)"}`);
+    log(`Auth mode:          ${mode != null ? mode : "(none)"}`);
+    log(`WIZ_API_TOKEN:      ${preview(token)}`);
+    log(`WIZ_CLIENT_ID:      ${preview(clientId)}`);
+    log(`WIZ_CLIENT_SECRET:  ${secretPreview(clientSecret)}`);
+    if (mode === "oauth") log(`WIZ_AUTH_URL:       ${authUrl}`);
+    log(`WIZ_PROJECT_ID_V2:  ${projectId || "(unset \u2014 querying all projects)"}`);
+    if (!apiUrl) {
+      log("FAIL: WIZ_API_URL is required, e.g. https://api.<region>.app.wiz.io/graphql.");
+      return lines.join("\n");
+    }
+    if (mode === null) {
+      log(
+        "FAIL: no usable credentials \u2014 the app runs in dry-run mode. Set WIZ_API_TOKEN, or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET."
+      );
+      return lines.join("\n");
+    }
+    let bearer = "";
+    try {
+      bearer = getToken(true);
+      log(
+        mode === "token" ? `Step 1 OK: using raw WIZ_API_TOKEN (${preview(bearer)}).` : `Step 1 OK: OAuth exchange minted an access token (${preview(bearer)}).`
+      );
+    } catch (e) {
+      log(`Step 1 FAIL: could not obtain a token \u2014 ${e.message}`);
+      log(
+        mode === "oauth" ? "\u2192 The token endpoint rejected the client credentials. Verify WIZ_CLIENT_ID / WIZ_CLIENT_SECRET (regenerate the service account in Wiz), and that WIZ_AUTH_URL matches the auth host shown on the service-account page." : "\u2192 WIZ_API_TOKEN is unusable. A Wiz GraphQL service account gives a client id + secret, not a durable token; use WIZ_CLIENT_ID / WIZ_CLIENT_SECRET."
+      );
+      return lines.join("\n");
+    }
+    let firstNode = null;
+    try {
+      const page = queryPage(buildVariables({ first: 1 }));
+      firstNode = (_b = page.nodes[0]) != null ? _b : null;
+      log(`Step 2 OK: query succeeded \u2014 ${page.nodes.length} finding(s) on page 1.`);
+    } catch (e) {
+      const msg = e.message;
+      log(`Step 2 FAIL: the query was rejected \u2014 ${msg}`);
+      if (/HTTP 401|HTTP 403|Unauthorized/i.test(msg)) {
+        log(
+          "\u2192 401/403/Unauthorized: the token was not accepted (expired, invalid, or minted for a different tenant). Confirm the service account targets this tenant."
+        );
+      } else if (/HTTP 404/i.test(msg)) {
+        log(
+          "\u2192 404: WIZ_API_URL host/path is wrong \u2014 it must be https://api.<region>.app.wiz.io/graphql for your tenant's region."
+        );
+      } else {
+        log(
+          '\u2192 If the body names a field (e.g. "Cannot query field"), the service account lacks permission for it or the tenant schema differs.'
+        );
+      }
+      return lines.join("\n");
+    }
+    if (firstNode === null) {
+      log(
+        "Step 3 SKIPPED: the query returned no findings, so there was no row to read a Wiz console link off. Not a failure \u2014 widen the severity filter or the project and re-run if you want this checked."
+      );
+    } else {
+      const raw = firstNode["portalUrl"];
+      const usable = normalizeWizUrl(raw);
+      if (usable) {
+        log(`Step 3 OK: findings carry a Wiz console link (${usable}).`);
+      } else if (typeof raw === "string" && raw.trim()) {
+        log(
+          `Step 3 WARN: this tenant returned a portalUrl the register will not link to \u2014 ${raw.trim()}`
+        );
+        log(
+          "\u2192 The finding sheet shows no Wiz row for it. Links are allowed only on the Wiz consoles (app.wiz.io / app.wiz.us); see gas_shared/domain/wizUrl.ts for why the list is a security boundary rather than a typo-catcher, and widen it there if your tenant is genuinely served from another host."
+        );
+      } else {
+        log("Step 3 WARN: the query worked but this finding carried no portalUrl.");
+        log(
+          "\u2192 The finding sheet will show no Wiz row for findings like it. If EVERY finding is like this, the tenant is not populating the field and there is nothing to link to; the register states that rather than guessing a URL."
+        );
+      }
+    }
+    log("=== All checks passed. Live scans should work. ===");
+    return lines.join("\n");
   }
   return __toCommonJS(index_exports);
 })();
