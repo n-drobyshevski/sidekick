@@ -3658,7 +3658,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "8807f1cd9ad9" : "dev";
+  var BUILD_ID = true ? "85c776beafc8" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -4803,6 +4803,11 @@ var Server = (() => {
   function getRepoTagMap() {
     var _a, _b, _c;
     if (mapMemo !== void 0) return mapMemo;
+    const hit = readMapCache();
+    if (hit) {
+      mapMemo = hit;
+      return hit;
+    }
     const map = {};
     try {
       ensureTab(TABS.domainMap);
@@ -4813,11 +4818,35 @@ var Server = (() => {
         if (!token || !domain && !lifecycle) continue;
         map[token] = { domain: domain || null, lifecycle: lifecycle || null };
       }
+      writeMapCache(map);
     } catch (e) {
       console.warn(`Repository tag map unreadable \u2014 no tags attached this execution: ${String(e)}`);
     }
     mapMemo = map;
     return map;
+  }
+  var MAP_CACHE_TTL_SEC = 21600;
+  function mapCacheKey() {
+    return "dsRepoTagMap1:" + dataVersion();
+  }
+  function readMapCache() {
+    const t0 = Date.now();
+    try {
+      const got = cacheGetJson(mapCacheKey());
+      const hit = !!got && typeof got === "object" && !Array.isArray(got);
+      console.log(JSON.stringify({ stage: "cache", name: "dsRepoTagMap1", hit, getMs: Date.now() - t0 }));
+      return hit ? got : void 0;
+    } catch (e) {
+      console.warn(`Repository tag map cache read failed: ${String(e)}`);
+      return void 0;
+    }
+  }
+  function writeMapCache(map) {
+    try {
+      cachePutJson(mapCacheKey(), map, MAP_CACHE_TTL_SEC);
+    } catch (e) {
+      console.warn(`Repository tag map cache write failed: ${String(e)}`);
+    }
   }
   function setRepoTagMap(map) {
     ensureTab(TABS.domainMap);
@@ -4833,6 +4862,7 @@ var Server = (() => {
     setProp(PROP_KEYS.repoTagMapKeys, JSON.stringify(configuredTagKeys()));
     mapMemo = { ...map };
     bumpDataVersion();
+    writeMapCache(mapMemo);
   }
   function builtUnderKeys() {
     const raw = getProp(PROP_KEYS.repoTagMapKeys);
@@ -5390,9 +5420,38 @@ var Server = (() => {
 
   // src/server/settingsStore.ts
   var settingsMemo;
+  var SETTINGS_CACHE_TTL_SEC = 21600;
+  var SETTINGS_CACHE_MAX_CHARS = 9e4;
+  function settingsCacheKey() {
+    return "dsSettings1:" + dataVersion();
+  }
+  function readSettingsCache() {
+    try {
+      const raw = CacheService.getScriptCache().get(settingsCacheKey());
+      const parsed = raw ? JSON.parse(raw) : void 0;
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : void 0;
+    } catch (e) {
+      console.warn(`Settings cache read failed: ${e}`);
+      return void 0;
+    }
+  }
+  function writeSettingsCache(raw) {
+    try {
+      const json = JSON.stringify(raw);
+      if (json.length > SETTINGS_CACHE_MAX_CHARS) return;
+      CacheService.getScriptCache().put(settingsCacheKey(), json, SETTINGS_CACHE_TTL_SEC);
+    } catch (e) {
+      console.warn(`Settings cache write failed: ${e}`);
+    }
+  }
   function loadSettings() {
     var _a, _b;
     if (settingsMemo) return settingsMemo;
+    const cachedRaw = readSettingsCache();
+    if (cachedRaw) {
+      settingsMemo = cleanSettings(cachedRaw);
+      return settingsMemo;
+    }
     const raw = {};
     for (const row of readAll(TABS.settings)) {
       const key = String((_a = row.key) != null ? _a : "");
@@ -5404,6 +5463,7 @@ var Server = (() => {
       }
     }
     settingsMemo = cleanSettings(raw);
+    writeSettingsCache(raw);
     return settingsMemo;
   }
   function saveSettings(next) {
@@ -5415,6 +5475,7 @@ var Server = (() => {
     overwrite(TABS.settings, rows);
     settingsMemo = cleaned;
     bumpDataVersion();
+    writeSettingsCache(JSON.parse(JSON.stringify(cleaned)));
     return cleaned;
   }
 
