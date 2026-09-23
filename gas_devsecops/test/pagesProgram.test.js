@@ -30,7 +30,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
-  executiveHeroView, executiveMovementView, executiveRegisterView, executiveSeverityView,
+  coldShareView, executiveHeroView, executiveMovementView, executiveRegisterView,
+  executiveSeverityView,
 } from "../src/client/js/pages/executive.js";
 import {
   accountingView, actionableClockView, awaitingView, endOfLifeExclusionNote, fmtCount, fmtDays,
@@ -1042,6 +1043,60 @@ describe("the executive page's own blocks", () => {
     const none = executiveMovementView(null);
     expect(none.show).toBe(false);
     expect(none.reason).toMatch(/week/);
+  });
+});
+
+describe("coldShareView — carries the coverage gap even though the card is one number", () => {
+  // MTTR delayed-entry package (E3): `scopes_without_scan` is the coverage-warning field
+  // `coldZoneHeadline` publishes beside `dropped_no_repo`/`unclassified_secrets`/`row_count` —
+  // this card is the only one of the four it is worth folding in, because it alone can put a
+  // scope's repositories inside the ONE number this card shows while this read cannot say
+  // whether they are cold (`renderColdShare`'s own header spells out why the other three stay
+  // off this page).
+  function execColdPayload(over = {}) {
+    return {
+      coldZoneAsOfSource: "ledger",
+      coldZone: {
+        measurable: true, mode: "fixed", cold_after_days: 90, fixed_after_days: 90,
+        target_share_pct: null, achieved_share_pct: null, floor_days: null, floor_applied: false,
+        derived_days: null,
+        totals: {
+          cold_backlog_share_pct: 24, open_in_cold: 24, open_findings: 100,
+          cold_repos: 2, repos_with_open: 6,
+        },
+        scopes_without_scan: [],
+        ...over,
+      },
+    };
+  }
+
+  it("is an empty list when every scope with rows was scanned", () => {
+    expect(coldShareView(execColdPayload()).scopesWithoutScan).toEqual([]);
+  });
+
+  it("names the scope with no scan on record", () => {
+    const view = coldShareView(execColdPayload({ scopes_without_scan: ["secrets"] }));
+    expect(view.scopesWithoutScan).toEqual(["secrets"]);
+  });
+
+  it("survives an unmeasurable block — the coverage fact is knowable even where the figure is not", () => {
+    const view = coldShareView(execColdPayload({
+      measurable: false, totals: null, scopes_without_scan: ["sca"],
+    }));
+    expect(view.show).toBe(false);
+    expect(view.scopesWithoutScan).toEqual(["sca"]);
+  });
+});
+
+describe("renderColdShare — the coverage gap folds into the card's own tooltip, not a second note", () => {
+  const fn = SRC.executive.slice(SRC.executive.indexOf("function renderColdShare"));
+  const body = fn.slice(0, fn.indexOf("\n  }\n"));
+
+  it("reads scopesWithoutScan and appends it to the SAME denominator sentence as the clock caveat", () => {
+    expect(body).toMatch(/view\.scopesWithoutScan/);
+    expect(body).toMatch(/coverageClause/);
+    expect(body).toMatch(/denominator:/);
+    expect(body).toMatch(/\$\{clock\}\$\{coverageClause\}/);
   });
 });
 

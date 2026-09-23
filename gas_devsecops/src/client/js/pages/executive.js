@@ -542,6 +542,17 @@ export function coldShareView(payload) {
     derivedDays: present ? num(cz.derived_days) : null,
     floorDays: present ? num(cz.floor_days) : null,
   };
+  // THE ONE COVERAGE COUNT THIS CARD CARRIES, of the four `coldZoneHeadline` publishes.
+  // `dropped_no_repo` and `unclassified_secrets` explain gaps in figures this card does not
+  // draw (the repo table, the high-risk figure — both live on Repositories), so they have
+  // nothing to caveat here; `row_count` is a population count with no single-number card to
+  // fold into. `scopes_without_scan` is different: it can put a scope's repositories INSIDE
+  // this card's own one number while this read cannot tell whether they are cold, which is a
+  // doubt about the figure the card shows rather than about one it does not — see
+  // `renderColdShare`'s denominator for what it says about that.
+  const scopesWithoutScan = present && Array.isArray(cz.scopes_without_scan)
+    ? cz.scopes_without_scan.map((s) => String(s))
+    : [];
   if (!measurable) {
     return {
       show: false,
@@ -549,6 +560,7 @@ export function coldShareView(payload) {
       atLedgerClock: source !== "wallClock",
       pct: null, openInCold: 0, openFindings: 0, coldRepos: 0, reposWithOpen: 0,
       coldAfterDays: present ? num(cz.cold_after_days) : null,
+      scopesWithoutScan,
       ...modeFields,
     };
   }
@@ -566,6 +578,7 @@ export function coldShareView(payload) {
     coldRepos: num(totals.cold_repos, 0),
     reposWithOpen: num(totals.repos_with_open, 0),
     coldAfterDays: num(cz.cold_after_days),
+    scopesWithoutScan,
   };
 }
 
@@ -1123,6 +1136,20 @@ export async function renderExecutive(host, params, _ctx) {
       ? "Measured at the last scan, never against today."
       : "Measured against the current time rather than the last scan — the clock the ledger"
         + " was measured at could not be read, so this figure moves as the page is reopened.";
+    // THE COVERAGE CAVEAT, FOLDED IN RATHER THAN GIVEN ITS OWN NOTE. This card is one number,
+    // and the Repositories page already carries the full sentence (`scopesWithoutScanNote`)
+    // naming these scopes and saying why their repositories are kept observed rather than
+    // accused of vanishing — a second copy of that argument here would be the "fifth standalone
+    // note" the repos page itself declined for a lesser count. But saying NOTHING would let a
+    // reader take this one percentage as covering the whole estate when a scope of it was never
+    // scanned at all, which is the silent failure `clock` just above already exists to refuse
+    // for the wall-clock case — so this is the same refusal for the scan-coverage case, in the
+    // same tooltip rather than as a second visible line.
+    const coverageClause = view.scopesWithoutScan.length
+      ? ` No scan is on record for ${view.scopesWithoutScan.map((s) => SCOPE_LABELS[s] || s).join(", ")}`
+        + `, so this figure cannot say whether ${view.scopesWithoutScan.length === 1 ? "its" : "their"}`
+        + " repositories are cold."
+      : "";
     coldHost.append(el("div", { class: "kpi-row" }, figureCard({
       label: "Backlog in the cold zone",
       value: view.pct === null ? absentText : pct1(view.pct),
@@ -1132,7 +1159,7 @@ export async function renderExecutive(host, params, _ctx) {
         `${fmtCount(view.openInCold)} of ${fmtCount(view.openFindings)} open findings, on`
         + ` ${fmtCount(view.coldRepos)} of ${fmtCount(view.reposWithOpen)} repositories with`
         + " open findings where nothing has been resolved, removed or rotated for"
-        + ` ${windowText}${modeClause}. ${clock}`,
+        + ` ${windowText}${modeClause}. ${clock}${coverageClause}`,
     })));
     coldHost.append(el("p", { class: "small muted" },
       "Which repositories, and which projects → ",
