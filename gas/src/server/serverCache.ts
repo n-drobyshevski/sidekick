@@ -132,7 +132,7 @@ export function cachePutJson(
   value: unknown,
   ttlSec = DEFAULT_TTL_SEC,
   chunkChars = CHUNK_CHARS,
-): void {
+): number {
   const json = JSON.stringify(value);
   const gz = Utilities.gzip(Utilities.newBlob(json, "application/json"));
   const packed = Utilities.base64Encode(gz.getBytes());
@@ -142,6 +142,7 @@ export function cachePutJson(
     entries[`${key}:${i}`] = c;
   });
   CacheService.getScriptCache().putAll(entries, ttlSec);
+  return json.length;
 }
 
 /** Cached value, or undefined on miss/partial eviction/parse failure. */
@@ -200,22 +201,35 @@ export function cached<T>(
   compute: () => T,
   ttlSec = DEFAULT_TTL_SEC,
 ): T {
+  // Timed to the execution log, hit or miss: `getMs` is the CacheService read, `computeMs` the
+  // callback (for a durable model that includes its Drive read — see readModelStore's "l2"
+  // line), `putMs` the gzip + write. One line per read-model per request.
   let key: string | null = null;
+  const t0 = Date.now();
   try {
     key = cacheKey(name, params, stamp());
     const hit = cacheGetJson(key);
-    if (hit !== undefined) return hit as T;
+    if (hit !== undefined) {
+      console.log(JSON.stringify({ stage: "cache", name, hit: true, getMs: Date.now() - t0 }));
+      return hit as T;
+    }
   } catch (e) {
     console.warn(`Cache read failed for ${name}: ${e}`);
     key = null;
   }
+  const t1 = Date.now();
   const value = compute();
+  const t2 = Date.now();
+  let chars = 0;
   if (key) {
     try {
-      cachePutJson(key, value, ttlSec);
+      chars = cachePutJson(key, value, ttlSec);
     } catch (e) {
       console.warn(`Cache write failed for ${name}: ${e}`);
     }
   }
+  console.log(JSON.stringify({
+    stage: "cache", name, hit: false, getMs: t1 - t0, computeMs: t2 - t1, putMs: Date.now() - t2, chars,
+  }));
   return value;
 }

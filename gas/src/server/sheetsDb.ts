@@ -190,12 +190,17 @@ function mapRows(headers: string[], values: unknown[][]): Rec[] {
 
 /** All data rows of a tab as objects keyed by header name. */
 export function readAll(tab: string): Rec[] {
+  const t0 = Date.now();
   const sh = sheet(tab);
   const lastRow = sh.getLastRow();
   const lastCol = sh.getLastColumn();
   if (lastRow < 2 || lastCol < 1) return [];
   const values = sh.getRange(1, 1, lastRow, lastCol).getValues();
-  return mapRows(values[0].map(String), values.slice(1));
+  const rows = mapRows(values[0].map(String), values.slice(1));
+  // Timed to the execution log beside the Drive reads (archiveStore.readGzJsonIn), so a slow
+  // page's I/O can be read off its own transcript rather than inferred.
+  console.log(JSON.stringify({ stage: "sheet", tab, rows: rows.length, ms: Date.now() - t0 }));
+  return rows;
 }
 
 /**

@@ -2906,17 +2906,33 @@ export function getExecutivePage(p?: unknown): ApiResult {
   // these three and nothing else land on the entry the Cold zone page warms — which is what
   // makes `execColdSlice` a SLICE rather than a second profile over the whole base.
   const coldParams = insightsParams;
-  return run(() => ({
-    mttr: execMttrSlice(cachedMttrData(p)),
-    ...(execInsightsSlice(cachedInsightsData(insightsParams)) ?? {}),
-    ...execColdSliceGuarded(coldParams),
-    // The same three-way dimension switch getMttrPage makes, through the same function so the
-    // two pages cannot disagree about what a scope means — or miss each other's cache entry.
-    byDomain: execGroupSlice(cachedMttrGroupSplit(p)),
-    // Already minimal — four scalars and a per-severity tally — so these two ship whole.
-    weekTrend: cachedExecutiveWeekTrend(p),
-    severityCounts: cachedExecutiveSeverityCounts(p),
-  }));
+  return run(() => {
+    // Each slice timed to the execution log, in the order they run. A cold load was measured
+    // at 146 s with the cold zone at under half a second of it; this line is what says which of
+    // the other five is the rest.
+    const ms: Record<string, number> = {};
+    const timed = <T,>(label: string, fn: () => T): T => {
+      const t0 = Date.now();
+      try {
+        return fn();
+      } finally {
+        ms[label] = Date.now() - t0;
+      }
+    };
+    const out = {
+      mttr: timed("mttr", () => execMttrSlice(cachedMttrData(p))),
+      ...(timed("insights", () => execInsightsSlice(cachedInsightsData(insightsParams))) ?? {}),
+      ...timed("coldZone", () => execColdSliceGuarded(coldParams)),
+      // The same three-way dimension switch getMttrPage makes, through the same function so the
+      // two pages cannot disagree about what a scope means — or miss each other's cache entry.
+      byDomain: timed("byDomain", () => execGroupSlice(cachedMttrGroupSplit(p))),
+      // Already minimal — four scalars and a per-severity tally — so these two ship whole.
+      weekTrend: timed("weekTrend", () => cachedExecutiveWeekTrend(p)),
+      severityCounts: timed("severityCounts", () => cachedExecutiveSeverityCounts(p)),
+    };
+    console.log(JSON.stringify({ stage: "executive", ...ms }));
+    return out;
+  });
 }
 
 // --------------------------------------------------------------------- scan history

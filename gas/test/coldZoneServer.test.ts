@@ -615,3 +615,28 @@ describe("bootstrapIfWarm", () => {
     expect(API_SRC).toContain("durablyPeek(BOOT_CORE, bootCoreParams())");
   });
 });
+
+// --------------------------------------------------------------------------------------- //
+//  The Executive's slice timings reach the execution log
+// --------------------------------------------------------------------------------------- //
+//
+// A cold Executive load was measured at 146 s with the cold zone at under half a second of it.
+// This line is how the rest gets attributed, so a refactor that drops a slice from it would
+// silently blind the next measurement.
+describe("getExecutivePage timing line", () => {
+  it("logs one line naming every slice, in milliseconds", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const res = getExecutivePage({ domain: "", supportGroup: "", severities: null });
+    expect(res.ok).toBe(true);
+    const lines = log.mock.calls
+      .map((c) => String(c[0]))
+      .filter((l) => l.includes('"stage":"executive"'))
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(lines).toHaveLength(1);
+    expect(Object.keys(lines[0]!).sort()).toEqual(
+      ["byDomain", "coldZone", "insights", "mttr", "severityCounts", "stage", "weekTrend"],
+    );
+    for (const [k, v] of Object.entries(lines[0]!)) if (k !== "stage") expect(typeof v).toBe("number");
+    log.mockRestore();
+  });
+});
