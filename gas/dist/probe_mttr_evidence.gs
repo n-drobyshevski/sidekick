@@ -1,4 +1,18 @@
 /**
+ * RUN ONE OF THESE FIVE. Everything else in this file is a helper, and the editor's Run
+ * dropdown lists helpers too — picking one runs it with no arguments and fails somewhere
+ * unhelpful, which is exactly what happened once already.
+ *
+ *   probeMttrEvidence   what "resolved" actually was: asset gone / mass fix / single fix
+ *   probeIdentityChurn  did the same cve come back on the same asset under a new record id
+ *   probeEstateShape    does this estate patch, or replace hosts
+ *   probeTrueLifetime   is the one-day half-life real, or is it the churn
+ *   probeStaleOpen      is the open backlog present, or residue nobody can see any more
+ *
+ * All five are read-only and write nothing. Delete the file once the answers are written down.
+ */
+
+/**
  * ONE-OFF, READ-ONLY measurement of the OS ledger. Writes nothing, changes nothing.
  *
  * It answers the question the Wiz API cannot: of everything this register calls "resolved",
@@ -737,7 +751,11 @@ function probeStaleOpen() {
 
 /** Pads a bucket label so the counts line up under each other. */
 function probeGap(label) {
+  // `String(label == null ? '' : label)` rather than `label.length`: this is a helper, the Run
+  // dropdown offers it like any entry point, and a helper that throws on a hand-run is a
+  // helper that sends its reader hunting for a bug in the measurement instead.
+  var text = String(label == null ? '' : label);
   var s = '';
-  while (label.length + s.length < 27) s += ' ';
+  while (text.length + s.length < 27) s += ' ';
   return s;
 }
