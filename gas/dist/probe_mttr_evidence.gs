@@ -509,3 +509,105 @@ function probeEstateShape() {
   Logger.log(out.join('\n'));
   return out.join('\n');
 }
+
+/**
+ * PROBE 4 — the last one. Is the one-day half-life real, or is it the churn?
+ *
+ * Three hypotheses died against the data. Whole assets going away: 0.6%. A fleet rebuilt from
+ * fresh images: 0.2% — 99.8% of asset-days lose findings and gain nothing, which is what
+ * patching looks like. Left truncation: 1.3% of open rows. What survived is record churn,
+ * proven by 5,208 resolutions (10.3%) whose successor was born BEFORE they closed.
+ *
+ * So the estate really does patch, and it patches in batches of about fifteen findings per
+ * asset per instant. The question left is whether the ONE DAY median lifetime belongs to that
+ * patching or to the churn — and the ledger can answer it without being re-keyed, by splitting
+ * the population the churn cannot touch from the population it defines:
+ *
+ *   solo      a (cve, asset) pair Wiz only ever issued ONE record for. No re-issue is possible
+ *             here, so its lifetime is the estate's real patch latency.
+ *   churned   a pair carrying several records. Each record's own lifetime is what the MTTR
+ *             page currently measures; the SPAN from the first record's first_seen to the last
+ *             record's resolved_at is what it would measure if a re-issue continued the row
+ *             instead of starting a new one.
+ *
+ * If solo lifetimes are ~1 day too, the half-life is real and this register is simply fast. If
+ * solo is much longer, the headline is the churn, and the fix is the ledger key: `vulnKey`
+ * returns `id:<node.id>` whenever an id exists (lifecycle.ts:34-36), and for OS findings one
+ * always does — the hash of (cve|asset|type|cloud|component) it falls back to is exactly the
+ * identity a re-issue preserves.
+ *
+ * Run `probeTrueLifetime`. Read-only, like its siblings, and the last of them.
+ */
+function probeTrueLifetime() {
+  var started = Date.now();
+  var out = [];
+  var say = function (l) { out.push(l); };
+
+  var id = PropertiesService.getScriptProperties().getProperty('LEDGER_SPREADSHEET_ID');
+  if (!id) { Logger.log('LEDGER_SPREADSHEET_ID is not set on this project.'); return; }
+  var sh = SpreadsheetApp.openById(id).getSheetByName('vuln_ledger');
+  if (!sh) { Logger.log('No vuln_ledger tab.'); return; }
+
+  say('TRUE LIFETIME PROBE  ' + new Date().toISOString());
+  say('');
+
+  var pairs = {};
+  var partial = probeStream(sh, ['cve', 'asset_id', 'first_seen', 'resolved_at', 'status'], started, function (r) {
+    var cve = String(r.cve || ''), aid = String(r.asset_id || '');
+    if (!cve || !aid) return;
+    var k = cve + '|' + aid;
+    (pairs[k] || (pairs[k] = [])).push({
+      f: probeMs(r.first_seen),
+      r: probeMs(r.resolved_at),
+      open: String(r.status || '').toUpperCase() !== 'RESOLVED',
+    });
+  });
+
+  var solo = probeHist();        // lifetime of a pair Wiz issued exactly one record for
+  var perRecord = probeHist();   // lifetime of each record inside a multi-record pair
+  var span = probeHist();        // first birth -> last death of a multi-record pair
+  var soloPairs = 0, churnedPairs = 0, openPairs = 0, spanPairs = 0;
+
+  for (var k2 in pairs) {
+    var list = pairs[k2];
+    list.sort(function (a, b) { return (a.f || 0) - (b.f || 0); });
+    var anyOpen = false;
+    for (var i = 0; i < list.length; i++) if (list[i].open) anyOpen = true;
+
+    if (list.length === 1) {
+      soloPairs++;
+      if (anyOpen) { openPairs++; continue; }
+      if (list[0].f !== null && list[0].r !== null) probeAdd(solo, (list[0].r - list[0].f) / 86400000);
+      continue;
+    }
+    churnedPairs++;
+    for (var j = 0; j < list.length; j++) {
+      if (list[j].f !== null && list[j].r !== null) probeAdd(perRecord, (list[j].r - list[j].f) / 86400000);
+    }
+    // The span only means anything once the whole pair has stopped: an open last record is a
+    // vulnerability still present, and censoring it as if it had closed is the bias this
+    // whole wave exists to refuse.
+    if (!anyOpen) {
+      var first = list[0].f, last = list[list.length - 1].r;
+      if (first !== null && last !== null) { probeAdd(span, (last - first) / 86400000); spanPairs++; }
+    }
+  }
+
+  say('POPULATIONS');
+  say('  pairs with ONE record      ' + soloPairs + '   (of which still open: ' + openPairs + ')');
+  say('  pairs with SEVERAL records ' + churnedPairs);
+  say('');
+  say('LIFETIMES  (p25 / median / p75, days)');
+  say('  solo — no re-issue possible      ' + probeMedianQ(solo, 0.25) + ' / ' + probeMedianQ(solo, 0.5) + ' / ' + probeMedianQ(solo, 0.75) + '   n=' + solo.n);
+  say('  each record of a churned pair    ' + probeMedianQ(perRecord, 0.25) + ' / ' + probeMedianQ(perRecord, 0.5) + ' / ' + probeMedianQ(perRecord, 0.75) + '   n=' + perRecord.n);
+  say('  churned pair, first birth->last death  ' + probeMedianQ(span, 0.25) + ' / ' + probeMedianQ(span, 0.5) + ' / ' + probeMedianQ(span, 0.75) + '   n=' + spanPairs);
+  say('');
+  say('  Row 1 is what the estate really does. Row 2 is what the MTTR page counts today.');
+  say('  Row 3 is what it would count if a re-issued finding continued its row instead of');
+  say('  starting a new one. If row 1 is close to row 2, the half-life is honest and this');
+  say('  estate is simply fast. If row 1 sits far above it, the headline is the churn.');
+  say('');
+  say((partial ? '*** PARTIAL: time budget hit ***\n' : '') + 'elapsed ' + ((Date.now() - started) / 1000).toFixed(0) + ' s');
+  Logger.log(out.join('\n'));
+  return out.join('\n');
+}
