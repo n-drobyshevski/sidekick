@@ -21,8 +21,13 @@ let settingsMemo: Rec | undefined;
 // the tab and it bumps the version, so a save moves every reader to a new key — and it writes
 // the new dict under that key itself, so the next request does not pay the sheet either. The
 // TTL only bounds the one path the version cannot see: someone editing the tab by hand in
-// Sheets, which is picked up within ten minutes.
-const SETTINGS_CACHE_TTL_SEC = 600;
+// Sheets, which is picked up at the next scan or settings save (both bump the version), or at
+// the latest when CacheService's six-hour maximum runs out.
+//
+// SIX HOURS, NOT TEN MINUTES. Ten was the first value shipped, and production showed what it
+// cost: once every ten minutes some execution re-read the tab — 2.1 s of a 3.4 s warm Executive
+// load — to guard against an edit nobody makes through the sheet.
+const SETTINGS_CACHE_TTL_SEC = 21_600;
 // A CacheService value is capped at 100 KB. A dict still carrying the legacy single-cell
 // support-group map can exceed that; it is simply not cached, and reads fall back to the tab.
 const SETTINGS_CACHE_MAX_CHARS = 90_000;
