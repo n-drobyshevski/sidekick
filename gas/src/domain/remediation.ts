@@ -165,12 +165,33 @@ export interface KMResult {
  * so the estimator loop is written once and the two can't drift.
  */
 export function kmCurve(events: number[], times: number[]): KMPoint[] {
+  // ONE SORT AND ONE SWEEP, NOT A SCAN PER EVENT TIME. This used to re-filter both arrays for
+  // every distinct event time — O(distinct × n) — and `mttr_days` is fractional, so on a real
+  // register the distinct count is in the thousands: measured in production at 27 s for the two
+  // curves behind the Executive week badge, and most of a cold Executive load overall.
+  //
+  // THE ANSWER IS BIT-FOR-BIT THE OLD ONE, which is why the product below still runs over the
+  // distinct event times in ascending order — S(t) is a running product, and a different order
+  // of the same factors can land one ULP apart (see CROSSING_EPSILON). `atRisk` is "times >= t"
+  // and `d` is "events === t", read off the sorted arrays instead of counted by a scan. NaN is
+  // dropped from both up front: it never satisfied `>=` or `===` in the old filters, so it was
+  // never at risk and never an event, and left in it would break the sort's ordering.
+  const ev = events.filter((x) => !Number.isNaN(x)).sort((a, b) => a - b);
+  const ts = times.filter((x) => !Number.isNaN(x)).sort((a, b) => a - b);
   const curve: KMPoint[] = [];
   let s = 1;
-  for (const t of [...new Set(events)].sort((a, b) => a - b)) {
-    const atRisk = times.filter((x) => x >= t).length;
+  let j = 0; // first index of `ts` with ts[j] >= t
+  for (let i = 0; i < ev.length; ) {
+    // `+ 0` turns -0 into +0, as the old `new Set(events)` did (a Set stores -0 as +0).
+    const t = ev[i] + 0;
+    let d = 0;
+    while (i < ev.length && ev[i] === t) {
+      d += 1;
+      i += 1;
+    }
+    while (j < ts.length && ts[j] < t) j += 1;
+    const atRisk = ts.length - j;
     if (atRisk === 0) continue;
-    const d = events.filter((x) => x === t).length;
     s *= 1 - d / atRisk;
     curve.push({ t, s, atRisk, events: d });
   }

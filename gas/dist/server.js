@@ -2936,12 +2936,21 @@ var Server = (() => {
     return { perSev, labels: RESOLUTION_BUCKET_LABELS, total };
   }
   function kmCurve(events, times) {
+    const ev = events.filter((x) => !Number.isNaN(x)).sort((a, b) => a - b);
+    const ts = times.filter((x) => !Number.isNaN(x)).sort((a, b) => a - b);
     const curve = [];
     let s = 1;
-    for (const t of [...new Set(events)].sort((a, b) => a - b)) {
-      const atRisk = times.filter((x) => x >= t).length;
+    let j = 0;
+    for (let i = 0; i < ev.length; ) {
+      const t = ev[i] + 0;
+      let d = 0;
+      while (i < ev.length && ev[i] === t) {
+        d += 1;
+        i += 1;
+      }
+      while (j < ts.length && ts[j] < t) j += 1;
+      const atRisk = ts.length - j;
       if (atRisk === 0) continue;
-      const d = events.filter((x) => x === t).length;
       s *= 1 - d / atRisk;
       curve.push({ t, s, atRisk, events: d });
     }
@@ -6320,7 +6329,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "2fe61f37c689" : "dev";
+  var BUILD_ID = true ? "022a2d834fd7" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
