@@ -1207,6 +1207,13 @@ export async function renderMttr(host, params, _ctx) {
   const scope = scopeParam(params);
 
   let paint = null;
+  // THE CHART.JS BUNDLE STARTS WITH THE DATA, NOT AFTER IT. It is fetched over its own
+  // google.script.run call, lazily, by the first chart to draw — which here meant after
+  // getMttrPage had answered, so the two ran back to back and each carried GAS's ~1.5–2 s of
+  // per-call overhead. Measured on the gas/ MTTR page as a chain of 3.3 s then 2.5 s (gas/ PR
+  // #331). It needs nothing from the page's data, so it is requested now and lands beside it;
+  // `loadCharts` is memoized, so every chart below awaits this same request.
+  loadCharts().catch(() => {}); // a refusal is cached by loadCharts and shown where charts draw
   const data = swrCall(
     "api_getMttrPage",
     scope ? { scope } : {},
