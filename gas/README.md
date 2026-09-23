@@ -254,12 +254,18 @@ The MTTR page's primary numbers come from a **Kaplan–Meier** survival estimate
 (`src/domain/remediation.ts:kaplanMeier`), not a plain median of closed findings:
 
 - **Events and censoring.** A resolved finding is an _event_ at its `mttr_days`; a
-  still-open finding is a _right-censored_ observation at its current `age_days`. Both
-  feed the risk set, so open work drags the estimate up instead of being excluded — the
-  bias the naive resolved-only median has.
+  still-open finding is a _right-censored_ observation. Both feed the risk set, so open
+  work drags the estimate up instead of being excluded — the bias the naive resolved-only
+  median has. **An open finding is censored at its last sighting, not at now**: a row we
+  can still see contributes `age_days`, a row we cannot contributes `seen_age_days`, and
+  the as-of replays in `trend.ts` use `censoredAsOf(d, last_seen)` so the trend line and
+  the hero cannot describe the same estimate differently. Counting time we did not watch
+  is inventing evidence.
 - **KM median** is the headline: the smallest time where survival S(t) falls to ≤ 0.5.
   Under heavy censoring (over half the findings still open) S never reaches 0.5, so there
-  is no median; the UI shows **"> X d"** against the largest observed time (`medianLowerBound`).
+  is no median; the UI publishes `medianLowerBound` — the largest observed time — as
+  **"at least N days"** in prose and **"≥ N d"** in a cell. Never `"> N d"`: the bound is
+  inclusive, and `>` would claim it is strictly beyond.
 - **KM mean (RMST)** is the restricted mean — the area under the survival curve out to
   τ, the largest observed time. When survival hasn't reached 0 by τ the RMST is a lower
   bound (`meanTruncated`), shown with **"≥"**.
@@ -323,6 +329,64 @@ The MTTR page's primary numbers come from a **Kaplan–Meier** survival estimate
 - The old **fast-lane exclusion** method (drop resolved findings with `mttr_days` under a
   configurable window) and its `fast_lane_days` setting have been **removed** — KM
   subsumes the de-biasing it was reaching for.
+
+### Present, unobserved, and what each figure is allowed to count
+
+A finding this register stopped seeing is not resolved — `coldZone.ts` refuses to infer a
+fix from silence, and that refusal stands. It is also not live exposure, so the figures
+draw a line the population does not:
+
+- **`BaseRow.observed`** is true when the row reached the newest scan **of its own
+  severity** (`ledgerCore.rowReachesScan`, the same predicate `coldZone.isObserved` uses —
+  one definition, because two would drift). A severity with no scan on record is
+  undecidable and counts as observed: never accuse an asset of vanishing on the strength
+  of a scan that never looked.
+- **`seen_age_days`** is how long a row was open while we could still see it.
+- **Counts include everything open; figures that measure elapsed time do not.** The
+  triage funnel, tier counts and severity totals count every open finding. Age buckets,
+  the aging distribution, oldest-open and the SLA figures measure the observed population
+  and publish the count they set aside, beside `unaged`.
+- **An SLA window is judged on what we actually saw.** Three outcomes: *breached* when
+  consumed time is past target (`age_days` observed, `seen_age_days` not — a window blown
+  while we were watching stays blown), *on the clock* when observed and inside it, and
+  *unknown* when unobserved and still inside it at the last sighting. Attainment divides
+  by breached + on the clock. Unknown is never folded into "within SLA": not looking is
+  not compliance. `fixNext` carries the same rule and the same `unknown` bucket, because
+  the front door decides who is "late".
+- Every page states which population it means — `N present · M unobserved since <date>` —
+  and all of it disappears when nothing is unobserved.
+
+### What the ledger actually holds (measured 2026-09-23)
+
+Five read-only probes were run against the live ledger before any of the above was
+written. Three hypotheses died; recording them is the point, because each one looks
+plausible enough to be re-proposed:
+
+| Question | Answer |
+|---|---|
+| Are assets being decommissioned and read as fixed? | No — 0.6% of resolutions |
+| Is the fleet rebuilt from fresh images? | No — 0.2% of asset-days; 99.8% lose findings and gain nothing |
+| Is the MTTR left-truncated, as in `gas_devsecops`? | Barely — 1.3% of open rows predate tracking |
+| Does the estate really patch in a day? | **Yes.** Pairs Wiz issued exactly one record for, where re-issue is impossible, have a median lifetime of 1 day over 32,485 pairs |
+
+What is real, and what it costs:
+
+- **Record churn.** 10.3% of resolutions were followed by a record of the same (cve, asset)
+  born *before* its predecessor closed — which no fix-then-regress can produce — and
+  returns arrive under a new id rather than as reopens of the same key (12,149 returns
+  against 1,996 counted reopens), because `vulnKey` is `id:<node.id>` and one always
+  exists here. **It inflates throughput and close-rate figures by roughly a quarter and
+  leaves the half-life alone.** Re-keying the ledger on (cve, asset, component) would move
+  the median by about a day and cost a migration, so it was measured and not done.
+- **The blind spot.** 2,630 of 5,174 open rows, on 113 assets, had not been in a scan for
+  **exactly 42 days** — p50 = p90 = max, which is one event around 2026-08-12, not wear.
+  The 2,532 that remained matched the API's own count of open CRITICAL findings, which is
+  the check that says the fetch is healthy. That measurement is why the section above
+  exists. 12 rows (0.2%) were stale while their asset was still being scanned; unexplained,
+  and small enough to be worth eyes rather than a package.
+- **Wiz keeps resolved findings for 7 days.** The count saturates at 7 and does not move
+  at 14, 30, 90 or 365. Anything born and fixed before this register's first scan is
+  invisible and always will be; only time fixes that.
 
 ## OS vulnerabilities: exploitability is the spine, not severity
 
