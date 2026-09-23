@@ -27,7 +27,7 @@ idea, not the file: `gas_devsecops` has its own `readModels.ts`, `readModelStore
 
 | Area | Where | State |
 |---|---|---|
-| Quadratic KM | `src/domain/remediation.ts:241` `kmCurve` | **Same bug as gas/ had.** Re-filters both arrays per distinct event time. Used by `kaplanMeier` (`remediation.ts:448`), i.e. the MTTR hero. `kmCurveEntry` (`:282`) is already O(n log n). |
+| Quadratic KM | `src/domain/remediation.ts:241` `kmCurve` | **Fixed in step 1** (sort and sweep, `test/kmCurveSweep.test.ts`). Was: same bug as gas/ had. Re-filters both arrays per distinct event time. Used by `kaplanMeier` (`remediation.ts:448`), i.e. the MTTR hero. `kmCurveEntry` (`:282`) is already O(n log n). |
 | Bootstrap | `src/server/api.ts:292` `bootstrap` | **Not cached at all.** Reads the `scans` tab, `loadSettings()`, `ledgerStore.loadBaseRows()` over the whole ledger, and `activeJob()` (`api.ts:378`, the whole `jobs` tab) on every call. |
 | Inline bootstrap | `src/server/main.ts:8` | `inlineBootJson(() => bootstrap())` from #316: **doGet computes the full uncached bootstrap on every page load.** Likely the biggest single cost. |
 | Settings | `src/server/settingsStore.ts:19` `loadSettings` | Reads the `settings` tab every execution (per-execution memo only). |
@@ -36,8 +36,8 @@ idea, not the file: `gas_devsecops` has its own `readModels.ts`, `readModelStore
 | Base rows | `src/server/ledgerStore.ts:691` `loadBaseRows(options)` | Re-derived per call; options vary by `now` / `scope` / `trackingStartByScope`. 13 call sites. |
 | Snapshot | `src/server/archiveStore.ts:293–313` | v1 (one JSON object per row). |
 | Warm | `src/server/readModels.ts:2598` `warmReadModels`, `WARM_BUDGET_MS` `:245` | Budgeted, logs a cut-out, **no continuation**. |
-| `parseTs` | `src/domain/util.ts:107` | No canonical-ISO fast path. |
-| Timing logs | — | **None.** |
+| `parseTs` | `src/domain/util.ts:107` | **Fast path added in step 1** (`test/parseTs.test.ts`). |
+| Timing logs | sheetsDb, archiveStore, serverCache, readModelStore, ledgerStore, api (`bootstrap`, `getExecutivePage`) | **Added in step 1.** Awaiting the first production logs. |
 
 Checks: `cd gas_devsecops && npm ci && npm run check` (typecheck, lint, vitest, check-dist-fresh).
 Rebuild `dist/` with `npm run build` and commit it with each change (`check-dist-fresh` fails

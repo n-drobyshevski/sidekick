@@ -1335,3 +1335,51 @@ describe("setProjectView", () => {
     expect(lockAcquisitions).toBeGreaterThan(before);
   });
 });
+
+// --------------------------------------------------------------------------------------- //
+//  The landing page's timing lines reach the execution log
+// --------------------------------------------------------------------------------------- //
+//
+// PERF_PLAN.md step 1: measure before fixing. These two lines are how a cold and a warm load
+// get attributed in production — bootstrap because doGet computes it inline on every page
+// load, getExecutivePage because it is the landing RPC — so a refactor that drops a lap would
+// silently blind the next measurement.
+function stageLines(log: { mock: { calls: unknown[][] } }, stage: string): Rec[] {
+  return log.mock.calls
+    .map((c) => String(c[0]))
+    .filter((l) => l.includes(`"stage":"${stage}"`))
+    .map((l) => JSON.parse(l) as Rec);
+}
+
+describe("timing lines", () => {
+  it("getExecutivePage logs one line naming every part, in milliseconds", async () => {
+    const { api } = await syncedRegister();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const res = api.getExecutivePage({}) as unknown as Rec;
+      expect(res["ok"]).toBe(true);
+      const lines = stageLines(log, "executive");
+      expect(lines).toHaveLength(1);
+      expect(Object.keys(lines[0]!).sort()).toEqual(["byScope", "executiveModel", "mttr", "stage"]);
+      for (const [k, v] of Object.entries(lines[0]!)) if (k !== "stage") expect(typeof v).toBe("number");
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("bootstrap logs one line naming every part, in milliseconds", async () => {
+    const { api } = await syncedRegister();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      expect(api.bootstrap({}).ok).toBe(true);
+      const lines = stageLines(log, "bootstrap");
+      expect(lines).toHaveLength(1);
+      expect(Object.keys(lines[0]!).sort()).toEqual(
+        ["activeJob", "baseRows", "catalogues", "live", "repoTags", "scans", "settings", "stage"],
+      );
+      for (const [k, v] of Object.entries(lines[0]!)) if (k !== "stage") expect(typeof v).toBe("number");
+    } finally {
+      log.mockRestore();
+    }
+  });
+});

@@ -133,14 +133,31 @@ export function writeGzJson(
   return folder.createFile(blob);
 }
 
-function parseGzBlob(blob: GoogleAppsScript.Base.Blob, name: string): unknown {
+/** Where a read's parse time went, for `readGzJson`'s timing line. */
+interface ParseMeta {
+  bytes: number;
+  ungzipMs: number;
+  textMs: number;
+  jsonMs: number;
+}
+
+function parseGzBlob(blob: GoogleAppsScript.Base.Blob, name: string, meta?: ParseMeta): unknown {
   const bytes = blob.getBytes();
+  if (meta) meta.bytes = bytes.length;
   const isGzip = bytes.length > 2 && (bytes[0] & 0xff) === 0x1f && (bytes[1] & 0xff) === 0x8b;
-  const text = isGzip
-    ? Utilities.ungzip(blob).getDataAsString("UTF-8")
-    : blob.getDataAsString("UTF-8");
+  const t0 = Date.now();
+  const plain = isGzip ? Utilities.ungzip(blob) : blob;
+  const t1 = Date.now();
+  const text = plain.getDataAsString("UTF-8");
+  const t2 = Date.now();
+  if (meta) {
+    meta.ungzipMs = t1 - t0;
+    meta.textMs = t2 - t1;
+  }
   try {
-    return JSON.parse(text);
+    const parsed = JSON.parse(text) as unknown;
+    if (meta) meta.jsonMs = Date.now() - t2;
+    return parsed;
   } catch (e) {
     // Absence is a null; corruption is not — a byte-mangled archive file must not be
     // indistinguishable from one that was never written, so this throws rather than warning
@@ -153,10 +170,30 @@ function parseGzBlob(blob: GoogleAppsScript.Base.Blob, name: string): unknown {
  * A gzipped JSON file by NAME within a Drive folder, or `null` when there is none.
  * Throws — naming the file — when the content cannot be parsed as JSON.
  */
-export function readGzJson(folder: GoogleAppsScript.Drive.Folder, name: string): unknown | null {
+export function readGzJson(
+  folder: GoogleAppsScript.Drive.Folder,
+  name: string,
+  label = "archiveRead",
+): unknown | null {
+  // Timed to the execution log — this is the one door every gz-JSON read on a page's path goes
+  // through (snapshot, slim, read-model files). `fileMs` is finding the file and fetching its
+  // blob, `parseMs` ungzip + text + parse, split into its three parts. A throw (corrupt file)
+  // logs nothing and propagates exactly as before.
+  const t0 = Date.now();
   const it = folder.getFilesByName(name);
-  if (!it.hasNext()) return null;
-  return parseGzBlob(it.next().getBlob(), name);
+  if (!it.hasNext()) {
+    console.log(JSON.stringify({ stage: "drive", label, name, found: false, ms: Date.now() - t0 }));
+    return null;
+  }
+  const blob = it.next().getBlob();
+  const t1 = Date.now();
+  const meta: ParseMeta = { bytes: 0, ungzipMs: 0, textMs: 0, jsonMs: 0 };
+  const parsed = parseGzBlob(blob, name, meta);
+  console.log(JSON.stringify({
+    stage: "drive", label, name, bytes: meta.bytes, fileMs: t1 - t0, parseMs: Date.now() - t1,
+    ungzipMs: meta.ungzipMs, textMs: meta.textMs, jsonMs: meta.jsonMs,
+  }));
+  return parsed;
 }
 
 /**
@@ -167,7 +204,7 @@ export function readGzJson(folder: GoogleAppsScript.Drive.Folder, name: string):
  * through it.
  */
 export function readGzJsonNamed(folder: Subfolder, name: string): unknown | null {
-  return readGzJson(subfolder(folder), name);
+  return readGzJson(subfolder(folder), name, "readModel");
 }
 
 /** Every file name in a subfolder. The input to a sweep. */
@@ -241,7 +278,10 @@ export function writeSlim(scanId: string, records: unknown[]): string {
 }
 
 export function readSlim(scanId: string): unknown[] | null {
-  const parsed = readGzJson(scanFolder(scanId), SLIM_NAME);
+  // The folder lookup is outside `readGzJson`'s own timing, so the whole read is timed here.
+  const t0 = Date.now();
+  const parsed = readGzJson(scanFolder(scanId), SLIM_NAME, "archiveRead:slim");
+  console.log(JSON.stringify({ stage: "driveTotal", label: "slim", ms: Date.now() - t0 }));
   return Array.isArray(parsed) ? parsed : null;
 }
 
@@ -311,7 +351,10 @@ export function writeLedgerSnapshot(state: LedgerState): void {
 
 /** The fast-read ledger copy, or null (missing/unreadable shape -> fall back to the tabs). */
 export function readLedgerSnapshot(): LedgerSnapshot | null {
-  const parsed = readGzJson(subfolder("snapshots"), SNAPSHOT_NAME);
+  // The folder lookup is outside `readGzJson`'s own timing, so the whole read is timed here.
+  const t0 = Date.now();
+  const parsed = readGzJson(subfolder("snapshots"), SNAPSHOT_NAME, "archiveRead:snapshot");
+  console.log(JSON.stringify({ stage: "driveTotal", label: "snapshot", ms: Date.now() - t0 }));
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
   const obj = parsed as Record<string, unknown>;
   return looksLikeLedgerState(obj) ? (obj as unknown as LedgerSnapshot) : null;

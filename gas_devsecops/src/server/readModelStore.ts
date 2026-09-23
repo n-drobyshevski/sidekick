@@ -178,7 +178,11 @@ export function durablyCached<T>(
   if (warming && touched) touched.add(readModelFileName(name, params));
 
   return cached(name, params, () => {
+    const t0 = Date.now();
     const hit = l2Read(name, params, version);
+    console.log(JSON.stringify({
+      stage: "l2", name, hit: hit.hit, why: hit.hit ? null : (hit.why ?? null), ms: Date.now() - t0,
+    }));
     if (hit.hit) return hit.value as T;
     const value = compute();
     // Writes only from the warm — see `warming` above.

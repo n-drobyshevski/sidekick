@@ -105,6 +105,15 @@ export function pyStr(v: unknown): string {
  * or null. Naive timestamps are treated as UTC, matching reconcile._parse.
  */
 export function parseTs(v: unknown): number | null {
+  // FAST PATH for the canonical shape every ledger column is written in ("…T…Z", second
+  // precision, see toIso): it needs neither the trim, the space normalization nor the
+  // no-timezone suffix below, so the two regex tests are pure overhead — and this runs once
+  // per timestamp per row per derivation. A NaN falls through to the general path, which
+  // answers the same. test/parseTs.test.ts pins the parity.
+  if (typeof v === "string" && v.length === 20 && v.charCodeAt(10) === 84 && v.charCodeAt(19) === 90) {
+    const t = Date.parse(v);
+    if (!Number.isNaN(t)) return t;
+  }
   const c = clean(v);
   if (c === null) return null;
   if (c instanceof Date) return isNaN(c.getTime()) ? null : c.getTime();

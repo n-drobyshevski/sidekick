@@ -286,11 +286,36 @@ export interface Bootstrap {
 }
 
 /**
+ * Consecutive laps of one request, logged as a single `{"stage": <stage>, <lap>: ms, …}` line to
+ * the execution log. Laps rather than a wrapper around each block so the timed code keeps its
+ * shape: each `lap(label)` records the time since the previous one (or since creation).
+ */
+function stageLaps(stage: string): { lap: (label: string) => void; log: () => void } {
+  let t = Date.now();
+  const ms: Record<string, number> = {};
+  return {
+    lap(label) {
+      const now = Date.now();
+      ms[label] = now - t;
+      t = now;
+    },
+    log() {
+      console.log(JSON.stringify({ stage, ...ms }));
+    },
+  };
+}
+
+/**
  * Everything the shell needs before it can draw: identity, credential state, the register's
  * vocabulary, and the freshness caption. One round trip, because the shell blocks on it.
+ *
+ * Its parts are timed to the execution log (`{"stage":"bootstrap",…}`), because doGet computes
+ * all of this inline on every page load (see main.ts) and the line is what says which part of
+ * the inline cost to cache first. test/api.test.ts pins the lap names.
  */
 export function bootstrap(_p?: unknown): ApiResult<Bootstrap> {
   return run(() => {
+  const laps = stageLaps("bootstrap");
   const scans = readAll(TABS.scans);
   // Pass 1: which sync is newest. Pass 2: every row of THAT sync. Two passes rather than one
   // because the winner is only known at the end, and a sync's rows are not adjacent on the tab.
@@ -340,18 +365,22 @@ export function bootstrap(_p?: unknown): ApiResult<Bootstrap> {
       scopes: rows.map((r) => ({ scope: r.scope, total: r.total, severities: r.severities })),
     };
   }
+  laps.lap("scans");
 
   const settings = loadSettings();
+  laps.lap("settings");
   // Unscoped by construction — `ledgerStore.loadBaseRows()` with no options is every scope,
   // every project. `scope.register` / `filterOptions.projectList` both read off this same
   // array so the register-wide side of the header can never disagree with itself.
   const allRows = ledgerStore.loadBaseRows();
+  laps.lap("baseRows");
   // ATTACHED BEFORE ANYTHING COUNTS. `_domain` is resolved on read and never persisted (see
   // domain/domainTag.ts), so every figure below — the catalogue, `shown`, `noDomain` — has to
   // be taken from rows that have already been through the join. Doing it once here is also
   // what keeps the register-wide side of the header self-consistent: `filterOptions.domainList`
   // and `scope.noDomain` read the same array.
   repoTags.attachRepoTags(allRows as unknown as Rec[]);
+  laps.lap("repoTags");
   const projectView = settings.projectView || null;
   const domainView = settings.domainView || null;
   // At most one of the two is ever set — `withProjectView`/`withDomainView` clear each other —
@@ -362,12 +391,31 @@ export function bootstrap(_p?: unknown): ApiResult<Bootstrap> {
     : domainView
       ? allRows.filter((r) => inDomain(r, domainView)).length
       : allRows.length;
+  const unattributed = unattributedCount(allRows);
+  const noDomain = noDomainCount(allRows);
+  const projectList = projectCatalogue(allRows);
+  const domainList = domainCatalogue(allRows);
+  laps.lap("catalogues");
+
+  // Hoisted out of the literal below only so each can be timed; the payload is unchanged.
+  const job = activeJob();
+  const activeJobSummary = job
+    ? jobSummarySlice(job, !isTerminalPhase(job.phase) && isStaleJob(job))
+    : null;
+  laps.lap("activeJob");
+  const hasCredentials = hasWizCredentials();
+  const wizVerifiedAt = getProp(PROP_KEYS.wizVerifiedAt);
+  const canEditAccess = canEditUsers();
+  const hubUrl = readHubUrl();
+  const syncProjectId = projectScope()?.[0] ?? null;
+  laps.lap("live");
+  laps.log();
 
   return {
     product: "Wiz Sidekick DevSecOps",
     buildId: BUILD_ID,
-    hasCredentials: hasWizCredentials(),
-    wizVerifiedAt: getProp(PROP_KEYS.wizVerifiedAt),
+    hasCredentials,
+    wizVerifiedAt,
     scopes: SCOPES,
     scopeLabels: SCOPE_LABELS,
     severityOrder: SEVERITY_ORDER,
@@ -375,27 +423,24 @@ export function bootstrap(_p?: unknown): ApiResult<Bootstrap> {
     effectiveSlaTargets: effectiveSlaTargets(settings),
     latestSync,
     lastScanByScope,
-    activeJob: (() => {
-      const job = activeJob();
-      return job ? jobSummarySlice(job, !isTerminalPhase(job.phase) && isStaleJob(job)) : null;
-    })(),
-    canEditAccess: canEditUsers(),
-    hubUrl: readHubUrl(),
+    activeJob: activeJobSummary,
+    canEditAccess,
+    hubUrl,
     settings,
     scope: {
       projectView: settings.projectView,
       domainView: settings.domainView,
       shown,
       register: allRows.length,
-      unattributed: unattributedCount(allRows),
-      noDomain: noDomainCount(allRows),
+      unattributed,
+      noDomain,
       // The FETCH scope, reported only — see `settingsLogic.ts`'s "TWO PROJECT SCOPES, TWO
       // HOMES". `projectScope()` is `[id] | null`; only the first element is ever set today.
-      syncProjectId: projectScope()?.[0] ?? null,
+      syncProjectId,
     },
     filterOptions: {
-      projectList: projectCatalogue(allRows),
-      domainList: domainCatalogue(allRows),
+      projectList,
+      domainList,
     },
   };
   });
@@ -696,14 +741,24 @@ function requestedScope(p?: unknown): Scope | null {
 export function getExecutivePage(p?: unknown): ApiResult {
   return run(() => {
     const params = modelParams(p);
+    // Each part timed to the execution log as one `{"stage":"executive",…}` line, in the order
+    // they run — the landing page's own attribution, beside entry.js's whole-RPC line.
+    // test/api.test.ts pins the lap names so a refactor cannot drop one.
+    const laps = stageLaps("executive");
     const exec = readModels.executiveModel(params);
+    laps.lap("executiveModel");
+    const mttr = execMttrSlice(readModels.mttrModel(params));
+    laps.lap("mttr");
+    const byScope = execGroupSlice(exec["byScope"]);
+    laps.lap("byScope");
+    laps.log();
     return {
       asOf: exec["asOf"],
       scope: exec["scope"],
       severities: exec["severities"],
       showNoFix: exec["showNoFix"],
-      mttr: execMttrSlice(readModels.mttrModel(params)),
-      byScope: execGroupSlice(exec["byScope"]),
+      mttr,
+      byScope,
       trackingSince: exec["trackingSince"],
       // Already minimal — a per-severity tally, a delta pair, the tier table and the coverage
       // caveat — so these four ship whole.
