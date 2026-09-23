@@ -6,6 +6,8 @@ import {
   GROUP_COLUMNS,
   ageBuckets,
   ageBucketsBy,
+  agingDistribution,
+  backlogSplit,
   concentration,
   exploitSummary,
   groupTree,
@@ -70,10 +72,14 @@ describe("exploitSummary", () => {
 });
 
 describe("ageBuckets", () => {
-  const row = (age_days: number | null, severity = "HIGH", status = "OPEN") => ({ severity, status, age_days });
+  // `observed` defaults true so every existing row here reads exactly as it did before the
+  // backlog split — an explicit `observed: false` is what the new tests below override.
+  const row = (age_days: number | null, severity = "HIGH", status = "OPEN", observed = true) => ({
+    severity, status, age_days, observed,
+  });
 
   it("buckets at the documented edges", () => {
-    const { perSev } = ageBuckets([
+    const { perSev, unobserved } = ageBuckets([
       row(0), row(7.0),        // bucket 0
       row(7.01), row(30.0),    // bucket 1
       row(30.5), row(90.0),    // bucket 2
@@ -81,10 +87,11 @@ describe("ageBuckets", () => {
     ]);
     expect(perSev.HIGH).toEqual([2, 2, 2, 2]);
     expect(AGE_BUCKET_LABELS).toHaveLength(4);
+    expect(unobserved).toBe(0);
   });
 
   it("skips resolved rows and null ages; splits per severity", () => {
-    const { perSev, totalOpen } = ageBuckets([
+    const { perSev, totalOpen, unobserved } = ageBuckets([
       row(5, "CRITICAL"),
       row(50, "LOW"),
       row(5, "HIGH", "RESOLVED"),
@@ -94,6 +101,96 @@ describe("ageBuckets", () => {
     expect(perSev.CRITICAL).toEqual([1, 0, 0, 0]);
     expect(perSev.LOW).toEqual([0, 0, 1, 0]);
     expect(perSev.HIGH).toBeUndefined();
+    expect(unobserved).toBe(0);
+  });
+
+  it("sets an unobserved open row aside — never bucketed, never folded into unaged", () => {
+    // Three open CRITICAL rows: one bucketed (age 5, bucket 0), one unaged (no age_days), one
+    // unobserved (age 999 — would be bucket 3 if it counted, but it must not).
+    const { perSev, totalOpen, unobserved } = ageBuckets([
+      row(5, "CRITICAL"),
+      row(null, "CRITICAL"),
+      row(999, "CRITICAL", "OPEN", false),
+    ]);
+    expect(perSev.CRITICAL).toEqual([1, 0, 0, 0]); // the 999-day row never reaches bucket 3
+    expect(totalOpen).toBe(1); // only the bucketed row
+    expect(unobserved).toBe(1);
+  });
+});
+
+describe("agingDistribution", () => {
+  const row = (age_days: number | null, severity = "CRITICAL", status = "OPEN", observed = true) => ({
+    severity, status, age_days, observed,
+  });
+
+  it("buckets observed open rows and reports unaged + unobserved apart", () => {
+    // Five CRITICAL rows: two bucketed (ages 3 and 40 -> buckets 0 and 2), one unaged (no
+    // age_days), one unobserved (age 999 -- would land in bucket 3 if counted, must not), one
+    // resolved (excluded from every count on this function, observed or not).
+    const { perSev, unaged, unobserved, totalOpen, slaEdge, slaEdgeExact } = agingDistribution([
+      row(3),
+      row(40),
+      row(null),
+      row(999, "CRITICAL", "OPEN", false),
+      row(1, "CRITICAL", "RESOLVED"),
+    ]);
+    expect(perSev.CRITICAL).toEqual([1, 0, 1, 0]); // 3d -> bucket 0, 40d -> bucket 2
+    expect(totalOpen).toBe(2); // the two bucketed rows only
+    expect(unaged).toBe(1); // the null-age open row
+    expect(unobserved).toBe(1); // the 999-day row, set aside before its age is even read
+    // 1 (unaged) + 2 (totalOpen) + 1 (unobserved) = 4, the whole open population; the
+    // resolved row is the fifth and plays no part in any of the three counts.
+    expect(unaged + totalOpen + unobserved).toBe(4);
+    // CRITICAL's SLA target is 7 days, exactly AGE_BUCKET_EDGES[0] -> bucket 0, exact.
+    expect(slaEdge.CRITICAL).toBe(0);
+    expect(slaEdgeExact.CRITICAL).toBe(true);
+  });
+
+  it("a severity with only unobserved open rows carries no perSev key at all", () => {
+    const { perSev, unaged, unobserved, totalOpen } = agingDistribution([
+      row(50, "CRITICAL", "OPEN", false),
+    ]);
+    expect(perSev.CRITICAL).toBeUndefined();
+    expect(unaged).toBe(0);
+    expect(totalOpen).toBe(0);
+    expect(unobserved).toBe(1);
+  });
+});
+
+describe("backlogSplit", () => {
+  const row = (over: Record<string, unknown> = {}) => ({
+    status: "OPEN", observed: true, asset_id: "a1", asset_name: "host-1", last_seen: null,
+    ...over,
+  });
+
+  it("splits open rows observed vs unobserved; resolved rows count toward neither", () => {
+    const split = backlogSplit([
+      row(),
+      row({ observed: false, asset_id: "a2", asset_name: "host-2", last_seen: "2026-01-01T00:00:00Z" }),
+      row({ status: "RESOLVED", observed: false }),
+    ]);
+    expect(split.observed).toBe(1);
+    expect(split.unobserved).toBe(1);
+    expect(split.unobservedAssets).toBe(1);
+    expect(split.unobservedSince).toBe("2026-01-01T00:00:00Z");
+  });
+
+  it("unobservedAssets counts DISTINCT assets, and unobservedSince is the newest last_seen among them", () => {
+    const split = backlogSplit([
+      row({ observed: false, asset_id: "a1", last_seen: "2026-01-01T00:00:00Z" }),
+      row({ observed: false, asset_id: "a1", last_seen: "2026-01-05T00:00:00Z" }), // same asset, later date
+      row({ observed: false, asset_id: "a2", last_seen: "2026-01-03T00:00:00Z" }),
+    ]);
+    expect(split.unobserved).toBe(3);
+    expect(split.unobservedAssets).toBe(2); // a1 and a2, not three rows
+    expect(split.unobservedSince).toBe("2026-01-05T00:00:00Z"); // the latest of the three
+  });
+
+  it("empty input, and an all-observed input, both report a null unobservedSince", () => {
+    expect(backlogSplit([])).toEqual({
+      observed: 0, unobserved: 0, unobservedAssets: 0, unobservedSince: null,
+    });
+    expect(backlogSplit([row()]).unobservedSince).toBeNull();
   });
 });
 
@@ -125,10 +222,12 @@ describe("movement", () => {
 
 describe("oldestOpen", () => {
   // Base-row shape the aggregation reads: age_days + status + cve/severity/asset_name/
-  // subscription_name and the server-attached _domain / _supportGroup.
+  // subscription_name and the server-attached _domain / _supportGroup. `observed` defaults
+  // true so every existing row here reads exactly as it did before the backlog split.
   const brow = (over: Record<string, unknown> = {}) => ({
     cve: "CVE-2024-0001", severity: "HIGH", status: "OPEN", asset_name: "web-1",
-    subscription_name: "sub-1", age_days: 10, _domain: "Payments", _supportGroup: "SG-A", ...over,
+    subscription_name: "sub-1", age_days: 10, observed: true,
+    _domain: "Payments", _supportGroup: "SG-A", ...over,
   });
 
   it("findings: sorted by age desc, capped at topN, resolved & null-age excluded", () => {
@@ -197,7 +296,29 @@ describe("oldestOpen", () => {
   });
 
   it("empty base yields empty lists", () => {
-    expect(oldestOpen([])).toEqual({ findings: [], byAsset: [], bySupportGroup: [], byDomain: [] });
+    expect(oldestOpen([])).toEqual({
+      findings: [], byAsset: [], bySupportGroup: [], byDomain: [], unobserved: 0,
+    });
+  });
+
+  it("sets an unobserved open row aside — ranked nowhere, counted once", () => {
+    const { findings, byAsset, byDomain, bySupportGroup, unobserved } = oldestOpen([
+      brow({ cve: "seen", age_days: 50 }),
+      // Would be the oldest of all by age, and would win every group — must appear nowhere.
+      brow({ cve: "dark", age_days: 9000, observed: false, asset_name: "host-dark" }),
+    ]);
+    expect(findings.map((f) => f.cve)).toEqual(["seen"]);
+    expect(byAsset.map((g) => g.key)).toEqual(["web-1"]);
+    expect(byDomain.map((g) => g.key)).toEqual(["Payments"]);
+    expect(bySupportGroup.map((g) => g.key)).toEqual(["SG-A"]);
+    expect(unobserved).toBe(1);
+  });
+
+  it("unobserved counts open rows only — resolved rows never enter it either way", () => {
+    const { unobserved } = oldestOpen([
+      brow({ status: "RESOLVED", observed: false, age_days: 999 }),
+    ]);
+    expect(unobserved).toBe(0);
   });
 });
 
@@ -361,11 +482,14 @@ describe("triageFunnel", () => {
 });
 
 describe("ageBucketsBy", () => {
+  // `observed: true` so the cross-check against `ageBuckets` below (which now filters on it)
+  // agrees for the reason the two SHOULD agree here — identical buckets — not because one
+  // silently excludes every row.
   const row = (over: Record<string, unknown> = {}) =>
-    ({ status: "OPEN", age_days: 3, severity: "CRITICAL", ...over }) as never;
+    ({ status: "OPEN", age_days: 3, severity: "CRITICAL", observed: true, ...over }) as never;
 
   it("buckets on an arbitrary key", () => {
-    const { perKey, totalOpen } = ageBucketsBy(
+    const { perKey, totalOpen, unobserved } = ageBucketsBy(
       [
         row({ age_days: 3, severity: "CRITICAL" }),
         row({ age_days: 20, severity: "CRITICAL" }),
@@ -376,12 +500,21 @@ describe("ageBucketsBy", () => {
     expect(perKey.CRITICAL).toEqual([1, 1, 0, 0]);
     expect(perKey.HIGH).toEqual([0, 0, 0, 1]);
     expect(totalOpen).toBe(3);
+    expect(unobserved).toBe(0);
   });
 
-  it("agrees with ageBuckets when keyed by severity", () => {
-    const rows = [row({ age_days: 1 }), row({ age_days: 45 }), row({ age_days: 400 })];
-    expect(ageBucketsBy(rows, (r: { severity: string }) => r.severity).perKey)
-      .toEqual(ageBuckets(rows).perSev);
+  it("agrees with ageBuckets when keyed by severity — perKey, totalOpen AND unobserved", () => {
+    const rows = [
+      row({ age_days: 1 }),
+      row({ age_days: 45 }),
+      row({ age_days: 400 }),
+      row({ age_days: 999, observed: false }), // must be set aside identically by both
+    ];
+    const byKey = ageBucketsBy(rows, (r: { severity: string }) => r.severity);
+    const bySev = ageBuckets(rows);
+    expect(byKey.perKey).toEqual(bySev.perSev);
+    expect(byKey.totalOpen).toBe(bySev.totalOpen);
+    expect(byKey.unobserved).toBe(bySev.unobserved);
   });
 
   it("skips rows with no finite age, so totalOpen can trail the open count", () => {
@@ -390,6 +523,22 @@ describe("ageBucketsBy", () => {
       () => "k",
     );
     expect(totalOpen).toBe(1);
+  });
+
+  it("sets an unobserved row aside before any key is read — one count, whatever the key stacks by", () => {
+    const { perKey, totalOpen, unobserved } = ageBucketsBy(
+      [
+        row({ age_days: 3, severity: "CRITICAL" }),
+        // Would land under a THIRD key ("HIGH") if it counted at all — must appear in no
+        // bucket under any key.
+        row({ age_days: 999, severity: "HIGH", observed: false }),
+      ],
+      (r: { severity: string }) => r.severity,
+    );
+    expect(perKey.HIGH).toBeUndefined();
+    expect(perKey.CRITICAL).toEqual([1, 0, 0, 0]);
+    expect(totalOpen).toBe(1);
+    expect(unobserved).toBe(1);
   });
 });
 

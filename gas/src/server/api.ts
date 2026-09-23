@@ -574,6 +574,10 @@ function insightsData(p?: unknown): Rec {
     // Movement's Persisting is filtered (it's derived from these base rows); New/Resolved/
     // Reopened come from scan-wide reconcile deltas and stay scan-wide (see movement()).
     movement: insights.movement(baseVisible, latestFlat, ledgerStore.loadScanRows().length),
+    // The open backlog split present-vs-unobserved, over the SAME baseVisible every block
+    // above reads — the one aggregate a hero stat or a KPI band reads instead of re-deriving
+    // the split from `aging.unobserved` or `oldest.unobserved`'s shape.
+    backlog: insights.backlogSplit(baseVisible as unknown as Parameters<typeof insights.backlogSplit>[0]),
   };
 }
 
@@ -654,7 +658,12 @@ function riskLadder(
       program.RISK_TIER_ORDER,
       { severities, hideNoFix: !showNoFix, includeOther: false },
     ),
-    agingTier: { perTier: agingTier.perKey, totalOpen: agingTier.totalOpen },
+    agingTier: {
+      perTier: agingTier.perKey,
+      totalOpen: agingTier.totalOpen,
+      // Same population `aging` (severity-keyed, below) sets aside — one filter, read twice.
+      unobserved: agingTier.unobserved,
+    },
     concentration: insights.concentration(recsVisible, ["asset", "cve", "supportGroup", "os"], 5),
     pastSla: openPastSla(actionableView(baseVisible as never)),
     medianOpenAge: insights.openAgeMedian(baseVisible as never),
@@ -690,7 +699,15 @@ const cachedInsightsData = (p?: unknown) =>
     // which reads as a register with nothing to do rather than as a cache miss. The key is
     // unchanged: both new figures are computed from `baseVisible`, the risk rule and the scan
     // log, every one of which the existing key already covers.
-    "insights7",
+    // "insights7" → "insights8": `aging` / `oldest` / `agingTier` now measure the OBSERVED
+    // backlog only and each publish the `unobserved` count they set aside (`agingTier` reads
+    // `insights.ageBucketsBy` directly, the same filter `aging` gets through `ageBuckets`); the
+    // payload also gained `backlog` (the aggregate present/unobserved split). A stale insights7
+    // entry has none of it, and `aging`/`oldest`/`agingTier` on it still count rows this
+    // version excludes — a fatter, WRONG backlog figure on THREE surfaces, not merely a
+    // missing one. The key is unchanged: `observed` comes off `baseVisible` rows themselves,
+    // already covered by the existing key's fields.
+    "insights8",
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
@@ -1287,7 +1304,11 @@ function mttrData(p?: unknown): Rec {
     vendorLatency: latencySummary(latencyRows, "detection"),
     disclosureLatency: latencySummary(latencyRows, "disclosure"),
   };
-  return { perSev, overall, slaPct, oldestDays, rowCount: rows.length, remediation };
+  // The open backlog split present-vs-unobserved, over the same `remRows` every block in
+  // `remediation` above measures — the one aggregate the hero's open count reads instead of
+  // re-deriving the split from `remediation.aging.unobserved` or `.openPastSla.unobserved`.
+  const backlog = insights.backlogSplit(remRows as unknown as Parameters<typeof insights.backlogSplit>[0]);
+  return { perSev, overall, slaPct, oldestDays, rowCount: rows.length, remediation, backlog };
 }
 
 // ------------------------------------------------------- program performance (P2P)
@@ -1687,7 +1708,16 @@ const cachedMttrData = (p?: unknown) =>
     // on every censored severity, and the whole aging section would render its "no open
     // findings to age yet" empty state over a register with a backlog. An absent section
     // reads as a measurement — "there is nothing here" — rather than as a cache age.
-    "mttr10",
+    // "mttr10" → "mttr11": the backlog split. `km` / `kmPerSev` / `kmFull` now censor an
+    // unobserved open row at its last sighting instead of at today (a changed VALUE, not just
+    // a changed shape — see `remediation.openAge`); `aging` and both `openPastSla` /
+    // `openPastSlaActionable` now measure the observed backlog only and each publish the
+    // `unobserved` count they set aside; the payload also gained `backlog` (the aggregate
+    // present/unobserved split). A stale mttr10 entry reports different KM statistics and a
+    // fatter, WRONG open-past-SLA than this version computes for the SAME rows — not a
+    // missing-field gap a reader could shrug off, an outright disagreement. The key is
+    // unchanged: `observed` / `seen_age_days` come off the base rows themselves.
+    "mttr11",
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
@@ -1711,8 +1741,14 @@ const cachedMttrTrendData = (p?: unknown) =>
   // "mttrTrend5" → "mttrTrend6": the reconstructed trend now scopes to the active domain /
   // Support group (was always whole-register); key gains domain + supportGroup so scopes cache
   // apart.
+  // "mttrTrend6" → "mttrTrend7": `km_median_days` now right-censors a still-open-as-of-d row
+  // at `min(d, last_seen)` instead of `d` itself (trend.censoredAsOf) — a row the scanner had
+  // already lost sight of by d no longer reads as open all the way to d. Same VALUE change as
+  // the hero's KM figures got from `BaseRow.observed`/`seen_age_days`; this is `durablyCached`
+  // (no TTL), so a stale mttrTrend6 entry would otherwise disagree with the hero forever, not
+  // just for an hour. The key is unchanged: `last_seen` comes off the same base rows.
   durablyCached(
-    "mttrTrend6",
+    "mttrTrend7",
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
@@ -1806,7 +1842,16 @@ const cachedMttrByDomainData = (p?: unknown) =>
     // by-asset split, so this entry is only ever reached with BOTH scopes empty. `supportGroup`
     // stays in the key anyway, matching the inert filter it keys: an entry that can only be
     // reached one way is not a reason to make it wrong for the other.
-    "mttrByDomain14",
+    //
+    // "mttrByDomain14" → "mttrByDomain15": `kmMedian` / `p90` (read off `kaplanMeier(rem)`) and
+    // `openPastSla` (read off `openPastSla(actionableView(rem))`) now censor / set aside an
+    // unobserved open row instead of treating it exactly like an observed one — a changed
+    // VALUE, same shape. `trend.kmPoints` (read off `kmMedianByGroupTrend`) moves the same way,
+    // capping a still-open row's censored age at its last sighting when the replay date is
+    // later than that (trend.censoredAsOf) — the table and the trend chart beside it must
+    // describe one estimate. Bump so a stale entry does not keep reporting the pre-split
+    // numbers on either.
+    "mttrByDomain15",
     {
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
       severities: readSeverities(p),
@@ -1823,7 +1868,10 @@ const cachedMttrBySupportGroupData = (p?: unknown) =>
     // "mttrBySupportGroup1" → "mttrBySupportGroup2": the payload dropped its always-zero
     // `excluded` block and the `domain` scope now resolves tag-first, so the rows a domain
     // scope selects can differ. Bump so no stale entry survives the persistent dataVersion.
-    "mttrBySupportGroup2",
+    // "mttrBySupportGroup2" → "mttrBySupportGroup3": same backlog-split value change as
+    // "mttrByDomain15" — `kmMedian` / `p90` / `openPastSla` now treat an unobserved open row
+    // differently from an observed one. Bump for the same reason.
+    "mttrBySupportGroup3",
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
@@ -1847,7 +1895,11 @@ const cachedMttrByAssetData = (p?: unknown) =>
     // `domain` is omitted and, unlike the by-domain entry's omission, needs no caveat at all:
     // `cachedMttrGroupSplit` reaches this only with `supportGroup` non-empty, `scopeKinds()`
     // makes the two scopes mutually exclusive, and `mttrByAssetData` reads no `domain` at all.
-    "mttrByAsset1",
+    //
+    // "mttrByAsset1" → "mttrByAsset2": same backlog-split value change as "mttrByDomain15" —
+    // `kmMedian` / `p90` / `openPastSla` now treat an unobserved open row differently from an
+    // observed one. Bump for the same reason.
+    "mttrByAsset2",
     {
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
       severities: readSeverities(p),
@@ -2687,7 +2739,12 @@ function executiveWeekTrend(p?: unknown): Rec | null {
 
 const cachedExecutiveWeekTrend = (p?: unknown) =>
   cached(
-    "execWeekTrend",
+    // "execWeekTrend" → "execWeekTrend2": both `current` and `previous` (kmMedianAsOf) now
+    // right-censor a still-open-as-of-d row at `min(d, last_seen)` instead of `d` itself
+    // (trend.censoredAsOf) — the same value change `mttrTrend7` got. A stale entry would
+    // compare two badge points built the OLD way against a hero that already reads the new
+    // one, for up to an hour after deploy.
+    "execWeekTrend2",
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),

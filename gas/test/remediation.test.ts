@@ -27,6 +27,9 @@ import { quantile, type Rec } from "../src/domain/util";
 // RemediationRow, so they also drop straight into openPastSla/kmMedian for the naive view).
 // A resolved row has an mttr on both clocks; an open row has an age on both. An awaiting row
 // is OPEN with null actionable fields — outside every clock, still in the open count.
+// `observed` defaults true (never false in either resolved helper — RESOLVED rows never reach
+// `openAge`'s observed branch) so every existing call site below reads exactly as it did
+// before the backlog split; `seen_age_days` defaults null for the same reason.
 const bRes = (mttr_days: number | null, mttr_actionable_days: number | null, severity = "HIGH") => ({
   severity,
   status: "RESOLVED",
@@ -35,12 +38,16 @@ const bRes = (mttr_days: number | null, mttr_actionable_days: number | null, sev
   mttr_actionable_days,
   actionable_age_days: null,
   awaiting_vendor_fix: false,
+  observed: true,
+  seen_age_days: null,
 });
 const bOpen = (
   age_days: number | null,
   actionable_age_days: number | null,
   awaiting_vendor_fix = false,
   severity = "HIGH",
+  observed = true,
+  seen_age_days: number | null = null,
 ) => ({
   severity,
   status: "OPEN",
@@ -49,21 +56,34 @@ const bOpen = (
   mttr_actionable_days: null,
   actionable_age_days,
   awaiting_vendor_fix,
+  observed,
+  seen_age_days,
 });
 
 // Ledger-base projections: a resolved row carries a finite mttr_days; an open row
 // carries a finite age_days and an open status. (severity | status | mttr_days | age_days.)
+// Same `observed`/`seen_age_days` defaults as bRes/bOpen above, for the same reason.
 const res = (mttr_days: number | null, severity = "HIGH") => ({
   severity,
   status: "RESOLVED",
   mttr_days,
   age_days: null,
+  observed: true,
+  seen_age_days: null,
 });
-const open = (age_days: number | null, severity = "HIGH", status = "OPEN") => ({
+const open = (
+  age_days: number | null,
+  severity = "HIGH",
+  status = "OPEN",
+  observed = true,
+  seen_age_days: number | null = null,
+) => ({
   severity,
   status,
   mttr_days: null,
   age_days,
+  observed,
+  seen_age_days,
 });
 
 describe("mttrPercentiles", () => {
@@ -304,6 +324,56 @@ describe("kaplanMeier", () => {
   }, 120_000);
 });
 
+// THE BACKLOG-SPLIT CENSORING CHANGE (published-figure test, not a quiet ride-along — see
+// remediation.ts's `openAge`). An unobserved open row is censored at its LAST SIGHTING
+// (`seen_age_days`), never at today's wall-clock `age_days` — the same treatment gas_ai's
+// issueSurvival.ts already gives a censored row. The contrast below uses one real scenario
+// (three findings the scanner lost sight of a few days after they opened, each still carrying
+// a 500-day wall-clock age) computed BOTH ways, so the size of the effect is visible rather
+// than asserted in the abstract.
+describe("kaplanMeier — censoring an unobserved row at its last sighting", () => {
+  // One resolved event at day 2, three open findings the scanner has lost — each 500 days old
+  // by the wall clock (age_days) but last actually seen 3 / 4 / 5 days after they opened
+  // (seen_age_days). `unobserved` toggles which figure `openAge` reads.
+  const scenario = (unobserved: boolean) => [
+    res(2),
+    open(500, "HIGH", "OPEN", !unobserved, 3),
+    open(500, "HIGH", "OPEN", !unobserved, 4),
+    open(500, "HIGH", "OPEN", !unobserved, 5),
+  ];
+
+  it("unobserved: censored at 3/4/5 (seen_age_days) — restrictionTime and the bound are 5, not 500", () => {
+    const km = kaplanMeier(scenario(true));
+    // events=[2], censored=[3,4,5] -> times=[2,3,4,5]. One distinct event time, t=2:
+    // atRisk = |{2,3,4,5} >= 2| = 4, d = 1, S(2) = 1*(1 - 1/4) = 0.75.
+    expect(km.curve).toEqual([{ t: 2, s: 0.75, atRisk: 4, events: 1 }]);
+    expect(km.events).toBe(1);
+    expect(km.censored).toBe(3);
+    expect(km.total).toBe(4);
+    // S never falls to <= 0.5, so there is no median — the bound is max(times) = 5, "> 5 d".
+    expect(km.median).toBeNull();
+    expect(km.restrictionTime).toBe(5);
+    expect(km.medianLowerBound).toBe(5);
+    // RMST to tau=5: 1*(2-0) + 0.75*(5-2) = 2 + 2.25 = 4.25. S(tau)=0.75>0, so truncated.
+    expect(km.mean).toBe(4.25);
+    expect(km.meanTruncated).toBe(true);
+  });
+
+  it("observed (the counterfactual): the SAME three findings censored at 500 instead — the bound balloons to 500", () => {
+    const km = kaplanMeier(scenario(false));
+    // events=[2], censored=[500,500,500] -> times=[2,500,500,500]. t=2: atRisk=4, d=1,
+    // S(2) = 0.75 — the same first point, because all three censoring times are still >= 2
+    // either way. Only the RESTRICTION TIME and everything measured against it move.
+    expect(km.curve).toEqual([{ t: 2, s: 0.75, atRisk: 4, events: 1 }]);
+    expect(km.median).toBeNull();
+    expect(km.restrictionTime).toBe(500);
+    expect(km.medianLowerBound).toBe(500); // "> 500 d" — the figure the split exists to correct
+    // RMST to tau=500: 1*(2-0) + 0.75*(500-2) = 2 + 373.5 = 375.5.
+    expect(km.mean).toBe(375.5);
+    expect(km.meanTruncated).toBe(true);
+  });
+});
+
 describe("kmQuantileFromCurve", () => {
   // Synthetic staircase with exact-binary survivals, so the threshold ties are float-clean (0.10
   // is not a binary fraction — a real KM product landing "on" 0.10 can drift either side of it).
@@ -364,6 +434,35 @@ describe("openPastSla", () => {
     expect(out.overall).toEqual({ open: 4, breached: 2, pct: 50 });
     expect(out.perSev.CRITICAL).toEqual({ open: 2, breached: 1, pct: 50, target: 7 });
     expect(out.perSev.MEDIUM).toEqual({ open: 1, breached: 1, pct: 100, target: 30 });
+    expect(out.unobserved).toBe(0);
+  });
+
+  it("sets an unobserved open row aside — never scored breached OR in-SLA, counted once", () => {
+    // CRITICAL target = 7. The unobserved row's age (900) would be a breach if it counted;
+    // it must move neither `open` nor `breached`, only `unobserved`.
+    const out = openPastSla([
+      open(10, "CRITICAL"), // 10 > 7 -> breached, observed
+      open(3, "CRITICAL"), // 3 <= 7 -> in SLA, observed
+      open(900, "CRITICAL", "OPEN", false), // unobserved -> set aside
+    ]);
+    expect(out.perSev.CRITICAL).toEqual({ open: 2, breached: 1, pct: 50, target: 7 });
+    expect(out.overall).toEqual({ open: 2, breached: 1, pct: 50 });
+    expect(out.unobserved).toBe(1);
+  });
+
+  it("an unobserved row is excluded by `observed` directly, not by openAge returning null — it usually has a finite seen_age_days", () => {
+    // seen_age_days = 2 is a perfectly finite, in-SLA-looking number; the row must still be
+    // set aside rather than scored in-SLA on the strength of it.
+    const out = openPastSla([open(50, "CRITICAL", "OPEN", false, 2)]);
+    expect(out.perSev).toEqual({});
+    expect(out.overall).toEqual({ open: 0, breached: 0, pct: null });
+    expect(out.unobserved).toBe(1);
+  });
+
+  it("resolved rows never count toward unobserved, whatever their observed flag says", () => {
+    const out = openPastSla([res(999, "CRITICAL")]); // observed: true by the res() default
+    expect(out.unobserved).toBe(0);
+    expect(openPastSla([{ ...res(999, "CRITICAL"), observed: false }]).unobserved).toBe(0);
   });
 });
 
@@ -395,9 +494,16 @@ describe("actionableView", () => {
       bOpen(40, null, true, "MEDIUM"), // awaiting: actionable fields null
     ];
     expect(actionableView(rows)).toEqual([
-      { severity: "CRITICAL", status: "RESOLVED", mttr_days: 3, age_days: null },
-      { severity: "HIGH", status: "OPEN", mttr_days: null, age_days: 8 },
-      { severity: "MEDIUM", status: "OPEN", mttr_days: null, age_days: null },
+      { severity: "CRITICAL", status: "RESOLVED", mttr_days: 3, age_days: null, observed: true, seen_age_days: null },
+      { severity: "HIGH", status: "OPEN", mttr_days: null, age_days: 8, observed: true, seen_age_days: null },
+      { severity: "MEDIUM", status: "OPEN", mttr_days: null, age_days: null, observed: true, seen_age_days: null },
+    ]);
+  });
+
+  it("observed / seen_age_days pass through from the source row unchanged", () => {
+    const rows = [bOpen(50, 8, false, "HIGH", false, 12)]; // unobserved, seen 12d ago
+    expect(actionableView(rows)).toEqual([
+      { severity: "HIGH", status: "OPEN", mttr_days: null, age_days: 8, observed: false, seen_age_days: 12 },
     ]);
   });
 });
@@ -444,6 +550,8 @@ describe("latencyView / latencySegments", () => {
     mttr_days: number | null;
     age_days: number | null;
     awaiting_vendor_fix: boolean;
+    observed: boolean;
+    seen_age_days: number | null;
   };
   const lat = (over: Partial<LatRow>): LatRow => ({
     severity: "HIGH",
@@ -457,9 +565,12 @@ describe("latencyView / latencySegments", () => {
     // same rows can be run through baseRowNoFix, the show-no-fix toggle's own predicate.
     awaiting_vendor_fix: false,
     // Carried so the SAME objects also feed the from-detection clock, which is what makes
-    // the differential test below a comparison rather than two unrelated numbers.
+    // the differential test below a comparison rather than two unrelated numbers. `observed`
+    // defaults true so the from-detection reading below is unaffected by the backlog split.
     mttr_days: null,
     age_days: null,
+    observed: true,
+    seen_age_days: null,
     ...over,
   });
 
@@ -500,7 +611,7 @@ describe("latencyView / latencySegments", () => {
       lat({ first_seen: "2026-07-10T00:00:00Z", fix_available_at: "2026-07-02T00:00:00Z" }),
     ];
     expect(latencyView(rows, "detection", NOW)).toEqual([
-      { severity: "HIGH", status: "RESOLVED", mttr_days: 0, age_days: null },
+      { severity: "HIGH", status: "RESOLVED", mttr_days: 0, age_days: null, observed: true, seen_age_days: null },
     ]);
     expect(latencySegments(rows, "detection", NOW)).toMatchObject({ events: 1, zeroAtOrigin: 1 });
   });
@@ -508,7 +619,7 @@ describe("latencyView / latencySegments", () => {
   it("a finding still awaiting a fix is censored at now, never dropped", () => {
     const rows = [lat({})]; // open, no fix, first seen 07-01; NOW is 08-01
     expect(latencyView(rows, "detection", NOW)).toEqual([
-      { severity: "HIGH", status: "OPEN", mttr_days: null, age_days: 31 },
+      { severity: "HIGH", status: "OPEN", mttr_days: null, age_days: 31, observed: true, seen_age_days: null },
     ]);
     expect(latencySegments(rows, "detection", NOW)).toMatchObject({ censored: 1, events: 0 });
   });
@@ -521,7 +632,7 @@ describe("latencyView / latencySegments", () => {
       lat({ status: "RESOLVED", resolved_at: "2026-07-11T00:00:00Z", mttr_days: 10 }),
     ];
     expect(latencyView(rows, "detection", NOW)).toEqual([
-      { severity: "HIGH", status: "OPEN", mttr_days: null, age_days: 10 },
+      { severity: "HIGH", status: "OPEN", mttr_days: null, age_days: 10, observed: true, seen_age_days: null },
     ]);
     expect(latencySegments(rows, "detection", NOW)).toMatchObject({
       closedBeforeFix: 1, censored: 0, events: 0,
@@ -820,6 +931,7 @@ describe("EOL findings excluded from the MTTR KPI", () => {
   // out — so with the toggle off, EOL findings no longer affect the KPI.
   const eolRow = {
     severity: "HIGH", status: "OPEN", mttr_days: null, age_days: 1000,
+    observed: true, seen_age_days: null,
     cve: "End-Of-life version of operating system",
   };
   const rows = [{ ...res(10), cve: "CVE-1" }, { ...res(20), cve: "CVE-2" }, eolRow];

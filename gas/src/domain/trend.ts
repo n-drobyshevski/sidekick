@@ -45,6 +45,27 @@ export function awaitingFixAsOf(
 }
 
 /**
+ * The instant a still-open-as-of-d row's duration may be measured to, capped at the last time
+ * this register actually saw it: `min(d, lastSeenMs)`.
+ *
+ * EVERY REPLAY THAT CENSORS AN OPEN ROW WAS TREATING `d` ITSELF AS THAT INSTANT — `d - first`
+ * — which is the SPECIAL CASE of this formula where `lastSeenMs >= d` (the row was still being
+ * returned by the scanner on or after the date being replayed). Once an asset goes quiet,
+ * `lastSeenMs < d` for every later replay date, and claiming the row was open all the way to
+ * `d` anyway is the exact mistake `ledgerCore.seen_age_days` exists to correct at "now" — this
+ * is that same correction applied at an arbitrary historical `d` instead of only today, so a
+ * hero KM figure (censored at last sighting) and a trend line built by replaying the same rows
+ * at earlier dates (this function) describe one estimate rather than two.
+ *
+ * `lastSeenMs === null` (a row with no reading to cap by — imported or compacted history)
+ * KEEPS today's behaviour, `d` itself, unchanged: there is nothing to cap WITH, not a signal
+ * that the row was seen through `d`. Exported for the trend spec.
+ */
+export function censoredAsOf(d: number, lastSeenMs: number | null): number {
+  return lastSeenMs !== null && lastSeenMs < d ? lastSeenMs : d;
+}
+
+/**
  * scans: rows with {ts, shape}; base: ledger+episode rows with {severity, first_seen,
  * resolved_at, mttr_days}. severities (optional) restricts to those + UNKNOWN.
  *
@@ -399,12 +420,13 @@ export function medianMttrByGroupTrend(
  * line chart's default (KM) series. For each saved flat-scan timestamp it replays the durable
  * ledger and computes, per group, the KM median over that group's rows: rows resolved as of
  * that instant (resolved_at <= ts) are events at their stored `mttr_days`; rows still open as
- * of ts (first_seen <= ts, not resolved by ts) are right-censored at age (ts − first_seen)/day.
- * The KM median is the smallest event time whose survival has fallen to <= 0.5
- * (kmMedianFromCurve over kmCurve — the same estimator the hero's `kaplanMeier` and the page
- * KM-median trend `withKmMedian` use, shared so the three can't drift), rounded to 3 decimals;
- * null before any event or when survival never reaches 0.5 (too much censoring) — matching the
- * "null until it has a resolution" leading-gap semantics of its naive sibling.
+ * of ts (first_seen <= ts, not resolved by ts) are right-censored at `censoredAsOf(ts, last)`
+ * — the last sighting, if that fell before `ts`, else `ts` itself. The KM median is the
+ * smallest event time whose survival has fallen to <= 0.5 (kmMedianFromCurve over kmCurve —
+ * the same estimator the hero's `kaplanMeier` and the page KM-median trend `withKmMedian`
+ * use, shared so the three can't drift), rounded to 3 decimals; null before any event or when
+ * survival never reaches 0.5 (too much censoring) — matching the "null until it has a
+ * resolution" leading-gap semantics of its naive sibling.
  *
  * Group value is `keyOf(r)`; blank/missing folds to "(none)"; values outside `groups` fold
  * into `otherLabel` (default "Other") when `includeOther` (default true), else drop. Every
@@ -417,8 +439,8 @@ export function medianMttrByGroupTrend(
  * GAS-first (no Python fixture parity — mirrors `medianMttrByGroupTrend` / `withKmMedian`): a
  * UI-only aggregation of the same durable rows, kept separate from `trendFromFrames`.
  *
- * scans: rows with {ts, shape}; base: ledger+episode rows with {first_seen, resolved_at,
- * mttr_days, severity, fix_available_at} plus whatever column `keyOf` reads.
+ * scans: rows with {ts, shape}; base: ledger+episode rows with {first_seen, last_seen,
+ * resolved_at, mttr_days, severity, fix_available_at} plus whatever column `keyOf` reads.
  */
 export function kmMedianByGroupTrend(
   scans: Rec[],
@@ -458,6 +480,7 @@ export function kmMedianByGroupTrend(
     const known = inGroup.has(value);
     return {
       first: parseTs(r["first_seen"]),
+      last: parseTs(r["last_seen"]),
       resolvedAt: parseTs(r["resolved_at"]),
       mttr: typeof r["mttr_days"] === "number" && !Number.isNaN(r["mttr_days"])
         ? (r["mttr_days"] as number)
@@ -487,10 +510,10 @@ export function kmMedianByGroupTrend(
           (times[r.group] ??= []).push(r.mttr);
         }
       } else if (r.first !== null && r.first <= ts.ms) {
-        // Open as of ts: right-censored at its current age — unless hiding no-fix rows and this
-        // one was still awaiting a vendor fix as of ts (not yet on the clock).
+        // Open as of ts: right-censored at censoredAsOf(ts, last) — unless hiding no-fix rows
+        // and this one was still awaiting a vendor fix as of ts (not yet on the clock).
         if (hideNoFix && awaitingFixAsOf(r.first, r.resolvedAt, r.fixAvail, ts.ms)) continue;
-        (times[r.group] ??= []).push((ts.ms - r.first) / DAY_MS);
+        (times[r.group] ??= []).push((censoredAsOf(ts.ms, r.last) - r.first) / DAY_MS);
       }
     }
     const byGroup: Record<string, number | null> = {};
@@ -578,11 +601,13 @@ export function trendFromBase(
  * "MTTR excl. fast lane" series. For each point date d it replays the durable base as of d:
  * rows resolved by d (resolved_at <= d) are events at their stored `mttr_days` (fixed once
  * resolved); rows still open as of d (first_seen <= d and not resolved by d) are right-
- * censored at age `(d − first_seen)/day`. The KM median is the smallest event time whose
- * survival has fallen to <= 0.5 (remediation.kmMedianFromCurve over remediation.kmCurve —
- * the same estimator the hero's kaplanMeier uses, shared so the two can't drift), rounded to
- * 3 decimals like `trendFromFrames`; null before any event or when survival never reaches 0.5
- * (too much censoring). Severity scoping matches every sibling here.
+ * censored at `censoredAsOf(d, last_seen)` — the last sighting, if that fell before `d`, else
+ * `d` itself, the same cap `kmMedianAsOf` and `kmMedianByGroupTrend` apply. The KM median is
+ * the smallest event time whose survival has fallen to <= 0.5
+ * (remediation.kmMedianFromCurve over remediation.kmCurve — the same estimator the hero's
+ * kaplanMeier uses, shared so the two can't drift), rounded to 3 decimals like
+ * `trendFromFrames`; null before any event or when survival never reaches 0.5 (too much
+ * censoring). Severity scoping matches every sibling here.
  *
  * GAS-first (no Python fixture parity — mirrors `withOpenPastSla`): a UI-only augmentation
  * of the same durable rows, kept out of the parity-tested `trendFromFrames`.
@@ -646,6 +671,7 @@ export function withKmMedian<T extends { date: string; reconstructed?: boolean }
   }
   const parsed = rows.map((r) => ({
     first: parseTs(r["first_seen"]),
+    last: parseTs(r["last_seen"]),
     resolvedAt: parseTs(r["resolved_at"]),
     mttr: typeof r["mttr_days"] === "number" && !Number.isNaN(r["mttr_days"])
       ? (r["mttr_days"] as number)
@@ -672,10 +698,10 @@ export function withKmMedian<T extends { date: string; reconstructed?: boolean }
             times.push(r.mttr);
           }
         } else if (r.first !== null && r.first <= d) {
-          // Open as of d: right-censored at its current age — unless hiding no-fix rows and
-          // this one was still awaiting a vendor fix as of d (not yet on the clock).
+          // Open as of d: right-censored at censoredAsOf(d, last) — unless hiding no-fix rows
+          // and this one was still awaiting a vendor fix as of d (not yet on the clock).
           if (hideNoFix && awaitingFixAsOf(r.first, r.resolvedAt, r.fixAvail, d)) continue;
-          times.push((d - r.first) / DAY_MS);
+          times.push((censoredAsOf(d, r.last) - r.first) / DAY_MS);
         }
       }
       med = kmMedianFromCurve(kmCurve(events, times));
@@ -690,10 +716,12 @@ export function withKmMedian<T extends { date: string; reconstructed?: boolean }
  * executive week-over-week badge — doesn't reconstruct a whole trend series just to read two points.
  * Same estimator (`kmCurve` → `kmMedianFromCurve`, shared so the two can't drift) and the same as-of
  * predicate `withKmMedian` uses: rows resolved by d are events at their stored `mttr_days`; rows open
- * as of d (first_seen ≤ d, not resolved by d) are right-censored at their age; with `hideNoFix`, an
- * open row still awaiting a vendor fix as of d drops from the risk set. `severities` (optional)
- * restricts to those + UNKNOWN. Returns the median in days (3 dp) or null when the curve never
- * reaches 0.5, there are no rows, or `d` is null.
+ * as of d (first_seen ≤ d, not resolved by d) are right-censored at `censoredAsOf(d, last_seen)` —
+ * the same cap `withKmMedian` and `kmMedianByGroupTrend` apply, so a hero built from `kaplanMeier`
+ * (censored at last sighting) and a week-over-week badge built by replaying two dates here describe
+ * one estimate, not two; with `hideNoFix`, an open row still awaiting a vendor fix as of d drops
+ * from the risk set. `severities` (optional) restricts to those + UNKNOWN. Returns the median in
+ * days (3 dp) or null when the curve never reaches 0.5, there are no rows, or `d` is null.
  */
 export function kmMedianAsOf(
   base: Rec[],
@@ -725,7 +753,8 @@ export function kmMedianAsOf(
     const first = parseTs(r["first_seen"]);
     if (first !== null && first <= d) {
       if (hideNoFix && awaitingFixAsOf(first, resolvedAt, parseTs(r["fix_available_at"]), d)) continue;
-      times.push((d - first) / DAY_MS);
+      const last = parseTs(r["last_seen"]);
+      times.push((censoredAsOf(d, last) - first) / DAY_MS);
     }
   }
   const med = kmMedianFromCurve(kmCurve(events, times));

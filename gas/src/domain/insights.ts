@@ -116,40 +116,73 @@ export function exploitSummary(records: Rec[]): ExploitSummary {
 export interface AgeBuckets {
   perSev: Record<string, [number, number, number, number]>;
   totalOpen: number;
+  /**
+   * Open rows excluded because the asset was not present at the newest scan of the row's own
+   * severity (`BaseRow.observed`) — the blind spot `coldZone.ts` already refuses to call
+   * fixed. Never folded into a bucket and never dropped silently, same precedent as `unaged`
+   * on `agingDistribution` beside it.
+   */
+  unobserved: number;
 }
 
 /**
- * Age distribution of still-open findings, bucketed 0-7 / 8-30 / 31-90 / 90+ days.
- * Input is ledger base rows because age_days derives from the durable first_seen
- * (survives re-detection); rows without an age (resolved, or missing first_seen)
- * are skipped.
+ * Age distribution of still-open findings, bucketed 0-7 / 8-30 / 31-90 / 90+ days, keyed by
+ * severity. `ageBucketsBy` (below) does the actual work, including the observed-only filter
+ * and the `unobserved` count — this is that function with the key fixed to
+ * `normalizeSeverity(severity)`, kept as its own export because "by severity" is what every
+ * caller but one (the risk-tier picture) wants.
  */
 export function ageBuckets(
-  rows: Pick<BaseRow, "severity" | "status" | "age_days">[],
+  rows: Pick<BaseRow, "severity" | "status" | "age_days" | "observed">[],
 ): AgeBuckets {
-  const { perKey, totalOpen } = ageBucketsBy(rows, (r) =>
+  const { perKey, totalOpen, unobserved } = ageBucketsBy(rows, (r) =>
     normalizeSeverity(r.severity),
   );
-  return { perSev: perKey, totalOpen };
+  return { perSev: perKey, totalOpen, unobserved };
 }
 
-/** The same four buckets over an arbitrary key, so the histogram can stack by risk tier
- *  instead of by severity — which is the whole point on a register that scans one severity.
- *  `ageBuckets` is this function with the key fixed to severity; both skip rows with no
- *  finite age, so `totalOpen` here can be lower than the open count shown elsewhere. */
+/**
+ * The same four buckets over an arbitrary key, so the histogram can stack by risk tier
+ * instead of by severity — which is the whole point on a register that scans one severity.
+ * `ageBuckets` is this function with the key fixed to severity.
+ *
+ * OBSERVED OPEN ROWS ONLY feed the buckets, whatever the key — an unobserved row's age is a
+ * measure of how long nobody has looked, not of live exposure, and that is a fact about the
+ * ROW, never about which key it happens to be grouped under. The excluded count is
+ * `unobserved`, never a silent drop; a row with no finite age (resolved, or missing
+ * first_seen) is dropped from `totalOpen` too but not counted anywhere — see the aging
+ * distribution below for the sibling that also tracks that population (`unaged`). Both skip
+ * rows with no finite age, so `totalOpen` here can be lower than the open count shown
+ * elsewhere.
+ *
+ * ONE FILTER, EVERY CALLER — the risk-tier aging picture on the Overview page
+ * (`api.ts`'s `agingTier`) calls this directly rather than through `ageBuckets`, and it reads
+ * the SAME observed population `ageBuckets` does: two aging pictures on one page must measure
+ * one population, or a reader comparing them is comparing two different questions that happen
+ * to share axis labels.
+ */
 export function ageBucketsBy<
-  T extends { status: string; age_days: number | null },
+  T extends { status: string; age_days: number | null; observed: boolean },
 >(
   rows: T[],
   keyOf: (row: T) => string,
 ): {
   perKey: Record<string, [number, number, number, number]>;
   totalOpen: number;
+  /** Open rows excluded because the asset was not present at the newest scan of the row's
+   *  own severity (`BaseRow.observed`) — set aside before a key is even read, so it is one
+   *  number regardless of how many keys the caller stacks by. */
+  unobserved: number;
 } {
   const perKey: Record<string, [number, number, number, number]> = {};
   let totalOpen = 0;
+  let unobserved = 0;
   for (const row of rows) {
     if (!isOpen(row.status)) continue;
+    if (!row.observed) {
+      unobserved += 1;
+      continue;
+    }
     const age = row.age_days;
     if (typeof age !== "number" || !Number.isFinite(age)) continue;
     const bucket =
@@ -165,7 +198,7 @@ export function ageBucketsBy<
     perKey[k][bucket] += 1;
     totalOpen += 1;
   }
-  return { perKey, totalOpen };
+  return { perKey, totalOpen, unobserved };
 }
 
 // ------------------------------------------------------------------- the aging distribution
@@ -204,6 +237,14 @@ export interface AgingDistribution {
   perSev: Record<string, [number, number, number, number]>;
   /** Open rows with no finite `age_days`. Never folded into a bucket, never dropped. */
   unaged: number;
+  /**
+   * Open rows excluded because the asset was not present at the newest scan of the row's own
+   * severity (`BaseRow.observed`) — same population `coldZone.ts` calls unobserved, counted
+   * apart for the same reason `unaged` is: `totalOpen + unaged + unobserved` is the whole open
+   * population, and a bar chart drawn from `perSev` alone would silently shrink the backlog it
+   * claims to show.
+   */
+  unobserved: number;
   /** Rows actually bucketed. `totalOpen + unaged` is the open population. */
   totalOpen: number;
   /** Per severity: the bucket its SLA deadline lands in; null where no target exists. */
@@ -260,16 +301,23 @@ export function slaEdgeIsExact(severity: unknown): boolean {
 /**
  * Open findings by age bucket and severity, with the unaged remainder and the SLA edge.
  * Open rows only — a resolved finding has stopped ageing, and its lifetime is the survival
- * curve's subject, not this one's.
+ * curve's subject, not this one's. OBSERVED ROWS ONLY feed the buckets and `unaged`; a row
+ * whose asset the scanner has stopped returning is set aside into `unobserved` before its age
+ * is even read, because a stale open finding's age is silence, not exposure.
  */
 export function agingDistribution(
-  rows: Pick<BaseRow, "severity" | "status" | "age_days">[],
+  rows: Pick<BaseRow, "severity" | "status" | "age_days" | "observed">[],
 ): AgingDistribution {
   const perSev: Record<string, [number, number, number, number]> = {};
   let unaged = 0;
+  let unobserved = 0;
   let totalOpen = 0;
   for (const row of rows) {
     if (!isOpen(row.status)) continue;
+    if (!row.observed) {
+      unobserved += 1;
+      continue;
+    }
     const s = normalizeSeverity(row.severity);
     if (!perSev[s]) perSev[s] = [0, 0, 0, 0];
     const age = row.age_days;
@@ -303,6 +351,7 @@ export function agingDistribution(
     labels: [...AGE_BUCKET_LABELS],
     perSev,
     unaged,
+    unobserved,
     totalOpen,
     slaEdge,
     slaTargets,
@@ -337,6 +386,13 @@ export interface OldestOpen {
   byAsset: OldestGroup[];
   bySupportGroup: OldestGroup[];
   byDomain: OldestGroup[];
+  /**
+   * Open rows excluded because the asset was not present at the newest scan of the row's own
+   * severity (`BaseRow.observed`) — the same set-aside population `ageBuckets` and
+   * `agingDistribution` publish, so all three backlog surfaces report one blind spot rather
+   * than three chances to disagree about its size.
+   */
+  unobserved: number;
 }
 
 type OldestRow = Pick<
@@ -347,14 +403,21 @@ type OldestRow = Pick<
   | "asset_name"
   | "subscription_name"
   | "age_days"
+  | "observed"
 > & {
   _domain?: unknown;
   _supportGroup?: unknown;
 };
 
-/** Finite age of an open row, or null when resolved / missing (skipped by callers). */
+/**
+ * Finite age of an open, OBSERVED row, or null when resolved / missing / unobserved (skipped
+ * by callers). An unobserved row is set aside rather than ranked — see `OldestOpen.unobserved`
+ * — because ranking it as "oldest" would put a blind spot at the top of a list meant to show
+ * where to look next.
+ */
 function openAge(row: OldestRow): number | null {
   if (!isOpen(row.status)) return null;
+  if (!row.observed) return null;
   const age = row.age_days;
   return typeof age === "number" && Number.isFinite(age) ? age : null;
 }
@@ -444,6 +507,60 @@ export function oldestOpen(rows: OldestRow[], topN = 7): OldestOpen {
       topN,
     ),
     byDomain: rankGroups(rows, (r) => String(r._domain ?? ""), topN),
+    unobserved: rows.filter((r) => isOpen(r.status) && !r.observed).length,
+  };
+}
+
+export interface BacklogSplit {
+  /** Open rows present at the newest scan of their own severity. */
+  observed: number;
+  /** Open rows the scanner has stopped returning — see `BaseRow.observed`. */
+  unobserved: number;
+  /** Distinct assets those unobserved rows sit on. */
+  unobservedAssets: number;
+  /**
+   * ISO of the newest `last_seen` among the unobserved rows — the date the blind spot
+   * starts. Null when there is nothing unobserved to date.
+   */
+  unobservedSince: string | null;
+}
+
+/**
+ * The open backlog split into present-vs-unobserved, ONE FIGURE for any page that shows an
+ * open count. `ageBuckets` / `agingDistribution` / `oldestOpen` each publish their own
+ * `unobserved` counter beside the figure it qualifies (a bar chart, a ranked list); this is
+ * the single aggregate a hero stat or a KPI band reads instead of re-deriving the same split
+ * from a shape it was never handed. Same predicate as all three — `BaseRow.observed` — so a
+ * reader comparing this number against theirs is comparing one count to itself.
+ */
+export function backlogSplit(
+  rows: Pick<BaseRow, "status" | "observed" | "asset_id" | "asset_name" | "last_seen">[],
+): BacklogSplit {
+  let observed = 0;
+  let unobserved = 0;
+  const assets = new Set<string>();
+  let sinceMs: number | null = null;
+  let sinceIso: string | null = null;
+  for (const row of rows) {
+    if (!isOpen(row.status)) continue;
+    if (row.observed) {
+      observed += 1;
+      continue;
+    }
+    unobserved += 1;
+    const assetKey = row.asset_id ?? row.asset_name;
+    if (assetKey !== null && assetKey !== undefined) assets.add(String(assetKey));
+    const seen = parseTs(row.last_seen);
+    if (seen !== null && (sinceMs === null || seen > sinceMs)) {
+      sinceMs = seen;
+      sinceIso = row.last_seen;
+    }
+  }
+  return {
+    observed,
+    unobserved,
+    unobservedAssets: assets.size,
+    unobservedSince: sinceIso,
   };
 }
 

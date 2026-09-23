@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   awaitingFixAsOf,
+  censoredAsOf,
   cohortSlaAttainment,
   kmSkipMask,
   kmMedianAsOf, kmMedianByGroupTrend, medianMttrByGroupTrend,
@@ -46,6 +47,20 @@ describe("awaitingFixAsOf", () => {
   });
   it("open now, resolves after d, no fix -> still awaiting as of d", () => {
     expect(awaitingFixAsOf(5, 20, null, 10)).toBe(true);
+  });
+});
+
+describe("censoredAsOf", () => {
+  // Millisecond scalars keep the arithmetic legible, matching awaitingFixAsOf's own style.
+  it("last_seen before d -> capped at last_seen (the row went quiet before the replay date)", () => {
+    expect(censoredAsOf(10, 3)).toBe(3);
+  });
+  it("last_seen on or after d -> d itself, unchanged (today's code was this special case)", () => {
+    expect(censoredAsOf(10, 10)).toBe(10); // exactly d
+    expect(censoredAsOf(10, 15)).toBe(10); // after d
+  });
+  it("no last_seen at all -> d itself, unchanged (nothing to cap WITH, not a green light)", () => {
+    expect(censoredAsOf(10, null)).toBe(10);
   });
 });
 
@@ -487,6 +502,43 @@ describe("kmMedianByGroupTrend", () => {
     expect(kmMedianByGroupTrend([], base, keyOf, groups)).toEqual([]);
     expect(kmMedianByGroupTrend(scans, [], keyOf, groups)).toEqual([]);
   });
+
+  // THE last_seen CAP (coordinator follow-up, same fix as remediation.openAge's
+  // observed/seen_age_days split but applied to a REPLAY: an open-as-of-d row is right-
+  // censored at censoredAsOf(d, last_seen), not at d itself, so this by-group KM trend and
+  // the by-group KM TABLE (remediationGroups' kaplanMeier, which already reads
+  // BaseRow.seen_age_days at "now") describe the same estimate rather than two.
+  it("caps a still-open row's censored age at last_seen when that fell before the replay date", () => {
+    // web: three events (2, 4, 9) plus two rows the scanner stopped seeing on 2026-01-04 —
+    // 3 days after they opened — replayed as of 2026-01-20 (19 days after they opened).
+    const base = [
+      res("web", 2, "2026-01-03T00:00:00Z"),
+      res("web", 4, "2026-01-05T00:00:00Z"),
+      res("web", 9, "2026-01-10T00:00:00Z"),
+      res("web", null, null, { last_seen: "2026-01-04T00:00:00Z" }),
+      res("web", null, null, { last_seen: "2026-01-04T00:00:00Z" }),
+    ];
+    const scan = { ts: "2026-01-20T00:00:00Z", shape: "flat" };
+    // Capped: censored age = 2026-01-04 - 2026-01-01 = 3 days (not 19). Risk set [2,4,9,3,3].
+    //   t=2: atRisk |{2,3,3,4,9}>=2| = 5, d=1 -> S = 1*(4/5) = 0.8.
+    //   t=4: atRisk |{2,3,3,4,9}>=4| = 2 (3 < 4 drops out TWICE), d=1 -> S = 0.8*(1/2) = 0.4.
+    //   0.4 <= 0.5 -> median 4.
+    expect(kmMedianByGroupTrend([scan], base, keyOf, groups)[0].byGroup.web).toBe(4);
+
+    // Uncapped counterfactual: no last_seen at all (the pre-fix behaviour, kept exactly for
+    // any row with nothing to cap by) — censored age = 2026-01-20 - 2026-01-01 = 19 days.
+    // Risk set [2,4,9,19,19].
+    //   t=2: atRisk 5, S=0.8.  t=4: atRisk 4 (4,9,19,19), S=0.8*(3/4)=0.6.
+    //   t=9: atRisk 3 (9,19,19), S=0.6*(2/3)=0.4 <= 0.5 -> median 9.
+    const baseNoLastSeen = [
+      res("web", 2, "2026-01-03T00:00:00Z"),
+      res("web", 4, "2026-01-05T00:00:00Z"),
+      res("web", 9, "2026-01-10T00:00:00Z"),
+      res("web", null, null),
+      res("web", null, null),
+    ];
+    expect(kmMedianByGroupTrend([scan], baseNoLastSeen, keyOf, groups)[0].byGroup.web).toBe(9);
+  });
 });
 
 describe("trendFromBase (backfill)", () => {
@@ -782,6 +834,31 @@ describe("withKmMedian", () => {
     expect(withKmMedian(points, b, null, { hideNoFix: true })[0].km_median_days).toBe(2);
   });
 
+  // THE last_seen CAP — same scenario and the same hand-computed medians (4 vs 9) as
+  // `kmMedianByGroupTrend`'s own capping test, so the two functions can be checked against
+  // each other by eye. `withKmMedian` is the overall (not per-group) series `mttrData`'s
+  // `remediation.km`/`kmFull` hero sits above, which is the exact pairing the coordinator
+  // named: the two must describe one estimate.
+  it("caps a still-open row's censored age at last_seen when that fell before the point date", () => {
+    const b = [
+      { severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-03T00:00:00Z", mttr_days: 2 },
+      { severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-05T00:00:00Z", mttr_days: 4 },
+      { severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-10T00:00:00Z", mttr_days: 9 },
+      { severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: null, mttr_days: null, last_seen: "2026-01-04T00:00:00Z" },
+      { severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: null, mttr_days: null, last_seen: "2026-01-04T00:00:00Z" },
+    ];
+    const points = [{ date: "2026-01-20T00:00:00Z" }];
+    // Same arithmetic as kmMedianByGroupTrend's capping test: capped age 3 (01-04 - 01-01) ->
+    // risk set [2,4,9,3,3] -> t=2 S=.8, t=4 atRisk 2 (3<4 drops twice) S=.8*.5=.4 <= .5 ->
+    // median 4.
+    expect(withKmMedian(points, b)[0].km_median_days).toBe(4);
+    // Same rows with last_seen stripped: uncapped age 19 (01-20 - 01-01) -> risk set
+    // [2,4,9,19,19] -> t=9 is the first crossing (S=.4) -> median 9. Proves the cap, not the
+    // rows themselves, moved the number.
+    const bNoLastSeen = b.map(({ last_seen: _drop, ...rest }) => rest);
+    expect(withKmMedian(points, bNoLastSeen)[0].km_median_days).toBe(9);
+  });
+
   describe("maxReconstructed sampling", () => {
     // A base whose events (as of a late date) give a stable KM median of 4, so every computed
     // point carries the same non-null value and only the compute/skip pattern varies.
@@ -885,5 +962,31 @@ describe("kmMedianAsOf", () => {
   it("returns null for no rows or a null date", () => {
     expect(kmMedianAsOf([], null, Date.parse("2026-01-10T00:00:00Z"))).toBeNull();
     expect(kmMedianAsOf(base, null, null)).toBeNull();
+  });
+
+  // THE last_seen CAP — the Executive week-over-week badge's own function, so this is the
+  // exact contradiction the coordinator named: without this, the badge would compare two
+  // points built the OTHER way from the hero and the trend line above.
+  it("caps a still-open row's censored age at last_seen — same numbers as withKmMedian's own capping test", () => {
+    const b: Rec[] = [
+      { severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-03T00:00:00Z", mttr_days: 2 },
+      { severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-05T00:00:00Z", mttr_days: 4 },
+      { severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-10T00:00:00Z", mttr_days: 9 },
+      { severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: null, mttr_days: null, last_seen: "2026-01-04T00:00:00Z" },
+      { severity: "HIGH", first_seen: "2026-01-01T00:00:00Z", resolved_at: null, mttr_days: null, last_seen: "2026-01-04T00:00:00Z" },
+    ];
+    const d = Date.parse("2026-01-20T00:00:00Z");
+    // Capped age 3 -> risk set [2,4,9,3,3] -> median 4 (arithmetic in the withKmMedian /
+    // kmMedianByGroupTrend capping tests above).
+    expect(kmMedianAsOf(b, null, d)).toBe(4);
+    // Uncapped counterfactual (last_seen stripped) -> age 19 -> risk set [2,4,9,19,19] ->
+    // median 9.
+    const bNoLastSeen = b.map(({ last_seen: _drop, ...rest }) => rest);
+    expect(kmMedianAsOf(bNoLastSeen, null, d)).toBe(9);
+    // And it still matches withKmMedian point-for-point WITH last_seen in play, not only
+    // without it — the property the first test in this block pins, extended to the new code
+    // path so the two functions can't quietly diverge under the cap.
+    expect(withKmMedian([{ date: "2026-01-20T00:00:00Z" }], b)[0].km_median_days)
+      .toBe(kmMedianAsOf(b, null, d));
   });
 });

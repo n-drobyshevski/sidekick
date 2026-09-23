@@ -10,7 +10,7 @@ import { DISAPPEARANCE_RESOLUTION, REMEDIATION_ROLLOUT_ISO, SEVERITY_ORDER } fro
 import { parseSeverities, serializeSeverities } from "./compaction";
 import { reconcile, type Deltas, type LedgerRow, type Observation } from "./reconcile";
 import { normalizeSeverity } from "./severity";
-import { nowIso, parseTs, toIso, type Rec } from "./util";
+import { nowIso, parseTs, present, toIso, type Rec } from "./util";
 
 export interface ScanRow {
   scan_id: string;
@@ -113,6 +113,42 @@ export function prevScanIdBySeverity(scans: ScanRow[]): Record<string, string> |
     if (!remaining.size) break;
   }
   return Object.keys(mapping).length ? mapping : null;
+}
+
+/** The newest FLAT scan that covered one severity — what `rowReachesScan` tests a row against. */
+export interface NewestScan {
+  scan_id: string | null;
+  ts: string | number | Date | null;
+}
+
+/**
+ * ONE DEFINITION OF "DID WE SEE IT". Does this ONE row reach the newest flat scan of its own
+ * severity?
+ *
+ * `last_scan_id` is authoritative when present: an exact match against `newest.scan_id` is a
+ * sighting, anything else is not — and a blank `newest.scan_id` cannot match anything, so an
+ * id-less "newest" never counts as a match by id. A BLANK `last_scan_id` — an older, imported or
+ * compacted row that never recorded one — falls back to `last_seen >= newest.ts`, because the
+ * sighting can still be dated even without an id to compare.
+ *
+ * THIS IS THE ROW-LEVEL CORE ONLY. It says nothing about what "no `newest` at all" (a severity
+ * with no covering flat scan) should mean — that is undecidable and it is the CALLER's call,
+ * always resolved the same conservative way: observed (see `coldZone.isObserved`, which ORs this
+ * test across every severity an asset carries, and `baseRows` below, which calls it once per row
+ * with its own severity's entry). Two definitions of "did we see it" is the defect this function
+ * exists to prevent — a caller that needs a different verdict composes this one rather than
+ * writing its own comparison.
+ */
+export function rowReachesScan(
+  row: Pick<LedgerRow, "last_scan_id" | "last_seen">,
+  newest: NewestScan,
+): boolean {
+  if (present(row.last_scan_id)) {
+    return present(newest.scan_id) && String(row.last_scan_id) === String(newest.scan_id);
+  }
+  const newestTs = parseTs(newest.ts);
+  const lastSeen = parseTs(row.last_seen);
+  return newestTs !== null && lastSeen !== null && lastSeen >= newestTs;
 }
 
 /**
@@ -335,6 +371,8 @@ export function reinsertScanRow(state: LedgerState, row: ScanRow): void {
 
 export type BaseRow = LedgerRow & {
   mttr_days: number | null;
+  // now - first_seen for an open row; null once resolved. UNCHANGED BY THE SPLIT BELOW — a
+  // reader who is not looking for `observed` still gets exactly what they always got.
   age_days: number | null;
   // Actionable clock — the SLA/MTTR clock starts when a vendor fix is available, not at
   // detection. fix_available_at: when a fix first existed (legacy rows: first_seen, since
@@ -346,6 +384,21 @@ export type BaseRow = LedgerRow & {
   mttr_actionable_days: number | null;
   actionable_age_days: number | null;
   awaiting_vendor_fix: boolean;
+  // ----------------------------------------------------------------- the backlog split
+  // Present at the newest flat scan of its OWN severity — `rowReachesScan` run once per row
+  // against the caller's `newestScanBySeverity`. A severity absent from that map is
+  // undecidable and resolves to `true` (see `rowReachesScan`'s header): the conservative
+  // direction, never accusing an asset of vanishing on the strength of a missing scan row.
+  // Callers that pass no map at all (most of this codebase's own tests, and every caller that
+  // predates this field) get `true` on every row for the same reason — an empty map makes
+  // every severity undecidable, which is the same conservative default one row at a time.
+  observed: boolean;
+  // For an OPEN row, (last_seen - first_seen) in days: how long it was open WHILE WE COULD
+  // STILL SEE IT. Null once resolved (mirrors age_days's own null-when-resolved convention)
+  // and null when either date is missing. This is the KM censoring clock for a row that has
+  // gone quiet — `remediation.openAge` reads it in place of `age_days` when `observed` is
+  // false, so a stale open finding is censored at its last sighting rather than at today.
+  seen_age_days: number | null;
 };
 
 const DAY_MS = 86_400_000;
@@ -359,8 +412,21 @@ const ROLLOUT_MS = parseTs(REMEDIATION_ROLLOUT_ISO);
  * Ledger rows plus non-superseded episodes (keys without a live row) with computed
  * mttr_days / open age_days and the actionable-clock derivations. Episodes surface
  * with '(compacted)' placeholder fields.
+ *
+ * `newestScanBySeverity` is OPTIONAL and defaults to `{}` — every severity then reads as
+ * "no scan on record", which `rowReachesScan` resolves as observed. That is not a special
+ * case bolted on for callers who don't care: it is the same conservative "undecidable"
+ * default `rowReachesScan` gives any one missing severity, applied uniformly when the whole
+ * map is missing. Every existing caller of this function (most of this codebase's tests, the
+ * compaction stats-identity gate, the trend backfills) keeps reading `observed: true` on
+ * every row with no code change of its own. `server/ledgerStore.loadBaseRows` is the one
+ * caller that passes the real map, computed from the scans this state actually holds.
  */
-export function baseRows(state: LedgerState, now?: number): BaseRow[] {
+export function baseRows(
+  state: LedgerState,
+  now?: number,
+  newestScanBySeverity: Record<string, NewestScan> = {},
+): BaseRow[] {
   const nowMs = now ?? Date.now();
   const out: BaseRow[] = [];
   const withDerived = (row: LedgerRow): BaseRow => {
@@ -380,6 +446,16 @@ export function baseRows(state: LedgerState, now?: number): BaseRow[] {
       fixAvailMs === null ? null : first === null ? fixAvailMs : Math.max(first, fixAvailMs);
     const actionableFrom = actionableMs === null ? null : toIso(actionableMs);
 
+    // ONE ROW, ONE SEVERITY, ONE LOOKUP — the row-level twin of `coldZone.isObserved`'s
+    // per-asset OR across severities. A severity with no entry in the map is undecidable and
+    // resolves to observed; see `rowReachesScan`'s own header for why that is the right
+    // direction to be wrong in.
+    const newest = newestScanBySeverity[normalizeSeverity(row.severity)];
+    const observed = !newest || rowReachesScan(row, newest);
+
+    const last = parseTs(row.last_seen);
+    const seenAgeDays = open && first !== null && last !== null ? (last - first) / DAY_MS : null;
+
     return {
       ...row,
       mttr_days: first !== null && resolved !== null ? (resolved - first) / DAY_MS : null,
@@ -391,6 +467,8 @@ export function baseRows(state: LedgerState, now?: number): BaseRow[] {
       actionable_age_days:
         open && actionableMs !== null ? (nowMs - actionableMs) / DAY_MS : null,
       awaiting_vendor_fix: open && fixAvailableAt === null,
+      observed,
+      seen_age_days: seenAgeDays,
     };
   };
   for (const row of Object.values(state.ledger)) out.push(withDerived(row));
