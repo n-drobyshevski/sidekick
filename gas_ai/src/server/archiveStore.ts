@@ -108,9 +108,15 @@ export function writeGzJson(
  * deterministically: the name IS the key, so there is no id to remember anywhere.
  */
 export function readGzJsonNamed(folder: Subfolder, name: string): unknown | null {
+  const t0 = Date.now();
   const it = subfolder(folder).getFilesByName(name);
-  if (!it.hasNext()) return null;
-  return parseGzBlob(it.next().getBlob());
+  if (!it.hasNext()) {
+    console.log(JSON.stringify({ stage: "driveTotal", label: folder, name, found: false, ms: Date.now() - t0 }));
+    return null;
+  }
+  const parsed = parseGzBlob(it.next().getBlob(), `${folder}:${name}`);
+  console.log(JSON.stringify({ stage: "driveTotal", label: folder, name, ms: Date.now() - t0 }));
+  return parsed;
 }
 
 /** Every file name in a subfolder. The input to a sweep. */
@@ -147,14 +153,26 @@ export function readGzJsonFile(fileId: string): unknown | null {
   }
 }
 
-function parseGzBlob(blob: GoogleAppsScript.Base.Blob): unknown | null {
+// Every Drive gz-JSON read goes through here, so this is where it is timed to the execution log,
+// in the same line shape as gas/ and gas_devsecops: `fetchMs` is `getBytes` (on a Drive blob,
+// the download — measured in gas/ as most of a read), then the inflate, the bytes-to-string
+// decode and JSON.parse.
+function parseGzBlob(blob: GoogleAppsScript.Base.Blob, label = "archive"): unknown | null {
   try {
+    const t0 = Date.now();
     const bytes = blob.getBytes();
     const isGzip = bytes.length > 2 && (bytes[0] & 0xff) === 0x1f && (bytes[1] & 0xff) === 0x8b;
-    const text = isGzip
-      ? Utilities.ungzip(blob).getDataAsString("UTF-8")
-      : blob.getDataAsString("UTF-8");
-    return JSON.parse(text);
+    const t1 = Date.now();
+    const plain = isGzip ? Utilities.ungzip(blob) : blob;
+    const t2 = Date.now();
+    const text = plain.getDataAsString("UTF-8");
+    const t3 = Date.now();
+    const parsed = JSON.parse(text) as unknown;
+    console.log(JSON.stringify({
+      stage: "drive", label, bytes: bytes.length,
+      fetchMs: t1 - t0, ungzipMs: t2 - t1, textMs: t3 - t2, jsonMs: Date.now() - t3,
+    }));
+    return parsed;
   } catch (e) {
     console.warn(`Failed to parse archive blob: ${e}`);
     return null;
@@ -204,9 +222,11 @@ export function writeGraphSnapshot(doc: GraphDoc): string {
 
 /** The fast-read graph copy, or null (missing/unreadable → fall back to the tabs). */
 export function readGraphSnapshot(): GraphDoc | null {
+  const t0 = Date.now();
   const files = subfolder("snapshots").getFilesByName(SNAPSHOT_NAME);
   if (!files.hasNext()) return null;
-  const parsed = parseGzBlob(files.next().getBlob());
+  const parsed = parseGzBlob(files.next().getBlob(), "graphSnapshot");
+  console.log(JSON.stringify({ stage: "driveTotal", label: "graphSnapshot", ms: Date.now() - t0 }));
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
   const doc = parsed as GraphDoc;
   return Array.isArray(doc.nodes) && Array.isArray(doc.edges) ? doc : null;

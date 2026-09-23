@@ -594,12 +594,17 @@ function mapRows(headers: string[], rows: unknown[][]): Rec[] {
 
 /** All data rows of a tab as objects keyed by header name. */
 export function readAll(tab: string): Rec[] {
+  const t0 = Date.now();
   const sh = sheet(tab);
   const lastRow = sh.getLastRow();
   const lastCol = sh.getLastColumn();
   if (lastRow < 2 || lastCol < 1) return [];
   const values = readGrid(sh, tab, lastRow, lastCol);
-  return mapRows(values[0]!.map(String), values.slice(1));
+  const rows = mapRows(values[0]!.map(String), values.slice(1));
+  // Timed to the execution log beside the Drive reads, in gas/'s line shape. The first Sheets
+  // access in an execution also pays for opening the spreadsheet — measured in gas/ at 2–9 s.
+  console.log(JSON.stringify({ stage: "sheet", tab, rows: rows.length, ms: Date.now() - t0 }));
+  return rows;
 }
 
 /**

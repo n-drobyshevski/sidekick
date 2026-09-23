@@ -133,12 +133,34 @@ export interface IssueHalfLife extends KMResult {
  * rather than dividing by zero — reachable only when a censored observation ties it exactly.
  */
 export function kmCurve(events: readonly number[], times: readonly number[]): KMPoint[] {
+  // ONE SORT AND ONE SWEEP, NOT A SCAN PER EVENT TIME. This re-filtered both arrays for every
+  // distinct event time — O(distinct × n) — and survival times are fractional, so a real
+  // register's distinct count runs into the thousands. The same function in gas/ was measured
+  // in production at 27 s for two curves and at 19,265 ms → 47 ms per curve once rewritten
+  // (gas/ #320); gas_devsecops took the same fix.
+  //
+  // THE ANSWER IS BIT-FOR-BIT THE OLD ONE: the product still runs over the distinct event times
+  // in ascending order (a different order of the same factors can land one ULP apart). `atRisk`
+  // is "times >= t" and `d` is "events === t", read off the sorted arrays instead of counted by
+  // a scan. NaN is dropped from both — it never satisfied `>=` or `===` in the old filters — and
+  // `-0` is reported as `+0`, as the old `new Set(events)` did. test/kmCurveSweep.test.ts keeps
+  // the old implementation as its oracle.
+  const ev = events.filter((x) => !Number.isNaN(x)).sort((a, b) => a - b);
+  const ts = times.filter((x) => !Number.isNaN(x)).sort((a, b) => a - b);
   const curve: KMPoint[] = [];
   let s = 1;
-  for (const t of [...new Set(events)].sort((a, b) => a - b)) {
-    const atRisk = times.filter((x) => x >= t).length;
+  let j = 0; // first index of `ts` with ts[j] >= t
+  for (let i = 0; i < ev.length; ) {
+    // `+ 0` turns -0 into +0, as the old `new Set(events)` did (a Set stores -0 as +0).
+    const t = ev[i]! + 0;
+    let d = 0;
+    while (i < ev.length && ev[i] === t) {
+      d += 1;
+      i += 1;
+    }
+    while (j < ts.length && ts[j]! < t) j += 1;
+    const atRisk = ts.length - j;
     if (atRisk === 0) continue;
-    const d = events.filter((x) => x === t).length;
     s *= 1 - d / atRisk;
     curve.push({ t, s, atRisk, events: d });
   }

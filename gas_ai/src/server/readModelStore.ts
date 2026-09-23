@@ -27,7 +27,7 @@
 // untouched.
 
 import { listNames, readGzJsonNamed, trashNamed, writeGzJson, subfolder } from "./archiveStore";
-import { cached, currentStamp, paramsHash } from "./serverCache";
+import { cached, currentStamp, paramsHash, peekCached, primeCached } from "./serverCache";
 
 const FOLDER = "readmodels" as const;
 const ENVELOPE_V = 1;
@@ -173,13 +173,31 @@ export function durablyCached<T>(
   if (warming && touched) touched.add(readModelFileName(name, params));
 
   return cached(name, params, () => {
+    const t0 = Date.now();
     const hit = l2Read(name, params, version);
+    console.log(JSON.stringify({
+      stage: "l2", name, hit: hit.hit, why: hit.hit ? null : hit.why ?? null, ms: Date.now() - t0,
+    }));
     if (hit.hit) return hit.value as T;
     const value = compute();
     // Writes only from the warm — see `warming` above.
     if (warming) l2Write(name, params, version, value);
     return value;
   }, ttlSec, version);
+}
+
+/**
+ * What `durablyCached(name, params, …, version)` would return, but only if it is already stored
+ * — L1, then the durable file — and never by computing it: undefined means "cold". An L2 hit is
+ * promoted to L1 exactly as the read-through would. For doGet's inline bootstrap.
+ */
+export function durablyPeek(name: string, params: unknown, version?: string): unknown | undefined {
+  const l1 = peekCached(name, params, version);
+  if (l1 !== undefined) return l1;
+  const hit = l2Read(name, params, version);
+  if (!hit.hit) return undefined;
+  primeCached(name, params, hit.value, undefined, version);
+  return hit.value;
 }
 
 /**

@@ -42,6 +42,7 @@ var Server = (() => {
   __export(api_exports, {
     ISSUES_CLIENT_ALL_MAX: () => ISSUES_CLIENT_ALL_MAX,
     bootstrap: () => bootstrap,
+    bootstrapIfWarm: () => bootstrapIfWarm,
     cancelSync: () => cancelSync2,
     expandAsset: () => expandAsset,
     getAarsRule: () => getAarsRule3,
@@ -193,6 +194,10 @@ var Server = (() => {
     return present(v) ? v : null;
   }
   function parseTs(v) {
+    if (typeof v === "string" && v.length === 20 && v.charCodeAt(10) === 84 && v.charCodeAt(19) === 90) {
+      const t2 = Date.parse(v);
+      if (!Number.isNaN(t2)) return t2;
+    }
     const c = clean(v);
     if (c === null) return null;
     if (c instanceof Date) return isNaN(c.getTime()) ? null : c.getTime();
@@ -11264,12 +11269,21 @@ var Server = (() => {
   var CROSSING_EPSILON = 1e-9;
   var DAY_MS4 = 864e5;
   function kmCurve(events, times) {
+    const ev2 = events.filter((x) => !Number.isNaN(x)).sort((a, b) => a - b);
+    const ts = times.filter((x) => !Number.isNaN(x)).sort((a, b) => a - b);
     const curve = [];
     let s = 1;
-    for (const t of [...new Set(events)].sort((a, b) => a - b)) {
-      const atRisk = times.filter((x) => x >= t).length;
+    let j = 0;
+    for (let i = 0; i < ev2.length; ) {
+      const t = ev2[i] + 0;
+      let d = 0;
+      while (i < ev2.length && ev2[i] === t) {
+        d += 1;
+        i += 1;
+      }
+      while (j < ts.length && ts[j] < t) j += 1;
+      const atRisk = ts.length - j;
       if (atRisk === 0) continue;
-      const d = events.filter((x) => x === t).length;
       s *= 1 - d / atRisk;
       curve.push({ t, s, atRisk, events: d });
     }
@@ -11577,7 +11591,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "3c4c1c544609" : "dev";
+  var BUILD_ID = true ? "446400f7a635" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -11650,6 +11664,7 @@ var Server = (() => {
       entries[`${key}:${i}`] = c;
     });
     CacheService.getScriptCache().putAll(entries, ttlSec);
+    return json.length;
   }
   function cacheGetJson(key) {
     const cache = CacheService.getScriptCache();
@@ -11674,23 +11689,54 @@ var Server = (() => {
   }
   function cached(name, params, compute, ttlSec = DEFAULT_TTL_SEC, version) {
     let key = null;
+    const t0 = Date.now();
     try {
       key = cacheKey(name, params, `${version != null ? version : dataVersion()}.${configStamp()}`);
       const hit = cacheGetJson(key);
-      if (hit !== void 0) return hit;
+      if (hit !== void 0) {
+        console.log(JSON.stringify({ stage: "cache", name, hit: true, getMs: Date.now() - t0 }));
+        return hit;
+      }
     } catch (e) {
       console.warn(`Cache read failed for ${name}: ${e}`);
       key = null;
     }
+    const t1 = Date.now();
     const value = compute();
+    const t2 = Date.now();
+    let chars = 0;
     if (key) {
       try {
-        cachePutJson(key, value, ttlSec);
+        chars = cachePutJson(key, value, ttlSec);
       } catch (e) {
         console.warn(`Cache write failed for ${name}: ${e}`);
       }
     }
+    console.log(JSON.stringify({
+      stage: "cache",
+      name,
+      hit: false,
+      getMs: t1 - t0,
+      computeMs: t2 - t1,
+      putMs: Date.now() - t2,
+      chars
+    }));
     return value;
+  }
+  function peekCached(name, params, version) {
+    try {
+      return cacheGetJson(cacheKey(name, params, `${version != null ? version : dataVersion()}.${configStamp()}`));
+    } catch (e) {
+      console.warn(`Cache peek failed for ${name}: ${e}`);
+      return void 0;
+    }
+  }
+  function primeCached(name, params, value, ttlSec = DEFAULT_TTL_SEC, version) {
+    try {
+      cachePutJson(cacheKey(name, params, `${version != null ? version : dataVersion()}.${configStamp()}`), value, ttlSec);
+    } catch (e) {
+      console.warn(`Cache write failed for ${name}: ${e}`);
+    }
   }
 
   // src/server/sheetsDb.ts
@@ -12349,12 +12395,15 @@ var Server = (() => {
     return out;
   }
   function readAll(tab) {
+    const t0 = Date.now();
     const sh = sheet(tab);
     const lastRow = sh.getLastRow();
     const lastCol = sh.getLastColumn();
     if (lastRow < 2 || lastCol < 1) return [];
     const values = readGrid(sh, tab, lastRow, lastCol);
-    return mapRows(values[0].map(String), values.slice(1));
+    const rows = mapRows(values[0].map(String), values.slice(1));
+    console.log(JSON.stringify({ stage: "sheet", tab, rows: rows.length, ms: Date.now() - t0 }));
+    return rows;
   }
   function readTail(tab, n) {
     const sh = sheet(tab);
@@ -12792,9 +12841,15 @@ var Server = (() => {
     return folder.createFile(blob);
   }
   function readGzJsonNamed(folder, name) {
+    const t0 = Date.now();
     const it = subfolder(folder).getFilesByName(name);
-    if (!it.hasNext()) return null;
-    return parseGzBlob(it.next().getBlob());
+    if (!it.hasNext()) {
+      console.log(JSON.stringify({ stage: "driveTotal", label: folder, name, found: false, ms: Date.now() - t0 }));
+      return null;
+    }
+    const parsed = parseGzBlob(it.next().getBlob(), `${folder}:${name}`);
+    console.log(JSON.stringify({ stage: "driveTotal", label: folder, name, ms: Date.now() - t0 }));
+    return parsed;
   }
   function listNames(folder) {
     const out = [];
@@ -12818,12 +12873,27 @@ var Server = (() => {
       return null;
     }
   }
-  function parseGzBlob(blob) {
+  function parseGzBlob(blob, label = "archive") {
     try {
+      const t0 = Date.now();
       const bytes = blob.getBytes();
       const isGzip = bytes.length > 2 && (bytes[0] & 255) === 31 && (bytes[1] & 255) === 139;
-      const text = isGzip ? Utilities.ungzip(blob).getDataAsString("UTF-8") : blob.getDataAsString("UTF-8");
-      return JSON.parse(text);
+      const t1 = Date.now();
+      const plain = isGzip ? Utilities.ungzip(blob) : blob;
+      const t2 = Date.now();
+      const text = plain.getDataAsString("UTF-8");
+      const t3 = Date.now();
+      const parsed = JSON.parse(text);
+      console.log(JSON.stringify({
+        stage: "drive",
+        label,
+        bytes: bytes.length,
+        fetchMs: t1 - t0,
+        ungzipMs: t2 - t1,
+        textMs: t3 - t2,
+        jsonMs: Date.now() - t3
+      }));
+      return parsed;
     } catch (e) {
       console.warn(`Failed to parse archive blob: ${e}`);
       return null;
@@ -12846,9 +12916,11 @@ var Server = (() => {
     return writeGzJson(subfolder("snapshots"), SNAPSHOT_NAME, doc).getId();
   }
   function readGraphSnapshot() {
+    const t0 = Date.now();
     const files = subfolder("snapshots").getFilesByName(SNAPSHOT_NAME);
     if (!files.hasNext()) return null;
-    const parsed = parseGzBlob(files.next().getBlob());
+    const parsed = parseGzBlob(files.next().getBlob(), "graphSnapshot");
+    console.log(JSON.stringify({ stage: "driveTotal", label: "graphSnapshot", ms: Date.now() - t0 }));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
     const doc = parsed;
     return Array.isArray(doc.nodes) && Array.isArray(doc.edges) ? doc : null;
@@ -13283,12 +13355,29 @@ var Server = (() => {
   function durablyCached(name, params, compute, ttlSec, version) {
     if (warming && touched) touched.add(readModelFileName(name, params));
     return cached(name, params, () => {
+      var _a5;
+      const t0 = Date.now();
       const hit = l2Read(name, params, version);
+      console.log(JSON.stringify({
+        stage: "l2",
+        name,
+        hit: hit.hit,
+        why: hit.hit ? null : (_a5 = hit.why) != null ? _a5 : null,
+        ms: Date.now() - t0
+      }));
       if (hit.hit) return hit.value;
       const value = compute();
       if (warming) l2Write(name, params, version, value);
       return value;
     }, ttlSec, version);
+  }
+  function durablyPeek(name, params, version) {
+    const l1 = peekCached(name, params, version);
+    if (l1 !== void 0) return l1;
+    const hit = l2Read(name, params, version);
+    if (!hit.hit) return void 0;
+    primeCached(name, params, hit.value, void 0, version);
+    return hit.value;
   }
   function sweepReadModels() {
     if (disabled || !touched) return 0;
@@ -18398,24 +18487,38 @@ var Server = (() => {
     return { kind: "registerScope", persisted, current, remedy: "sync" };
   }
   function bootstrap(_p) {
-    return run(() => {
-      var _a5;
-      return {
-        ...durablyCached("bootstrapCore", null, bootstrapCore),
-        hasCredentials: hasWizCredentials(),
-        // OUTSIDE THE DURABLY-CACHED CORE, and that placement is the whole point. The hub URL is
-        // a Script Property an operator can change at any moment through Settings; nothing about
-        // it bumps the data version the cache is keyed on, so a copy inside `bootstrapCore` would
-        // keep serving the OLD address — or keep the header's button hidden — until some unrelated
-        // sync happened to invalidate the cache. Same reason `hasCredentials` and the build stamp
-        // sit out here.
-        hubUrl: readHubUrl(),
-        // Outside the cached core on purpose: a cached build stamp would be the one thing
-        // guaranteed to lie after a deploy.
-        build: buildInfo(),
-        activeJob: (_a5 = activeJob()) != null ? _a5 : null
-      };
-    });
+    return run(() => withLiveBootFields(durablyCached(BOOT_CORE, null, bootstrapCore)));
+  }
+  var BOOT_CORE = "bootstrapCore";
+  var bootstrapIfWarm = () => {
+    const t0 = Date.now();
+    const core = durablyPeek(BOOT_CORE, null);
+    const peekMs = Date.now() - t0;
+    if (core === void 0 || core === null || typeof core !== "object") {
+      console.log(JSON.stringify({ stage: "bootstrapIfWarm", hit: false, peekMs }));
+      return { ok: false, error: "bootstrap core is cold", errorKind: "cold" };
+    }
+    const res = run(() => withLiveBootFields(core));
+    console.log(JSON.stringify({ stage: "bootstrapIfWarm", hit: true, peekMs, liveMs: Date.now() - t0 - peekMs }));
+    return res;
+  };
+  function withLiveBootFields(core) {
+    var _a5;
+    return {
+      ...core,
+      hasCredentials: hasWizCredentials(),
+      // OUTSIDE THE DURABLY-CACHED CORE, and that placement is the whole point. The hub URL is
+      // a Script Property an operator can change at any moment through Settings; nothing about
+      // it bumps the data version the cache is keyed on, so a copy inside `bootstrapCore` would
+      // keep serving the OLD address — or keep the header's button hidden — until some unrelated
+      // sync happened to invalidate the cache. Same reason `hasCredentials` and the build stamp
+      // sit out here.
+      hubUrl: readHubUrl(),
+      // Outside the cached core on purpose: a cached build stamp would be the one thing
+      // guaranteed to lie after a deploy.
+      build: buildInfo(),
+      activeJob: (_a5 = activeJob()) != null ? _a5 : null
+    };
   }
   function bootstrapCore() {
     var _a5, _b, _c, _d;
@@ -20717,7 +20820,7 @@ var Server = (() => {
   // src/server/main.ts
   function doGet(_e) {
     const template = HtmlService.createTemplateFromFile("index");
-    template.bootJson = inlineBootJson(() => bootstrap());
+    template.bootJson = inlineBootJson(() => bootstrapIfWarm());
     return template.evaluate().setTitle("Wiz SIDEKICK AI").addMetaTag("viewport", "width=device-width, initial-scale=1").setXFrameOptionsMode(HtmlService.XFrameOptionsMode.DEFAULT);
   }
   function include(filename) {
