@@ -247,3 +247,117 @@ function probeLine(part, whole) {
   while (s.length < 8) s = ' ' + s;
   return s + probeShare(part, whole);
 }
+
+/**
+ * PROBE 2 — is the ledger watching vulnerabilities, or watching Wiz's records of them?
+ *
+ * The first probe found a median resolved lifetime of ONE DAY against an open backlog whose
+ * median age is six weeks, with 98.7% of resolutions arriving in same-instant batches on
+ * still-live assets and `resolution_src: api` on 99.3% of them. That shape has an innocent
+ * reading (fleet-wide patch runs) and a damning one: Wiz closes a finding record and issues a
+ * NEW id for the same vulnerability on the same asset, and `vulnKey` — which is `id:<node.id>`
+ * whenever an id exists, and one always does here — records that as a death and a birth.
+ *
+ * This tells the two apart. If the same (cve, asset) pair keeps reappearing within a day or
+ * two of being "resolved" — or worse, is reborn BEFORE its predecessor's resolved_at — then
+ * the half-life on the MTTR page is measuring record churn, not remediation, and it is
+ * measuring it optimistically.
+ *
+ * Run `probeIdentityChurn`. Read-only, like its sibling.
+ */
+function probeIdentityChurn() {
+  var started = Date.now();
+  var out = [];
+  var say = function (l) { out.push(l); };
+
+  var id = PropertiesService.getScriptProperties().getProperty('LEDGER_SPREADSHEET_ID');
+  if (!id) { Logger.log('LEDGER_SPREADSHEET_ID is not set on this project.'); return; }
+  var ss = SpreadsheetApp.openById(id);
+  var sh = ss.getSheetByName('vuln_ledger');
+  if (!sh) { Logger.log('No vuln_ledger tab.'); return; }
+
+  say('IDENTITY CHURN PROBE  ' + new Date().toISOString());
+  say('');
+  say('project scope in use: WIZ_PROJECT_ID_V2 = ' +
+    (PropertiesService.getScriptProperties().getProperty('WIZ_PROJECT_ID_V2') || '(unset)'));
+  say('');
+
+  // (cve|asset) -> episodes of that ONE vulnerability on that ONE asset, however many
+  // finding ids Wiz spent on it.
+  var pairs = {};
+  var rows = 0, keyed = 0, reopenedRows = 0, reopenTotal = 0;
+  var partial = probeStream(sh, ['vuln_key', 'cve', 'asset_id', 'first_seen', 'resolved_at', 'status', 'reopened_count'], started, function (r) {
+    rows++;
+    var cve = String(r.cve || '');
+    var asset = String(r.asset_id || '');
+    if (!cve || !asset) return;
+    keyed++;
+    var rc = Number(r.reopened_count || 0);
+    if (rc > 0) { reopenedRows++; reopenTotal += rc; }
+    var k = cve + '|' + asset;
+    var list = pairs[k] || (pairs[k] = []);
+    list.push({
+      f: probeMs(r.first_seen),
+      r: probeMs(r.resolved_at),
+      open: String(r.status || '').toUpperCase() !== 'RESOLVED',
+    });
+  });
+
+  // Walk each pair in birth order and look at what happened after every resolution.
+  var perPair = probeHist(), gapHist = probeHist();
+  var pairCount = 0, multi = 0, resolutions = 0;
+  var rebornSameDay = 0, reborn2d = 0, reborn7d = 0, rebornEver = 0, overlapped = 0;
+  var pairsOpenAndClosed = 0;
+
+  for (var k in pairs) {
+    var list = pairs[k];
+    pairCount++;
+    probeAdd(perPair, list.length);
+    if (list.length > 1) multi++;
+    var anyOpen = false, anyClosed = false;
+    for (var i = 0; i < list.length; i++) { if (list[i].open) anyOpen = true; else anyClosed = true; }
+    if (anyOpen && anyClosed) pairsOpenAndClosed++;
+
+    list.sort(function (a, b) { return (a.f || 0) - (b.f || 0); });
+    for (var j = 0; j < list.length; j++) {
+      if (list[j].r === null) continue;
+      resolutions++;
+      // The next record of the SAME vulnerability on the SAME asset, if any.
+      var next = j + 1 < list.length ? list[j + 1] : null;
+      if (next === null || next.f === null) continue;
+      rebornEver++;
+      var gapDays = (next.f - list[j].r) / 86400000;
+      if (gapDays < 0) overlapped++;      // born before its predecessor was closed
+      probeAdd(gapHist, Math.abs(gapDays));
+      if (gapDays <= 1) rebornSameDay++;
+      if (gapDays <= 2) reborn2d++;
+      if (gapDays <= 7) reborn7d++;
+    }
+  }
+
+  say('LEDGER');
+  say('  rows                       ' + rows + (partial ? '   *** PARTIAL: time budget hit ***' : ''));
+  say('  rows with cve AND asset    ' + keyed);
+  say('  distinct (cve, asset)      ' + pairCount);
+  say('  finding records per pair   p50 ' + probeMedianQ(perPair, 0.5) + '  p90 ' + probeMedianQ(perPair, 0.9) + '  max ' + probeMedianQ(perPair, 1));
+  say('  pairs with >1 record       ' + probeLine(multi, pairCount));
+  say('  pairs both open AND closed ' + probeLine(pairsOpenAndClosed, pairCount));
+  say('  rows carrying reopened>0   ' + reopenedRows + '   (total reopens counted: ' + reopenTotal + ')');
+  say('');
+  say('AFTER A RESOLUTION, DID THE SAME CVE COME BACK ON THE SAME ASSET?   (' + resolutions + ' resolutions)');
+  say('  came back at all           ' + probeLine(rebornEver, resolutions));
+  say('  came back within 1 day     ' + probeLine(rebornSameDay, resolutions));
+  say('  came back within 2 days    ' + probeLine(reborn2d, resolutions));
+  say('  came back within 7 days    ' + probeLine(reborn7d, resolutions));
+  say('  born BEFORE the old record closed ' + probeLine(overlapped, resolutions));
+  say('  median gap                 ' + probeMedian(gapHist) + ' d');
+  say('');
+  say('  A high "within 1 day" share, and any sizeable overlap, mean Wiz re-issued the');
+  say('  finding rather than anybody fixing it: the ledger keys on node.id, so a new id');
+  say('  reads as a new vulnerability. The half-life would then be record churn.');
+  say('  A low share means the batches are real fleet-wide fixes and the figure stands.');
+  say('');
+  say('elapsed ' + ((Date.now() - started) / 1000).toFixed(0) + ' s');
+  Logger.log(out.join('\n'));
+  return out.join('\n');
+}
