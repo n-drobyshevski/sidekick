@@ -512,7 +512,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "507a983c371c" : "dev";
+  var BUILD_ID = true ? "d481294fe124" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -7005,7 +7005,7 @@ var Server = (() => {
 
   // src/domain/pagePayload.ts
   function execMttrSlice(mttr) {
-    var _a, _b;
+    var _a, _b, _c;
     if (!mttr || typeof mttr !== "object") return null;
     const m = mttr;
     const overall = (_a = m["overall"]) != null ? _a : {};
@@ -7013,7 +7013,11 @@ var Server = (() => {
     return {
       rowCount: m["rowCount"],
       overall: { resolved: overall["resolved"], open: overall["open"] },
-      remediation: km ? { km: { median: km["median"], medianLowerBound: km["medianLowerBound"] } } : {}
+      remediation: km ? { km: { median: km["median"], medianLowerBound: km["medianLowerBound"] } } : {},
+      // O1b: the present/unobserved split behind the hero's "Still open" count. Four scalars —
+      // `backlogSplitView` (pages/_backlog.js) is what turns them into the hero's line and
+      // caption — so this rides whole rather than earning its own narrowing function.
+      backlog: (_c = m["backlog"]) != null ? _c : null
     };
   }
   function execGroupSlice(byGroup) {
@@ -7101,7 +7105,8 @@ var Server = (() => {
     const known = OLDEST_VIEWS.includes(view) ? view : "findings";
     const oldest = insights && typeof insights === "object" ? insights["oldest"] : void 0;
     const rows = oldest ? oldest[known] : void 0;
-    return { view: known, rows: Array.isArray(rows) ? rows : [] };
+    const unobserved = oldest && typeof oldest["unobserved"] === "number" ? oldest["unobserved"] : 0;
+    return { view: known, rows: Array.isArray(rows) ? rows : [], unobserved };
   }
   function mttrGroupTableSlice(byGroup) {
     var _a;

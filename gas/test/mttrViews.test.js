@@ -17,7 +17,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  kmHalfLifeView, kmP90View, meterPctFor, rateView, rmstView,
+  kmHalfLifeView, kmP90View, meterPctFor, mttrHeroView, rateView, rmstView,
 } from "../src/client/js/pages/mttr.js";
 
 // A shipped KMResult shape (src/domain/remediation.ts) with only the fields each test reads —
@@ -222,5 +222,64 @@ describe("rmstView: unchanged from gas_devsecops — this register's KMResult ca
     const view = rmstView(km({ mean: null }));
     expect(view.measured).toBe(false);
     expect(view.text).toBe("Not measured");
+  });
+});
+
+// =========================================================================================
+//  mttrHeroView — the present/unobserved split beside the qualifier (O1b)
+// =========================================================================================
+//
+// `mttr.backlog` rides beside the qualifier, never inside its sentence — `renderHero` draws
+// the two as separate `.hero-line`s through `heroLines`. Real numbers from the live ledger
+// this package was written against: 2,532 present, 2,630 unobserved across 113 assets, last
+// seen 2026-08-12.
+
+function mttrPayload(over = {}) {
+  return {
+    rowCount: 5174,
+    overall: { resolved: 0, open: 5174 },
+    perSev: {},
+    remediation: { km: km({ median: null, medianLowerBound: 41 }) },
+    ...over,
+  };
+}
+
+describe("mttrHeroView — the backlog split (present)", () => {
+  it("publishes the line and the caption alongside the qualifier, never folded into it", () => {
+    const view = mttrHeroView(mttrPayload({
+      backlog: {
+        observed: 2532, unobserved: 2630, unobservedAssets: 113, unobservedSince: "2026-08-12",
+      },
+    }));
+    expect(view.qualifier).toContain("5,174 open");
+    expect(view.backlogLine).toBe("2,532 present · 2,630 unobserved since 2026-08-12");
+    expect(view.backlogCaption).toBe(
+      "2,630 findings on 113 assets have not been in a scan since 2026-08-12. Counted apart: "
+      + "the scanner has not answered for them, which is not the same as nobody fixing them.",
+    );
+  });
+});
+
+describe("mttrHeroView — the backlog split (absent / zero)", () => {
+  it("hides cleanly when nothing is unobserved", () => {
+    const view = mttrHeroView(mttrPayload({
+      backlog: { observed: 5174, unobserved: 0, unobservedAssets: 0, unobservedSince: null },
+    }));
+    expect(view.backlogLine).toBeNull();
+    expect(view.backlogCaption).toBeNull();
+  });
+
+  it("hides cleanly when the payload carries no backlog block at all", () => {
+    const view = mttrHeroView(mttrPayload());
+    expect(view.backlogLine).toBeNull();
+    expect(view.backlogCaption).toBeNull();
+  });
+
+  it("refuses rather than throwing for a missing or empty payload", () => {
+    for (const p of [null, undefined, {}]) {
+      const view = mttrHeroView(p);
+      expect(view.backlogLine).toBeNull();
+      expect(view.backlogCaption).toBeNull();
+    }
   });
 });

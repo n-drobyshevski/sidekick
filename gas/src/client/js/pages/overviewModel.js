@@ -19,6 +19,10 @@
 // arrived null — and those are enumerable in node.
 
 import { absentText, fmtCount, fmtDays, num } from "../../../../../gas_shared/ui/figures.js";
+// THE PRESENT/UNOBSERVED SPLIT IS IMPORTED, NOT REPEATED — same shape `pages/executive.js` and
+// `pages/mttr.js` read off their own hero payloads. Pure, like this whole module (only
+// formatters, no DOM), so importing it here does not cost this file its node-testability.
+import { backlogSplitView } from "./_backlog.js";
 
 /** The separator between parts. One line, read left to right. */
 const JOINER = " · ";
@@ -165,6 +169,13 @@ export function overviewHeroView(insights, firstRun) {
   const aw = insights.awaiting || null;
   const median = insights.medianOpenAge;
   const scanTs = insights.scan ? insights.scan.ts : null;
+  // O1a's `openPastSla()` now excludes an unobserved row before it is even scored as breached
+  // or not (remediation.ts), so "Past SLA" below moved under a reader who was not looking at
+  // this stat specifically — the hero's own split note a screen up does not, by itself, say
+  // THIS number is the one it qualifies. Same shape as the aging sections and the MTTR hero's
+  // own "Open past SLA": the compact line joins the stat's own sub-line, the caption sits one
+  // level down on its tip.
+  const split = backlogSplitView(insights.backlog);
 
   return {
     pending: false,
@@ -213,9 +224,10 @@ export function overviewHeroView(insights, firstRun) {
           ? "of " + fmtCount(past.open) + " on the clock"
           : "no clock running",
         emptyLabel: "no open finding has an SLA clock running",
-        sub: "past it, on the vendor-fix clock",
+        sub: "past it, on the vendor-fix clock" + (split.show ? " · " + split.line : ""),
         lines: ["On the vendor-fix clock, matching the MTTR page.",
-          "A finding with no patch yet is not a breach: its clock has not started."],
+          "A finding with no patch yet is not a breach: its clock has not started.",
+          ...(split.show ? [split.caption] : [])],
         term: "actionable-age",
       },
       {
