@@ -6482,7 +6482,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "1e783c32bda6" : "dev";
+  var BUILD_ID = true ? "c4a50c461a98" : "dev";
   var CACHE_EPOCH = "1";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
@@ -8152,12 +8152,38 @@ var Server = (() => {
     }
     return rows;
   }
+  var SG_MAP_CACHE_TTL_SEC = 21600;
+  function sgMapCacheKey() {
+    return "sgMap1:" + dataVersion();
+  }
+  function readSgMapCache() {
+    try {
+      const hit = cacheGetJson(sgMapCacheKey());
+      return hit && typeof hit === "object" && !Array.isArray(hit) ? hit : void 0;
+    } catch (e) {
+      console.warn(`Support-group map cache read failed: ${e}`);
+      return void 0;
+    }
+  }
+  function writeSgMapCache(map) {
+    try {
+      cachePutJson(sgMapCacheKey(), map, SG_MAP_CACHE_TTL_SEC);
+    } catch (e) {
+      console.warn(`Support-group map cache write failed: ${e}`);
+    }
+  }
   function getSupportGroupMap2() {
     if (sgMapMemo !== void 0) return { version: 0, map: sgMapMemo };
+    const hit = readSgMapCache();
+    if (hit) {
+      sgMapMemo = hit;
+      return { version: 0, map: hit };
+    }
     ensureTab(TABS.supportGroupMap);
     const rows = readAll(TABS.supportGroupMap);
     const map = rows.length ? supportGroupRowsToMap(rows) : getSupportGroupMap(loadSettings()).map;
     sgMapMemo = map;
+    writeSgMapCache(map);
     return { version: 0, map };
   }
   function setFetchSeverities(sevs) {
@@ -8203,6 +8229,7 @@ var Server = (() => {
     } else {
       bumpDataVersion();
     }
+    writeSgMapCache(sgMapMemo);
   }
 
   // src/server/bizDomains.ts
@@ -10875,9 +10902,19 @@ var Server = (() => {
       getIncludeEol2()
     );
   }
+  var scopedMemo;
   function scopedBaseRows(domain, supportGroup) {
-    let rows = loadBaseRows();
-    if (domain || supportGroup) {
+    if (!domain && !supportGroup) return loadBaseRows();
+    const version = currentStamp();
+    if (!scopedMemo || scopedMemo.version !== version) {
+      scopedMemo = { version, byScope: /* @__PURE__ */ new Map() };
+    }
+    const key = domain + "\0" + supportGroup;
+    let scoped = scopedMemo.byScope.get(key);
+    if (!scoped) {
+      const t0 = Date.now();
+      let rows = loadBaseRows();
+      const t1 = Date.now();
       attachSupportGroups(rows);
       if (supportGroup) rows = rows.filter((r) => {
         var _a;
@@ -10888,8 +10925,18 @@ var Server = (() => {
         attachBizDomains(rows);
         rows = rows.filter((r) => resolveDomainName(r, compiled) === domain);
       }
+      scoped = rows;
+      scopedMemo.byScope.set(key, scoped);
+      console.log(JSON.stringify({
+        stage: "scopedBase",
+        domain,
+        supportGroup,
+        rows: rows.length,
+        baseMs: t1 - t0,
+        attachMs: Date.now() - t1
+      }));
     }
-    return rows;
+    return scoped.map((r) => ({ ...r }));
   }
   function shipKM(km) {
     return {

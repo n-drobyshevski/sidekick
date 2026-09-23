@@ -4,7 +4,7 @@
 import type { RiskRule } from "../domain/program";
 import * as logic from "../domain/settingsLogic";
 import type { Rec } from "../domain/util";
-import { bumpDataVersion, dataVersion } from "./serverCache";
+import { bumpDataVersion, cacheGetJson, cachePutJson, dataVersion } from "./serverCache";
 import { ensureTab, readAll, overwrite, TABS } from "./sheetsDb";
 
 // Per-execution memo: every settings getter below funnels through loadSettings(),
@@ -151,14 +151,52 @@ export function supportGroupMapToRows(map: unknown): Rec[] {
   return rows;
 }
 
+// ACROSS EXECUTIONS TOO, in CacheService — the same move as the settings dict above. The tab is
+// ~5k rows and was read in every execution that attached support groups: measured at 0.7–1.4 s,
+// and often the execution's first Sheets touch, which is what opens the spreadsheet. Keyed on
+// the data version, which `setSupportGroupMap` (the tab's only writer) bumps; it also writes the
+// new map under the new key. The map is over CacheService's 100 KB per value, so it goes through
+// serverCache's gzip + chunked helpers. Any cache error falls back to the tab.
+const SG_MAP_CACHE_TTL_SEC = 21_600;
+
+function sgMapCacheKey(): string {
+  return "sgMap1:" + dataVersion();
+}
+
+function readSgMapCache(): Record<string, string> | undefined {
+  try {
+    const hit = cacheGetJson(sgMapCacheKey());
+    return hit && typeof hit === "object" && !Array.isArray(hit)
+      ? (hit as Record<string, string>)
+      : undefined;
+  } catch (e) {
+    console.warn(`Support-group map cache read failed: ${e}`);
+    return undefined;
+  }
+}
+
+function writeSgMapCache(map: Record<string, string>): void {
+  try {
+    cachePutJson(sgMapCacheKey(), map, SG_MAP_CACHE_TTL_SEC);
+  } catch (e) {
+    console.warn(`Support-group map cache write failed: ${e}`);
+  }
+}
+
 export function getSupportGroupMap(): { version: number; map: Record<string, string> } {
   if (sgMapMemo !== undefined) return { version: 0, map: sgMapMemo };
+  const hit = readSgMapCache();
+  if (hit) {
+    sgMapMemo = hit;
+    return { version: 0, map: hit };
+  }
   ensureTab(TABS.supportGroupMap);
   const rows = readAll(TABS.supportGroupMap);
   // Legacy fallback: a small map that still lives in the old single settings cell (pre-tab
   // deployments whose map fit). The next refresh rewrites it into the tab.
   const map = rows.length ? supportGroupRowsToMap(rows) : logic.getSupportGroupMap(loadSettings()).map;
   sgMapMemo = map;
+  writeSgMapCache(map);
   return { version: 0, map };
 }
 
@@ -226,4 +264,6 @@ export function setSupportGroupMap(map: unknown): void {
   } else {
     bumpDataVersion();
   }
+  // Under the NEW version's key, so the next request reads the new map from the cache.
+  writeSgMapCache(sgMapMemo);
 }

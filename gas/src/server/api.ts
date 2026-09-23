@@ -1129,9 +1129,35 @@ function visibleBase(rows: Rec[]): Rec[] {
 // A base row carries no `_supportGroup` or `_bizDomain` natively — only `tags_json` and its
 // subscription columns — so both are attached here rather than assumed, which is the one way
 // this differs from scopedFrameRecords above.
+//
+// SCOPED ONCE PER EXECUTION. A scoped page reaches this through every read-model it composes —
+// five for a scoped Executive (mttr, insights, cold zone, group split, week trend) — and each
+// call used to redo the whole scoping pass over the full base: the support-group join, a
+// `tags_json` parse per row for the business domain, and the domain rules. The scoped rows are
+// now built once per (data version, scope) and handed out as SHALLOW COPIES, for
+// the reason `ledgerStore.loadBaseRows` gives: callers annotate rows in place (`_domain`,
+// `risk_tier`, `_supportGroup` → NONE). The unscoped path is untouched — plain base copies,
+// nothing attached — so no whole-register payload can change.
+//
+// KEYED ON THE CACHE STAMP, and that is sufficient: its data version is bumped by every write
+// that could change the answer — ledger writes through `invalidateLedgerMemos`, settings saves
+// (domain rules) and `setSupportGroupMap` — and its domain-tag segment follows the tag key the
+// business-domain join reads. `currentStamp()` is memoized per execution and dropped on a bump,
+// so this costs no property read per call.
+let scopedMemo: { version: string; byScope: Map<string, Rec[]> } | undefined;
+
 function scopedBaseRows(domain: string, supportGroup: string): Rec[] {
-  let rows = ledgerStore.loadBaseRows() as unknown as Rec[];
-  if (domain || supportGroup) {
+  if (!domain && !supportGroup) return ledgerStore.loadBaseRows() as unknown as Rec[];
+  const version = currentStamp();
+  if (!scopedMemo || scopedMemo.version !== version) {
+    scopedMemo = { version, byScope: new Map() };
+  }
+  const key = domain + "\u0000" + supportGroup;
+  let scoped = scopedMemo.byScope.get(key);
+  if (!scoped) {
+    const t0 = Date.now();
+    let rows = ledgerStore.loadBaseRows() as unknown as Rec[];
+    const t1 = Date.now();
     supportGroups.attachSupportGroups(rows);
     if (supportGroup) rows = rows.filter((r) => String(r["_supportGroup"] ?? "") === supportGroup);
     if (domain) {
@@ -1141,8 +1167,15 @@ function scopedBaseRows(domain: string, supportGroup: string): Rec[] {
       bizDomains.attachBizDomains(rows);
       rows = rows.filter((r) => resolveDomainName(r, compiled) === domain);
     }
+    scoped = rows;
+    scopedMemo.byScope.set(key, scoped);
+    // Same line shape as the #319 timings: `baseMs` is the base copy, `attachMs` the scoping.
+    console.log(JSON.stringify({
+      stage: "scopedBase", domain, supportGroup, rows: rows.length,
+      baseMs: t1 - t0, attachMs: Date.now() - t1,
+    }));
   }
-  return rows;
+  return scoped.map((r) => ({ ...r }));
 }
 
 /**
