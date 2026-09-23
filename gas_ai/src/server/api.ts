@@ -196,7 +196,7 @@ import { domainCoverage, domainOfTags } from "../domain/domainTag";
 import { cached, wizDataVersion } from "./serverCache";
 // The Drive-backed second level, for the time-invariant read-models only. See that
 // module's header for which are eligible and why the other two are not.
-import { durablyCached } from "./readModelStore";
+import { durablyCached, durablyPeek } from "./readModelStore";
 import {
   AGENT_EXPANSION,
   decodeExpansion,
@@ -451,8 +451,42 @@ function registerScopeNotice(latest: Rec | null): Rec | null {
 }
 
 export function bootstrap(_p?: unknown): ApiResult {
-  return run(() => ({
-    ...(durablyCached("bootstrapCore", null, bootstrapCore) as Rec),
+  return run(() => withLiveBootFields(durablyCached(BOOT_CORE, null, bootstrapCore) as Rec));
+}
+
+// The core's cache name, shared by `bootstrap` and `bootstrapIfWarm` so the inline path can only
+// ever peek at the entry the RPC path reads and the warm writes.
+const BOOT_CORE = "bootstrapCore";
+
+/**
+ * The bootstrap envelope, but only when its core is already cached — doGet's inline path
+ * (gas_shared/server/inlineBoot.ts). `{ok:false}` on a cold core, and the page ships without the
+ * block: the client shows the boot splash and asks over `api_bootstrap`, as before the inline
+ * path existed. Computing the core here instead would hold the whole page — a blank tab where
+ * the splash should be — for as long as the core takes cold; measured in gas/ at 20+ s after a
+ * deploy, which is why gas/ (#317) and gas_devsecops (#328) peek rather than compute too.
+ *
+ * `export const`, NOT `export function`, and deliberately: this build treats every
+ * `export function` in api.ts as an RPC and requires an entry.js delegator for it
+ * (esbuild.config.mjs, test/entryPoints.test.ts). This is not one — doGet calls it in-process
+ * (main.ts) and google.script.run must not reach it.
+ */
+export const bootstrapIfWarm = (): ApiResult => {
+  const t0 = Date.now();
+  const core = durablyPeek(BOOT_CORE, null);
+  const peekMs = Date.now() - t0;
+  if (core === undefined || core === null || typeof core !== "object") {
+    console.log(JSON.stringify({ stage: "bootstrapIfWarm", hit: false, peekMs }));
+    return { ok: false, error: "bootstrap core is cold", errorKind: "cold" };
+  }
+  const res = run(() => withLiveBootFields(core as Rec));
+  console.log(JSON.stringify({ stage: "bootstrapIfWarm", hit: true, peekMs, liveMs: Date.now() - t0 - peekMs }));
+  return res;
+};
+
+function withLiveBootFields(core: Rec): Rec {
+  return {
+    ...core,
     hasCredentials: hasWizCredentials(),
     // OUTSIDE THE DURABLY-CACHED CORE, and that placement is the whole point. The hub URL is
     // a Script Property an operator can change at any moment through Settings; nothing about
@@ -465,7 +499,7 @@ export function bootstrap(_p?: unknown): ApiResult {
     // guaranteed to lie after a deploy.
     build: buildInfo(),
     activeJob: (activeJob() as unknown as Rec) ?? null,
-  }));
+  };
 }
 
 function bootstrapCore(): Rec {

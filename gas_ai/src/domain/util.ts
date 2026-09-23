@@ -105,6 +105,14 @@ export function pyStr(v: unknown): string {
  * or null. Naive timestamps are treated as UTC, matching reconcile._parse.
  */
 export function parseTs(v: unknown): number | null {
+  // FAST PATH for the canonical "…T…Z" shape (second precision) timestamps are written in: it
+  // needs neither the trim, the space normalization nor the no-timezone suffix below, so the two
+  // regex tests are pure overhead on a function called millions of times per request (~30%
+  // faster per call, gas/ #318). A NaN falls through to the general path, which answers the same.
+  if (typeof v === "string" && v.length === 20 && v.charCodeAt(10) === 84 && v.charCodeAt(19) === 90) {
+    const t = Date.parse(v);
+    if (!Number.isNaN(t)) return t;
+  }
   const c = clean(v);
   if (c === null) return null;
   if (c instanceof Date) return isNaN(c.getTime()) ? null : c.getTime();
