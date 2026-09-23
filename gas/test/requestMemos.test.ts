@@ -23,6 +23,17 @@ vi.mock("../src/server/sheetsDb", () => ({
   appendRows: () => {},
 }));
 
+// The durable snapshot `loadState()` prefers over the tabs: two live ledger rows.
+const snapshotLedger = {
+  a: { vuln_key: "a", severity: "HIGH", status: "OPEN", asset_id: "x", first_seen: "2026-01-01T00:00:00Z",
+    last_seen: "2026-09-01T00:00:00Z", resolved_at: null },
+  b: { vuln_key: "b", severity: "LOW", status: "RESOLVED", asset_id: "y", first_seen: "2026-01-01T00:00:00Z",
+    last_seen: "2026-02-01T00:00:00Z", resolved_at: "2026-02-01T00:00:00Z" },
+};
+vi.mock("../src/server/archiveStore", () => ({
+  readLedgerSnapshot: () => ({ ledger: JSON.parse(JSON.stringify(snapshotLedger)), episodes: [] }),
+}));
+
 // bumpDataVersion (called by invalidateLedgerMemos/saveSettings) hits PropertiesService.
 vi.stubGlobal("PropertiesService", {
   getScriptProperties: () => ({
@@ -70,5 +81,47 @@ describe("ledgerStore scan-rows memo", () => {
     ledger.invalidateLedgerMemos();
     ledger.loadScanRows();
     expect(readAllCalls.filter((t) => t === "scans")).toHaveLength(2);
+  });
+});
+
+// `baseRows` was re-derived per CALLER — five times for one Executive load, twenty-seven for one
+// warm — and was the largest single cost measured. It is derived once per execution now, and
+// handed out as copies because callers annotate rows in place (`_domain`, `risk_tier`, and
+// `_supportGroup`, which one split overwrites with its NONE bucket).
+describe("ledgerStore base-rows memo", () => {
+  const derivations = (log: ReturnType<typeof vi.spyOn>) =>
+    log.mock.calls.filter((c: unknown[]) => String(c[0]).includes('"stage":"baseRows"')).length;
+
+  it("derives once per execution and again after a write", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const ledger = await import("../src/server/ledgerStore");
+    ledger.loadBaseRows();
+    ledger.loadBaseRows();
+    expect(derivations(log)).toBe(1);
+    ledger.invalidateLedgerMemos();
+    ledger.loadBaseRows();
+    expect(derivations(log)).toBe(2);
+    log.mockRestore();
+  });
+
+  it("hands each caller rows it can annotate without touching the next caller's", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const ledger = await import("../src/server/ledgerStore");
+    const first = ledger.loadBaseRows() as unknown as Record<string, unknown>[];
+    for (const r of first) r["_supportGroup"] = "(none)";
+    const second = ledger.loadBaseRows() as unknown as Record<string, unknown>[];
+    expect(second.map((r) => r["_supportGroup"])).toEqual([undefined, undefined]);
+    expect(second.map((r) => r["vuln_key"]).sort()).toEqual(["a", "b"]);
+    log.mockRestore();
+  });
+
+  it("does not memoize a read at an explicit instant", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const ledger = await import("../src/server/ledgerStore");
+    const at = Date.parse("2026-09-01T00:00:00Z");
+    const rows = ledger.loadBaseRows(at);
+    expect(rows.find((r) => r.vuln_key === "a")!.age_days).toBe(243);
+    expect(derivations(log)).toBe(0);
+    log.mockRestore();
   });
 });

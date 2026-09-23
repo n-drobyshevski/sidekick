@@ -171,6 +171,10 @@ var Server = (() => {
     return String(v);
   }
   function parseTs(v) {
+    if (typeof v === "string" && v.length === 20 && v.charCodeAt(10) === 84 && v.charCodeAt(19) === 90) {
+      const t2 = Date.parse(v);
+      if (!Number.isNaN(t2)) return t2;
+    }
     const c = clean(v);
     if (c === null) return null;
     if (c instanceof Date) return isNaN(c.getTime()) ? null : c.getTime();
@@ -6294,7 +6298,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "ddf0bf9fcf21" : "dev";
+  var BUILD_ID = true ? "5944d16d832c" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -6893,9 +6897,11 @@ var Server = (() => {
   }
   var scanRowsMemo;
   var stateMemo;
+  var baseRowsMemo;
   function invalidateLedgerMemos() {
     scanRowsMemo = void 0;
     stateMemo = void 0;
+    baseRowsMemo = void 0;
     bumpDataVersion();
   }
   function loadScanRows() {
@@ -7028,7 +7034,13 @@ var Server = (() => {
   var readPayloadForRow = (row) => readScanPayload(row.raw_ref);
   function loadBaseRows(now) {
     const state = loadState();
-    return baseRows(state, now, newestFlatScanBySeverity(state.scans));
+    if (now !== void 0) return baseRows(state, now, newestFlatScanBySeverity(state.scans));
+    if (baseRowsMemo === void 0 || baseRowsMemo.state !== state) {
+      const t0 = Date.now();
+      baseRowsMemo = { state, rows: baseRows(state, void 0, newestFlatScanBySeverity(state.scans)) };
+      console.log(JSON.stringify({ stage: "baseRows", rows: baseRowsMemo.rows.length, ms: Date.now() - t0 }));
+    }
+    return baseRowsMemo.rows.map((r) => ({ ...r }));
   }
   var KM_TREND_MAX_RECONSTRUCTED = 48;
   function loadTrend(severities = null, showNoFix = true, baseOverride) {
@@ -11265,13 +11277,33 @@ var Server = (() => {
     var _a, _b;
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
     const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
+    const t0 = Date.now();
     let rows = scopedBaseRows(domain, supportGroup);
+    const tBase = Date.now();
     attachSupportGroups(rows);
     rows = filterSeverities(rows, readSeverities(p));
     rows = visibleBase(rows);
+    const tJoin = Date.now();
     const rule = getRiskRule2().rule;
     const cold = getColdZone();
     const clock = ledgerClock();
+    const profile = coldZoneProfile(rows, {
+      now: clock.asOf,
+      observedFrom: clock.observedFrom,
+      coldAfterDays: cold.coldAfterDays,
+      mode: cold.mode,
+      targetSharePct: cold.targetSharePct,
+      floorDays: cold.floorDays,
+      newestScanBySeverity: newestScanBySeverity(),
+      rule
+    });
+    console.log(JSON.stringify({
+      stage: "coldZone",
+      rows: rows.length,
+      baseMs: tBase - t0,
+      joinMs: tJoin - tBase,
+      profileMs: Date.now() - tJoin
+    }));
     return {
       asOf: clock.asOf,
       asOfSource: clock.asOfSource,
@@ -11281,16 +11313,7 @@ var Server = (() => {
       // rule produced it rather than leaving the reader to go and look.
       rule,
       ruleSentence: ruleSentence(rule),
-      coldZone: coldZoneProfile(rows, {
-        now: clock.asOf,
-        observedFrom: clock.observedFrom,
-        coldAfterDays: cold.coldAfterDays,
-        mode: cold.mode,
-        targetSharePct: cold.targetSharePct,
-        floorDays: cold.floorDays,
-        newestScanBySeverity: newestScanBySeverity(),
-        rule
-      }),
+      coldZone: profile,
       // Named so the page can state what was excluded before any of this counted.
       toggles: {
         showNoFix: getShowNoFix2(),
