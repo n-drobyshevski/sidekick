@@ -8,8 +8,12 @@ import { mttrPaintPlan } from "./mttrPaintPlan.js";
 import { denominatorNode, fmtPct, rateCell } from "./_rates.js";
 import { agingTableModel, barsTableModel, trendTableModel } from "./_charts.js";
 import { groupCutNote } from "./_groupSplit.js";
+// THE PRESENT/UNOBSERVED SPLIT IS IMPORTED, NOT REPEATED — shared with `pages/executive.js`
+// and `pages/overview.js` so the hero and the two "open findings by age" charts across all
+// three pages describe one blind spot in one voice.
+import { backlogSplitView } from "./_backlog.js";
 import {
-  absent, absentText, boundedDays, changeChip, chartTable, clear, dataTable,
+  absent, absentText, boundedDays, changeChip, chartTable, clear, dataTable, denomNote,
   el, emptyState, errorState, firstRunNotice, fmtCount, fmtDays, fmtSpan, heroLines,
   heroStat, meter, num, pageHeader, pluralize, scopeBar, sectionLabel,
   segmented, sevBadge, skeleton, sparkLabel, sparkPath, sparkline, statRow, survivalTableModel,
@@ -380,6 +384,10 @@ export function mttrHeroView(mttr) {
   const open = num(mttr && mttr.overall && mttr.overall.open, 0);
   const unknown = (mttr && mttr.perSev && mttr.perSev.UNKNOWN) || {};
   const unclassified = num(unknown.open, 0) + num(unknown.resolved, 0);
+  // The present/unobserved split behind "open" above. NEVER FOLDED INTO THE QUALIFIER — see
+  // `renderHero`, which draws it as its own `.hero-line` through `heroLines`. Hides cleanly
+  // when there is nothing unobserved.
+  const split = backlogSplitView(mttr && mttr.backlog);
   return {
     ...half,
     events,
@@ -389,6 +397,8 @@ export function mttrHeroView(mttr) {
     resolved,
     open,
     unclassified,
+    backlogLine: split.line,
+    backlogCaption: split.caption,
     qualifier: rowCount
       ? fmtCount(rowCount) + " tracked " + pluralize(rowCount, "lifecycle")
         + " in the durable base · " + fmtCount(resolved) + " resolved · "
@@ -1024,6 +1034,10 @@ export async function renderMttr(main, _params, ctx) {
     // are read against. Null when the payload is a stale pre-KM cache or the overall median is
     // itself censored; the bars then rank without a reference line (see mttrContributionBars).
     const overallKm = mttr?.remediation?.km?.median ?? null;
+    // O1a's per-group `openPastSla` (below) now excludes an unobserved row too, and this table
+    // has no per-group split to attach — the register-wide caveat joins the "Open past SLA"
+    // column's own tip instead, same as the per-severity table above.
+    const split = backlogSplitView(mttr && mttr.backlog);
 
     // Chart pair over the group trend the server ships alongside the table. Each card swaps
     // its canvas for a muted message when there's nothing to draw (copied from overview.js's
@@ -1424,7 +1438,8 @@ export async function renderMttr(main, _params, ctx) {
           className: "num",
           help: ["Open findings already older than their severity's SLA target, measured from when " +
             "a vendor fix became available. Unlike In-SLA % (which only scores resolved " +
-            "findings), an aged-out open CRITICAL counts here."],
+            "findings), an aged-out open CRITICAL counts here.",
+            ...(split.show ? [split.caption] : [])],
           cell: (r) => fmtOpenPastSla(r.openPastSla),
         },
         {
@@ -1632,13 +1647,16 @@ export async function renderMttr(main, _params, ctx) {
           view.qualifier,
           naiveClause(km, prev, scoped),
           latencyLine(rem?.vendorLatency, rem?.disclosureLatency),
+          // NEVER FOLDED IN — its own line, dropped outright by `heroLines` when there is
+          // nothing unobserved.
+          view.backlogLine,
         ),
         heroHelp(view),
       ),
       aside: trendAside(halfLifeTrendPoints(trends)),
       stats: [
         slaStatRow(overallSla, prev, scoped),
-        pastSlaStatRow(openPastSla, prev, scoped),
+        pastSlaStatRow(openPastSla, prev, scoped, view.backlogLine, view.backlogCaption),
         p90StatRow(overallKmP90 !== undefined ? overallKmP90 : overallPctiles?.p90, km),
         openAgeStatRow(mttr, prev, scoped),
         ...(awaiting && awaiting.overall !== null && awaiting.overall !== undefined
@@ -1647,6 +1665,9 @@ export async function renderMttr(main, _params, ctx) {
           : []),
       ],
     }));
+    // THE SHARED CAPTION, ON THE SURFACE — what "unobserved" means here, not an explanation of
+    // a number already on screen, so it stays out of any tip. Null prints nothing.
+    if (view.backlogCaption) heroHost.append(denomNote(view.backlogCaption));
   }
 
   /**
@@ -1798,7 +1819,14 @@ export async function renderMttr(main, _params, ctx) {
    * the ones still running, how many have already blown it. A single "SLA %" over everything
    * would be neither, and the two sub-lines name their own base for that reason.
    */
-  function pastSlaStatRow(openPastSla, prev, scoped) {
+  // `backlogLine` / `backlogCaption` are the hero's own split (`view.backlogLine` /
+  // `view.backlogCaption`, `mttrHeroView`'s reading of `mttr.backlog`) — REUSED HERE, NOT
+  // RECOMPUTED. O1a's `openPastSla()` now excludes an unobserved row before it is even scored
+  // as breached or not (see remediation.ts), so this count moved under a reader who was not
+  // looking at this figure specifically — the exact thing this package exists to prevent. Same
+  // `_backlog.js` shape as the two aging sections: the compact line joins the sub-line that
+  // already states the rate's own base, and the caption sits one level down on the tip.
+  function pastSlaStatRow(openPastSla, prev, scoped, backlogLine, backlogCaption) {
     const open = num(openPastSla && openPastSla.open, 0);
     const breached = num(openPastSla && openPastSla.breached);
     const rate = rateView(
@@ -1813,13 +1841,15 @@ export async function renderMttr(main, _params, ctx) {
     return statRow(
       "Open past SLA",
       chip ? el("span", {}, value, chip) : value,
-      rate.baseEmpty ? rate.emptyLabel : rate.text + " of " + rate.denominatorLabel,
+      (rate.baseEmpty ? rate.emptyLabel : rate.text + " of " + rate.denominatorLabel)
+        + (backlogLine ? " · " + backlogLine : ""),
       meterPctFor(rate),
       {
         term: "sla-target",
         lines: [
           "Taken over what is still RUNNING: of what is open, the share past target.",
           "Unlike In SLA, an aged-out open CRITICAL counts here.",
+          ...(backlogCaption ? [backlogCaption] : []),
         ],
       },
     );
@@ -2009,12 +2039,22 @@ export async function renderMttr(main, _params, ctx) {
     // it rather than inventing a third convention.
     if (!mttr.rowCount) return;
     const vm = agingView(mttr.remediation, boot.palette.order);
+    // The same present/unobserved split the hero carries, over the SAME `remRows` this chart's
+    // `unaged` and bucketed counts are drawn from (`mttrData`'s `aging` and `backlog` are one
+    // filter, read twice). Computed here rather than reused from the hero's own view because
+    // this section can paint on its own (`mttrPaintPlan`'s `plan.aging`) without the hero.
+    const split = backlogSplitView(mttr.backlog);
     const heading = sectionLabel("Open findings by age", {
       term: "age",
       lines: [
         "Open findings only, aged from first detection to now.",
         "A resolved finding stopped ageing; its lifetime is the survival curve's subject.",
         vm.denominator,
+        // ONE LEVEL DOWN HERE — the surface already carries the line itself, in the
+        // `chart-note` below (and on its own, ahead of the emptyState, when the chart has
+        // nothing else to show). The full explanation of what "counted apart" means sits
+        // behind this heading's own trigger rather than repeating the paragraph a second time.
+        ...(split.show ? [split.caption] : []),
       ],
     });
     // The base every bar is counted over, on the heading itself — the same
@@ -2022,6 +2062,11 @@ export async function renderMttr(main, _params, ctx) {
     // figure is a distribution rather than a single rate.
     heading.setAttribute("data-denominator", String(vm.totalOpen));
     agingHost.append(heading);
+    // AHEAD OF THE EMPTY-STATE BRANCH, DELIBERATELY. A register whose entire open backlog is
+    // unobserved has no bucketed row to draw (`vm.show` is false) and would otherwise print
+    // "No open findings to age yet." over a real, sizeable blind spot — the exact silent-drop
+    // this package exists to stop.
+    if (split.show) agingHost.append(el("p", { class: "chart-note" }, split.line));
 
     if (!vm.show) {
       agingHost.append(emptyState(
@@ -2481,6 +2526,12 @@ export async function renderMttr(main, _params, ctx) {
     // so it always matches the severities feeding the hero and trend above.
     const sevs = boot.palette.order.filter((s) => mttr.perSev[s] && sevScope.includes(s));
     if (!sevs.length) return;
+    // O1a's `openPastSla()` now excludes an unobserved row per severity too, and this table
+    // carries no per-severity split to attach to any one cell (`OpenPastSla.unobserved` is a
+    // single register-wide count) — so the caveat joins the "Open past SLA" column's own tip,
+    // the same place this table already sends a column's definition rather than a paragraph
+    // under the table ("A column heading is asked once", below).
+    const split = backlogSplitView(mttr.backlog);
 
     slaHost.append(sectionLabel("Remediation by severity", { term: "sla-band" }));
     // Trimmed to the high-signal columns — Resolved, Awaiting, Open age p90 and the SLA
@@ -2584,6 +2635,7 @@ export async function renderMttr(main, _params, ctx) {
               "Taken over what is still RUNNING: of what is open here, the share past target.",
               "Unlike In SLA, which scores only what CLOSED, an aged-out open CRITICAL counts.",
               "Measured from when a vendor fix became available.",
+              ...(split.show ? [split.caption] : []),
             ],
           },
           // The count AND the rate AND the base. The count alone hides how big the backlog it

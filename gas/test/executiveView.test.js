@@ -482,6 +482,55 @@ describe("executiveHeroView — the qualifier states its own base", () => {
 });
 
 // =========================================================================================
+//  executiveHeroView — the present/unobserved split beside the qualifier (O1b)
+// =========================================================================================
+//
+// `mttr.backlog` (`insights.backlogSplit`) rides beside the qualifier above, never inside its
+// sentence — `renderHero` draws the two as separate `.hero-line`s through `heroLines`. Real
+// numbers from the live ledger this package was written against: 2,532 present, 2,630
+// unobserved across 113 assets, last seen 2026-08-12.
+
+describe("executiveHeroView — the backlog split (present)", () => {
+  it("publishes the line and the caption alongside the qualifier, never folded into it", () => {
+    const v = executiveHeroView(heroPayload({ median: 41 }, {
+      backlog: {
+        observed: 2532, unobserved: 2630, unobservedAssets: 113, unobservedSince: "2026-08-12",
+      },
+    }));
+    expect(v.qualifier).toBe("554 tracked lifecycles · 138 resolved · 416 still open");
+    expect(v.backlogLine).toBe("2,532 present · 2,630 unobserved since 2026-08-12");
+    expect(v.backlogCaption).toBe(
+      "2,630 findings on 113 assets have not been in a scan since 2026-08-12. Counted apart: "
+      + "the scanner has not answered for them, which is not the same as nobody fixing them.",
+    );
+  });
+});
+
+describe("executiveHeroView — the backlog split (absent / zero)", () => {
+  it("hides cleanly when nothing is unobserved", () => {
+    const v = executiveHeroView(heroPayload({ median: 41 }, {
+      backlog: { observed: 416, unobserved: 0, unobservedAssets: 0, unobservedSince: null },
+    }));
+    expect(v.backlogLine).toBeNull();
+    expect(v.backlogCaption).toBeNull();
+  });
+
+  it("hides cleanly when the payload carries no backlog block at all", () => {
+    const v = executiveHeroView(heroPayload({ median: 41 }));
+    expect(v.backlogLine).toBeNull();
+    expect(v.backlogCaption).toBeNull();
+  });
+
+  it("refuses rather than throwing on a payload with no mttr slice at all", () => {
+    for (const p of [null, undefined, {}, { mttr: null }, { mttr: {} }]) {
+      const v = executiveHeroView(p);
+      expect(v.backlogLine).toBeNull();
+      expect(v.backlogCaption).toBeNull();
+    }
+  });
+});
+
+// =========================================================================================
 //  coldShareView — one number, and the three things that can make it not be one
 // =========================================================================================
 //

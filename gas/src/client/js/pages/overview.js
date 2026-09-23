@@ -31,11 +31,15 @@ import {
 import { findingRowLabel, openFindingSheet } from "./findingSheet.js";
 import { rateCell } from "./_rates.js";
 import { meterPctFor, rateView } from "./mttr.js";
+// THE PRESENT/UNOBSERVED SPLIT IS IMPORTED, NOT REPEATED — shared with `pages/executive.js`
+// and `pages/mttr.js` so the open-count strip and the aging chart here describe one blind spot
+// in the same voice as the two hero pages.
+import { backlogSplitView, oldestUnobservedNote } from "./_backlog.js";
 import { call } from "../../../../../gas_shared/api.js";
 import { bootstrap, navigate, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  DEFAULT_PAGE_SIZE, absent, chartTable, clear, closeActiveSheet, dataTable, days1, el,
-  emptyState, errorState, firstRunNotice, fmtDate, glossaryTip, heroStat, kpiCard,
+  DEFAULT_PAGE_SIZE, absent, chartTable, clear, closeActiveSheet, dataTable, days1, denomNote,
+  el, emptyState, errorState, firstRunNotice, fmtDate, glossaryTip, heroStat, kpiCard,
   measuredEmpty, num, nvdUrl, openSheet, pageHeader, pct1, scopeBar, sectionLabel, segmented,
   sevBadge, sevEntries, sevKeyRow, sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow,
   tableFooter, tip, tipAnchor, tipLabel, togglePills, triCell,
@@ -329,7 +333,14 @@ export async function renderOverview(main, params, ctx) {
     // rather than the fleet. Null (an older cached payload with no `population` block, or a
     // register nobody has read) draws nothing rather than half a sentence.
     const population = loaded && !view.firstRun ? populationLine(insights) : null;
-    const aside = openSevs.length || population
+    // THE PRESENT/UNOBSERVED SPLIT BEHIND THE OPEN-BY-SEVERITY STRIP. `openSevs` above is
+    // read off the current scan's FRAME (`sevStats`), so it already IS the present-only count
+    // — an unobserved row cannot appear there, the scanner did not return it. `insights.backlog`
+    // is the same population read off the durable ledger instead, so it is what says how much
+    // more is sitting unobserved beside that strip. NEVER FOLDED IN: its own line, beside the
+    // strip rather than inside its label. Hides cleanly when there is nothing unobserved.
+    const split = backlogSplitView(loaded && !view.firstRun ? insights.backlog : null);
+    const aside = openSevs.length || population || split.show
       ? el("div", { class: "page-strip" },
         openSevs.length
           ? [
@@ -348,6 +359,7 @@ export async function renderOverview(main, params, ctx) {
               class: "scope-chip" + (i === 0 ? " scope-chip--lead" : ""),
             }, part)))
           : null,
+        split.show ? el("div", { class: "small muted" }, split.line) : null,
       )
       : null;
 
@@ -358,6 +370,9 @@ export async function renderOverview(main, params, ctx) {
       aside,
       stats: view.stats.map(statFromView),
     }));
+    // THE SHARED CAPTION, ON THE SURFACE — what "unobserved" means here (not resolved, not
+    // silence), not an explanation of a number already on screen, so it stays out of any tip.
+    if (split.show) heroHost.append(denomNote(split.caption));
   }
 
   /** One `statRow` from the view model's description of it. A `rate` stat carries its base
@@ -629,8 +644,15 @@ export async function renderOverview(main, params, ctx) {
    *  with no vendor fix available has no clock running. */
   function renderAging(insights) {
     const aging = insights.agingTier;
+    // The same present/unobserved split the hero strip carries, over the SAME `baseVisible`
+    // this chart's `agingTier` is drawn from — one filter, read twice (`api.ts`'s own words for
+    // it). Computed ahead of the empty-state branch below: a register whose entire open
+    // backlog is unobserved has no bucketed row to draw and would otherwise print "No open
+    // findings" over a real, sizeable blind spot.
+    const split = backlogSplitView(insights.backlog);
     insightsHost.append(sectionLabel("Aging of open findings"));
     if (!aging || !aging.totalOpen) {
+      if (split.show) insightsHost.append(el("p", { class: "small muted" }, split.line));
       insightsHost.append(emptyState("No open findings in the durable base."));
       return;
     }
@@ -645,15 +667,19 @@ export async function renderOverview(main, params, ctx) {
       : "How long open findings have been open";
     insightsHost.append(el("div", { class: "chart-card" },
       // The clock caveat and the omitted-rows caveat are what the HEADLINE means, so they are
-      // its tip; the sub-line says only what the bars count.
+      // its tip; the sub-line says only what the bars count. The shared caption joins them one
+      // level down when there is something unobserved to explain — the line itself stays on
+      // the surface, in the sub-line just below.
       el("h3", {}, tipLabel(headline, {
         lines: [
           "SLA runs on the vendor-fix clock: a finding awaiting a patch is not a breach.",
           "Rows with no recorded age are omitted, so this total can trail the open count.",
+          ...(split.show ? [split.caption] : []),
         ],
       })),
       el("div", { class: "small muted", style: "margin-bottom:8px" },
-        `${aging.totalOpen.toLocaleString()} still-open findings by age and risk tier.`),
+        `${aging.totalOpen.toLocaleString()} still-open findings by age and risk tier.`
+        + (split.show ? ` ${split.line}.` : "")),
       el("div", { class: "chart-box" }, canvas),
       // The same `AGE_LABELS` / `aging.perTier` the wrapper below is handed, named once here.
       chartTable({
@@ -803,6 +829,11 @@ export async function renderOverview(main, params, ctx) {
     let view = "byAsset";
     // Fetched views, by name. Lives as long as the open drawer.
     const loaded = new Map();
+    // The open rows this panel's ranking left out because they are unobserved — see
+    // `insights.oldestOpen`'s own `openAge`. THE SAME NUMBER ON EVERY VIEW (`oldestOpenSlice`
+    // computes it once from `insights.oldest.unobserved`, independent of which of the three
+    // rankings answered), so it is set once here rather than re-read per view.
+    let unobservedCount = null;
     // Current page within the active view, reset to 0 whenever the view switches.
     let page = 0;
     // Rows per page, adjustable from the footer and kept across a view switch: a reader who
@@ -824,6 +855,10 @@ export async function renderOverview(main, params, ctx) {
     const tableHost = el("div", {});
     const footerHost = el("div", {});
     const caption = el("p", { class: "chart-caption muted" });
+    // The unobserved footer — one line, and a link to the page that already ranks these
+    // assets rather than a second ranking here. Its own host so `paint()` can update it
+    // without rebuilding the toggle or the table under a reader's focus.
+    const coldNoteHost = el("div", {});
 
     /** Fetch the active view unless it is already in hand, then repaint. */
     function ensure() {
@@ -847,6 +882,7 @@ export async function renderOverview(main, params, ctx) {
     function absorb(res) {
       if (!res || !tableHost.isConnected) return;
       loaded.set(res.view, res.rows || []);
+      if (typeof res.unobserved === "number") unobservedCount = res.unobserved;
       if (res.view === view) paint();
     }
 
@@ -901,6 +937,20 @@ export async function renderOverview(main, params, ctx) {
           onPageSize: (size, nextPage) => { pageSize = size; page = nextPage; paint(); },
         }));
       }
+      // THE OLDEST-OPEN LIST SHOWS OBSERVED ROWS ONLY (`insights.oldestOpen`'s `openAge`
+      // already sets an unobserved row aside before ranking, on every view drawn above); this
+      // is the footer naming the rest, with the one link that answers where they went — the
+      // cold zone already ranks these assets, so nothing here re-ranks them a second time.
+      const note = oldestUnobservedNote(unobservedCount);
+      clear(coldNoteHost);
+      if (note) {
+        coldNoteHost.append(el("p", { class: "small muted" }, note + " ",
+          el("button", {
+            type: "button",
+            class: "linklike",
+            onclick: () => { closeActiveSheet(); navigate("coldZone"); },
+          }, "See the cold zone →")));
+      }
     }
 
     ensure();
@@ -954,7 +1004,7 @@ export async function renderOverview(main, params, ctx) {
     }, "Open the findings table, oldest first \u2192");
     return el("div", { class: "chart-card" },
       el("h3", {}, "Oldest open findings"),
-      toggle, tableHost, footerHost, caption,
+      toggle, tableHost, footerHost, caption, coldNoteHost,
       el("p", { class: "small muted" }, toRegister));
   }
 
