@@ -1,0 +1,79 @@
+# gas_devsecops performance plan
+
+Port of the `gas/` performance work (PRs #316–#325, 23 Sep 2026) to `gas_devsecops/`. Written
+at the end of that work, for a fresh session to execute. Delete this file once every step is
+merged or explicitly dropped.
+
+## What `gas/` taught us (read this first)
+
+- **Measure before fixing.** In `gas/`, three plausible hypotheses (network, the cold-zone model,
+  generic I/O) were each wrong. The execution-log timing lines (#319) found the real causes in
+  one deploy. Do the same here: instrument, deploy, read the log, then fix.
+- **Synthetic benchmarks can hide the bug.** A benchmark with identical `mttr_days` on every row
+  hid a quadratic Kaplan–Meier. Benchmark with realistic, fractional, mostly-distinct values.
+- **GAS CPU is close to node; GAS I/O is not.** `baseRows` over 58k rows ran in ~0.3–0.5 s in
+  GAS. What was slow: algorithms (quadratic KM), recomputation (the same derivation 5–27× per
+  execution), the first Sheets access per execution (2–9 s to open the spreadsheet), and Drive
+  downloads (0.5–2.6 s for the same file).
+- **Results in `gas/`:** cold Executive 85–152 s → ~12 s; warm Executive ~1 s server-side;
+  warm doGet touches no Sheets; full page load ~2.8 min → ~6 s; deploys no longer cold-start
+  the cache.
+
+Reference implementations live in `gas/` (and `gas_shared/server/inlineBoot.ts`). Port the
+idea, not the file: `gas_devsecops` has its own `readModels.ts`, `readModelStore.ts`,
+`serverCache.ts`, scopes (`sca`/`sast`/secrets) and `loadBaseRows(options)`.
+
+## Current state of gas_devsecops (verified 23 Sep 2026 against main @ 938bd6a)
+
+| Area | Where | State |
+|---|---|---|
+| Quadratic KM | `src/domain/remediation.ts:241` `kmCurve` | **Same bug as gas/ had.** Re-filters both arrays per distinct event time. Used by `kaplanMeier` (`remediation.ts:448`), i.e. the MTTR hero. `kmCurveEntry` (`:282`) is already O(n log n). |
+| Bootstrap | `src/server/api.ts:292` `bootstrap` | **Not cached at all.** Reads the `scans` tab, `loadSettings()`, `ledgerStore.loadBaseRows()` over the whole ledger, and `activeJob()` (`api.ts:378`, the whole `jobs` tab) on every call. |
+| Inline bootstrap | `src/server/main.ts:8` | `inlineBootJson(() => bootstrap())` from #316: **doGet computes the full uncached bootstrap on every page load.** Likely the biggest single cost. |
+| Settings | `src/server/settingsStore.ts:19` `loadSettings` | Reads the `settings` tab every execution (per-execution memo only). |
+| Cache key | `src/server/serverCache.ts:29` `KEY_PREFIX = wsk.${BUILD_ID}`, and `currentStamp` (~`:165`) folds BUILD_ID into the L2 stamp | Every deploy cold-starts every read-model. |
+| Namespaces | `readModels.ts`: `dsMttr4`, `dsExecutive2`, `dsRegister2`, `dsSecrets2`, `dsProgram2`, `dsRepos2`, `dsHistory4`, `dsStorage1`; `api.ts`: **`settingsImpact` (no version suffix)** | All but one versioned. |
+| Base rows | `src/server/ledgerStore.ts:691` `loadBaseRows(options)` | Re-derived per call; options vary by `now` / `scope` / `trackingStartByScope`. 13 call sites. |
+| Snapshot | `src/server/archiveStore.ts:293–313` | v1 (one JSON object per row). |
+| Warm | `src/server/readModels.ts:2598` `warmReadModels`, `WARM_BUDGET_MS` `:245` | Budgeted, logs a cut-out, **no continuation**. |
+| `parseTs` | `src/domain/util.ts:107` | No canonical-ISO fast path. |
+| Timing logs | — | **None.** |
+
+Checks: `cd gas_devsecops && npm ci && npm run check` (typecheck, lint, vitest, check-dist-fresh).
+Rebuild `dist/` with `npm run build` and commit it with each change (`check-dist-fresh` fails
+otherwise). Read `gas_devsecops/README.md` and `DESIGN.md` before changing server behavior.
+
+## Step 1 — instrument + the certain fixes (one PR)
+
+1. **Timing lines**, same shapes as `gas/` so logs read the same across apps:
+   - `sheetsDb.readAll`: `{"stage":"sheet",tab,rows,ms}`
+   - `archiveStore` gz-JSON reads: `{"stage":"drive",label,name,bytes,fileMs,parseMs,ungzipMs,textMs,jsonMs}`, plus `driveTotal` around the snapshot/frame reads (include the folder lookup).
+   - `serverCache.cached`: `{"stage":"cache",name,hit,getMs,computeMs,putMs,chars}` on hits and misses (`cachePutJson` returns the JSON length).
+   - `readModelStore.durablyCached` L2 read: `{"stage":"l2",name,hit,why,ms}`.
+   - `ledgerStore.loadBaseRows`: `{"stage":"baseRows",rows,ms}`.
+   - Per-slice timing in the landing page's endpoint, `getExecutivePage` (`api_getExecutivePage` in `dist/entry.js`), pinned by a spec so a refactor can't drop a slice.
+   - Also time `bootstrap` inside doGet (`inlineBootJson` already logs `{"api":"bootstrap","inline":true,"ms"}`).
+   Reference: `gas/` PR #319.
+2. **`kmCurve` → one sort and one sweep.** Copy `gas/src/domain/remediation.ts` `kmCurve` (sort-and-sweep, NaN dropped, `-0` reported as `+0`) and `gas/test/kmCurveSweep.test.ts` (the old implementation kept verbatim as the oracle, 200 seeded random registers + edge values + a <1 s perf check on 60k rows). Every existing vitest snapshot must stay unchanged. Reference: #320 (in gas/: 19,265 ms → 47 ms per curve at 58,679 rows).
+3. **`parseTs` fast path** for 20-char `…T…Z` strings (`Date.parse` directly; fall through on NaN). Copy the parity spec `gas/test/parseTs.test.ts`. Reference: #318.
+
+Then **stop and ask the user to deploy** and send: one cold load (after a settings save, which bumps DATA_VERSION) and one warm load of the landing page — the doGet log and the landing RPC's log.
+
+## Step 2 — decided by the step-1 numbers (likely all of these)
+
+Order by what the log shows. Expected, in rough order of impact:
+
+1. **Cache the bootstrap core and inline it only when warm.** Split `bootstrap` into a cached core (everything derived from ledger/settings/scans — key on `dataVersion`, give it a versioned namespace like `dsBootCore1`, `durablyCached` if it should survive CacheService's 6 h) and live fields (`activeJob`, hub URL, credentials — never cached). Add `bootstrapIfWarm()` that peeks L1 then L2 and never computes (see `gas/src/server/api.ts` `bootstrapIfWarm`, `readModelStore.durablyPeek`, `serverCache.peekCached`/`primeCached`); point `main.ts` at it. Add the core to the warm, first. Reference: #317.
+2. **Settings cache** in CacheService, key `settings1:<dataVersion>`, TTL 21,600 s, write-through in `saveSettings`, skip dicts over 90k chars, any cache error falls back to the tab. Confirm `saveSettings` is the only writer of the tab and that it bumps the data version. Reference: #321 + #323, specs in `gas/test/requestMemos.test.ts`.
+3. **Active job for display**, generation-keyed: `activeJob2:<generation>`, TTL 6 h, every writer of the `jobs` tab sets a fresh generation after its write; display only (guards keep `activeJob()`). Reference: `gas/src/server/jobsStore.ts` `activeJobForDisplay` / `forgetActiveJob` (#325), specs in `gas/test/jobsStore.test.ts` (including the late-stale-write race and the lost-generation case).
+4. **Stop invalidating on deploy.** Replace BUILD_ID in `KEY_PREFIX` and in `currentStamp` with a `CACHE_EPOCH` constant; rename `settingsImpact` → `settingsImpact1` (or whatever suffix the next bump would be); add a spec like `gas/test/cacheNamespaces.test.ts` requiring a version on every namespace and keeping BUILD_ID out of the stamp; update the L2 "deploy moves the stamp" spec to "an epoch bump moves the stamp". Record the convention in root `CLAUDE.md` next to the gas/ line. Reference: #322.
+5. **Base rows once per execution**, if the log shows repeated derivations: memoize per (state object, options) and hand out shallow copies — callers annotate rows in place. Bypass the memo for an explicit `now`. Reference: #318.
+6. **Warm continuation** if the warm reports cut-outs: one-shot `trigger_continueWarm`-style handler with its own name, 6-hop cap per cache stamp, 60 s deferral while a job is in flight; add the handler to `dist/entry.js`, the entry-points spec and the build's NOT_RPCS guard. Put the landing page's models first in the warm order. Reference: #317.
+7. **Snapshot v2** if the snapshot read is a visible cost: reuse `gas/src/domain/snapshotCodec.ts` (consider moving it to `gas_shared/domain/` and importing it from both apps rather than copying). Keep reading v1; name the v2 fields differently from v1 so a rollback reads the tabs instead of misreading. Reference: #324.
+
+## Conventions carried over from the gas/ work
+
+- One PR per step (or per logical change), each with before/after numbers from production logs in the description.
+- Branch per session instructions; rebuild `dist/`; `npm run check` green before every push.
+- Don't regenerate vitest snapshots to make a perf change pass — a perf change must leave them unchanged.
+- Say plainly in the PR when something is estimated from node rather than measured in GAS.
