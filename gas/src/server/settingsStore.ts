@@ -4,7 +4,7 @@
 import type { RiskRule } from "../domain/program";
 import * as logic from "../domain/settingsLogic";
 import type { Rec } from "../domain/util";
-import { bumpDataVersion } from "./serverCache";
+import { bumpDataVersion, dataVersion } from "./serverCache";
 import { ensureTab, readAll, overwrite, TABS } from "./sheetsDb";
 
 // Per-execution memo: every settings getter below funnels through loadSettings(),
@@ -12,8 +12,54 @@ import { ensureTab, readAll, overwrite, TABS } from "./sheetsDb";
 // state dies with the GAS execution, so this can never serve cross-request data.
 let settingsMemo: Rec | undefined;
 
+// ACROSS EXECUTIONS TOO, in CacheService. Measured in production: reading this seven-row tab
+// cost 0.8–1 s in every execution that touched a setting — which is nearly every RPC — and
+// 7.1 s in a doGet that was the first thing to open the spreadsheet. A CacheService read is
+// tens of milliseconds, and a warm doGet then never opens the spreadsheet at all.
+//
+// KEYED ON THE DATA VERSION, which is what makes it safe: `saveSettings` is the only writer of
+// the tab and it bumps the version, so a save moves every reader to a new key — and it writes
+// the new dict under that key itself, so the next request does not pay the sheet either. The
+// TTL only bounds the one path the version cannot see: someone editing the tab by hand in
+// Sheets, which is picked up within ten minutes.
+const SETTINGS_CACHE_TTL_SEC = 600;
+// A CacheService value is capped at 100 KB. A dict still carrying the legacy single-cell
+// support-group map can exceed that; it is simply not cached, and reads fall back to the tab.
+const SETTINGS_CACHE_MAX_CHARS = 90_000;
+
+function settingsCacheKey(): string {
+  return "settings1:" + dataVersion();
+}
+
+function readSettingsCache(): Rec | undefined {
+  try {
+    const raw = CacheService.getScriptCache().get(settingsCacheKey());
+    if (!raw) return undefined;
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Rec) : undefined;
+  } catch (e) {
+    console.warn(`Settings cache read failed: ${e}`);
+    return undefined;
+  }
+}
+
+function writeSettingsCache(settings: Rec): void {
+  try {
+    const json = JSON.stringify(settings);
+    if (json.length > SETTINGS_CACHE_MAX_CHARS) return;
+    CacheService.getScriptCache().put(settingsCacheKey(), json, SETTINGS_CACHE_TTL_SEC);
+  } catch (e) {
+    console.warn(`Settings cache write failed: ${e}`);
+  }
+}
+
 export function loadSettings(): Rec {
   if (settingsMemo !== undefined) return settingsMemo;
+  const hit = readSettingsCache();
+  if (hit) {
+    settingsMemo = hit;
+    return hit;
+  }
   const out: Rec = {};
   for (const row of readAll(TABS.settings)) {
     const key = row["key"];
@@ -30,6 +76,7 @@ export function loadSettings(): Rec {
     }
   }
   settingsMemo = out;
+  writeSettingsCache(out);
   return out;
 }
 
@@ -44,6 +91,8 @@ export function saveSettings(settings: Rec): void {
   settingsMemo = settings;
   // Settings feed the cached bootstrap payload and _domain assignment.
   bumpDataVersion();
+  // Under the NEW version's key, so the next request reads the saved dict from the cache.
+  writeSettingsCache(settings);
 }
 
 export const getFetchSeverities = (): string[] => logic.getFetchSeverities(loadSettings());

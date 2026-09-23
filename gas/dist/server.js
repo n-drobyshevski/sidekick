@@ -6329,7 +6329,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "022a2d834fd7" : "dev";
+  var BUILD_ID = true ? "ddc61e19bb6a" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -7861,8 +7861,38 @@ var Server = (() => {
 
   // src/server/settingsStore.ts
   var settingsMemo;
+  var SETTINGS_CACHE_TTL_SEC = 600;
+  var SETTINGS_CACHE_MAX_CHARS = 9e4;
+  function settingsCacheKey() {
+    return "settings1:" + dataVersion();
+  }
+  function readSettingsCache() {
+    try {
+      const raw = CacheService.getScriptCache().get(settingsCacheKey());
+      if (!raw) return void 0;
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : void 0;
+    } catch (e) {
+      console.warn(`Settings cache read failed: ${e}`);
+      return void 0;
+    }
+  }
+  function writeSettingsCache(settings) {
+    try {
+      const json = JSON.stringify(settings);
+      if (json.length > SETTINGS_CACHE_MAX_CHARS) return;
+      CacheService.getScriptCache().put(settingsCacheKey(), json, SETTINGS_CACHE_TTL_SEC);
+    } catch (e) {
+      console.warn(`Settings cache write failed: ${e}`);
+    }
+  }
   function loadSettings() {
     if (settingsMemo !== void 0) return settingsMemo;
+    const hit = readSettingsCache();
+    if (hit) {
+      settingsMemo = hit;
+      return hit;
+    }
     const out = {};
     for (const row of readAll(TABS.settings)) {
       const key = row["key"];
@@ -7879,6 +7909,7 @@ var Server = (() => {
       }
     }
     settingsMemo = out;
+    writeSettingsCache(out);
     return out;
   }
   function saveSettings(settings) {
@@ -7891,6 +7922,7 @@ var Server = (() => {
     );
     settingsMemo = settings;
     bumpDataVersion();
+    writeSettingsCache(settings);
   }
   var getFetchSeverities2 = () => getFetchSeverities(loadSettings());
   var getDisplaySeverities2 = () => getDisplaySeverities(loadSettings());

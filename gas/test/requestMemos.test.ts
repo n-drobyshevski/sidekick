@@ -125,3 +125,74 @@ describe("ledgerStore base-rows memo", () => {
     log.mockRestore();
   });
 });
+
+// Measured in production: the seven-row settings tab cost 0.8–1 s in nearly every execution and
+// 7.1 s in a doGet that opened the spreadsheet first. It is cached across executions now, keyed
+// on the data version so a save (the only writer, which bumps it) moves every reader on.
+describe("settingsStore cross-execution cache", () => {
+  const props = new Map<string, string>();
+  const cache = new Map<string, string>();
+  let cacheThrows = false;
+
+  beforeEach(() => {
+    props.clear();
+    cache.clear();
+    cacheThrows = false;
+    vi.stubGlobal("PropertiesService", {
+      getScriptProperties: () => ({
+        getProperty: (k: string) => props.get(k) ?? null,
+        setProperty: (k: string, v: string) => { props.set(k, v); },
+        deleteProperty: (k: string) => { props.delete(k); },
+      }),
+    });
+    vi.stubGlobal("CacheService", {
+      getScriptCache: () => ({
+        get: (k: string) => { if (cacheThrows) throw new Error("cache down"); return cache.get(k) ?? null; },
+        put: (k: string, v: string) => { if (cacheThrows) throw new Error("cache down"); cache.set(k, v); },
+      }),
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  const settingsReads = () => readAllCalls.filter((t) => t === "settings").length;
+  // A fresh module graph is a fresh GAS execution: the per-execution memo starts cold.
+  const nextExecution = async () => {
+    vi.resetModules();
+    return import("../src/server/settingsStore");
+  };
+
+  it("serves a second execution from the cache without opening the tab", async () => {
+    (await nextExecution()).getRetentionDays();
+    expect(settingsReads()).toBe(1);
+    expect((await nextExecution()).getRetentionDays()).toBe(30);
+    expect(settingsReads()).toBe(1);
+  });
+
+  it("hands the next execution the saved dict, not the tab's old one", async () => {
+    const first = await nextExecution();
+    first.getRetentionDays();
+    first.saveSettings({ retention_days: 45 });
+    expect((await nextExecution()).getRetentionDays()).toBe(45);
+    expect(settingsReads()).toBe(1);
+  });
+
+  it("re-reads the tab once the data version moves", async () => {
+    (await nextExecution()).getRetentionDays();
+    props.set("DATA_VERSION", "999");
+    (await nextExecution()).getRetentionDays();
+    expect(settingsReads()).toBe(2);
+  });
+
+  it("does not cache a dict too large for one CacheService value", async () => {
+    settingsRows = [{ key: "support_group_map", value_json: JSON.stringify({ blob: "x".repeat(100_000) }) }];
+    (await nextExecution()).loadSettings();
+    (await nextExecution()).loadSettings();
+    expect(settingsReads()).toBe(2);
+  });
+
+  it("falls back to the tab when the cache throws", async () => {
+    cacheThrows = true;
+    expect((await nextExecution()).getRetentionDays()).toBe(30);
+    expect(settingsReads()).toBe(1);
+  });
+});
