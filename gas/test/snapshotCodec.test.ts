@@ -4,7 +4,7 @@
 // trip of the input.
 import { describe, expect, it } from "vitest";
 import { gzipSync } from "node:zlib";
-import { decodeSnapshot, encodeSnapshot } from "../src/domain/snapshotCodec";
+import { decodeSnapshot, encodeSnapshot } from "../../gas_shared/domain/snapshotCodec";
 
 type Row = Record<string, unknown>;
 const viaJson = <T,>(v: T): T => JSON.parse(JSON.stringify(v)) as T;

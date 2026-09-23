@@ -35,7 +35,7 @@ idea, not the file: `gas_devsecops` has its own `readModels.ts`, `readModelStore
 | Cache key | `src/server/serverCache.ts:29` `KEY_PREFIX = wsk.${BUILD_ID}`, and `currentStamp` (~`:165`) folds BUILD_ID into the L2 stamp | Every deploy cold-starts every read-model. |
 | Namespaces | `readModels.ts`: `dsMttr4`, `dsExecutive2`, `dsRegister2`, `dsSecrets2`, `dsProgram2`, `dsRepos2`, `dsHistory4`, `dsStorage1`; `api.ts`: **`settingsImpact` (no version suffix)** | All but one versioned. |
 | Base rows | `src/server/ledgerStore.ts:691` `loadBaseRows(options)` | Re-derived per call; options vary by `now` / `scope` / `trackingStartByScope`. 13 call sites. |
-| Snapshot | `src/server/archiveStore.ts:293–313` | v1 (one JSON object per row). |
+| Snapshot | `src/server/archiveStore.ts` `writeLedgerSnapshot`/`readLedgerSnapshot` | **v2 in step 2c** (shared codec, `gas_shared/domain/snapshotCodec.ts`, keyed by `finding_key`; v1 still read; `scans` no longer written). Was: v1, 1.96 MB gz, 2.4–2.8 s per cold read. |
 | Warm | `src/server/readModels.ts:2598` `warmReadModels`, `WARM_BUDGET_MS` `:245` | Budgeted, logs a cut-out, **no continuation**. |
 | `parseTs` | `src/domain/util.ts:107` | **Fast path added in step 1** (`test/parseTs.test.ts`). |
 | Timing logs | sheetsDb, archiveStore, serverCache, readModelStore, ledgerStore, api (`bootstrap`, `getExecutivePage`) | **Added in step 1.** Awaiting the first production logs. |
@@ -88,7 +88,7 @@ Order by what the log shows. Expected, in rough order of impact:
 4. **Stop invalidating on deploy.** Replace BUILD_ID in `KEY_PREFIX` and in `currentStamp` with a `CACHE_EPOCH` constant; rename `settingsImpact` → `settingsImpact1` (or whatever suffix the next bump would be); add a spec like `gas/test/cacheNamespaces.test.ts` requiring a version on every namespace and keeping BUILD_ID out of the stamp; update the L2 "deploy moves the stamp" spec to "an epoch bump moves the stamp". Record the convention in root `CLAUDE.md` next to the gas/ line. Reference: #322.
 5. **Base rows once per execution**, if the log shows repeated derivations: memoize per (state object, options) and hand out shallow copies — callers annotate rows in place. Bypass the memo for an explicit `now`. Reference: #318.
 6. **Warm continuation** if the warm reports cut-outs: one-shot `trigger_continueWarm`-style handler with its own name, 6-hop cap per cache stamp, 60 s deferral while a job is in flight; add the handler to `dist/entry.js`, the entry-points spec and the build's NOT_RPCS guard. Put the landing page's models first in the warm order. Reference: #317.
-7. **Snapshot v2** if the snapshot read is a visible cost: reuse `gas/src/domain/snapshotCodec.ts` (consider moving it to `gas_shared/domain/` and importing it from both apps rather than copying). Keep reading v1; name the v2 fields differently from v1 so a rollback reads the tabs instead of misreading. Reference: #324.
+7. **(2c, done — codec moved to `gas_shared/domain/`, gas/ imports it too)** **Snapshot v2** if the snapshot read is a visible cost: reuse `gas/src/domain/snapshotCodec.ts` (consider moving it to `gas_shared/domain/` and importing it from both apps rather than copying). Keep reading v1; name the v2 fields differently from v1 so a rollback reads the tabs instead of misreading. Reference: #324.
 
 ## Conventions carried over from the gas/ work
 

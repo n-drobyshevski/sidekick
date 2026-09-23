@@ -22,6 +22,7 @@ import { PROP_KEYS, requireProp } from "./props";
 // `ledger` is keyed by finding_key. This module only relies on that outer shape — it never
 // reads a row — which is exactly what `looksLikeLedgerState` below checks on the way in.
 import type { LedgerState } from "../domain/ledgerTypes";
+import { decodeSnapshot, encodeSnapshot, SNAPSHOT_V2 } from "../../../gas_shared/domain/snapshotCodec";
 export type { LedgerState };
 
 /** Structural check for `readLedgerSnapshot`/`readBackup`: arrays for scans/episodes, a
@@ -332,20 +333,36 @@ const SNAPSHOT_NAME = "ledger-snapshot.json.gz";
 
 export interface LedgerSnapshot {
   version: number;
-  scans: LedgerState["scans"];
   ledger: LedgerState["ledger"];
   episodes: LedgerState["episodes"];
 }
 
-/** Rewrite the fast-read copy of the ledger (called after every ledger state write). One
- *  file, latest wins — this is a cache of the tabs, not a history of them. */
+/** The ledger map's key field in this register (gas/ keys by `vuln_key`). */
+const LEDGER_KEY_FIELD = "finding_key";
+
+/**
+ * Rewrite the fast-read copy of the ledger (called after every ledger state write). One file,
+ * latest wins — this is a cache of the tabs, not a history of them.
+ *
+ * WRITTEN AS V2 (gas_shared/domain/snapshotCodec.ts): columns and a string dictionary rather
+ * than one JSON object per row, the format gas/ moved to in #324. The v1 file was measured in
+ * production (PERF_PLAN.md step 1) at 1.96 MB gzipped and 2.4–2.8 s to fetch, inflate, decode
+ * and parse, in every cold execution that loads the ledger — twice per cold landing page.
+ *
+ * `scans` is no longer written: `ledgerStore.loadState` reads the scans backbone from the TAB
+ * (it is the commit record), and nothing read the snapshot's copy.
+ *
+ * The reader below accepts both versions, so the first read after this deploy finds the v1 file
+ * and the next state write replaces it. A ROLLBACK is safe the other way too: v2's fields are
+ * named `ledgerTable`/`episodeTable`, so a v1 reader finds no `ledger`/`episodes`/`scans`, reports
+ * no snapshot, and reads the tabs — slower, and correct.
+ */
 export function writeLedgerSnapshot(state: LedgerState): void {
-  const snap: LedgerSnapshot = {
-    version: 1,
-    scans: state.scans,
-    ledger: state.ledger,
-    episodes: state.episodes,
-  };
+  const snap = encodeSnapshot(
+    state.ledger as unknown as Record<string, Record<string, unknown>>,
+    state.episodes as unknown as Record<string, unknown>[],
+    LEDGER_KEY_FIELD,
+  );
   writeGzJson(subfolder("snapshots"), SNAPSHOT_NAME, snap);
 }
 
@@ -356,6 +373,16 @@ export function readLedgerSnapshot(): LedgerSnapshot | null {
   const parsed = readGzJson(subfolder("snapshots"), SNAPSHOT_NAME, "archiveRead:snapshot");
   console.log(JSON.stringify({ stage: "driveTotal", label: "snapshot", ms: Date.now() - t0 }));
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const t1 = Date.now();
+  const v2 = decodeSnapshot(parsed);
+  if (v2) {
+    console.log(JSON.stringify({ stage: "snapshotDecode", version: SNAPSHOT_V2, ms: Date.now() - t1 }));
+    return {
+      version: SNAPSHOT_V2,
+      ledger: v2.ledger as unknown as LedgerState["ledger"],
+      episodes: v2.episodes as unknown as LedgerState["episodes"],
+    };
+  }
   const obj = parsed as Record<string, unknown>;
   return looksLikeLedgerState(obj) ? (obj as unknown as LedgerSnapshot) : null;
 }
