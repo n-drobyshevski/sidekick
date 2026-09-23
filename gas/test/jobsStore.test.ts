@@ -221,3 +221,48 @@ describe("getJob reads the tail, not the whole tab", () => {
     expect(reads.tail).toBe(0);
   });
 });
+
+// bootstrap's live `activeJob` field read the whole jobs tab on every page load (~0.9 s,
+// measured in doGet). It now reads a display copy in CacheService that every writer drops.
+describe("activeJobForDisplay", () => {
+  const cache = new Map<string, string>();
+  let cacheThrows = false;
+
+  beforeEach(() => {
+    cache.clear();
+    cacheThrows = false;
+    reads.full = 0;
+    vi.stubGlobal("CacheService", {
+      getScriptCache: () => ({
+        get: (k: string) => { if (cacheThrows) throw new Error("down"); return cache.get(k) ?? null; },
+        put: (k: string, v: string) => { if (cacheThrows) throw new Error("down"); cache.set(k, v); },
+        remove: (k: string) => { if (cacheThrows) throw new Error("down"); cache.delete(k); },
+      }),
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  it("reads the tab once, then serves the cached answer — including 'nothing running'", async () => {
+    const { activeJobForDisplay } = await load();
+    expect(activeJobForDisplay()).toBeNull();
+    expect(activeJobForDisplay()).toBeNull();
+    expect(reads.full).toBe(1);
+  });
+
+  it("is dropped by createJob and updateJob, so the next read sees the write", async () => {
+    const { activeJobForDisplay, createJob, updateJob } = await load();
+    expect(activeJobForDisplay()).toBeNull();
+    createJob(newRow(), NOW);
+    expect(activeJobForDisplay()?.job_id).toBe("backfill-1");
+    updateJob("backfill-1", { phase: "DONE" }, NOW);
+    expect(activeJobForDisplay()).toBeNull();
+    expect(reads.full).toBe(3);
+  });
+
+  it("falls back to the tab when the cache throws", async () => {
+    const { activeJobForDisplay, createJob } = await load();
+    cacheThrows = true;
+    createJob(newRow(), NOW);
+    expect(activeJobForDisplay()?.job_id).toBe("backfill-1");
+  });
+});

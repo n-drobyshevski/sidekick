@@ -56,6 +56,11 @@ web UI. The top-level `pytest` suite should remain focused on non-UI logic.
 - Never regenerate golden fixtures or vitest snapshots without reading the diff
   carefully.
 - Commit locally; do not push or open a PR unless asked.
+- In `gas/`, a deploy no longer invalidates the read-model cache (keys carry
+  `serverCache.CACHE_EPOCH`, not the build id). When you change what a cached
+  read-model returns — its shape or its meaning — bump that model's namespace
+  suffix (`mttr12` → `mttr13`); `test/cacheNamespaces.test.ts` requires every
+  namespace to carry one.
 
 ## Design context
 

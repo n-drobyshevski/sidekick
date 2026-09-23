@@ -103,9 +103,9 @@ describe("the read path: L2 hit means no recompute", () => {
     expect(durablyCached("m", P, () => "new")).toBe("new");
   });
 
-  // BUILD_ID is a source hash, so every deploy moves the stamp and every file goes stale at
-  // once. Bounded by the warm trigger; pinned here so the behaviour is deliberate.
-  it("treats a code deploy the same as a data change", () => {
+  // The stamp's first segment is serverCache.CACHE_EPOCH (it was BUILD_ID, which made every
+  // deploy a cold start). Bumping the epoch must still retire every durable file at once.
+  it("treats a cache-epoch bump the same as a data change", () => {
     duringWarm(() => durablyCached("m", P, () => "old"));
     stamp = "build2.100.tagA";
     expect(durablyCached("m", P, () => "new")).toBe("new");

@@ -55,7 +55,7 @@ import * as archive from "./archiveStore";
 import * as errorLog from "./errorLog";
 import * as findings from "./findings";
 import * as history from "./historyStore";
-import { activeJob, clearTriggers, getJob, isStaleJob, isTerminalPhase, type JobRow } from "./jobsStore";
+import { activeJob, activeJobForDisplay, clearTriggers, getJob, isStaleJob, isTerminalPhase, type JobRow } from "./jobsStore";
 import { durablyCached, durablyPeek, duringWarm, sweepReadModels } from "./readModelStore";
 import * as ledgerStore from "./ledgerStore";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
@@ -183,7 +183,7 @@ function withLiveBootFields(core: Rec): Rec {
  * (gas_shared/server/inlineBoot.ts). `{ok:false}` on a cold core, and the page ships without
  * the block: the client then shows the boot splash and asks over `api_bootstrap`, exactly as
  * before the inline path existed. Computing the core here instead held the whole page for
- * ~20 s on the first open after a deploy (every cache key carries BUILD_ID), with a blank tab
+ * ~20 s on the first open after a deploy (every cache key carried BUILD_ID then), with a blank tab
  * where the splash used to be — measured, which is why this peeks rather than computes.
  */
 export function bootstrapIfWarm(): ApiResult {
@@ -416,8 +416,10 @@ function jobSummary(job: JobRow | null): Rec | null {
   return jobSummarySlice(job, !isTerminalPhase(job.phase) && isStaleJob(job));
 }
 
+// The DISPLAY copy (jobsStore.activeJobForDisplay): this feeds bootstrap's live field and the
+// id-less status poll, both of which only show the job. Guards call `activeJob()` directly.
 function activeJobSummary(): Rec | null {
-  return jobSummary(activeJob());
+  return jobSummary(activeJobForDisplay());
 }
 
 
@@ -1075,7 +1077,10 @@ function filterNoFixFrame(records: Rec[], showNoFix: boolean): Rec[] {
 // EOL OS can't be remediated by patching the finding, so it would otherwise sit open forever,
 // skewing MTTR/SLA.
 function eolVulnKeys(): Set<string> {
-  const keys = cached("eolKeys", {}, (): string[] => {
+  // "eolKeys" → "eolKeys1": no semantic change — every namespace carries a version now that a
+  // deploy no longer changes the cache stamp (see serverCache.CACHE_EPOCH), and this was the
+  // one without a number to bump.
+  const keys = cached("eolKeys1", {}, (): string[] => {
     const scan = findings.currentScan();
     if (!scan) return [];
     const out: string[] = [];
@@ -3947,7 +3952,7 @@ function warmReadModelsInner(budgetMs: number): number {
   };
 
   // ORDER IS PRIORITY, because the budget can run out. Measured on a real register right after a
-  // deploy (which changes BUILD_ID, so every entry is cold at once): the old order — the
+  // deploy (when BUILD_ID was still in every key, so every entry went cold at once): the old order — the
   // all-severities scope in full, then the Display subset, the cold zone last — warmed 19 of 27
   // and left the Display subset's `insights` and BOTH cold-zone entries cold. Those are exactly
   // what the default landing page (Executive) reads when a Display subset is configured, and it

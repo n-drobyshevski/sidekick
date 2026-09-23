@@ -73,6 +73,7 @@ export function createJob(row: Omit<JobRow, "started_at" | "updated_at">, now?: 
   ensureTab(TABS.jobs);
   const full: JobRow = { ...row, started_at: nowIso(now), updated_at: nowIso(now) };
   appendRows(TABS.jobs, [full as unknown as Rec]);
+  forgetActiveJob();
   return full;
 }
 
@@ -81,6 +82,7 @@ export function updateJob(jobId: string, patch: Partial<JobRow>, now?: number): 
     ...patch,
     updated_at: nowIso(now),
   } as Rec);
+  forgetActiveJob();
 }
 
 function rowToJob(r: Rec): JobRow {
@@ -207,4 +209,46 @@ export function lastJobOfKind(kind: JobKind): JobRow | null {
  */
 export function activeJob(): JobRow | null {
   return listJobs().find((j) => !isTerminalPhase(j.phase)) ?? null;
+}
+
+// ------------------------------------------------------- the active job, for DISPLAY only
+//
+// `activeJob()` reads the whole jobs tab, measured at ~0.9 s — and bootstrap's live
+// `activeJob` field paid it on every page load, doGet's inline bootstrap included, where it was
+// most of that bootstrap's cost once the read-models were warm. This copy lives in CacheService
+// and every writer of the tab (`createJob`, `updateJob`, the ledger reset) drops it.
+//
+// DISPLAY ONLY, NEVER A GUARD. A reader that computed from the sheet just before a write can put
+// its now-stale answer back after the writer dropped the key; the TTL bounds that to a minute,
+// which a progress card can live with — the client polls the job by id through `getJob`, which
+// is never cached. Anything whose correctness depends on the answer (the warm's in-flight check,
+// single-flight mutations) keeps calling `activeJob()`.
+const ACTIVE_JOB_CACHE_KEY = "activeJob1";
+const ACTIVE_JOB_CACHE_TTL_SEC = 60;
+
+/** `activeJob()` through a short-lived cache. For what a page SHOWS, never for what it guards. */
+export function activeJobForDisplay(): JobRow | null {
+  try {
+    // "null" is a cached answer (no job in flight); a missing key is a miss.
+    const raw = CacheService.getScriptCache().get(ACTIVE_JOB_CACHE_KEY);
+    if (raw !== null) return JSON.parse(raw) as JobRow | null;
+  } catch (e) {
+    console.warn(`Active-job cache read failed: ${e}`);
+  }
+  const job = activeJob();
+  try {
+    CacheService.getScriptCache().put(ACTIVE_JOB_CACHE_KEY, JSON.stringify(job), ACTIVE_JOB_CACHE_TTL_SEC);
+  } catch (e) {
+    console.warn(`Active-job cache write failed: ${e}`);
+  }
+  return job;
+}
+
+/** Drop the display copy. Every writer of the jobs tab calls this after its write. */
+export function forgetActiveJob(): void {
+  try {
+    CacheService.getScriptCache().remove(ACTIVE_JOB_CACHE_KEY);
+  } catch (e) {
+    console.warn(`Active-job cache drop failed: ${e}`);
+  }
 }

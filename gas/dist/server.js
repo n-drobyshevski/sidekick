@@ -6329,7 +6329,8 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "ddc61e19bb6a" : "dev";
+  var BUILD_ID = true ? "c690fd9d60c2" : "dev";
+  var CACHE_EPOCH = "1";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -6342,7 +6343,7 @@ var Server = (() => {
   var versionStamp;
   function stamp() {
     if (versionStamp === void 0) {
-      versionStamp = `${BUILD_ID}.${dataVersion()}.${domainTagStamp()}`;
+      versionStamp = `${CACHE_EPOCH}.${dataVersion()}.${domainTagStamp()}`;
     }
     return versionStamp;
   }
@@ -6819,6 +6820,7 @@ var Server = (() => {
     ensureTab(TABS.jobs);
     const full = { ...row, started_at: nowIso(now), updated_at: nowIso(now) };
     appendRows(TABS.jobs, [full]);
+    forgetActiveJob();
     return full;
   }
   function updateJob(jobId, patch, now) {
@@ -6826,6 +6828,7 @@ var Server = (() => {
       ...patch,
       updated_at: nowIso(now)
     });
+    forgetActiveJob();
   }
   function rowToJob(r) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
@@ -6893,6 +6896,30 @@ var Server = (() => {
   function activeJob() {
     var _a;
     return (_a = listJobs().find((j) => !isTerminalPhase(j.phase))) != null ? _a : null;
+  }
+  var ACTIVE_JOB_CACHE_KEY = "activeJob1";
+  var ACTIVE_JOB_CACHE_TTL_SEC = 60;
+  function activeJobForDisplay() {
+    try {
+      const raw = CacheService.getScriptCache().get(ACTIVE_JOB_CACHE_KEY);
+      if (raw !== null) return JSON.parse(raw);
+    } catch (e) {
+      console.warn(`Active-job cache read failed: ${e}`);
+    }
+    const job = activeJob();
+    try {
+      CacheService.getScriptCache().put(ACTIVE_JOB_CACHE_KEY, JSON.stringify(job), ACTIVE_JOB_CACHE_TTL_SEC);
+    } catch (e) {
+      console.warn(`Active-job cache write failed: ${e}`);
+    }
+    return job;
+  }
+  function forgetActiveJob() {
+    try {
+      CacheService.getScriptCache().remove(ACTIVE_JOB_CACHE_KEY);
+    } catch (e) {
+      console.warn(`Active-job cache drop failed: ${e}`);
+    }
   }
 
   // src/server/ledgerStore.ts
@@ -7494,6 +7521,7 @@ var Server = (() => {
     overwrite(TABS.episodes, []);
     overwrite(TABS.compactions, []);
     overwrite(TABS.jobs, []);
+    forgetActiveJob();
     trashLedgerSnapshot();
     invalidateLedgerMemos();
     return counts;
@@ -10121,7 +10149,7 @@ var Server = (() => {
     return jobSummarySlice(job, !isTerminalPhase(job.phase) && isStaleJob(job));
   }
   function activeJobSummary() {
-    return jobSummary(activeJob());
+    return jobSummary(activeJobForDisplay());
   }
   function readStringArray(p, key) {
     const raw = p == null ? void 0 : p[key];
@@ -10642,7 +10670,7 @@ var Server = (() => {
     return records.filter((r) => !recordNoFix(r));
   }
   function eolVulnKeys() {
-    const keys = cached("eolKeys", {}, () => {
+    const keys = cached("eolKeys1", {}, () => {
       const scan = currentScan();
       if (!scan) return [];
       const out = [];
