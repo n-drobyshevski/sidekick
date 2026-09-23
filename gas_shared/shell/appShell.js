@@ -57,6 +57,11 @@ import { beginRouteLoading, endRouteLoading, mountRouteOverlay } from "./routeOv
  * @property {() => object}  [pageContext] extra fields merged into every page.render's third
  *                                     argument (gas passes its two client-side scopes and
  *                                     two callbacks; the siblings pass nothing)
+ * @property {() => void}    [afterFirstRoute] called once the first route after a boot has
+ *                                     settled (rendered, or failed) — the moment the front
+ *                                     door has its data on screen and the rest of the session
+ *                                     can be prepared in the background. gas and gas_devsecops
+ *                                     start the Chart.js bundle here. A throw is swallowed.
  */
 
 /**
@@ -321,6 +326,13 @@ export function createAppShell(spec) {
     } finally {
       // Only the latest route settles the overlay; a newer change keeps it up.
       if (useOverlay && seq === routeSeq) endRouteLoading();
+      if (firstRoute && spec.afterFirstRoute) {
+        try {
+          spec.afterFirstRoute();
+        } catch (e) {
+          console.warn("afterFirstRoute failed:", e);
+        }
+      }
       firstRoute = false;
     }
   }

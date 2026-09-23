@@ -37,6 +37,7 @@ import { PAGES } from "./pages.js";
 import { LANE_ICONS, ROUTE_ICONS } from "./routeIcons.js";
 import { findEntry } from "./helpContent.js";
 import { installExperimentalFanout } from "./experimental.js";
+import { loadCharts } from "../../../../gas_shared/ui/chartsLoader.js";
 
 // ============================================================================ the manifest
 //
@@ -451,11 +452,25 @@ function navContext() {
 
 // ------------------------------------------------------------------------------ the shell
 
+// CHART.JS IN THE BACKGROUND, ONCE THE FRONT DOOR HAS PAINTED. The bundle comes over its own
+// google.script.run call, and every chart route used to request it only when its first chart
+// drew — after that page's data had answered — so a chart page paid two GAS calls back to back,
+// each with ~1.5–2 s of per-call overhead (measured on the MTTR page: 3.3 s then 2.5 s). The
+// landing page draws no chart and still does not pay for it: this runs only after the first
+// route has settled, and only when the browser is idle. `loadCharts` is memoized, so any chart
+// route opened afterwards awaits this same request instead of starting its own.
+function prefetchCharts() {
+  const go = () => { loadCharts().catch(() => {}); }; // a refusal is cached, shown where charts draw
+  if (typeof window.requestIdleCallback === "function") window.requestIdleCallback(go, { timeout: 3000 });
+  else setTimeout(go, 1000);
+}
+
 const shell = createAppShell({
   pages: PAGES,
   appbarScope,
   railFooter: renderSyncZone,
   navContext,
+  afterFirstRoute: prefetchCharts,
 });
 
 // THE EXPERIMENTAL GATE HAS ONE LISTENER SLOT and createAppShell already claimed it, for the
