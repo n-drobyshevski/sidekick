@@ -173,9 +173,11 @@ writeFileSync(join(dist, "index.html"), renderIndexHtml(root));
 // in api.ts but are reached from `trigger_warmReadModels` as `Server.api.warmReadModelsScheduled()`
 // directly, or from `scanJobs.ts` in-process — never through a `timedApi_`-gated `api_x`
 // delegator — so requiring one for them would flag a real, working wire-up as unreachable.
+// `continueWarm` is the same shape (`trigger_continueWarm`), and `bootstrapIfWarm` is called
+// in-process by doGet (src/server/main.ts), never over google.script.run.
 const entryJs = readFileSync(join(dist, "entry.js"), "utf8");
 const apiTs = readFileSync(join(root, "src/server/api.ts"), "utf8");
-const NOT_RPCS = new Set(["warmReadModels", "warmReadModelsScheduled"]);
+const NOT_RPCS = new Set(["warmReadModels", "warmReadModelsScheduled", "continueWarm", "bootstrapIfWarm"]);
 const declared = new Set(
   [...entryJs.matchAll(/function api_(\w+)\s*\(/g)].map((m) => m[1]),
 );

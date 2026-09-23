@@ -60,6 +60,8 @@ function trigger_continuePurge(e) { Server.purge.continuePurge(e); }
 // setup() three times across the working day (warm by 09:00, 13:00 and 17:00 Europe/Paris)
 // rather than round the clock — see setup.ts for why the fires are an hour early.
 function trigger_warmReadModels() { Server.api.warmReadModelsScheduled(); }
+// The next hop of a warm that ran out of its budget — one-shot, scheduled by the warm itself.
+function trigger_continueWarm(e) { Server.api.continueWarm(e); }
 
 // google.script.run API surface — thin delegators so the client can call api_* by name.
 // Each is timed to the execution log ({"api":name,"ms":n} lines) so server cost can be

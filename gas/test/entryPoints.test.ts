@@ -28,7 +28,7 @@ const globals = new Set([...entry.matchAll(/^function\s+(\w+)\s*\(/gm)].map((m) 
 const forwarded = new Set([...entry.matchAll(/timedApi_\("(\w+)"/g)].map((m) => m[1]!));
 
 // Exported from api.ts but deliberately not RPCs — called server-side only.
-const NOT_RPCS = new Set(["warmReadModels", "warmReadModelsScheduled"]);
+const NOT_RPCS = new Set(["warmReadModels", "warmReadModelsScheduled", "continueWarm", "bootstrapIfWarm"]);
 
 describe("every trigger handler named in src/ exists in entry.js", () => {
   // The bug this catches: a trigger installed against a handler that only exists inside the
@@ -43,7 +43,7 @@ describe("every trigger handler named in src/ exists in entry.js", () => {
   });
 
   it("has a global for each trigger_* handler used as a continuation elsewhere", () => {
-    for (const file of ["scanJobs.ts", "backfillJobs.ts", "purgeJobs.ts"]) {
+    for (const file of ["scanJobs.ts", "backfillJobs.ts", "purgeJobs.ts", "api.ts"]) {
       const src = readFileSync(join(root, "src/server", file), "utf8");
       for (const m of src.matchAll(/CONTINUE_HANDLER\s*=\s*"(\w+)"/g)) {
         expect(globals).toContain(m[1]!);

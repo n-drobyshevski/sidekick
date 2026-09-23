@@ -61,6 +61,8 @@ vi.mock("../src/server/serverCache", () => ({
     l1.set(k, v);
     return v;
   },
+  peekCached: (n: string, p: unknown) => l1.get(n + JSON.stringify(p ?? null) + stamp),
+  primeCached: (n: string, p: unknown, v: unknown) => { l1.set(n + JSON.stringify(p ?? null) + stamp, v); },
   currentStamp: () => stamp,
   paramsHash: (p: unknown) => "h" + JSON.stringify(p ?? null).length,
 }));
@@ -69,13 +71,14 @@ vi.mock("../src/server/serverCache", () => ({
 // execution, which is correct in production and would leak between specs here.
 const load = () => import("../src/server/readModelStore");
 let durablyCached: Awaited<ReturnType<typeof load>>["durablyCached"];
+let durablyPeek: Awaited<ReturnType<typeof load>>["durablyPeek"];
 let duringWarm: Awaited<ReturnType<typeof load>>["duringWarm"];
 let readModelFileName: Awaited<ReturnType<typeof load>>["readModelFileName"];
 let sweepReadModels: Awaited<ReturnType<typeof load>>["sweepReadModels"];
 
 beforeEach(async () => {
   vi.resetModules();
-  ({ durablyCached, duringWarm, readModelFileName, sweepReadModels } = await load());
+  ({ durablyCached, durablyPeek, duringWarm, readModelFileName, sweepReadModels } = await load());
   files.clear();
   l1.clear();
   calls.create = 0; calls.read = 0; calls.trash = 0; calls.list = 0; calls.folder = 0;
@@ -284,5 +287,40 @@ describe("the sweep survives a warm that only hits L1", () => {
       sweepReadModels();
     });
     expect(files.size).toBe(2);
+  });
+});
+
+// doGet's inline bootstrap peeks rather than reads through: a cold core computed inside doGet
+// held the whole page for ~20 s after a deploy. The peek must answer from what is stored and
+// never compute, and an L2 hit must land in L1 exactly as the read-through would have put it.
+describe("durablyPeek: stored or nothing, never computed", () => {
+  it("answers undefined when neither level holds the entry", () => {
+    expect(durablyPeek("m", P)).toBeUndefined();
+    expect(files.size).toBe(0);
+  });
+
+  it("answers from L1 without touching Drive", () => {
+    durablyCached("m", P, () => "value");
+    calls.read = 0;
+    expect(durablyPeek("m", P)).toBe("value");
+    expect(calls.read).toBe(0);
+  });
+
+  it("answers from the durable file and promotes it to L1", () => {
+    duringWarm(() => durablyCached("m", P, () => "warmed"));
+    l1.clear(); // CacheService lapsed; the Drive file survives
+    expect(durablyPeek("m", P)).toBe("warmed");
+    const compute = vi.fn(() => "recomputed");
+    calls.read = 0;
+    expect(durablyCached("m", P, compute)).toBe("warmed");
+    expect(compute).not.toHaveBeenCalled();
+    expect(calls.read).toBe(0); // the promotion is what the read-through then hits
+  });
+
+  it("treats a durable file from another build as cold", () => {
+    duringWarm(() => durablyCached("m", P, () => "old"));
+    l1.clear();
+    stamp = "build2.100.tagA"; // a deploy
+    expect(durablyPeek("m", P)).toBeUndefined();
   });
 });

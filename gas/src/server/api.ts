@@ -55,8 +55,8 @@ import * as archive from "./archiveStore";
 import * as errorLog from "./errorLog";
 import * as findings from "./findings";
 import * as history from "./historyStore";
-import { activeJob, getJob, isStaleJob, isTerminalPhase, type JobRow } from "./jobsStore";
-import { durablyCached, duringWarm, sweepReadModels } from "./readModelStore";
+import { activeJob, clearTriggers, getJob, isStaleJob, isTerminalPhase, type JobRow } from "./jobsStore";
+import { durablyCached, durablyPeek, duringWarm, sweepReadModels } from "./readModelStore";
 import * as ledgerStore from "./ledgerStore";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
 import * as access from "./access";
@@ -66,7 +66,7 @@ import { BASE_FILTER_WORDS } from "./wizClient";
 import * as backfillJobs from "./backfillJobs";
 import * as purgeJobs from "./purgeJobs";
 import * as scanJobs from "./scanJobs";
-import { BUILD_ID, cached, dataVersion } from "./serverCache";
+import { BUILD_ID, cached, currentStamp, dataVersion } from "./serverCache";
 import * as settingsStore from "./settingsStore";
 import { cellUsage, SCHEMA_VERSION, TAB_HEADERS, TABS } from "./sheetsDb";
 import {
@@ -117,8 +117,15 @@ function mutate<T>(fn: () => T, label = "api"): ApiResult<T> {
 
 // ------------------------------------------------------------------------ bootstrap
 
+// The core's cache name and params, shared by `bootstrap` and `bootstrapIfWarm` so the inline
+// path can only ever peek at the entry the RPC path reads and the warm writes.
+const BOOT_CORE = "bootstrapCore8";
+function bootCoreParams(): Rec {
+  return { showNoFix: settingsStore.getShowNoFix() };
+}
+
 export function bootstrap(_p?: unknown): ApiResult {
-  return run(() => ({
+  return run(() => withLiveBootFields({
     // The core is a pure function of ledger + settings state — cached per DATA_VERSION.
     // "bootstrapCore" → "bootstrapCore2": counts / unassigned / filterOptions now honor the
     // show-no-fix toggle and settings gained `showNoFix`; params null → {showNoFix} so the
@@ -151,7 +158,13 @@ export function bootstrap(_p?: unknown): ApiResult {
     // "bootstrapCore7" → "bootstrapCore8": `scopeCounts` gained `unassignedBase`. A stale
     // entry has none, and the switcher would keep printing the frame-only zero that made the
     // MTTR Unassigned bar look like a bug in the first place.
-    ...(durablyCached("bootstrapCore8", { showNoFix: settingsStore.getShowNoFix() }, bootstrapCore) as Rec),
+    ...(durablyCached(BOOT_CORE, bootCoreParams(), bootstrapCore) as Rec),
+  }));
+}
+
+function withLiveBootFields(core: Rec): Rec {
+  return {
+    ...core,
     // Live per-request fields: never cached (activeJob changes every poll tick).
     // OUTSIDE THE DURABLY-CACHED CORE, and that placement is the whole point. The hub URL is
     // a Script Property an operator can change at any moment through Settings; nothing about
@@ -162,7 +175,23 @@ export function bootstrap(_p?: unknown): ApiResult {
     hubUrl: readHubUrl(),
     hasCredentials: hasWizCredentials(),
     activeJob: activeJobSummary(),
-  }));
+  };
+}
+
+/**
+ * The bootstrap envelope, but only when its core is already cached — doGet's inline path
+ * (gas_shared/server/inlineBoot.ts). `{ok:false}` on a cold core, and the page ships without
+ * the block: the client then shows the boot splash and asks over `api_bootstrap`, exactly as
+ * before the inline path existed. Computing the core here instead held the whole page for
+ * ~20 s on the first open after a deploy (every cache key carries BUILD_ID), with a blank tab
+ * where the splash used to be — measured, which is why this peeks rather than computes.
+ */
+export function bootstrapIfWarm(): ApiResult {
+  const core = durablyPeek(BOOT_CORE, bootCoreParams());
+  if (core === undefined || core === null || typeof core !== "object") {
+    return { ok: false, error: "bootstrap core is cold", errorKind: "cold" };
+  }
+  return run(() => withLiveBootFields(core as Rec));
 }
 
 // --------------------------------------------------------------------------------------- //
@@ -3805,11 +3834,71 @@ function defaultGroupingKeys(): string[] {
 // execution at six minutes, and a partial warm that reports itself beats a killed one.
 const WARM_BUDGET_MS = 270_000;
 
-export function warmReadModels(budgetMs = WARM_BUDGET_MS): void {
-  duringWarm(() => warmReadModelsInner(budgetMs));
+// A pass that runs out of budget hands the rest to a one-shot trigger instead of leaving it cold
+// until the next scheduled fire, four hours away. Its OWN handler name, for the reason
+// backfillJobs gives: a shared one would let each clear the other's pending hop.
+const WARM_CONTINUE_HANDLER = "trigger_continueWarm";
+const WARM_CONTINUE_DELAY_MS = 1_000;
+// A job in flight blocks the warm (see warmReadModelsScheduled); a continuation that finds one
+// waits this long and tries again rather than giving up on the entries it was scheduled for.
+const WARM_BUSY_DELAY_MS = 60_000;
+// Every pass warms at least the first cold entry it reaches, so the chain always makes progress
+// — but an entry that alone outlasts the execution cap would kill each hop at the same place.
+// The cap bounds that, per cache stamp; a completed pass resets it.
+const WARM_MAX_HOPS = 6;
+
+function warmHopsKey(): string {
+  return "warmHops:" + currentStamp();
 }
 
-function warmReadModelsInner(budgetMs: number): void {
+function scheduleWarmContinuation(delayMs: number): void {
+  try {
+    const cache = CacheService.getScriptCache();
+    const key = warmHopsKey();
+    const hops = Number(cache.get(key) ?? "0") + 1;
+    if (hops > WARM_MAX_HOPS) {
+      console.warn(`Cache warm: gave up after ${WARM_MAX_HOPS} continuation hops`);
+      return;
+    }
+    cache.put(key, String(hops), 21_600);
+    clearTriggers(WARM_CONTINUE_HANDLER);
+    ScriptApp.newTrigger(WARM_CONTINUE_HANDLER).timeBased().after(delayMs).create();
+  } catch (e) {
+    console.warn(`Cache warm: could not schedule a continuation: ${e}`);
+  }
+}
+
+export function warmReadModels(budgetMs = WARM_BUDGET_MS): void {
+  const skipped = duringWarm(() => warmReadModelsInner(budgetMs));
+  if (skipped) {
+    scheduleWarmContinuation(WARM_CONTINUE_DELAY_MS);
+    return;
+  }
+  try {
+    CacheService.getScriptCache().remove(warmHopsKey());
+  } catch (_e) {
+    // The counter only bounds a chain; a stale one expires with its six-hour TTL.
+  }
+}
+
+/** `trigger_continueWarm` in dist/entry.js: the next hop of a warm that ran out of budget. */
+export function continueWarm(_e?: unknown): void {
+  try {
+    clearTriggers(WARM_CONTINUE_HANDLER);
+  } catch (e) {
+    console.warn(`Cache warm: could not clear the continuation trigger: ${e}`);
+  }
+  const job = activeJob();
+  if (job) {
+    console.log(`Cache warm: continuation deferred, ${job.kind} job ${job.job_id} is ${job.phase}`);
+    scheduleWarmContinuation(WARM_BUSY_DELAY_MS);
+    return;
+  }
+  warmReadModels();
+}
+
+/** Returns how many entries the budget left cold (0 = the pass completed). */
+function warmReadModelsInner(budgetMs: number): number {
   const t0 = Date.now();
   let warmed = 0;
   let skipped = 0;
@@ -3817,7 +3906,9 @@ function warmReadModelsInner(budgetMs: number): void {
   // the thing that hits the 6-minute execution cap first if the register grows, and a killed
   // execution warms NOTHING — every entry it had already computed is still cached, but the
   // ones it never reached stay cold and nothing reports why. Stopping at the budget and
-  // logging "warmed N of M" degrades instead of failing.
+  // logging "warmed N of M" degrades instead of failing; `warmReadModels` then schedules a
+  // continuation, and on that hop the entries already warmed are L1 hits that cost next to
+  // nothing, so the budget goes to what this pass could not reach.
   const warm = (label: string, fn: () => unknown) => {
     if (Date.now() - t0 >= budgetMs) { skipped += 1; return; }
     try {
@@ -3828,55 +3919,52 @@ function warmReadModelsInner(budgetMs: number): void {
     }
   };
 
-  // Severity-independent entries: the bootstrap core (also feeds the sidebar/counts), the
-  // scan-history KPI band, and the Settings storage panel (cellCount walks every sheet).
+  // ORDER IS PRIORITY, because the budget can run out. Measured on a real register right after a
+  // deploy (which changes BUILD_ID, so every entry is cold at once): the old order — the
+  // all-severities scope in full, then the Display subset, the cold zone last — warmed 19 of 27
+  // and left the Display subset's `insights` and BOTH cold-zone entries cold. Those are exactly
+  // what the default landing page (Executive) reads when a Display subset is configured, and it
+  // took 85–150 s to open. So: the bootstrap core, then everything `getExecutivePage` reads in
+  // the scope the pages actually request, then the rest of that scope, then the other scope.
   warm("bootstrap", () => bootstrap());
-  warm("scanHistory", () => cachedScanHistoryData());
-  warm("storageStats", () => cachedStorageStatsData());
 
   // The severity scopes the pages actually request (see the executive/mttr/overview/
-  // attribution pages): the all-severities entry (severities null, the shared default) plus
-  // the configured Display-severity subset when it's narrower.
+  // attribution pages): the configured Display-severity subset when it's narrower — which is
+  // what every page sends, so it goes FIRST — and the all-severities entry (severities null,
+  // the shared default).
   const display = settingsStore.getDisplaySeverities();
-  const scopes: (string[] | null)[] = [null];
+  const scopes: (string[] | null)[] = [];
   if (Array.isArray(display) && display.length && display.length < SELECTABLE_SEVERITIES.length) {
     scopes.push([...display]);
   }
+  scopes.push(null);
   const groupingKeys = defaultGroupingKeys();
   for (const severities of scopes) {
     const p = { domain: "", supportGroup: "", severities };
+    // What `getExecutivePage` reads for the unscoped landing page, in its order: `mttr`, the
+    // `insights` slice, the cold-zone slice, the by-domain split, the week trend and the
+    // severity counts. The cold zone is the heaviest model here; it sits after the cheaper
+    // Executive entries so a cut-out costs the landing page one card rather than all of them.
     warm("mttr", () => cachedMttrData(p));
     warm("mttrByDomain", () => cachedMttrByDomainData(p));
-    // Both Executive-only entries, and the week trend was never warmed at all — so the DEFAULT
-    // landing page's hero badge paid two full `kmMedianAsOf` passes over the base on the first
-    // load after every scan, which is the one load most likely to be someone opening the app.
     warm("execWeekTrend", () => cachedExecutiveWeekTrend(p));
     warm("execSevCounts", () => cachedExecutiveSeverityCounts(p));
-    warm("mttrTrend", () => cachedMttrTrendData(p));
     warm("insights", () => cachedInsightsData(p));
-    // Program performance is a top-level nav item one click from the landing page, and neither
-    // of its read-models was warmed — so the first visit after every scan paid a full
-    // `scopedBaseRows` + classifyRisk pass over the whole base, plus the backfilled trend
-    // backbone. `mttrBySupportGroup` is the split BOTH the MTTR and Executive pages switch to
-    // the moment a domain scope is picked, and it was cold for the same reason.
+    warm("coldZone", () => cachedColdZoneData(p));
+    // One click from the landing page: the MTTR page's trend, Program performance (a full
+    // `scopedBaseRows` + classifyRisk pass cold), the support-group split both MTTR and
+    // Executive switch to once a domain is picked, and the Overview's grouping / attribution.
+    warm("mttrTrend", () => cachedMttrTrendData(p));
     warm("program", () => cachedProgramData(p));
     warm("programTrend", () => cachedProgramTrendData(p));
     warm("mttrBySupportGroup", () => cachedMttrBySupportGroupData(p));
     warm("grouping", () => cachedGroupingData({ ...p, keys: groupingKeys }));
     warm("attribution", () => cachedAttributionData({ severities }));
   }
-  // THE COLD ZONE IS WARMED LAST, AND IN A PASS OF ITS OWN.
-  //
-  // It is on the DEFAULT landing page (the Executive card slices it) as well as behind its own
-  // route, and `durablyCached` only writes L2 during the warm — so without this the durable file
-  // would never be written at all and every first load after a scan would pay the full profile
-  // over the base. But it is also the newest and heaviest model here, and the warm runs under a
-  // budget: warmed in the middle of the loop it could spend what is left and leave `bootstrap`,
-  // `mttr` or `program` — the models every page has depended on for far longer — cold for the
-  // second severity scope. Last means it can only ever starve itself.
-  for (const severities of scopes) {
-    warm("coldZone", () => cachedColdZoneData({ domain: "", supportGroup: "", severities }));
-  }
+  // Severity-independent and off the landing path: the Scan History KPI band and the Settings
+  // storage panel (cellCount walks every sheet).
+  warm("scanHistory", () => cachedScanHistoryData());
+  warm("storageStats", () => cachedStorageStatsData());
   if (skipped) {
     console.warn(`Cache warm: ran out of budget after ${warmed} entries, ${skipped} left cold`);
   }
@@ -3885,8 +3973,10 @@ function warmReadModelsInner(budgetMs: number): void {
   // none of which any future write would ever overwrite, because nothing asks for those names.
   //
   // Skipped after a budget cut-out: the expected list would be short by whatever never ran, and
-  // sweeping against it would trash live entries to re-fetch them next pass.
+  // sweeping against it would trash live entries to re-fetch them next pass. The continuation
+  // that finishes the chain runs the whole list (as L1 hits), so it sweeps against all of it.
   if (!skipped) sweepReadModels();
+  return skipped;
 }
 
 
