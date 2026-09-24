@@ -131,6 +131,11 @@ account is `gas/DESIGN.md` §6a). What is this register's own:
   by severity". Where a curve never halved there is no half-life marker; the median open age
   (diamond) still shows the gap to the target. "SLA by severity — every cell" is folded, and
   remembered; everything else on the page is unchanged.
+- **Coverage & efficiency** opens with the same briefing (`gas/DESIGN.md` §6c): coverage and
+  efficiency as bounded tracks (efficiency with the prevalence tick and its "At or below random"
+  chip), High risk still open, and Classified — the share of scope the rule could score, which
+  every rate here is taken over. Prevalence and the observation window sit below as secondary
+  figures; the secrets-excluded pill and the end-of-life note stay on the surface.
 
 ## Measuring a page, and what the unit-chart round moved
 

@@ -2547,5 +2547,24 @@ a.brief-list__row:hover .brief-list__primary { text-decoration: underline; }
   transform: rotate(45deg); background: var(--sev-medium); border: 2px solid var(--page); box-sizing: content-box;
 }
 .brief-clocks__key-age { display: inline-block; width: 8px; height: 8px; transform: rotate(45deg); background: var(--sev-medium); }
+.brief-bounded {
+  position: relative; display: block; width: 100%; height: var(--brief-track-h);
+  border-radius: var(--brief-mark-radius); background: var(--surface-2); overflow: hidden;
+}
+.brief-bounded__fill { position: absolute; inset: 0 auto 0 0; background: var(--ink); border-radius: var(--brief-mark-radius); }
+/* The bounds: a hatched band over the track, so the doubt reads as texture, not a second value. */
+.brief-bounded__band {
+  position: absolute; top: 0; bottom: 0;
+  background: repeating-linear-gradient(135deg, var(--hairline-strong) 0 2px, transparent 2px 5px);
+  box-shadow: inset 0 0 0 1px var(--hairline-strong);
+}
+.brief-bounded__ref { position: absolute; top: -2px; bottom: -2px; width: 2px; margin-left: -1px; background: var(--sev-medium); }
+.brief-key-ref { display: inline-block; width: 2px; height: 12px; background: var(--sev-medium); vertical-align: -2px; }
+/* A briefing followed by the small print that qualifies it (Coverage & efficiency): the
+   population line, the secondary stat rows and the notes sit close to each other, and a
+   step further from the figures they qualify. */
+.brief-stack { display: flex; flex-direction: column; gap: var(--space-3); }
+.brief-stack > .brief { margin-bottom: var(--space-4); }
+.brief-stack > p { margin: 0; }
 .brief-extras { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-7); }
 .brief-extras > * { min-width: 160px; }

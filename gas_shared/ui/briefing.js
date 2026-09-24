@@ -623,3 +623,57 @@ export function briefMore(text, onClick) {
   return el("button", { type: "button", class: "brief-more", onclick: onClick },
     text, el("span", { "aria-hidden": "true" }, " →"));
 }
+
+// ------------------------------------------------------------- a rate with its bounds
+
+/**
+ * A percentage with its uncertainty and a reference line, as positions on a 0-100 track.
+ *
+ * WHY THE BAND IS DRAWN. Coverage and efficiency re-label the unclassified findings both ways,
+ * so each is a point inside [lo, hi] — and the WIDTH of that interval is the doubt. A bar
+ * that stops at the point alone would claim a precision the estimator does not have.
+ *
+ * THE REFERENCE is what a program picking at random would score (prevalence). Efficiency at
+ * or below it is "no better than random", and a line on the same track says so faster than a
+ * sentence. `verdict` compares the POINT; the caller decides the words.
+ *
+ * @returns {{show: boolean, point: number|null, lo: number|null, hi: number|null,
+ *   ref: number|null, band: boolean, verdict: "above"|"at-or-below"|null}}
+ */
+export function boundedTrackModel({ point, lo, hi, reference } = {}) {
+  const clamp = (v) => (v === null ? null : Math.min(Math.max(v, 0), 100));
+  const p = clamp(num(point));
+  if (p === null) return { show: false, point: null, lo: null, hi: null, ref: null, band: false, verdict: null };
+  let l = clamp(num(lo));
+  let h = clamp(num(hi));
+  if (l !== null && h !== null && l > h) [l, h] = [h, l];
+  const band = l !== null && h !== null && (Math.abs(l - p) > 1e-9 || Math.abs(h - p) > 1e-9);
+  const ref = clamp(num(reference));
+  return {
+    show: true,
+    point: p,
+    lo: band ? l : null,
+    hi: band ? h : null,
+    ref,
+    band,
+    verdict: ref === null ? null : p > ref ? "above" : "at-or-below",
+  };
+}
+
+/** The bounded-rate track: the point filled, the bounds a lighter band, the reference a tick. */
+export function boundedTrack({ point, lo, hi, reference, label }) {
+  const m = boundedTrackModel({ point, lo, hi, reference });
+  if (!m.show) return null;
+  const track = el("span", { class: "brief-bounded", role: "img", "aria-label": label },
+    el("span", { class: "brief-bounded__fill", style: "width: " + m.point.toFixed(2) + "%" }));
+  if (m.band) {
+    track.append(el("span", {
+      class: "brief-bounded__band",
+      style: "left: " + m.lo.toFixed(2) + "%; width: " + Math.max(m.hi - m.lo, 0.6).toFixed(2) + "%",
+    }));
+  }
+  if (m.ref !== null) {
+    track.append(el("span", { class: "brief-bounded__ref", style: "left: " + m.ref.toFixed(2) + "%" }));
+  }
+  return track;
+}

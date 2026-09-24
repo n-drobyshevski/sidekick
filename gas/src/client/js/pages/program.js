@@ -17,9 +17,10 @@ import { scatterTableModel, trendTableModel } from "./_charts.js";
 import { call } from "../../../../../gas_shared/api.js";
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import {
+  boundedTrack, briefExtras, briefFigure, briefFigures, shareTrack,
   DEFAULT_PAGE_SIZE, PAGE_SIZES, absent, absentText, bookTip, chartTable, clear, dataTable,
-  denomNote, downloadText, el, emptyState, errorState, figureCard, fmtCount, fmtDate,
-  glossaryTip, heroStat, meter, num, openSheet, pageHeader, pct1, quadModel, quadTable,
+  downloadText, el, emptyState, errorState, fmtCount, fmtDate,
+  glossaryTip, meter, num, openSheet, pageHeader, pct1, quadModel, quadTable,
   scopeBar, sectionLabel, sevBadge, skeleton, statRow, statusPill, tableFooter, tipLabel,
   toast,
   disclosure,
@@ -450,7 +451,7 @@ export async function renderProgram(main, _params, ctx) {
   const scopeChips = scopeBar({ domain, supportGroup, onClear: ctx.clearScope });
   if (scopeChips) main.append(scopeChips);
 
-  const heroHost = el("div", {});
+  const heroHost = el("div", { class: "brief-stack" });
   const matrixHost = el("div", {});
   const trendHost = el("div", {});
   const ruleHost = el("div", {});
@@ -551,99 +552,133 @@ export async function renderProgram(main, _params, ctx) {
     // which no glossary entry can carry and which is the part that makes the rate checkable
     // rather than asserted. The general lines each tip used to carry (what the bracketed
     // range means, why the pair is never published apart) live in helpContent.js now.
-    const aside = figureCard({
-      label: "Efficiency",
-      value: effRate.text,
-      sub: rateSub(effRate),
-      // THE VERDICT IS THE CARD'S CHIP, drawn only when `beatsRandom` is FALSE, never when it
-      // is null — "not prioritising" needs both halves of the comparison measured.
-      chip: view.beatsRandom === false
-        ? statusPill("warn", "At or below random", {
-          lines: [
-            "Efficiency is at or below prevalence (" + view.prevalenceText + "), which is"
-            + " what a program selecting findings at random would score.",
-            "That is a verdict on the rule, not on the team.",
-          ],
-        })
-        : null,
-      help: {
-        term: "efficiency",
-        lines: [
-          "Of everything remediated, the share that was actually high risk. TP / (TP + FP) —"
-          + " here " + m.tp.toLocaleString() + " of " + (m.tp + m.fp).toLocaleString() + ".",
-          m.prevalence !== null
-            ? "Picking at random would score about " + pct(m.prevalence)
-              + " — the share of classified findings that are high risk."
+    // THE BRIEFING (2026-09-24, DESIGN.md §6c). Coverage and efficiency side by side, each a
+    // bounded track — the point filled, the bounds hatched (the width IS the doubt), and for
+    // efficiency the random-selection line — then what is still open and the capacity verdict.
+    // Published together, never alone: widening the rule moves them in opposite directions.
+    const highRisk = m.tp + m.fn;
+    const verdict = VERDICT[capHigh.verdict] || null;
+    heroHost.append(el("div", { class: "brief" },
+      briefFigures(
+        briefFigure({
+          label: "Coverage",
+          help: {
+            term: "coverage",
+            lines: [
+              "Of every finding the active rule calls high risk, the share that has been "
+              + "remediated. TP / (TP + FN) — here " + m.tp.toLocaleString() + " of "
+              + highRisk.toLocaleString() + ".",
+            ],
+          },
+          denominator: covRate.baseEmpty ? covRate.emptyLabel : rateSub(covRate) + ".",
+          value: covRate.measured ? covRate.text : "Not measured",
+          valueClass: covRate.measured ? null : "brief-value--text",
+          visual: boundedTrack({
+            point: covRate.point, lo: covRate.lo, hi: covRate.hi,
+            label: "Coverage " + covRate.text
+              + (covRate.boundsText ? ", bounds " + covRate.boundsText : ""),
+          }),
+          caption: rateSub(covRate),
+        }),
+        briefFigure({
+          label: "Efficiency",
+          help: {
+            term: "efficiency",
+            lines: [
+              "Of everything remediated, the share that was actually high risk. TP / (TP + FP) —"
+              + " here " + m.tp.toLocaleString() + " of " + (m.tp + m.fp).toLocaleString() + ".",
+              m.prevalence !== null
+                ? "Picking at random would score about " + pct(m.prevalence)
+                  + " — the share of classified findings that are high risk."
+                : null,
+            ].filter(Boolean),
+          },
+          denominator: effRate.baseEmpty ? effRate.emptyLabel : rateSub(effRate) + ".",
+          value: effRate.measured ? effRate.text : "Not measured",
+          valueClass: effRate.measured ? null : "brief-value--text",
+          delta: view.beatsRandom === false
+            ? statusPill("warn", "At or below random", {
+              lines: [
+                "Efficiency is at or below prevalence (" + view.prevalenceText + "), which is"
+                + " what a program selecting findings at random would score.",
+                "That is a verdict on the rule, not on the team.",
+              ],
+            })
             : null,
-        ].filter(Boolean),
-      },
-    });
-
-    heroHost.append(pageHeader({
-      hero: heroStat(
-        "Remediation coverage",
-        covRate.text,
-        // THE CLASSIFIED-COUNT LINE IS THE QUALIFIER. "N tracked lifecycle(s), N classified
-        // (X%), N with no captured exploit signal" is the population EVERY figure on this
-        // page is drawn from — the same job `executiveHeroView`'s qualifier does on the
-        // front door — and the unclassified count stays on the surface because it is the
-        // Outside: the population the rule refused to score, not an aside about the rate.
-        m.total.toLocaleString() + " tracked lifecycle(s) · " +
-        m.classified.toLocaleString() + " classified (" + pct0(m.signalCoveragePct) + ") · " +
-        m.unknown.toLocaleString() + " with no captured exploit signal",
+          visual: boundedTrack({
+            point: effRate.point, lo: effRate.lo, hi: effRate.hi, reference: view.prevalence,
+            label: "Efficiency " + effRate.text
+              + (effRate.boundsText ? ", bounds " + effRate.boundsText : "")
+              + (view.prevalence !== null ? "; random selection would score " + view.prevalenceText : ""),
+          }),
+          caption: el("span", {}, rateSub(effRate),
+            view.prevalence !== null
+              ? el("span", {}, el("br"),
+                el("span", { class: "brief-key-ref", "aria-hidden": "true" }),
+                " random would score " + view.prevalenceText)
+              : null),
+        }),
+        briefFigure({
+          label: "High risk, still open",
+          help: { term: "coverage" },
+          denominator: highRisk ? "Of " + highRisk.toLocaleString() + " classified high-risk findings." : null,
+          value: m.fn.toLocaleString(),
+          visual: highRisk
+            ? shareTrack({
+              part: m.fn, whole: highRisk,
+              label: m.fn.toLocaleString() + " of " + highRisk.toLocaleString()
+                + " classified high-risk findings are still open",
+            })
+            : null,
+          caption: "of " + highRisk.toLocaleString() + " classified high risk · "
+            + m.tp.toLocaleString() + " remediated",
+        }),
+        briefFigure({
+          label: "Net capacity",
+          help: {
+            lines: [
+              "Whether the team closes high-risk findings faster than they arrive, month on month.",
+            ],
+          },
+          value: verdict ? verdict.glyph + " " + verdict.text : "Not measured",
+          valueClass: "brief-value--text",
+          caption: "whether high-risk findings close faster than they arrive, month on month"
+        }),
+      ),
+    ));
+    heroHost.append(el("p", { class: "small muted" },
+      m.total.toLocaleString() + " tracked lifecycle(s) · "
+      + m.classified.toLocaleString() + " classified (" + pct0(m.signalCoveragePct) + ") · "
+      + m.unknown.toLocaleString() + " with no captured exploit signal"));
+    heroHost.append(briefExtras(
+      statRow(
+        "Monthly close rate",
+        capOverall.oneInN
+          ? el("span", {}, pct0Cell(capOverall.mmcrMean),
+            el("span", { class: "prog-range" }, "1 in " + capOverall.oneInN.toFixed(1)))
+          : pct0Cell(capOverall.mmcrMean),
+        null,
+      ),
+      statRow(
+        "Closed per month",
+        closedPerMonthText(capOverall.closedPerMonthMean),
+        null,
+        null,
         {
-          term: "coverage",
+          term: "closed-per-month",
           lines: [
-            "Of every finding the active rule calls high risk, the share that has been " +
-              "remediated. TP / (TP + FN) — here " + m.tp.toLocaleString() + " of " +
-              (m.tp + m.fn).toLocaleString() + ".",
+            "Mean findings closed per calendar month — the close rate above, as a count.",
+            capOverall.monthsCounted
+              ? "Over " + capOverall.monthsCounted
+                + " complete, directly-observed month(s)."
+              : "No complete, directly-observed month yet, so there is nothing to average.",
+            capOverall.monthsCounted
+              ? "The month in progress and anything before the first scan are excluded."
+              : null,
           ],
         },
       ),
-      aside,
-      stats: [
-        statRow("High risk, still open", m.fn.toLocaleString(), null),
-        statRow("High risk, remediated", m.tp.toLocaleString(), null),
-        statRow(
-          "Monthly close rate",
-          capOverall.oneInN
-            ? el("span", {}, pct0Cell(capOverall.mmcrMean),
-              el("span", { class: "prog-range" }, "1 in " + capOverall.oneInN.toFixed(1)))
-            : pct0Cell(capOverall.mmcrMean),
-          null,
-        ),
-        // THE COUNT SITS DIRECTLY UNDER THE RATE, and the pair is the point: the rate says
-        // what share of the backlog moves, this says how much work that is. The two share
-        // `monthsCounted`, so the tip states the base once for both rather than each row
-        // carrying a different-looking denominator for the same set of months.
-        statRow(
-          "Closed per month",
-          closedPerMonthText(capOverall.closedPerMonthMean),
-          null,
-          null,
-          {
-            term: "closed-per-month",
-            lines: [
-              "Mean findings closed per calendar month — the close rate above, as a count.",
-              capOverall.monthsCounted
-                ? "Over " + capOverall.monthsCounted
-                  + " complete, directly-observed month(s)."
-                : "No complete, directly-observed month yet, so there is nothing to average.",
-              capOverall.monthsCounted
-                ? "The month in progress and anything before the first scan are excluded."
-                : null,
-            ],
-          },
-        ),
-        statRow("Net capacity (high risk)", verdictPill(capHigh.verdict), null),
-      ],
-    }));
-
-    // THE BOUND IS AN HONESTY STATEMENT, so it stays on the surface — a paragraph under the
-    // hero rather than a line inside the tip that explains what it means. `denomNote` is the
-    // one shared component for exactly this: a rate's own base and bracket, printed where a
-    // reader sees it with nothing to hover.
-    heroHost.append(denomNote(rateSub(covRate)));
+    ));
 
     // Honest state, stated where it cannot be missed rather than buried in the methodology
     // block: a rate computed over a thin slice of the register is not a rate for the

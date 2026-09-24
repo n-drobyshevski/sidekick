@@ -135,7 +135,8 @@ export { splitBar } from "./splitBar.js";
 export {
   briefClocks, briefDelta, briefExtras, briefFigure, briefFigures, briefList, briefMore,
   briefNotes, briefSkeleton, briefSplit, briefSplits, briefStatus, briefTrendDelta, clockModel,
-  openFolded, sentenceStart, sevWord, staleness, tierCounts, tierTone,
+  openFolded, sentenceStart, sevWord, staleness, tierCounts, tierTone, boundedTrack,
+  boundedTrackModel,
   dotGrid, dotGridModel, foldTail, ringMark, ringModel, shareTrack, slopeMark, slopeModel,
   splitModel, unitSquares,
 } from "./briefing.js";

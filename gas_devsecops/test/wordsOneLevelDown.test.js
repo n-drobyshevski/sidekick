@@ -175,9 +175,12 @@ describe("program — the same, on the coverage lane", () => {
   it("stops printing both rates a second time under the header", () => {
     expect(PROGRAM_CODE).not.toContain('"Coverage: "');
     expect(PROGRAM_CODE).not.toContain('". Efficiency: "');
-    // …and the denominator of each is on its own figure instead.
-    expect(PROGRAM_CODE).toMatch(/label: "Remediation efficiency"/);
-    expect((PROGRAM_CODE.match(/\bfigureCard\(\{/g) || []).length).toBeGreaterThanOrEqual(2);
+    // …and the denominator of each is on its own briefing figure instead (DESIGN.md "The
+    // briefing"): `briefFigure` carries figureCard's `denominator` contract.
+    expect(PROGRAM_CODE).toMatch(/label: "Coverage",/);
+    expect(PROGRAM_CODE).toMatch(/label: "Efficiency",/);
+    expect((PROGRAM_CODE.match(/\bbriefFigure\(\{/g) || []).length).toBeGreaterThanOrEqual(2);
+    expect((PROGRAM_CODE.match(/\bdenominator: /g) || []).length).toBeGreaterThanOrEqual(2);
   });
 
   it("gives the capacity verdict a dot AND a word", () => {
