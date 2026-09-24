@@ -206,7 +206,7 @@ describe("os: the page suppresses rather than dashes", () => {
     // the previous register's figures standing under the panel.
     const s = code(SRC);
     const branch = s.slice(s.indexOf("if (first.show) {"), s.indexOf("renderFixNext(payload)"));
-    for (const host of ["fixHost", "splitsHost", "topHost"]) {
+    for (const host of ["fixHost", "splitsHost"]) {
       expect(branch, `${host} survives the first-run branch`).toContain("clear(" + host + ")");
     }
     expect(branch).toContain("return;");
@@ -244,7 +244,7 @@ describe("os: the page suppresses rather than dashes", () => {
     const commentOnly = [
       "// this page used to draw actFigure(payload) unconditionally, with no first.show branch",
       "const first = executiveFirstRunView(payload, boot);",
-      "if (first.show) { clear(fixHost); clear(splitsHost); clear(topHost); return; }",
+      "if (first.show) { clear(fixHost); clear(splitsHost); return; }",
       "renderFixNext(payload);",
       "renderSplits(payload);",
       "const a = first && first.show ? null : actFigure(payload);",

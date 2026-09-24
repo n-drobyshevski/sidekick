@@ -2488,6 +2488,13 @@ a.brief-list__row:hover .brief-list__primary { text-decoration: underline; }
 .brief-fig > .brief-more { margin-top: auto; align-self: flex-start; }
 .brief-more { min-height: 0; box-shadow: none; font-size: var(--fs-label); font-weight: var(--fw-semibold); color: var(--accent-text); text-decoration: none; background: none; border: 0; padding: 0; cursor: pointer; font-family: inherit; }
 .brief-more:hover { text-decoration: underline; }
+/* Fix next, shut: its top three rows under the section heading. `[hidden]` is spelled out
+   because `display: flex` would otherwise beat the attribute when the section opens. */
+.brief-fix__preview { display: flex; flex-direction: column; gap: var(--space-3); margin-top: var(--space-3); }
+.brief-fix__preview[hidden], .brief-fix__preview:empty { display: none; }
+.brief-fix__preview > .brief-more { align-self: flex-start; }
+/* The brief's own gap already spaces its blocks; the section's standalone margin would double it. */
+.brief > div > .section-collapse { margin-top: 0; }
 .brief-notes { display: flex; flex-direction: column; gap: var(--space-2); }
 .brief-notes__list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
 .brief-notes__list li { padding: var(--space-2) 0; border-top: 1px solid var(--hairline); line-height: 1.5; }

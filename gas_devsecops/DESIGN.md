@@ -118,8 +118,11 @@ account is `gas/DESIGN.md` §6a). What is this register's own:
 - **By register** carries each register's sync-on-sync change; the three half-lives ride in its
   foot, never summed ("three registers, three clocks"), and each share keeps its
   `data-denominator` and the empty-base rule in a line of its own.
+- **Fix next** follows the splits as one block: shut, its top three rows sit under the
+  heading; opened, the full list replaces them in place. There is no separate Fix first
+  preview any more — it drew the same groups twice.
 - **Read with care** keeps the tracking-since line, the window line and the end-of-life note on
-  the surface, as a list above the folded worklist.
+  the surface, as a list under the worklist, last on the page.
 - The cold zone's denominator sentence — window, relative-mode clause, clock caveat and the
   scopes-without-scan clause — is unchanged, now on the figure's tip and `data-denominator`.
 

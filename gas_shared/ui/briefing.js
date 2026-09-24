@@ -281,7 +281,10 @@ export function briefSplits(...splits) {
 /**
  * A short ranked list: tone mark, primary, secondary, a figure, a meta figure.
  *
- * @param {{label: Node|string, action?: Node|null, rows: Array<{tone: string, primary: string,
+ * `label: null` draws no head — for a list that sits under a heading of its own, such as the
+ * Executive page's Fix next preview under its collapsible section's summary.
+ *
+ * @param {{label: Node|string|null, action?: Node|null, rows: Array<{tone: string, primary: string,
  *          secondary?: string|null, figure?: string|null, meta?: string|null,
  *          href?: string|null, aria?: string|null}>}} l
  */
@@ -300,9 +303,11 @@ export function briefList(l) {
           ? el("a", { class: "brief-list__row", href: r.href, "aria-label": r.aria || null }, ...inner)
           : el("div", { class: "brief-list__row" }, ...inner));
     }));
-  return el("section", { class: "brief-list" },
-    el("div", { class: "brief-list__head" }, el("h2", { class: "brief-label" }, l.label), l.action || null),
-    list);
+  const head = l.label || l.action
+    ? el("div", { class: "brief-list__head" },
+      l.label ? el("h2", { class: "brief-label" }, l.label) : null, l.action || null)
+    : null;
+  return el("section", { class: "brief-list" }, head, list);
 }
 
 /**

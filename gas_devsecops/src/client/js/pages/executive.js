@@ -702,22 +702,22 @@ export async function renderExecutive(host, params, _ctx) {
   );
 
   // THE BRIEFING (2026-09-24, gas_devsecops/DESIGN.md "The briefing"). Four headline figures,
-  // two splits, a three-row preview of the ranked list and the notes a reader must not miss,
-  // read at a glance (gas_shared/ui/briefing.js). The honesty rules did not move: "Not
-  // reached" still says so, the tracking window and end-of-life notes stay on the surface,
-  // every picture repeats a figure printed beside it, and the full ranked list is still the
-  // last block, shut until opened.
+  // two splits, the ranked list and the notes a reader must not miss, read at a glance
+  // (gas_shared/ui/briefing.js). The honesty rules did not move: "Not reached" still says so,
+  // the tracking window and end-of-life notes stay on the surface, and every picture repeats a
+  // figure printed beside it. The ranked list is ONE block, Fix next: shut, it shows its top
+  // three; opened, the full list replaces them in place. (It was a "Fix first" preview up here
+  // and the full list at the foot of the page — the same groups twice, under two names.)
   const statusHost = el("div", {});
   const noticeHost = el("div", {});
   const figuresHost = el("div", {});
   const splitsHost = el("div", {});
-  const topHost = el("div", {});
   const notesHost = el("div", {});
   const fixHost = el("div", {});
   let fixOpen = false;
   const brief = el("div", { class: "brief" });
   host.append(pageHeader({ route: "executive" }), brief);
-  brief.append(statusHost, noticeHost, figuresHost, splitsHost, topHost, notesHost, fixHost);
+  brief.append(statusHost, noticeHost, figuresHost, splitsHost, fixHost, notesHost);
 
   function guard(label, target, fn) {
     try {
@@ -746,11 +746,9 @@ export async function renderExecutive(host, params, _ctx) {
     if (first.show) {
       clear(fixHost);
       clear(splitsHost);
-      clear(topHost);
       return;
     }
     guard("the splits", splitsHost, () => renderSplits(payload));
-    guard("the fix-first list", topHost, () => renderTop(payload));
     guard("the fix-next list", fixHost, () => renderFixNext(payload));
   };
 
@@ -1084,29 +1082,9 @@ export async function renderExecutive(host, params, _ctx) {
     });
   }
 
-  // --------------------------------------------------------------------- fix first
+  // ------------------------------------------------------------------------ fix next
 
-  function renderTop(payload) {
-    clear(topHost);
-    const view = fixNextView(payload, boot);
-    if (!view.show || view.empty) return;
-    topHost.append(briefList({
-      label: "Fix first",
-      action: fixButton("All " + fmtCount(view.items.length) + " "
-        + pluralize(view.items.length, "group") + " · " + view.rankedShort),
-      rows: view.items.slice(0, 3).map((it) => ({
-        tone: "t" + Math.min(Math.max(it.tier, 1), 3),
-        primary: it.repoText,
-        secondary: it.tierLabel + " · " + it.scopeLabel,
-        figure: it.countText,
-        meta: it.oldestText,
-        href: it.href,
-        aria: it.tierLabel + " — " + it.repoText + ", " + it.countText + ", " + it.oldestText
-          + ". " + it.linkLabel,
-      })),
-    }));
-  }
-
+  /** Opens the Fix next section and brings it into view. */
   function fixButton(text) {
     return el("button", {
       type: "button",
@@ -1148,8 +1126,7 @@ export async function renderExecutive(host, params, _ctx) {
   }
 
   /**
-   * The ranked list, as an ordered list of GROUPS — last on the page, and behind its own
-   * heading.
+   * The ranked list, as an ordered list of GROUPS — one block, straight after the splits.
    *
    * NO CHART AND NO CANVAS, which is the module header's hard rule and is not relaxed for a
    * ranking. `<ol>` is the right element because the order IS the claim — a reader using a
@@ -1159,7 +1136,9 @@ export async function renderExecutive(host, params, _ctx) {
    * carries "days" for the same reason, and a group whose rows have no readable age says so
    * rather than printing a 0.
    *
-   * COLLAPSIBLE, AND SHUT UNTIL A READER OPENS IT. Everything the section holds folds
+   * SHUT, IT PREVIEWS; OPEN, IT LISTS. The shut section shows its top three rows (the
+   * briefing's `briefList`) under the heading, and opening it swaps them for the full list,
+   * so the same groups are never on screen twice. Everything the section holds folds
    * together, the cap note with the list it qualifies, so nothing in it is ever on screen
    * without its caveat; the denominator rides on the heading so the shut section still says
    * how much of the backlog is behind it. See the host declaration above for why `fixOpen` is
@@ -1187,9 +1166,11 @@ export async function renderExecutive(host, params, _ctx) {
       open: fixOpen,
       // Per reader, across visits — the flag above only survives this page's own repaints.
       remember: "execFixNext",
-      onToggle: (o) => { fixOpen = o; },
+      onToggle: (o) => { fixOpen = o; preview.hidden = o; },
     });
-    fixHost.append(section.node);
+    const preview = previewOf(view);
+    preview.hidden = section.node.open;
+    fixHost.append(section.node, preview);
     const fix = section.body;
 
     if (view.empty) {
@@ -1234,5 +1215,29 @@ export async function renderExecutive(host, params, _ctx) {
     // list it qualifies, which is the one arrangement in which the list is never on screen
     // without it.
     if (view.cutNote) fix.append(el("p", { class: "small muted" }, view.cutNote));
+  }
+
+  /** The shut section's top three rows, and the way into the rest. Empty when nothing ranked. */
+  function previewOf(view) {
+    const preview = el("div", { class: "brief-fix__preview" });
+    if (view.empty) return preview;
+    preview.append(briefList({
+      label: null,
+      rows: view.items.slice(0, 3).map((it) => ({
+        tone: "t" + Math.min(Math.max(it.tier, 1), 3),
+        primary: it.repoText,
+        secondary: it.tierLabel + " · " + it.scopeLabel,
+        figure: it.countText,
+        meta: it.oldestText,
+        href: it.href,
+        aria: it.tierLabel + " — " + it.repoText + ", " + it.countText + ", " + it.oldestText
+          + ". " + it.linkLabel,
+      })),
+    }));
+    if (view.items.length > 3) {
+      preview.append(fixButton("All " + fmtCount(view.items.length) + " "
+        + pluralize(view.items.length, "group")));
+    }
+    return preview;
   }
 }

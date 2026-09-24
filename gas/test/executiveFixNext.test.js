@@ -542,12 +542,12 @@ function hostOrder(src) {
 }
 
 describe("os: Fix next is the page's LAST block, and it is collapsible", () => {
-  it("appends fixHost after every other host, the fix-first preview included", () => {
+  it("appends fixHost after every other host", () => {
     const order = hostOrder(SRC);
     expect(order).toEqual([
-      // The briefing (DESIGN.md §6a): the status line, the four figures, the two splits and
-      // the three-row preview all come first; what this test is about is the tail.
-      "statusHost", "noticeHost", "figuresHost", "splitsHost", "topHost", "fixHost",
+      // The briefing (DESIGN.md §6a): the status line, the four figures and the two splits
+      // come first; the ranked list — its own top three while shut — is last.
+      "statusHost", "noticeHost", "figuresHost", "splitsHost", "fixHost",
     ]);
     // Perturbed, because "is fixHost in the list" would pass on the arrangement this replaced.
     // The ranked list spent its whole life directly under the hero, which put the page's
@@ -558,11 +558,23 @@ describe("os: Fix next is the page's LAST block, and it is collapsible", () => {
     expect(hostOrder(SRC).at(-1)).toBe("fixHost");
   });
 
+  it("is ONE block: no separate Fix first preview, and the shut preview hides when it opens", () => {
+    // The same top three used to be drawn twice — a "Fix first" preview above, and the folded
+    // Fix next list below starting with the same groups. The preview now lives inside the
+    // Fix next block and steps aside whenever the section is open.
+    expect(SRC).not.toContain("topHost");
+    expect(SRC).not.toContain('label: "Fix first"');
+    const fn = SRC.slice(SRC.indexOf("function renderFixNext("));
+    expect(fn).toMatch(/const preview = previewOf\(view\);/);
+    expect(fn).toMatch(/preview\.hidden = section\.node\.open;/);
+    expect(fn).toMatch(/fixHost\.append\(section\.node, preview\);/);
+  });
+
   it("builds the section through collapsibleSection, with the page holding the open flag", () => {
     const fn = SRC.slice(SRC.indexOf("function renderFixNext("));
     expect(fn).toContain('collapsibleSection("Fix next", {');
     expect(fn).toMatch(/open: fixOpen,/);
-    expect(fn).toMatch(/onToggle: \(o\) => \{ fixOpen = o; \},/);
+    expect(fn).toMatch(/onToggle: \(o\) => \{ fixOpen = o; preview\.hidden = o; \},/);
     // Remembered per reader across visits — the closure flag only survives this page's own
     // repaints, and swrCall paints twice on a warm cache.
     expect(fn).toMatch(/remember: "execFixNext",/);
