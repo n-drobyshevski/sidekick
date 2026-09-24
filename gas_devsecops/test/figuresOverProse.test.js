@@ -314,8 +314,10 @@ describe("halfLifeTrendPoints: the sparkline and the line chart read the SAME se
    * gate reads the same `model` the strip was measured with, not a second `sparkPath` call.
    */
   it("the aside drops the box when nothing was drawn, off the model it already measured", () => {
-    expect(MTTR_SRC).toMatch(/\(model\.d \|\| model\.end\)\s*\n?\s*\? sparkline\(values, \{/);
-    // One `sparkPath` in `trendAside`: the gate cannot be measured against a second one.
+    // The briefing's half-life figure (DESIGN.md "The briefing") draws the sparkline only when
+    // `sparkPath` drew a line, and the ring of closed/observed otherwise.
+    expect(MTTR_SRC).toMatch(/sparkPath\(trendValues, \{ w: 200, h: 48 \}\)\.d\s*\n?\s*\? sparkline\(trendValues, \{/);
+    // One `sparkPath` for the gate: it cannot be measured against a second one.
     expect((MTTR_SRC.match(/sparkPath\(/g) || []).length).toBe(1);
     // And Scan History keeps its strip on every paint — the opposite answer, same attribute.
     const historySrc = readFileSync(
@@ -431,9 +433,9 @@ describe("halfLifeTrendPoints: the sparkline and the line chart read the SAME se
     expect(MTTR_SRC).not.toMatch(/categoryAxis/);
     expect(MTTR_SRC).toMatch(/drawn\.map\(\(p\) => \(\{ x: p\.date, y: p\.km_median_days \}\)\)/);
     expect(MTTR_SRC).toMatch(/rows: drawn,/);
-    // The subset is the CHART's, never the aside's: `trendAside` still reads every slot it
-    // is handed, gaps included, because it positions by index.
-    expect(MTTR_SRC).toMatch(/const values = list\.map\(\(p\) => p\.km_median_days\);/);
+    // The subset is the CHART's, never the sparkline's: the briefing still reads every slot it
+    // is handed, gaps included, because the sparkline positions by index.
+    expect(MTTR_SRC).toMatch(/const trendValues = \(Array\.isArray\(trendPoints\) \? trendPoints : \[\]\)\.map\(\(p\) => p\.km_median_days\);/);
     // And what the subset leaves out is published as a figure rather than dropped in silence.
     expect(MTTR_SRC).toMatch(/const unmeasured = points\.length - drawn\.length;/);
     expect(MTTR_SRC).toContain("evaluated to no measurable half-life.");

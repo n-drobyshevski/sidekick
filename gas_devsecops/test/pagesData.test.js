@@ -1582,7 +1582,7 @@ describe("history: KPIs, KM points and the SLA-trend gap", () => {
       const mttrSrc = readFileSync(
         new URL("../src/client/js/pages/mttr.js", import.meta.url), "utf8",
       );
-      expect(mttrSrc).toContain('heroStat("Remediation half-life"');
+      expect(mttrSrc).toContain('tipLabel("Remediation half-life"');
     });
   });
 

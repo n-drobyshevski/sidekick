@@ -355,3 +355,171 @@ export function briefStatus(s) {
   });
   return line;
 }
+
+// ------------------------------------------------------------------ the clock by severity
+
+/** The time axis the clocks share: log-scaled, 1 day to the first round span past the data. */
+const CLOCK_SPANS = [30, 90, 180, 365, 730, 1095];
+const CLOCK_TICKS = [
+  { days: 1, label: "1d" }, { days: 7, label: "7d" }, { days: 30, label: "30d" },
+  { days: 90, label: "90d" }, { days: 180, label: "180d" }, { days: 365, label: "1y" },
+  { days: 730, label: "2y" }, { days: 1095, label: "3y" },
+];
+
+/**
+ * Each severity's half-life against its own SLA target, on one shared axis.
+ *
+ * WHY THIS PICTURE. An aggregated MTTR hides whether the CRITICAL clock meets its target —
+ * the question a remediation page exists to answer — so the MTTR briefing leads with the
+ * per-severity reading, drawn so the gap between "how long it takes" and "how long it may
+ * take" is the first thing seen, not a pair of numbers in two table columns.
+ *
+ * LOG-SCALED ON PURPOSE. Targets run from 7 to 180 days and half-lives past a year; on a
+ * linear axis every CRITICAL target is a hairline at the left edge. On a log axis 7 days and
+ * 180 days are both legible, and "twice the target" is the same distance at every severity.
+ *
+ * A LOWER BOUND IS DRAWN AS ONE: a hollow marker at the bound with an open arrow to the
+ * right ("at least this far"), never a filled dot at a value the estimator did not produce.
+ * A severity with no reading has no marker at all — absence is not a position on the axis.
+ *
+ * THE OPEN-AGE MARKER IS OPTIONAL AND SECOND. `age` (the median age of what is still open)
+ * is how old the running backlog already is — a reading that exists even where the half-life
+ * does not ("Not reached"), so a register whose curve never halved still shows its gap to the
+ * target. It never decides the verdict: that is the half-life's alone.
+ *
+ * @param {Array<{days: number|null, bounded?: boolean, target: number|null,
+ *                age?: number|null}>} rows
+ * @returns {{max: number, ticks: Array<{days: number, label: string, pos: number}>,
+ *   rows: Array<{halfPos: number|null, targetPos: number|null, agePos: number|null,
+ *                verdict: "over"|"within"|null}>}}
+ */
+export function clockModel(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  const values = [];
+  list.forEach((r) => {
+    const d = num(r.days);
+    const t = num(r.target);
+    const a = num(r.age);
+    if (d !== null && d > 0) values.push(d);
+    if (t !== null && t > 0) values.push(t);
+    if (a !== null && a > 0) values.push(a);
+  });
+  const top = values.length ? Math.max(...values) : 30;
+  const max = CLOCK_SPANS.find((s) => s >= top * 1.15) || Math.ceil(top * 1.15);
+  const pos = (d) => {
+    const v = Math.min(Math.max(d, 1), max);
+    return Math.round((Math.log(v) / Math.log(max)) * 10000) / 100;
+  };
+  return {
+    max,
+    ticks: CLOCK_TICKS.filter((t) => t.days <= max).map((t) => ({ ...t, pos: pos(t.days) })),
+    rows: list.map((r) => {
+      const d = num(r.days);
+      const t = num(r.target);
+      const a = num(r.age);
+      const halfPos = d !== null && d > 0 ? pos(d) : null;
+      const targetPos = t !== null && t > 0 ? pos(t) : null;
+      const agePos = a !== null && a > 0 ? pos(a) : null;
+      // A lower bound past the target is over for certain; one inside it says nothing.
+      const verdict = halfPos === null || targetPos === null
+        ? null
+        : d > t ? "over" : r.bounded ? null : "within";
+      return { halfPos, targetPos, agePos, verdict };
+    }),
+  };
+}
+
+/**
+ * The clock-by-severity block.
+ *
+ * @param {{label: Node|string, rows: Array<{sev: string, badge: Node, days: number|null,
+ *          bounded?: boolean, halfText: string, target: number|null, age?: number|null,
+ *          ageText?: string|null,
+ *          rate: {text: string, value: number|null, denominator: number|null,
+ *                 denominatorLabel: string, baseEmpty: boolean, emptyLabel: string},
+ *          past: string|Node|null}>, foot?: Node|string|null,
+ *          after?: Array<Node|null>}} c
+ */
+export function briefClocks(c) {
+  const m = clockModel(c.rows);
+  const box = el("section", { class: "brief-clocks" },
+    el("div", { class: "brief-list__head" }, el("h2", { class: "brief-label" }, c.label)));
+  if (!c.rows.length) {
+    box.append(el("p", { class: "brief-caption" }, "No severity has findings in scope."));
+    return box;
+  }
+  const axis = el("div", { class: "brief-clocks__axis", "aria-hidden": "true" },
+    ...m.ticks.map((t) => el("span", {
+      // 1 day, 180 days and the multi-year ticks are MINOR: a phone drops them so 90d and 1y
+      // do not collide, and the axis still reads left to right.
+      class: "brief-clocks__tick" + ([1, 180, 730, 1095].includes(t.days) ? " brief-clocks__tick--minor" : ""),
+      style: "left: " + t.pos + "%",
+    }, t.label)));
+  const head = el("div", { class: "brief-clocks__row brief-clocks__row--head" },
+    el("span", {}, ""),
+    axis,
+    el("span", { class: "brief-clocks__col" }, "Half-life"),
+    el("span", { class: "brief-clocks__col" }, "In SLA"),
+    el("span", { class: "brief-clocks__col" }, "Open past SLA"));
+  box.append(head);
+  c.rows.forEach((r, i) => {
+    const g = m.rows[i];
+    const track = el("span", {
+      class: "brief-clocks__track",
+      role: "img",
+      "aria-label": r.sev + ": half-life " + (r.bounded ? "at least " : "") + r.halfText
+        + (r.target ? ", against a " + fmtCount(r.target) + "-day target" : ", no target")
+        + (r.ageText ? "; open findings' median age " + r.ageText : ""),
+    });
+    if (g.targetPos !== null) {
+      track.append(el("span", { class: "brief-clocks__target", style: "left: " + g.targetPos + "%" }));
+    }
+    if (g.agePos !== null) {
+      track.append(el("span", { class: "brief-clocks__age", style: "left: " + g.agePos + "%" }));
+    }
+    if (g.halfPos !== null) {
+      track.append(el("span", {
+        class: "brief-clocks__half" + (r.bounded ? " brief-clocks__half--bound" : "")
+          + (g.verdict ? " brief-clocks__half--" + g.verdict : ""),
+        style: "left: " + g.halfPos + "%",
+      }));
+      if (r.bounded) {
+        track.append(el("span", {
+          class: "brief-clocks__reach", style: "left: " + g.halfPos + "%; right: 0",
+        }));
+      }
+    }
+    const rate = r.rate;
+    box.append(el("div", { class: "brief-clocks__row" },
+      el("span", { class: "brief-clocks__sev" }, r.badge),
+      track,
+      el("span", { class: "brief-clocks__col num" + (g.verdict === "over" ? " brief-clocks__over" : "") },
+        r.halfText),
+      el("span", {
+        class: "brief-clocks__col num",
+        "data-denominator": rate.denominator === null ? "none" : String(rate.denominator),
+        "aria-label": rate.baseEmpty
+          ? "In SLA not measured: " + rate.emptyLabel
+          : rate.text + " of " + rate.denominatorLabel + " closed in SLA",
+      }, rate.baseEmpty ? "—" : rate.text),
+      el("span", { class: "brief-clocks__col num" }, r.past === null ? "—" : r.past)));
+  });
+  box.append(el("div", { class: "brief-clocks__key" },
+    el("span", {}, el("span", { class: "brief-clocks__key-target", "aria-hidden": "true" }), " SLA target"),
+    el("span", {}, el("span", { class: "brief-clocks__key-half", "aria-hidden": "true" }), " half-life"),
+    el("span", {}, el("span", { class: "brief-clocks__key-bound", "aria-hidden": "true" }), " at least (curve never fell to half)"),
+    m.rows.some((g) => g.agePos !== null)
+      ? el("span", {}, el("span", { class: "brief-clocks__key-age", "aria-hidden": "true" }), " median age of what is open")
+      : null,
+    el("span", {}, "Log scale — 7 days and a year both stay legible.")));
+  if (c.foot) box.append(el("p", { class: "brief-caption" }, c.foot));
+  (c.after || []).forEach((n) => { if (n) box.append(n); });
+  return box;
+}
+
+/** A row of secondary figures — smaller than the four, for the ones a leader reads second. */
+export function briefExtras(...items) {
+  const list = items.flat().filter(Boolean);
+  if (!list.length) return null;
+  return el("div", { class: "brief-extras" }, ...list);
+}

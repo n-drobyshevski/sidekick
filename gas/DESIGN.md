@@ -236,6 +236,27 @@ payload in one execution. `gas_devsecops` does the same with two parts, `exec` a
 **The slope is zero-based on purpose**: scaled to [min, max], 87 → 76 and 420 → 413 would draw
 the same cliff. Against zero a 2% move reads as nearly flat, which is what it is.
 
+### 6b. The MTTR briefing (2026-09-24)
+
+The MTTR page opens with the same briefing shape as Executive, then keeps every chart below it.
+
+- **Four figures:** remediation half-life (days, "≥" for a lower bound, "Not measured" in words;
+  its picture is the half-life sparkline when `sparkPath` draws one, the resolved/tracked ring
+  otherwise), In SLA, Open past SLA and Awaiting a fix. Each rate is a `briefFigure` with a
+  `denominator` (tip + `data-denominator`), and every track takes `meterPctFor`'s decision —
+  an unmeasured rate draws no track, never an empty one.
+- **Against the target, by severity** (`briefClocks`): each severity's KM half-life against its
+  own SLA target on one log axis, the median open age as a diamond, and In SLA / Open past SLA
+  beside it. Red is over the target, green inside, hollow a lower bound; a severity with no
+  reading has no marker. Researched rationale: an aggregated MTTR hides whether the CRITICAL
+  clock meets its target, so the per-severity reading leads.
+- **Secondary figures** (MTTR P90, Open age P90) sit under the clocks as small stat rows; the
+  naive closed-only median stays the half-life's qualifier, and the vendor-latency line and the
+  backlog caption stay on the surface.
+- **Folded, not dropped:** "Remediation by severity — every cell" is the old table, behind a
+  remembered `collapsibleSection`. Trends, the survival curve, the fan, the age bars and the
+  by-domain section are unchanged below.
+
 ## 7. The formatter table
 
 Beside the shared duration helpers (`gas_shared/ui/figures.js`'s `fmtDays` / `days1` /
