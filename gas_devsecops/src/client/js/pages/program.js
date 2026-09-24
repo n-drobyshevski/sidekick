@@ -33,8 +33,9 @@ import { chartUnavailable, loadCharts } from "../../../../../gas_shared/ui/chart
 import { denominatorNode, fmtPct, rateCell, scopeParam } from "./_rates.js";
 import { SCOPE_LABELS_LONG as SCOPE_LABELS } from "./_scopeLabels.js";
 import {
+  boundedTrack, briefExtras, briefFigure, briefFigures, shareTrack,
   absentText, chartTable, chartTableModel, clear, dataTable, disclosure, el, emptyState,
-  errorState, figureCard, firstRunNotice, heroStat, kpiCard, meter, num, onPageTeardown,
+  errorState, figureCard, firstRunNotice, kpiCard, meter, num, onPageTeardown,
   pageHeader, pluralize, quadModel, quadTable, sectionLabel, skeleton, statRow, statusPill,
   tipLabel,
 } from "../ui.js";
@@ -612,59 +613,20 @@ export async function renderProgram(host, params, _ctx) {
       return;
     }
     const view = coverageEfficiencyView(program.matrix);
+    const m = program.matrix || {};
+    const fn = Number(m.fn || 0);
+    const tp = Number(m.tp || 0);
+    const highRisk = tp + fn;
+    const share = view.classifiedShare;
 
-    // Efficiency rides in the header's aside slot rather than in a second hero: DESIGN.md
-    // allows one hero per page, and the point of this pair is that neither figure means
-    // anything alone. Coverage leads because it is the P2P convention, not because it wins.
-    //
-    // A `kpiCard` NOW, not a hand-built `.page-strip` of `.kpi-label`/`.kpi-value` divs — the
-    // same component this page already uses for every other figure, so this is the one figure
-    // that no longer draws its own copy of a card the shared module already owns.
-    // `denominatorNode` is appended after, exactly as `mmcrMean`'s card does below, because
-    // `kpiCard`'s own `sub` slot is the one line the bounds/measured sentence needs.
-    // A `figureCard` NOW, so the sentence goes where R3 puts it: `data-denominator` on the
-    // card and the first line of the tip on its own label, rather than a `denominatorNode`
-    // appended under the value. The card is still `.page-header > .kpi-card`, so pages.css's
-    // 22rem cap still holds it under the hero beside it.
-    //
-    // THE VERDICT IS THE CARD'S CHIP. "Efficiency is at or below prevalence (12.5%), which is
-    // what a program selecting findings at random would score. That is a verdict on the rule,
-    // not on the team." was 32 words in a paragraph below the header — a verdict about THIS
-    // figure, drawn further from it than any other sentence on the page. A pill on the card
-    // says it in four words, with the whole sentence behind it; and it is drawn only when
-    // `beatsRandom` is FALSE, never when it is null, because "not prioritising" needs both
-    // halves of the comparison to have been measured.
-    const aside = figureCard({
-      label: "Remediation efficiency",
-      value: view.efficiency.text,
-      sub: rateSub(view.efficiency),
-      chip: view.beatsRandom === false
-        ? statusPill("warn", "At or below random", {
-          lines: [
-            "Efficiency is at or below prevalence (" + view.prevalenceText + "), which is"
-            + " what a program selecting findings at random would score.",
-            "That is a verdict on the rule, not on the team.",
-          ],
-        })
-        : null,
-      help: { term: "efficiency" },
-      denominator: view.efficiency.baseEmpty
-        ? "Not measured: " + view.efficiency.emptyLabel + "."
-        : "Of everything that was remediated under a classification, the share that deserved"
-          + " it — taken over " + view.efficiency.denominatorLabel + ".",
-    });
-
-    // NO `route`: the h1 is in the title block appended once at the top of renderProgram.
-    heroHost.append(pageHeader({
-      hero: heroStat(
-        "Remediation coverage",
-        view.coverage.text,
-        rateSub(view.coverage),
-        // THE 48-WORD METHOD PARAGRAPH IS HERE. It printed both rates a second time — each
-        // with its own `denominatorNode` — under a header that had just drawn them, and then
-        // said why they are published together. The two figures are above; what a reader
-        // cannot get from them is the rule the pair enforces, and that is a definition.
-        {
+    // THE BRIEFING (2026-09-24, DESIGN.md "The briefing"). Coverage and efficiency side by
+    // side, each a bounded track — the point filled, the bounds hatched (the width IS the
+    // doubt), and for efficiency the random-selection line — then what is still open and how
+    // much of the scope the rule could score. Published together, never alone.
+    heroHost.append(el("div", { class: "brief" }, briefFigures(
+      briefFigure({
+        label: "Coverage",
+        help: {
           term: "coverage",
           lines: [
             "Of what deserved remediation, the share remediated — over "
@@ -673,21 +635,97 @@ export async function renderProgram(host, params, _ctx) {
             "Published together: widen the rule and coverage climbs while efficiency falls.",
           ],
         },
-      ),
-      aside,
-      // "Classified: not measured — 0 of 0 findings scored" is the same zero-glued-to-an
-      // -absence the SLA line carried. On an unread ledger the notice above already says
-      // what the whole page waits on, so the stat row is dropped rather than dashed.
-      stats: first ? [] : [
+        denominator: view.coverage.baseEmpty
+          ? "Not measured: " + view.coverage.emptyLabel + "."
+          : rateSub(view.coverage) + ".",
+        value: view.coverage.measured ? view.coverage.text : "Not measured",
+        valueClass: view.coverage.measured ? null : "brief-value--text",
+        visual: boundedTrack({
+          point: view.coverage.point, lo: view.coverage.lo, hi: view.coverage.hi,
+          label: "Coverage " + view.coverage.text
+            + (view.coverage.boundsText ? ", bounds " + view.coverage.boundsText : ""),
+        }),
+        caption: rateSub(view.coverage),
+      }),
+      briefFigure({
+        label: "Efficiency",
+        help: { term: "efficiency" },
+        denominator: view.efficiency.baseEmpty
+          ? "Not measured: " + view.efficiency.emptyLabel + "."
+          : "Of everything that was remediated under a classification, the share that deserved"
+            + " it — taken over " + view.efficiency.denominatorLabel + ".",
+        value: view.efficiency.measured ? view.efficiency.text : "Not measured",
+        valueClass: view.efficiency.measured ? null : "brief-value--text",
+        // THE VERDICT IS THE CARD'S CHIP, still: "At or below random" rides beside the
+        // efficiency figure it judges, and the reference tick on its track draws the same line.
+        delta: view.beatsRandom === false
+          ? statusPill("warn", "At or below random", {
+            lines: [
+              "Efficiency is at or below prevalence (" + view.prevalenceText + "), which is"
+              + " what a program selecting findings at random would score.",
+              "That is a verdict on the rule, not on the team.",
+            ],
+          })
+          : null,
+        visual: boundedTrack({
+          point: view.efficiency.point, lo: view.efficiency.lo, hi: view.efficiency.hi,
+          reference: view.prevalence,
+          label: "Efficiency " + view.efficiency.text
+            + (view.efficiency.boundsText ? ", bounds " + view.efficiency.boundsText : "")
+            + (view.prevalence !== null
+              ? "; random selection would score " + view.prevalenceText
+              : ""),
+        }),
+        caption: el("span", {}, rateSub(view.efficiency),
+          view.prevalence !== null
+            ? el("span", {}, el("br"),
+              el("span", { class: "brief-key-ref", "aria-hidden": "true" }),
+              " random would score " + view.prevalenceText)
+            : null),
+      }),
+      first ? null : briefFigure({
+        label: "High risk, still open",
+        help: { term: "coverage" },
+        denominator: highRisk ? "Of " + fmtCount(highRisk) + " classified high-risk findings." : null,
+        value: fmtCount(fn),
+        visual: highRisk
+          ? shareTrack({
+            part: fn, whole: highRisk,
+            label: fmtCount(fn) + " of " + fmtCount(highRisk)
+              + " classified high-risk findings are still open",
+          })
+          : null,
+        caption: "of " + fmtCount(highRisk) + " classified high risk · " + fmtCount(tp)
+          + " remediated",
+      }),
+      first ? null : briefFigure({
+        label: "Classified",
+        help: {
+          lines: [
+            "The share of findings in scope the rule could score — the population every rate"
+            + " on this page is taken over.",
+          ],
+        },
+        denominator: share.baseEmpty
+          ? "Not measured: " + share.emptyLabel + "."
+          : "Of " + share.denominatorLabel + ".",
+        value: share.measured ? share.text : "Not measured",
+        valueClass: share.measured ? null : "brief-value--text",
+        visual: share.measured
+          ? shareTrack({
+            part: share.point, whole: 100,
+            label: fmtCount(view.classified) + " of " + fmtCount(view.total) + " findings scored",
+          })
+          : null,
+        caption: fmtCount(view.classified) + " of " + fmtCount(view.total) + " findings scored",
+      }),
+    )));
+    if (!first) {
+      heroHost.append(briefExtras(
         statRow(
           "Prevalence",
           view.prevalenceText,
           "what a program picking at random would score",
-        ),
-        statRow(
-          "Classified",
-          view.classifiedShare.text,
-          fmtCount(view.classified) + " of " + fmtCount(view.total) + " findings scored",
         ),
         statRow(
           "Observation window",
@@ -696,13 +734,9 @@ export async function renderProgram(host, params, _ctx) {
             ? "dated by the newest scan"
             : "dated by the wall clock — no scan on record",
         ),
-      ],
-    }));
+      ));
+    }
 
-    // AN EXCLUSION IS A STATE, so it is drawn as one. The 42-word paragraph said which
-    // population is outside every figure on this page and why the rule refuses to score it;
-    // the COUNT and the word "excluded" are what a reader has to see without hovering
-    // anything (R2's KEEP case), and the reason is a definition of the refusal.
     const excluded = num(program.excludedSecrets, 0);
     if (excluded > 0) {
       heroHost.append(el("p", { class: "small muted" }, statusPill(

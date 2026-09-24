@@ -554,6 +554,7 @@ in its `role="img"` name, a figure printed beside it.
 | `briefFigures(...)` / `briefFigure(f)` | the row of four, and one figure: label, value, unit, delta, picture, caption, link or action | `help` + `denominator` is `figureCard`'s contract — the base leads the tip and rides on `data-denominator`; `valueClass: "brief-value--text"` for a refusal in words ("Not reached") |
 | `briefSplit({label, parts, aria, foot, after})` / `briefSplits` | one track split into labelled parts | refuses a zero total; zero parts stay off the track; `after` keeps a cap note its own paragraph |
 | `briefClocks({label, rows})` | each severity's half-life against its own SLA target, on a log axis, plus the median open age | a lower bound is hollow with an open reach; no reading, no marker; the open age never decides the verdict |
+| `boundedTrack({point, lo, hi, reference, label})` | a rate on a 0-100 track: point filled, bounds hatched, a reference tick (prevalence) | the band is drawn only when the bounds differ from the point; `boundedTrackModel` judges the point against the reference |
 | `briefList({label, action, rows})` | a short ranked list (Fix first) | rows link where the full list would |
 | `briefNotes(notes)` | "Read with care": notes that qualify every figure | honesty statements stay on the surface, never in a tip |
 | `briefExtras(...)` | a row of small secondary stat rows | for the figures read second (P90, open age) |
@@ -565,7 +566,7 @@ callers pass `meterPctFor`'s decision, never a raw `rate.value`), `briefDelta` (
 bad), `briefMore` + `openFolded` (the button that opens a folded section and scrolls to it).
 
 **Pure models, tested in node** (`gas/test/briefing.test.js`): `slopeModel`, `ringModel`,
-`dotGridModel`, `splitModel`, `foldTail`, `clockModel`, and the helpers `sevWord`,
+`dotGridModel`, `splitModel`, `foldTail`, `clockModel`, `boundedTrackModel`, and the helpers `sevWord`,
 `sentenceStart`, `tierTone`, `tierCounts`, `staleness`.
 
 **Tokens.** `--fs-brief-value` / `--fs-brief-value-text` / `--fs-brief-delta` (figure sizes),

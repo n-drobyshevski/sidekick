@@ -103,3 +103,22 @@ describe("the helpers the four briefing pages share", () => {
     expect(staleness("not a date", now).stale).toBe(false);
   });
 });
+
+describe("boundedTrackModel — a rate drawn with its doubt and the random line", () => {
+  it("draws the band only when the bounds differ from the point", async () => {
+    const { boundedTrackModel } = await import("../../gas_shared/ui/briefing.js");
+    expect(boundedTrackModel({ point: 43.8, lo: 43.1, hi: 44.6 }).band).toBe(true);
+    expect(boundedTrackModel({ point: 50, lo: 50, hi: 50 }).band).toBe(false);
+  });
+  it("judges the point against the reference, and orders swapped bounds", async () => {
+    const { boundedTrackModel } = await import("../../gas_shared/ui/briefing.js");
+    expect(boundedTrackModel({ point: 70, reference: 55 }).verdict).toBe("above");
+    expect(boundedTrackModel({ point: 55, reference: 55 }).verdict).toBe("at-or-below");
+    const m = boundedTrackModel({ point: 40, lo: 60, hi: 30 });
+    expect([m.lo, m.hi]).toEqual([30, 60]);
+  });
+  it("refuses an unmeasured point", async () => {
+    const { boundedTrackModel } = await import("../../gas_shared/ui/briefing.js");
+    expect(boundedTrackModel({ point: null }).show).toBe(false);
+  });
+});

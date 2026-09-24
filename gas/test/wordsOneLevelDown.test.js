@@ -204,12 +204,16 @@ describe("executive — the by-domain footnote is gone; the column heading's own
 //  program.js
 // =========================================================================================
 
-describe("program — renderHero draws the shared header, not a local .hero block", () => {
-  it("calls pageHeader({ with a heroStat and an aside", () => {
-    const fn = PROGRAM_CODE.slice(PROGRAM_CODE.indexOf("function renderHero("));
-    expect(fn).toMatch(/pageHeader\(\{/);
-    expect(fn).toMatch(/hero: heroStat\(/);
-    expect(fn).toMatch(/aside,/);
+describe("program — renderHero draws the shared briefing, not a local .hero block", () => {
+  it("builds its figures through the shared briefing primitives (DESIGN.md §6c)", () => {
+    const fn = PROGRAM_CODE.slice(
+      PROGRAM_CODE.indexOf("function renderHero("),
+      PROGRAM_CODE.indexOf("function renderMatrix("),
+    );
+    expect(fn).toMatch(/briefFigures\(/);
+    // Coverage and efficiency stay published together, each with its bounds drawn.
+    expect((fn.match(/boundedTrack\(\{/g) || []).length).toBe(2);
+    expect(fn).toMatch(/reference: view\.prevalence/);
   });
 
   it("passes NO route — the h1 lives in the title block renderProgram appends once", () => {

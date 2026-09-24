@@ -257,6 +257,20 @@ The MTTR page opens with the same briefing shape as Executive, then keeps every 
   remembered `collapsibleSection`. Trends, the survival curve, the fan, the age bars and the
   by-domain section are unchanged below.
 
+### 6c. The Coverage & efficiency briefing (2026-09-24)
+
+The page opens with four figures, the matrix and everything after it unchanged below.
+
+- **Coverage** and **Efficiency**, side by side and never alone, each drawn as a
+  `boundedTrack`: the point filled, the bounds hatched over it (the width *is* the doubt —
+  the unclassified rows re-labelled both ways), and on efficiency an amber tick at prevalence,
+  what random selection would score. "At or below random" stays the efficiency figure's chip.
+  Both keep their base as a `denominator`.
+- **High risk, still open** (FN over TP + FN) and **Net capacity** (the high-risk verdict in
+  words). Monthly close rate and closed per month sit below as secondary stat rows, their tips
+  intact; the population line (tracked · classified · no exploit signal), the coverage-bound
+  note and the unclassified warning stay on the surface.
+
 ## 7. The formatter table
 
 Beside the shared duration helpers (`gas_shared/ui/figures.js`'s `fmtDays` / `days1` /
