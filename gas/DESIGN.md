@@ -202,6 +202,32 @@ disclosure. Measured against the DevSecOps front door on its own harness (272 wo
 prose blocks): 276 words, 9 prose blocks, the difference being the eight ranked meta lines,
 which carry the count, hosts, leading CVE, age and domain that its shorter list omits.
 
+### 6a. The briefing (2026-09-24) — supersedes the stack above
+
+The front door is now read at a glance rather than top to bottom: a status line, four
+headline figures, two splits, a three-row preview, and the folded worklist. The primitives are
+shared (`gas_shared/ui/briefing.js`, styles in `components.css`, phone rules in
+`overrides.css`), so `gas_devsecops` draws the same shape.
+
+| Was | Now |
+| --- | --- |
+| `pageHeader()` hero + movement aside + Tracked/Resolved/Still-open strip | Four figures: **Open findings** (count, delta, zero-based slope between the two scans), **Half-life** (days or the refusal in words, ring of resolved/tracked), **Act now** (one square per ranked group, coloured by tier), **Cold zone** (share, 100-dot grid) |
+| Severity strip / movement rows | **By severity** split, each part carrying its week-on-week change |
+| MTTR-by-domain table | **By domain** split (top four + "N others"); the KM medians that reached half ride in its foot |
+| Last-scan section | The status line under the title; amber, with the age in words, past seven days |
+| Fix next (shut, last) | Unchanged and still last and shut; a **Fix first** preview of its top three sits above it, and "All N groups" opens it |
+
+**What did not move.** Every picture is DOM or SVG (no canvas, no Chart.js) and every one
+repeats a figure printed beside it in its `role="img"` name. The half-life still says "at
+least" for a lower bound and "Not measured" for an unread ledger. The cold zone keeps its full
+denominator sentence — `briefFigure` carries `figureCard`'s `denominator` contract (tip +
+`data-denominator`). The population line, the by-asset cap note and the Fix next caveats stay
+on the surface. The first-run branch still suppresses every counted figure (`actFigure`,
+`coldFigure`) and clears the splits, the preview and the worklist.
+
+**The slope is zero-based on purpose**: scaled to [min, max], 87 → 76 and 420 → 413 would draw
+the same cliff. Against zero a 2% move reads as nearly flat, which is what it is.
+
 ## 7. The formatter table
 
 Beside the shared duration helpers (`gas_shared/ui/figures.js`'s `fmtDays` / `days1` /

@@ -537,17 +537,17 @@ describe("os: the front door still draws no chart", () => {
  * DOM order, so this is the one line that decides what a reader meets first.
  */
 function hostOrder(src) {
-  const m = src.match(/main\.append\(([^)]*Host[^)]*)\);/);
+  const m = src.match(/(?:main|brief)\.append\(([^)]*Host[^)]*)\);/);
   return m ? m[1].split(",").map((s) => s.trim()).filter(Boolean) : [];
 }
 
 describe("os: Fix next is the page's LAST block, and it is collapsible", () => {
-  it("appends fixHost after every other host, the last-scan caption included", () => {
+  it("appends fixHost after every other host, the fix-first preview included", () => {
     const order = hostOrder(SRC);
     expect(order).toEqual([
-      // `coldHost` rides in the run of one-glance blocks that qualify the hero, between the
-      // severity slot and the by-domain table; what this test is about is the tail.
-      "noticeHost", "heroHost", "sevHost", "coldHost", "byDomainHost", "scanHost", "fixHost",
+      // The briefing (DESIGN.md §6a): the status line, the four figures, the two splits and
+      // the three-row preview all come first; what this test is about is the tail.
+      "statusHost", "noticeHost", "figuresHost", "splitsHost", "topHost", "fixHost",
     ]);
     // Perturbed, because "is fixHost in the list" would pass on the arrangement this replaced.
     // The ranked list spent its whole life directly under the hero, which put the page's

@@ -98,3 +98,33 @@
   .sheet-footer { padding-bottom: calc(var(--space-3) + env(safe-area-inset-bottom, 0px)); }
   .sheet-footer > button { flex: 1 1 auto; }
 }
+
+/* The Executive briefing on narrow screens: the four figures fold to a 2x2, the splits stack,
+   and a list row keeps only mark, name and figure. */
+@media (max-width: 1120px) {
+  .brief-figures { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: var(--space-6); }
+  .brief-fig:nth-child(odd) { padding-left: 0; border-left: 0; }
+  .brief-fig:nth-child(even) { padding-right: 0; }
+}
+@media (max-width: 640px) {
+  .brief { gap: var(--space-6); }
+  .brief-figures { column-gap: var(--space-4); }
+  .brief-fig { padding: 0; border-left: 0; }
+  .brief-value { font-size: 38px; }
+  .brief-value--text { font-size: 24px; }
+  .brief-unit-word { font-size: var(--fs-body); }
+  .brief-visual { min-height: 0; }
+  .brief-slope { width: 100%; height: auto; }
+  .brief-ring { width: 40px; height: 40px; }
+  .brief-dots { grid-template-columns: repeat(20, 5px); gap: 2px; }
+  .brief-dot { width: 5px; height: 5px; }
+  .brief-unit { width: 14px; height: 14px; }
+  .brief-splits { grid-template-columns: minmax(0, 1fr); gap: var(--space-6); }
+  /* The tier stays, under the owner: two ranked groups can share an owner and differ only by
+     tier, and hiding it printed the same name twice with nothing telling the rows apart. */
+  .brief-list__row { grid-template-columns: 12px minmax(0, 1fr) auto; row-gap: 0; padding: var(--space-2) 0; }
+  .brief-list__secondary { grid-column: 2; grid-row: 2; font-size: var(--fs-label); }
+  .brief-list__figure { grid-column: 3; grid-row: 1 / span 2; }
+  .brief-list__mark { grid-row: 1 / span 2; }
+  .brief-list__meta { display: none; }
+}

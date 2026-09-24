@@ -160,18 +160,20 @@ describe("os: the hero on an unread ledger", () => {
 function firstRunGuards(src) {
   const s = code(src);
   const problems = [];
-  // 1. The stat strip is an ARGUMENT that depends on the first-run verdict. Three stat rows
-  //    reading 0 under a hero that just said "Not measured" is the contradiction the whole
-  //    panel exists to end.
-  if (!/stats:\s*first\s*&&\s*first\.show\s*\?\s*\[\]\s*:\s*stats/.test(s)) {
-    problems.push("the stat strip is not suppressed on a first run");
+  // 1. The figures that count something (Act now, Cold zone) are ARGUMENTS that depend on the
+  //    first-run verdict. Two zeros beside a half-life that just said "Not measured" is the
+  //    contradiction the whole panel exists to end. (The briefing's successor to the old stat
+  //    strip's `stats: first && first.show ? [] : stats`.)
+  if (!/first\s*&&\s*first\.show\s*\?\s*null\s*:\s*actFigure\(/.test(s)
+    || !/first\s*&&\s*first\.show\s*\?\s*null\s*:\s*coldFigure\(/.test(s)) {
+    problems.push("the counted figures are not suppressed on a first run");
   }
   // 2. The verdict is reached BEFORE anything below the hero is drawn. A page that painted
   //    the ranked list and then decided it was a first run has already shown the zeros.
   const verdict = s.indexOf("executiveFirstRunView(payload, boot)");
   const suppress = s.indexOf("if (first.show) {");
   const fixNext = s.indexOf("renderFixNext(payload)");
-  const severity = s.indexOf("renderSeverity(payload)");
+  const severity = s.indexOf("renderSplits(payload)");
   if (verdict < 0) problems.push("the page never asks for the first-run verdict");
   if (suppress < 0) problems.push("the page never suppresses the blocks below the hero");
   if (fixNext < 0 || severity < 0) problems.push("the page draws neither fix-next nor severity");
@@ -204,7 +206,7 @@ describe("os: the page suppresses rather than dashes", () => {
     // the previous register's figures standing under the panel.
     const s = code(SRC);
     const branch = s.slice(s.indexOf("if (first.show) {"), s.indexOf("renderFixNext(payload)"));
-    for (const host of ["fixHost", "sevHost", "byDomainHost"]) {
+    for (const host of ["fixHost", "splitsHost", "topHost"]) {
       expect(branch, `${host} survives the first-run branch`).toContain("clear(" + host + ")");
     }
     expect(branch).toContain("return;");
@@ -214,27 +216,25 @@ describe("os: the page suppresses rather than dashes", () => {
   // the hero's own "Not measured" carry the honesty — which is precisely the shape that
   // shipped `0 · 0 · 0` under it. Reproduced here and run through the SAME sweep, so the
   // assertion is "the guard fires", not a restatement of the regex.
-  it("PERTURBATION: an unconditional stat strip fails the same sweep", () => {
+  it("PERTURBATION: unconditional counted figures fail the same sweep", () => {
     const DEFECTIVE = [
-      "  function renderHero(payload, first) {",
-      "    const view = executiveHeroView(payload);",
-      "    const stats = [",
-      '      statRow("Tracked", fmtCount(view.tracked), "lifecycles in the ledger"),',
-      "    ];",
-      "    heroHost.append(pageHeader({",
-      '      hero: heroStat("Remediation half-life", view.value, view.qualifier),',
-      "      stats: stats,",
-      "    }));",
+      "  function renderFigures(payload, first) {",
+      "    figuresHost.append(briefFigures(",
+      "      openFigure(open, hero),",
+      "      halfLifeFigure(hero, payload),",
+      "      actFigure(payload),",
+      "      coldFigure(payload),",
+      "    ));",
       "  }",
       "  paint = (payload) => {",
       "    const first = executiveFirstRunView(payload, boot);",
-      '    guard("the half-life", heroHost, () => renderHero(payload, first));',
+      '    guard("the headline figures", figuresHost, () => renderFigures(payload, first));',
       '    guard("the fix-next list", fixHost, () => renderFixNext(payload));',
-      '    guard("open findings by severity", sevHost, () => renderSeverity(payload));',
+      '    guard("the splits", splitsHost, () => renderSplits(payload));',
       "  };",
     ].join("\n");
     const hits = firstRunGuards(DEFECTIVE);
-    expect(hits).toContain("the stat strip is not suppressed on a first run");
+    expect(hits).toContain("the counted figures are not suppressed on a first run");
     expect(hits).toContain("the page never suppresses the blocks below the hero");
   });
 
@@ -242,15 +242,14 @@ describe("os: the page suppresses rather than dashes", () => {
     // Every module header in this tree explains its prohibition by QUOTING it, so a raw-text
     // check would fail on the sentence that states the rule. `code()` strips comments first.
     const commentOnly = [
-      "// this page used to pass stats: stats unconditionally, with no first.show branch",
-      "const stats = [];",
+      "// this page used to draw actFigure(payload) unconditionally, with no first.show branch",
       "const first = executiveFirstRunView(payload, boot);",
-      "if (first.show) { clear(fixHost); clear(sevHost); clear(byDomainHost); return; }",
+      "if (first.show) { clear(fixHost); clear(splitsHost); clear(topHost); return; }",
       "renderFixNext(payload);",
-      "renderSeverity(payload);",
-      "const strip = first && first.show ? [] : stats;",
-      "const header = { stats: first && first.show ? [] : stats };",
-      "void strip; void header;",
+      "renderSplits(payload);",
+      "const a = first && first.show ? null : actFigure(payload);",
+      "const b = first && first.show ? null : coldFigure(payload);",
+      "void a; void b;",
     ].join("\n");
     expect(firstRunGuards(commentOnly)).toEqual([]);
   });
