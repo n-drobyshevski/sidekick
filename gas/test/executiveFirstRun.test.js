@@ -63,9 +63,9 @@ describe("os: executiveFirstRunView", () => {
     }
 
     const figures = view.items.map((i) => i.figure).join(" | ");
-    expect(figures).toMatch(/half-life/i);
+    expect(figures).toMatch(/MTTR/);
     expect(figures).toMatch(/severity/i);
-    expect(figures).toMatch(/Fix next/);
+    expect(figures).toMatch(/Fix first/);
     expect(figures).toMatch(/movement/i);
   });
 
@@ -88,13 +88,13 @@ describe("os: executiveFirstRunView", () => {
     const unlocks = view.items.map((i) => i.unlock);
     expect(new Set(unlocks).size).toBe(unlocks.length);
     const byFigure = Object.fromEntries(view.items.map((i) => [i.figure, i.unlock]));
-    // The half-life needs a CLOSE, and a close needs a second scan — that is the register's
+    // The MTTR needs a CLOSE, and a close needs a second scan — that is the register's
     // own resolution rule (a finding is dated closed at the scan that stopped seeing it).
-    expect(byFigure["Remediation half-life"]).toMatch(/second scan/);
+    expect(byFigure["MTTR"]).toMatch(/second scan/);
     // The severity picture needs only the first.
     expect(byFigure["Open findings by severity"]).toMatch(/first scan/);
     // The ranking needs the risk signals, which is a different thing from a scan count.
-    expect(byFigure["Fix next"]).toMatch(/exploited|fix is published|reachable/);
+    expect(byFigure["Fix first"]).toMatch(/exploited|fix is published|reachable/);
     // The comparison needs two endpoints a week apart, and refuses to invent one.
     expect(byFigure["Week-over-week movement"]).toMatch(/seven days apart/);
   });

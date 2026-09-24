@@ -36,8 +36,8 @@ import { bootstrap, swrParts } from "../../../../../gas_shared/store.js";
 import { scopeParam } from "./_rates.js";
 import { SCOPE_LABELS_LONG as SCOPE_LABELS } from "./_scopeLabels.js";
 import {
-  absent, absentText, briefDelta, briefFigure, briefFigures, briefList, briefSkeleton, briefSplit,
-  briefSplits, briefStatus, clear, collapsibleSection, days1, disclosure, dotGrid, el, motionOk, emptyState, errorState,
+  absentText, briefDelta, briefFigure, briefFigures, briefList, briefSkeleton, briefSplit,
+  briefSplits, briefStatus, clear, days1, dotGrid, el, emptyState, errorState,
   fmtCount, fmtDate, fmtDateTime, fmtDays, num, pageHeader, pct1, pluralize, relativeAge,
   ringMark, slopeMark, statusPill, tipLabel, unitSquares,
 } from "../ui.js";
@@ -204,7 +204,7 @@ export function executiveMovementView(weekTrend) {
   if (!weekTrend) {
     return {
       show: false,
-      reason: "Under a week of history, or the half-life was not observable at one of the two"
+      reason: "Under a week of history, or the MTTR was not observable at one of the two"
         + " endpoints. No comparison is published rather than a made-up one.",
     };
   }
@@ -217,8 +217,8 @@ export function executiveMovementView(weekTrend) {
     direction,
     // Up = slower remediation = worse. Stated in words so the arrow is never the only cue.
     label: direction === "flat"
-      ? "Half-life unchanged versus last week"
-      : "Half-life " + (direction === "up" ? "up" : "down") + " " + magnitude
+      ? "MTTR unchanged versus last week"
+      : "MTTR " + (direction === "up" ? "up" : "down") + " " + magnitude
         + " versus last week — remediation is " + (direction === "up" ? "slower" : "faster"),
     magnitude: direction === "flat" ? "±0" : (direction === "up" ? "↑ " : "↓ ") + magnitude,
     current: weekTrend.current === null || weekTrend.current === undefined
@@ -633,7 +633,7 @@ export function executiveFirstRunView(payload, boot) {
 
   const items = [
     {
-      figure: "Remediation half-life",
+      figure: "MTTR",
       unlock: "One closed lifecycle with a readable clock. A finding is dated closed at the"
         + " sync that stopped seeing it, so the first close needs a second sync.",
       route: null,
@@ -714,7 +714,6 @@ export async function renderExecutive(host, params, _ctx) {
   const splitsHost = el("div", {});
   const notesHost = el("div", {});
   const fixHost = el("div", {});
-  let fixOpen = false;
   const brief = el("div", { class: "brief" });
   host.append(pageHeader({ route: "executive" }), brief);
   brief.append(statusHost, noticeHost, figuresHost, splitsHost, fixHost, notesHost);
@@ -860,7 +859,7 @@ export async function renderExecutive(host, params, _ctx) {
       : null;
     const numeric = view.measured && !view.isLowerBound && num(view.days) !== null;
     return briefFigure({
-      label: tipLabel("Half-life", heroHelp(view)),
+      label: tipLabel("MTTR", heroHelp(view)),
       // "Not reached" and "Not measured" are the value, in words, exactly as the MTTR page
       // prints them — `kmHalfLifeView` decides, this page does not re-decide.
       value: numeric ? fmtCount(Math.round(view.days)) : view.value,
@@ -909,7 +908,7 @@ export async function renderExecutive(host, params, _ctx) {
         term: "half-life",
         lines: [
           "No lifecycle has a readable clock yet: “not measured”, not zero.",
-          "The half-life needs at least one observation to rest on.",
+          "The MTTR needs at least one observation to rest on.",
         ],
       };
     }
@@ -940,7 +939,6 @@ export async function renderExecutive(host, params, _ctx) {
         label: legend.join(", "),
       }),
       caption: legend.join(" · ") + ". " + view.rankedShort + ".",
-      action: fixButton("Fix next"),
     });
   }
 
@@ -1033,7 +1031,7 @@ export async function renderExecutive(host, params, _ctx) {
       aria: "Open findings by register: "
         + parts.map((p) => p.label + " " + fmtCount(p.value)).join(", "),
       foot: el("span", {},
-        tipLabel("Half-life per register", {
+        tipLabel("MTTR per register", {
           term: "half-life",
           lines: [
             "Three registers, three clocks. The same CVE arriving through a dependency and"
@@ -1083,24 +1081,6 @@ export async function renderExecutive(host, params, _ctx) {
     });
   }
 
-  // ------------------------------------------------------------------------ fix next
-
-  /** Opens the Fix next section and brings it into view. */
-  function fixButton(text) {
-    return el("button", {
-      type: "button",
-      class: "brief-more",
-      onclick: () => {
-        const details = fixHost.querySelector("details");
-        if (!details) return;
-        details.open = true;
-        fixOpen = true;
-        // No glide for a reader who asked for less motion — helpPage.js makes the same call.
-        details.scrollIntoView({ block: "start", behavior: motionOk() ? "smooth" : "auto" });
-      },
-    }, text, el("span", { "aria-hidden": "true" }, " →"));
-  }
-
   // ------------------------------------------------------------------ the reading notes
 
   /**
@@ -1117,7 +1097,7 @@ export async function renderExecutive(host, params, _ctx) {
       && payload.mttr.remediation.km) || null;
     const windowLine = windowLineView(payload, km);
     if (windowLine.show) notes.push(tipLabel(windowLine.text, WINDOW_LINE_HELP));
-    const eol = endOfLifeExclusionNote(payload && payload.endOfLife, "the half-life figures");
+    const eol = endOfLifeExclusionNote(payload && payload.endOfLife, "the MTTR figures");
     if (eol) notes.push(eol);
     if (!notes.length) return;
     notesHost.append(el("section", { class: "brief-notes" },
@@ -1126,105 +1106,35 @@ export async function renderExecutive(host, params, _ctx) {
         ...notes.map((n) => el("li", { class: "small muted" }, n)))));
   }
 
+  // ----------------------------------------------------------------------- fix first
+
   /**
-   * The ranked list, as an ordered list of GROUPS — one block, straight after the splits.
+   * The ranked list, cut to its top three GROUPS: the briefing's small table, and the only
+   * copy of the ranking on the page. (The full, folded Fix next list under it is gone — the
+   * same groups drawn twice, and a worklist on a page read at a glance.)
    *
-   * NO CHART AND NO CANVAS, which is the module header's hard rule and is not relaxed for a
-   * ranking. `<ol>` is the right element because the order IS the claim — a reader using a
-   * screen reader hears "1 of 8" and gets the same argument the page is making visually.
-   *
-   * EVERY ROW CARRIES ITS UNITS. "7" is not a figure; "7 open findings" is. The oldest age
-   * carries "days" for the same reason, and a group whose rows have no readable age says so
-   * rather than printing a 0.
-   *
-   * SHUT, IT PREVIEWS; OPEN, IT LISTS. The shut section shows its top three rows (the
-   * briefing's `briefList`) under the heading, and opening it swaps them for the full list,
-   * so the same groups are never on screen twice. Everything the section holds folds
-   * together, the cap note with the list it qualifies, so nothing in it is ever on screen
-   * without its caveat; the denominator rides on the heading so the shut section still says
-   * how much of the backlog is behind it. See the host declaration above for why `fixOpen` is
-   * the page's and not the node's.
+   * EVERY ROW CARRIES ITS UNITS and links to its own register. The head says how much of the
+   * ranking the three rows are ("Top 3 of 8 groups"); how much of the BACKLOG the ranking is
+   * rides on the Act now figure's caption (`rankedShort`). The cap stays on the surface under
+   * the rows — a constraint on the ranking is a fact a reader needs without opening anything.
    */
   function renderFixNext(payload) {
     const view = fixNextView(payload, boot);
     clear(fixHost);
     if (!view.show) return;
-
-    // THE RANKING RULE IS A DEFINITION, so it lives where a definition lives. The 52-word
-    // lede said what "Fix next" means; the heading now says it through the `fix-next` entry,
-    // which is the same three clauses in the book's own voice. Nothing about the rule is a
-    // task constraint or an honesty statement, which is what R2 keeps on the surface.
-    //
-    // THE DENOMINATOR IS THE SHUT SECTION'S OWN CAPTION. "10 of 416 open findings ranked" used
-    // to sit under the list as a surface paragraph; it is the one line that tells a reader what
-    // is behind the toggle and how much of the backlog it speaks for, so it rides on the
-    // heading instead and is legible whether the section is open or closed. It is NOT moved
-    // behind a signifier — the disclosure under it still holds the four reasons, exactly as
-    // before — it moved UP, onto the thing it measures.
-    const section = collapsibleSection("Fix next", {
-      help: { term: "fix-next" },
-      hint: view.rankedShort,
-      open: fixOpen,
-      // Per reader, across visits — the flag above only survives this page's own repaints.
-      remember: "execFixNext",
-      onToggle: (o) => { fixOpen = o; preview.hidden = o; },
-    });
-    const preview = previewOf(view);
-    preview.hidden = section.node.open;
-    fixHost.append(section.node, preview);
-    const fix = section.body;
-
+    const label = tipLabel("Fix first", { term: "fix-next" });
     if (view.empty) {
-      fix.append(emptyState("Nothing is ranked.", view.emptyReason));
-    } else {
-      const list = el("ol", { class: "fixnext" });
-      for (const it of view.items) {
-        list.append(el("li", { class: "fixnext-item" },
-          el("div", { class: "fixnext-head" },
-            statusPill(it.kind, it.tierLabel),
-            el("a", {
-              class: "linklike fixnext-repo",
-              href: it.href,
-              // `it.repoText` stays a STRING (the aria-label above interpolates it into a
-              // sentence, where a Node would render "[object HTMLSpanElement]") — but
-              // `.fixnext-repo` sets `font-weight: 600` and no colour, so the visible text
-              // needs the same promotion `dataTable` gives a cell: `absent()` when the repo
-              // itself is unresolvable, never a bold black dash.
-              "aria-label": it.tierLabel + " — " + it.repoText + ", " + it.countText
-                + ", " + it.oldestText + ". " + it.linkLabel,
-            }, it.repoText === absentText ? absent() : it.repoText)),
-          el("div", { class: "fixnext-meta small muted" },
-            it.scopeLabel + " · " + it.countText + " · " + it.oldestText
-            + " · " + it.ownerText),
-        ));
-      }
-      fix.append(list);
+      fixHost.append(el("section", { class: "brief-list" },
+        el("div", { class: "brief-list__head" }, el("h2", { class: "brief-label" }, label)),
+        emptyState("Nothing is ranked.", view.emptyReason)));
+      return;
     }
-
-    // The four reasons behind the other 406 in a closed `disclosure`. NOT a tip: the sentence
-    // is an ACCOUNTING, four counts with a reason each, and a hover card is the wrong shape
-    // for something a reader may want to read twice and compare against the register pages. A
-    // disclosure is the second of the two channels R1 allows, and its summary is the visible
-    // signifier. The two numbers it accounts for are on the section's own heading now.
-    fix.append(disclosure(
-      "Why the rest are not ranked",
-      el("p", { class: "small muted" }, view.unrankedSentence),
-    ));
-    // KEPT ON THIS SECTION'S SURFACE. A cap is a task constraint — the reader is looking at a
-    // list that stops before the backlog does, and a count of what was cut off the end is
-    // exactly the kind of statement R2 refuses to move behind a signifier. It folds with the
-    // list it qualifies, which is the one arrangement in which the list is never on screen
-    // without it.
-    if (view.cutNote) fix.append(el("p", { class: "small muted" }, view.cutNote));
-  }
-
-  /** The shut section's top three rows, and the way into the rest. Empty when nothing ranked. */
-  function previewOf(view) {
-    const preview = el("div", { class: "brief-fix__preview" });
-    if (view.empty) return preview;
-    preview.append(briefList({
-      label: null,
-      rows: view.items.slice(0, 3).map((it) => ({
+    const top = view.items.slice(0, 3);
+    fixHost.append(briefList({
+      label,
+      action: el("span", { class: "small muted" }, "Top " + fmtCount(top.length) + " of "
+        + fmtCount(view.items.length) + " " + pluralize(view.items.length, "group")),
+      rows: top.map((it) => ({
         tone: "t" + Math.min(Math.max(it.tier, 1), 3),
         primary: it.repoText,
         secondary: it.tierLabel + " · " + it.scopeLabel,
@@ -1235,10 +1145,6 @@ export async function renderExecutive(host, params, _ctx) {
           + ". " + it.linkLabel,
       })),
     }));
-    if (view.items.length > 3) {
-      preview.append(fixButton("All " + fmtCount(view.items.length) + " "
-        + pluralize(view.items.length, "group")));
-    }
-    return preview;
+    if (view.cutNote) fixHost.append(el("p", { class: "small muted" }, view.cutNote));
   }
 }

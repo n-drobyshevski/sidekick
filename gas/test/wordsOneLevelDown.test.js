@@ -179,13 +179,12 @@ describe("executive — cutNote, exposureNote and rankedShort MAY NEVER LEAVE TH
     expect(split).toContain('el("p", { class: "small muted" }, view.cutNote)');
   });
 
-  it("rankedShort still prints ahead of the disclosure holding the full accounting", () => {
-    const fn = EXECUTIVE_CODE.slice(EXECUTIVE_CODE.indexOf("function renderFixNext("));
-    const shortIdx = fn.indexOf("view.rankedShort");
-    const discIdx = fn.indexOf("disclosure(");
-    expect(shortIdx).toBeGreaterThan(-1);
-    expect(discIdx).toBeGreaterThan(-1);
-    expect(shortIdx).toBeLessThan(discIdx);
+  it("rankedShort still prints, on the Act now figure's caption", () => {
+    // The folded full list and its accounting disclosure are gone; the page keeps a three-row
+    // Fix first table, so the "N of M open findings ranked" denominator rides on the figure
+    // that counts the ranked groups.
+    const fn = EXECUTIVE_CODE.slice(EXECUTIVE_CODE.indexOf("function actFigure("));
+    expect(fn).toMatch(/caption: legend\.join\(" · "\) \+ "\. " \+ view\.rankedShort \+ "\.",/);
   });
 });
 

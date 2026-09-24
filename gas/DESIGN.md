@@ -205,25 +205,25 @@ which carry the count, hosts, leading CVE, age and domain that its shorter list 
 ### 6a. The briefing (2026-09-24) — supersedes the stack above
 
 The front door is now read at a glance rather than top to bottom: a status line, four
-headline figures, two splits, and the folded worklist showing its top three. The primitives are
+headline figures, two splits, and a three-row Fix first table. The primitives are
 shared (`gas_shared/ui/briefing.js`, styles in `components.css`, phone rules in
 `overrides.css`), so `gas_devsecops` draws the same shape.
 
 | Was | Now |
 | --- | --- |
-| `pageHeader()` hero + movement aside + Tracked/Resolved/Still-open strip | Four figures: **Open findings** (count, delta, zero-based slope between the two scans), **Half-life** (days or the refusal in words, ring of resolved/tracked), **Act now** (one square per ranked group, coloured by tier), **Cold zone** (share, 100-dot grid) |
+| `pageHeader()` hero + movement aside + Tracked/Resolved/Still-open strip | Four figures: **Open findings** (count, delta, zero-based slope between the two scans), **MTTR** (the KM remediation half-life: days or the refusal in words, ring of resolved/tracked), **Act now** (one square per ranked group, coloured by tier), **Cold zone** (share, 100-dot grid) |
 | Severity strip / movement rows | **By severity** split, each part carrying its week-on-week change |
 | MTTR-by-domain table | **By domain** split (top four + "N others"); the KM medians that reached half ride in its foot |
 | Last-scan section | The status line under the title; amber, with the age in words, past seven days |
-| Fix next (shut, last) | Still last and shut, and one block: shut, it shows its top three rows under the heading; opened (the heading, "All N groups" or Act now's "Fix next →"), the full table replaces them in place. A separate **Fix first** preview above it drew the same groups twice and is gone |
+| Fix next (shut, last) | **Fix first**, last: the top three ranked groups as a small table, its head saying "Top 3 of N groups". The folded full table, its "why the rest are not ranked" disclosure and the links into it are gone — the same groups twice, and a worklist on a page read at a glance. Act now's caption still carries "N of M open findings ranked" |
 
 **What did not move.** Every picture is DOM or SVG (no canvas, no Chart.js) and every one
-repeats a figure printed beside it in its `role="img"` name. The half-life still says "at
+repeats a figure printed beside it in its `role="img"` name. The MTTR still says "at
 least" for a lower bound and "Not measured" for an unread ledger. The cold zone keeps its full
 denominator sentence — `briefFigure` carries `figureCard`'s `denominator` contract (tip +
-`data-denominator`). The population line, the by-asset cap note and the Fix next caveats stay
-on the surface. The first-run branch still suppresses every counted figure (`actFigure`,
-`coldFigure`) and clears the splits and the worklist.
+`data-denominator`). The population line, the by-asset cap note and the ranking's cap and exposure notes
+stay on the surface, under the Fix first rows. The first-run branch still suppresses every counted figure (`actFigure`,
+`coldFigure`) and clears the splits and the Fix first table.
 
 **It loads in parallel.** The page asks `api_getExecutivePage` for four parts at once:
 `mttr`, `insights`, `coldZone` and `byDomain`. It uses `swrParts` in `gas_shared/store.js`.

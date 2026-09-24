@@ -316,8 +316,11 @@ describe("the front door still draws no chart", () => {
     expect(SRC).not.toMatch(/from "\.\.\/chartsLoader\.js"/);
   });
 
-  it("draws the ranked list as an ordered list, because the order is the claim", () => {
-    expect(SRC).toContain('el("ol", { class: "fixnext" })');
+  it("draws the ranked list as the briefing's ordered list, because the order is the claim", () => {
+    // `briefList` renders an `<ol>`, so a screen reader hears "1 of 3". A stack of divs would
+    // be the same pixels and no statement at all, which is what this pin is against.
+    const fn = SRC.slice(SRC.indexOf("function renderFixNext("));
+    expect(fn).toMatch(/fixHost\.append\(briefList\(\{/);
   });
 });
 
@@ -335,10 +338,10 @@ function hostOrder(src) {
     : [];
 }
 
-describe("Fix next is one collapsible block, straight after the splits", () => {
+describe("the ranking is a three-row Fix first table, straight after the splits", () => {
   it("appends fixHost after the splits and before the reading notes", () => {
-    // The briefing (DESIGN.md "The briefing"): status line, figures, splits, then the ranked
-    // list — its own top three while shut — and the reading notes last, so the notes qualify
+    // The briefing (DESIGN.md "The briefing"): status line, figures, splits, then the
+    // three-row Fix first table, and the reading notes last, so the notes qualify
     // everything above them.
     expect(hostOrder(SRC)).toEqual([
       "statusHost", "noticeHost", "figuresHost", "splitsHost", "fixHost", "notesHost",
@@ -353,33 +356,21 @@ describe("Fix next is one collapsible block, straight after the splits", () => {
     expect(hostOrder(SRC).at(-1)).toBe("notesHost");
   });
 
-  it("is ONE block: no separate Fix first preview, and the shut preview hides when it opens", () => {
-    // The same top three used to be drawn twice — a "Fix first" preview above, and the folded
-    // Fix next list below starting with the same groups. The preview now lives inside the
-    // Fix next block and steps aside whenever the section is open.
+  it("is the small Fix first table only: three rows, no folded full list", () => {
+    // The folded Fix next section repeated the same groups under a second name; the page keeps
+    // the three-row table and nothing else of the ranking.
+    const fn = SRC.slice(SRC.indexOf("function renderFixNext("));
+    expect(fn).toContain('tipLabel("Fix first", {');
+    expect(fn).toMatch(/view\.items\.slice\(0, 3\)/);
+    expect(SRC).not.toContain("collapsibleSection(");
+    expect(SRC).not.toContain("execFixNext");
+    expect(SRC).not.toContain("fixButton(");
     expect(SRC).not.toContain("topHost");
-    expect(SRC).not.toContain('label: "Fix first"');
-    const fn = SRC.slice(SRC.indexOf("function renderFixNext("));
-    expect(fn).toMatch(/const preview = previewOf\(view\);/);
-    expect(fn).toMatch(/preview\.hidden = section\.node\.open;/);
-    expect(fn).toMatch(/fixHost\.append\(section\.node, preview\);/);
   });
 
-  it("builds the section through collapsibleSection, with the page holding the open flag", () => {
+  it("says how much of the ranking the three rows are, on the list's own head", () => {
     const fn = SRC.slice(SRC.indexOf("function renderFixNext("));
-    expect(fn).toContain('collapsibleSection("Fix next", {');
-    expect(fn).toMatch(/open: fixOpen,/);
-    expect(fn).toMatch(/onToggle: \(o\) => \{ fixOpen = o; preview\.hidden = o; \},/);
-    // Remembered per reader across visits — the closure flag only survives this page's own
-    // repaints, and swrCall paints twice on a warm cache.
-    expect(fn).toMatch(/remember: "execFixNext",/);
-  });
-
-  it("puts the denominator on the heading, so a SHUT section still says what it holds", () => {
-    const fn = SRC.slice(SRC.indexOf("function renderFixNext("));
-    expect(fn).toMatch(/hint: view\.rankedShort,/);
-    // And it is no longer ALSO a paragraph under the list — one statement, one place.
-    expect(fn).not.toContain('el("p", { class: "small muted" }, view.rankedShort)');
+    expect(fn).toMatch(/"Top " \+ fmtCount\(top\.length\) \+ " of "/);
   });
 });
 

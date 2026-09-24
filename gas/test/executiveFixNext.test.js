@@ -510,15 +510,11 @@ describe("os: the front door still draws no chart", () => {
     expect(SRC).not.toMatch(/from "\.\.\/chartsLoader\.js"/);
   });
 
-  it("draws the ranked list as a table with a rank column, because the order is the claim", () => {
-    // It was an `<ol>`, so a screen reader heard "1 of 8". A table with a rank column says the
-    // same thing ("row 1 of 8", and the number in the first cell) and gives every fact its own
-    // column instead of one `·`-joined sentence per group — eight of which were eight of this
-    // page's nine prose blocks under the density walker. A stack of divs would be the same
-    // pixels and no statement at all, which is what this pin is against.
-    expect(SRC).toContain('className: "fixnext-table"');
-    expect(SRC).toMatch(/key: "rank",\s*label: "#"/);
-    expect(SRC).not.toContain('el("ol", { class: "fixnext" })');
+  it("draws the ranked list as the briefing's ordered list, because the order is the claim", () => {
+    // `briefList` renders an `<ol>`, so a screen reader hears "1 of 3". A stack of divs would
+    // be the same pixels and no statement at all, which is what this pin is against.
+    const fn = SRC.slice(SRC.indexOf("function renderFixNext("));
+    expect(fn).toMatch(/fixHost\.append\(briefList\(\{/);
   });
 
   it("has no page-level Run scan button left to disagree with the rail's", () => {
@@ -541,12 +537,12 @@ function hostOrder(src) {
   return m ? m[1].split(",").map((s) => s.trim()).filter(Boolean) : [];
 }
 
-describe("os: Fix next is the page's LAST block, and it is collapsible", () => {
+describe("os: the ranking is the page's LAST block, a three-row Fix first table", () => {
   it("appends fixHost after every other host", () => {
     const order = hostOrder(SRC);
     expect(order).toEqual([
       // The briefing (DESIGN.md §6a): the status line, the four figures and the two splits
-      // come first; the ranked list — its own top three while shut — is last.
+      // come first; the ranking — a three-row Fix first table — is last.
       "statusHost", "noticeHost", "figuresHost", "splitsHost", "fixHost",
     ]);
     // Perturbed, because "is fixHost in the list" would pass on the arrangement this replaced.
@@ -558,45 +554,27 @@ describe("os: Fix next is the page's LAST block, and it is collapsible", () => {
     expect(hostOrder(SRC).at(-1)).toBe("fixHost");
   });
 
-  it("is ONE block: no separate Fix first preview, and the shut preview hides when it opens", () => {
-    // The same top three used to be drawn twice — a "Fix first" preview above, and the folded
-    // Fix next list below starting with the same groups. The preview now lives inside the
-    // Fix next block and steps aside whenever the section is open.
+  it("is the small Fix first table only: three rows, no folded full list", () => {
+    // The folded Fix next section repeated the same groups under a second name; the page keeps
+    // the three-row table and nothing else of the ranking.
+    const fn = SRC.slice(SRC.indexOf("function renderFixNext("));
+    expect(fn).toContain('tipLabel("Fix first", {');
+    expect(fn).toMatch(/view\.items\.slice\(0, 3\)/);
+    expect(SRC).not.toContain("collapsibleSection(");
+    expect(SRC).not.toContain("execFixNext");
+    expect(SRC).not.toContain("fixButton(");
     expect(SRC).not.toContain("topHost");
-    expect(SRC).not.toContain('label: "Fix first"');
-    const fn = SRC.slice(SRC.indexOf("function renderFixNext("));
-    expect(fn).toMatch(/const preview = previewOf\(view\);/);
-    expect(fn).toMatch(/preview\.hidden = section\.node\.open;/);
-    expect(fn).toMatch(/fixHost\.append\(section\.node, preview\);/);
   });
 
-  it("builds the section through collapsibleSection, with the page holding the open flag", () => {
+  it("says how much of the ranking the three rows are, on the list's own head", () => {
     const fn = SRC.slice(SRC.indexOf("function renderFixNext("));
-    expect(fn).toContain('collapsibleSection("Fix next", {');
-    expect(fn).toMatch(/open: fixOpen,/);
-    expect(fn).toMatch(/onToggle: \(o\) => \{ fixOpen = o; preview\.hidden = o; \},/);
-    // Remembered per reader across visits — the closure flag only survives this page's own
-    // repaints, and swrCall paints twice on a warm cache.
-    expect(fn).toMatch(/remember: "execFixNext",/);
+    expect(fn).toMatch(/"Top " \+ fmtCount\(top\.length\) \+ " of "/);
   });
 
-  it("puts the denominator on the heading, so a SHUT section still says what it holds", () => {
+  it("keeps the cap and the exposure refusal on the surface, under the rows they qualify", () => {
     const fn = SRC.slice(SRC.indexOf("function renderFixNext("));
-    expect(fn).toMatch(/hint: view\.rankedShort,/);
-    // And it is no longer ALSO a paragraph under the table — one statement, one place. The
-    // "may never leave the surface" pin in wordsOneLevelDown.test.js is what holds the other
-    // half of this: the heading is on the surface whether the section is open or closed.
-    expect(fn).not.toContain('el("p", { class: "small muted" }, view.rankedShort)');
-  });
-
-  it("keeps the cap and the exposure refusal inside the section, beside what they qualify", () => {
-    const fn = SRC.slice(SRC.indexOf("function renderFixNext("));
-    // `fix` is the section's own body. Folding a caveat away WITH the figure it qualifies is
-    // the one arrangement in which the figure is never on screen without it; appending either
-    // to `fixHost` instead would leave it outside the fold, stating a constraint on a list the
-    // reader cannot see.
-    expect(fn).toMatch(/if \(view\.cutNote\) fix\.append/);
-    expect(fn).toMatch(/fix\.append\(el\("p", \{ class: "small muted" \}, view\.exposureNote\)\)/);
+    expect(fn).toMatch(/if \(view\.cutNote\) fixHost\.append/);
+    expect(fn).toMatch(/fixHost\.append\(el\("p", \{ class: "small muted" \}, view\.exposureNote\)\)/);
   });
 });
 
