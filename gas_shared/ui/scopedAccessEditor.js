@@ -18,6 +18,7 @@ import { confirmDialog, toast } from "./feedback.js";
 import { statusPill } from "./controls.js";
 import { tip } from "./tip.js";
 import { settingsPanel } from "./settings.js";
+import { guardUnsaved } from "./accessSave.js";
 import {
   draftProblems, foreignDomain, normEmail, rosterChanged, rosterPayload, rowChips, rowReach,
   SCOPE_DIM_LABELS, scopeValues, summaryTiles,
@@ -333,5 +334,7 @@ export function scopedAccessSection({ info, dims, onSaved }) {
     editing = null;
     draw();
   };
+  // A reload with unsaved roster edits asks first, like the people/admins card beside it.
+  guardUnsaved(block, () => rosterChanged(rows, saved));
   return block;
 }
