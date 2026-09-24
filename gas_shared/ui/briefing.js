@@ -17,6 +17,7 @@
 // part to nothing, a split that refuses a zero total — are testable in node.
 
 import { el } from "./dom.js";
+import { skeleton } from "./feedback.js";
 import { svgEl } from "../icons.js";
 import { figureCardModel, fmtCount, num } from "./figures.js";
 import { tipLabel } from "./tip.js";
@@ -229,6 +230,34 @@ export function briefFigure(f) {
     f.caption ? el("p", { class: "brief-caption" }, f.caption) : null,
     f.link ? el("a", { class: "brief-link", href: f.link.href }, f.link.text, el("span", { "aria-hidden": "true" }, " →")) : null,
     f.action || null);
+}
+
+/**
+ * The briefing's loading stubs, drawn IN ITS OWN GRID: four figure columns with their rules,
+ * two splits with a track, a ranked list's rows. The stub is the layout — a stub shaped like
+ * some other page makes the real content jump when it lands. Everything is `aria-hidden`
+ * (`skeleton()`); the figures stub carries the one `role="status"` a screen reader hears.
+ */
+export function briefSkeleton() {
+  const line = (width, height) => skeleton("line", { width, height });
+  const figures = el("div", { class: "brief-figures brief-skel", role: "status",
+    "aria-label": "Computing the headline figures" },
+    ...[0, 1, 2, 3].map((i) => el("div", { class: "brief-fig" },
+      line(i % 2 ? "72px" : "96px"),
+      skeleton("stat", { width: i % 2 ? "150px" : "110px", height: "52px", radius: "8px" }),
+      skeleton("", { width: "70%", height: "56px" }),
+      line("88%"), line("56%"))));
+  const splits = el("div", { class: "brief-splits brief-skel" },
+    ...[0, 1].map(() => el("div", { class: "brief-split" },
+      line("96px"), skeleton("", { height: "28px", radius: "4px" }),
+      el("div", { class: "brief-skel__keys" }, ...[0, 1, 2, 3].map(() => line("48px"))),
+      line("40%"))));
+  const list = el("div", { class: "brief-skel" },
+    line("120px", "16px"),
+    el("div", { class: "brief-skel__rows" }, ...[0, 1, 2].map((i) => el("div", { class: "brief-skel__row" },
+      skeleton("", { width: "10px", height: "10px", radius: "3px" }),
+      line(["180px", "220px", "160px"][i]), line("140px"), el("span", {}), line("64px"), line("72px")))));
+  return { figures, splits, list };
 }
 
 /** The row the four figures sit in. */

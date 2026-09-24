@@ -36,10 +36,10 @@ import { bootstrap, swrParts } from "../../../../../gas_shared/store.js";
 import { scopeParam } from "./_rates.js";
 import { SCOPE_LABELS_LONG as SCOPE_LABELS } from "./_scopeLabels.js";
 import {
-  absent, absentText, briefDelta, briefFigure, briefFigures, briefList, briefSplit, briefSplits,
-  briefStatus, clear, collapsibleSection, days1, disclosure, dotGrid, el, motionOk, emptyState, errorState,
+  absent, absentText, briefDelta, briefFigure, briefFigures, briefList, briefSkeleton, briefSplit,
+  briefSplits, briefStatus, clear, collapsibleSection, days1, disclosure, dotGrid, el, motionOk, emptyState, errorState,
   fmtCount, fmtDate, fmtDateTime, fmtDays, num, pageHeader, pct1, pluralize, relativeAge,
-  ringMark, skeleton, slopeMark, statusPill, tipLabel, unitSquares,
+  ringMark, slopeMark, statusPill, tipLabel, unitSquares,
 } from "../ui.js";
 // THE HALF-LIFE DECISION IS IMPORTED, NOT REPEATED. `execMttrSlice` is a slice of the MTTR
 // page's own payload (api.ts says so), so the rule that turns `{median, medianLowerBound}`
@@ -731,11 +731,12 @@ export async function renderExecutive(host, params, _ctx) {
     }
   }
 
-  clear(figuresHost).append(
-    el("div", { role: "status", "aria-label": "Computing the headline figures" },
-      skeleton("line", { width: "220px" }),
-      skeleton("stat", { width: "260px", height: "56px" })),
-  );
+  // Stubs in the briefing's own grid, so nothing jumps when the parts land. Each render
+  // clears its host first; the first-run branch clears the splits and the list.
+  const stub = briefSkeleton();
+  clear(figuresHost).append(stub.figures);
+  clear(splitsHost).append(stub.splits);
+  clear(fixHost).append(stub.list);
   guard("the sync status", statusHost, renderStatus);
 
   paint = (payload) => {

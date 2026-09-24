@@ -382,3 +382,19 @@ describe("Fix next is one collapsible block, straight after the splits", () => {
     expect(fn).not.toContain('el("p", { class: "small muted" }, view.rankedShort)');
   });
 });
+
+describe("the loading stubs are the briefing's own layout", () => {
+  it("stubs the figures, the splits and the list in their hosts, and each render clears its own", () => {
+    const s = SRC.slice(SRC.indexOf("const stub = briefSkeleton();"));
+    expect(s).toMatch(/clear\(figuresHost\)\.append\(stub\.figures\);/);
+    expect(s).toMatch(/clear\(splitsHost\)\.append\(stub\.splits\);/);
+    expect(s).toMatch(/clear\(fixHost\)\.append\(stub\.list\);/);
+    // A stub left standing under real content is the defect this guards: every host the stub
+    // fills is cleared by its render (and by the first-run branch for the last two).
+    for (const [fn, host] of [["renderFigures", "figuresHost"], ["renderSplits", "splitsHost"],
+      ["renderFixNext", "fixHost"]]) {
+      const body = SRC.slice(SRC.indexOf("function " + fn + "("));
+      expect(body.slice(0, 400), fn).toContain("clear(" + host + ")");
+    }
+  });
+});

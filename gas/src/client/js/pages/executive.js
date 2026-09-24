@@ -51,11 +51,12 @@
 
 import { bootstrap, swrParts } from "../../../../../gas_shared/store.js";
 import {
-  briefDelta, briefFigure, briefFigures, briefList, briefSplit, briefSplits, briefStatus,
+  briefDelta, briefFigure, briefFigures, briefList, briefSkeleton, briefSplit, briefSplits,
+  briefStatus,
   clear, collapsibleSection, dataTable, disclosure, dotGrid, el, motionOk, emptyState, errorState,
   fmtCount, fmtDate, fmtDateTime, fmtDays, fmtSpan, foldTail, num, pageHeader,
   pluralize, relativeAge, ringMark,
-  scopeBar, sectionLabel, skeleton, slopeMark, statusPill, tipLabel, unitSquares,
+  scopeBar, sectionLabel, slopeMark, statusPill, tipLabel, unitSquares,
   FINE_UNITS, unitRow, unitScale,
   absent, days1,
   absentText, pct1,
@@ -1013,11 +1014,12 @@ export async function renderExecutive(main, _params, ctx) {
     }
   }
 
-  clear(figuresHost).append(
-    el("div", { role: "status", "aria-label": "Computing the headline figures" },
-      skeleton("line", { width: "220px" }),
-      skeleton("stat", { width: "260px", height: "56px" })),
-  );
+  // Stubs in the briefing's own grid, so nothing jumps when the parts land. Each render
+  // clears its host first; the first-run branch clears the splits and the list.
+  const stub = briefSkeleton();
+  clear(figuresHost).append(stub.figures);
+  clear(splitsHost).append(stub.splits);
+  clear(fixHost).append(stub.list);
   guard("the scan status", statusHost, renderStatus);
 
   paint = (payload) => {
