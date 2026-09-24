@@ -52,7 +52,7 @@
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import {
   briefDelta, briefFigure, briefFigures, briefList, briefSplit, briefSplits, briefStatus,
-  clear, collapsibleSection, dataTable, disclosure, dotGrid, el, emptyState, errorState,
+  clear, collapsibleSection, dataTable, disclosure, dotGrid, el, motionOk, emptyState, errorState,
   fmtCount, fmtDate, fmtDateTime, fmtDays, fmtSpan, foldTail, num, pageHeader,
   pluralize, relativeAge, ringMark,
   scopeBar, sectionLabel, skeleton, slopeMark, statusPill, tipLabel, unitSquares,
@@ -1417,7 +1417,8 @@ export async function renderExecutive(main, _params, ctx) {
         if (!details) return;
         details.open = true;
         fixOpen = true;
-        details.scrollIntoView({ block: "start", behavior: "smooth" });
+        // No glide for a reader who asked for less motion — helpPage.js makes the same call.
+        details.scrollIntoView({ block: "start", behavior: motionOk() ? "smooth" : "auto" });
       },
     }, text, el("span", { "aria-hidden": "true" }, " →"));
   }

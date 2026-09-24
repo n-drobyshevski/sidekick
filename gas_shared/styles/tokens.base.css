@@ -210,12 +210,13 @@
   --cat-vuln-ink: #dc2626;     --cat-vuln-text: #b91c1c;     --cat-vuln-tint: #fef2f2;
   --cat-exposure-ink: #ea580c; --cat-exposure-text: #c2410c; --cat-exposure-tint: #fff7ed;
 
-  /* The sixth radius, which was already the most-used one after the five tokens (12 bare
-     literals) and never got named. Three of its uses sit on :focus-visible rules, so it is
-     load-bearing rather than cosmetic. */
   /* The Executive briefing's neutral ramp (ui/briefing.js): parts of a split that are not
      severities, darkest first. Neutral on purpose — a domain is not a verdict. */
   --brief-r1: #27272a; --brief-r2: #52525b; --brief-r3: #71717a; --brief-r4: #a1a1aa; --brief-r5: #d4d4d8;
+
+  /* The sixth radius, which was already the most-used one after the five tokens (12 bare
+     literals) and never got named. Three of its uses sit on :focus-visible rules, so it is
+     load-bearing rather than cosmetic. */
   --radius-xs: 3px;
   --radius-sm: 6px;
   --radius-md: 8px;

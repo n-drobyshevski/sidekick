@@ -37,7 +37,7 @@ import { scopeParam } from "./_rates.js";
 import { SCOPE_LABELS_LONG as SCOPE_LABELS } from "./_scopeLabels.js";
 import {
   absent, absentText, briefDelta, briefFigure, briefFigures, briefList, briefSplit, briefSplits,
-  briefStatus, clear, collapsibleSection, days1, disclosure, dotGrid, el, emptyState, errorState,
+  briefStatus, clear, collapsibleSection, days1, disclosure, dotGrid, el, motionOk, emptyState, errorState,
   fmtCount, fmtDate, fmtDateTime, fmtDays, num, pageHeader, pct1, pluralize, relativeAge,
   ringMark, skeleton, slopeMark, statusPill, tipLabel, unitSquares,
 } from "../ui.js";
@@ -1112,7 +1112,8 @@ export async function renderExecutive(host, params, _ctx) {
         if (!details) return;
         details.open = true;
         fixOpen = true;
-        details.scrollIntoView({ block: "start", behavior: "smooth" });
+        // No glide for a reader who asked for less motion — helpPage.js makes the same call.
+        details.scrollIntoView({ block: "start", behavior: motionOk() ? "smooth" : "auto" });
       },
     }, text, el("span", { "aria-hidden": "true" }, " →"));
   }

@@ -120,6 +120,11 @@
   .brief-dot { width: 5px; height: 5px; }
   .brief-unit { width: 14px; height: 14px; }
   .brief-splits { grid-template-columns: minmax(0, 1fr); gap: var(--space-6); }
-  .brief-list__row { grid-template-columns: 12px minmax(0, 1fr) auto; }
-  .brief-list__secondary, .brief-list__meta { display: none; }
+  /* The tier stays, under the owner: two ranked groups can share an owner and differ only by
+     tier, and hiding it printed the same name twice with nothing telling the rows apart. */
+  .brief-list__row { grid-template-columns: 12px minmax(0, 1fr) auto; row-gap: 0; padding: var(--space-2) 0; }
+  .brief-list__secondary { grid-column: 2; grid-row: 2; font-size: var(--fs-label); }
+  .brief-list__figure { grid-column: 3; grid-row: 1 / span 2; }
+  .brief-list__mark { grid-row: 1 / span 2; }
+  .brief-list__meta { display: none; }
 }
