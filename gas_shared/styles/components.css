@@ -2371,7 +2371,12 @@ input[type="range"].cut-hist__range {
    hairline and by space, and saturated colour stays rationed to severity, tier and state
    (the cold-zone amber is --warn, the same token every "no movement" reading uses). */
 
-.brief { display: flex; flex-direction: column; gap: var(--space-7); max-width: 1320px; }
+/* FULL CONTENT WIDTH, like every other page and like the title rule above it. It used to stop
+   at 1320px, which on a wide screen left the four figures and the splits in the left two
+   thirds under a header rule running to the edge. The figures are a 4-column grid and the
+   splits a 2-column one, so they spread rather than stretch; prose inside them keeps its own
+   measure (`.brief-caption`). */
+.brief { display: flex; flex-direction: column; gap: var(--space-7); }
 /* An empty host (no first-run panel, a suppressed block) must not cost the page a gap. */
 .brief > :empty { display: none; }
 .brief-status {
@@ -2404,7 +2409,7 @@ input[type="range"].cut-hist__range {
 .brief-value--text { font-size: 34px; letter-spacing: -0.02em; }
 .brief-unit-word { font-size: var(--fs-display-sm); font-weight: var(--fw-semibold); color: var(--text-3); }
 .brief-visual { display: flex; align-items: center; gap: var(--space-4); min-height: 64px; }
-.brief-caption { margin: 0; font-size: var(--fs-label); line-height: 1.5; color: var(--text-2); }
+.brief-caption { margin: 0; max-width: var(--measure); font-size: var(--fs-label); line-height: 1.5; color: var(--text-2); }
 .brief-caption strong { color: var(--ink); font-weight: var(--fw-semibold); }
 .brief-link {
   margin-top: auto; align-self: flex-start; font-size: var(--fs-label); font-weight: var(--fw-semibold);
