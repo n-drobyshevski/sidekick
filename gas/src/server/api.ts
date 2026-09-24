@@ -3023,18 +3023,39 @@ export function getExecutivePage(p?: unknown): ApiResult {
         ms[label] = Date.now() - t0;
       }
     };
-    const out = {
-      mttr: timed("mttr", () => execMttrSlice(cachedMttrData(p))),
-      ...(timed("insights", () => execInsightsSlice(cachedInsightsData(insightsParams))) ?? {}),
-      ...timed("coldZone", () => execColdSliceGuarded(coldParams)),
+    // THE PART TABLE. The client asks for these IN PARALLEL (`swrParts`, gas_shared/store.js):
+    // Apps Script runs each google.script.run call as its own execution, concurrently, so a
+    // cold page costs the slowest part instead of the sum of all four. Each part names
+    // disjoint keys, so the client's shallow merge rebuilds exactly the single-call payload.
+    // Grouped by what they read: `mttr`'s three share the scoped base the MTTR entry builds,
+    // and the other three are each a heavy read-model of their own.
+    const PARTS: Record<string, () => Rec> = {
+      mttr: () => ({
+        mttr: timed("mttr", () => execMttrSlice(cachedMttrData(p))),
+        // Already minimal — four scalars and a per-severity tally — so these two ship whole.
+        weekTrend: timed("weekTrend", () => cachedExecutiveWeekTrend(p)),
+        severityCounts: timed("severityCounts", () => cachedExecutiveSeverityCounts(p)),
+      }),
+      insights: () => ({
+        ...(timed("insights", () => execInsightsSlice(cachedInsightsData(insightsParams))) ?? {}),
+      }),
+      coldZone: () => ({ ...timed("coldZone", () => execColdSliceGuarded(coldParams)) }),
       // The same three-way dimension switch getMttrPage makes, through the same function so the
       // two pages cannot disagree about what a scope means — or miss each other's cache entry.
-      byDomain: timed("byDomain", () => execGroupSlice(cachedMttrGroupSplit(p))),
-      // Already minimal — four scalars and a per-severity tally — so these two ship whole.
-      weekTrend: timed("weekTrend", () => cachedExecutiveWeekTrend(p)),
-      severityCounts: timed("severityCounts", () => cachedExecutiveSeverityCounts(p)),
+      byDomain: () => ({ byDomain: timed("byDomain", () => execGroupSlice(cachedMttrGroupSplit(p))) }),
     };
-    console.log(JSON.stringify({ stage: "executive", ...ms }));
+    // No `part` (or one this build does not know): the whole payload, in one execution — what
+    // the warm, the tests and any older client get, key for key as before the split.
+    const part = String((p as Rec)?.["part"] ?? "");
+    const out = PARTS[part]
+      ? PARTS[part]!()
+      : {
+        ...PARTS["mttr"]!(),
+        ...PARTS["insights"]!(),
+        ...PARTS["coldZone"]!(),
+        ...PARTS["byDomain"]!(),
+      };
+    console.log(JSON.stringify({ stage: "executive", ...(PARTS[part] ? { part } : {}), ...ms }));
     return out;
   });
 }

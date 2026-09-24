@@ -49,7 +49,7 @@
 // The view functions below are pure and exported so the claims they encode are testable in
 // node — the split scanProgress.js and capacity.js already use, and for the same reason.
 
-import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
+import { bootstrap, swrParts } from "../../../../../gas_shared/store.js";
 import {
   briefDelta, briefFigure, briefFigures, briefList, briefSplit, briefSplits, briefStatus,
   clear, collapsibleSection, dataTable, disclosure, dotGrid, el, motionOk, emptyState, errorState,
@@ -962,9 +962,14 @@ export async function renderExecutive(main, _params, ctx) {
 
   // A SCOPE CHANGE NEEDS NO INVALIDATION: swrCall keys on name + JSON.stringify(params), so
   // each scope is its own entry and the previous one stays valid.
+  // FOUR PARTS, IN PARALLEL. Each is its own google.script.run execution and Apps Script runs
+  // them concurrently, so a cold front door costs its slowest read-model rather than the sum
+  // of all four (a serial cold load was measured at 146 s). The server's part table
+  // (api.ts `getExecutivePage`) keeps the keys disjoint, so the merge is the single-call payload.
   let paint;
-  const execData = swrCall(
+  const execData = swrParts(
     "api_getExecutivePage",
+    ["mttr", "insights", "coldZone", "byDomain"],
     { domain, supportGroup, severities },
     (fresh) => paint && paint(fresh),
   );

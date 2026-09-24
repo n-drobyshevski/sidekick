@@ -225,6 +225,14 @@ denominator sentence — `briefFigure` carries `figureCard`'s `denominator` cont
 on the surface. The first-run branch still suppresses every counted figure (`actFigure`,
 `coldFigure`) and clears the splits, the preview and the worklist.
 
+**It loads in parallel.** The page asks `api_getExecutivePage` for four parts at once:
+`mttr`, `insights`, `coldZone` and `byDomain`. It uses `swrParts` in `gas_shared/store.js`.
+Apps Script runs each `google.script.run` call as its own concurrent execution, so a cold front
+door costs its slowest read-model rather than the sum of all four; a serial cold load was
+measured at 146 s. The parts name disjoint keys and merge into exactly the single-call payload,
+which `test/coldZoneServer.test.ts` pins. With no `part`, the endpoint still returns the whole
+payload in one execution. `gas_devsecops` does the same with two parts, `exec` and `mttr`.
+
 **The slope is zero-based on purpose**: scaled to [min, max], 87 → 76 and 420 → 413 would draw
 the same cliff. Against zero a 2% move reads as nearly flat, which is what it is.
 

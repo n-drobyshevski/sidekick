@@ -1388,6 +1388,27 @@ describe("timing lines", () => {
     }
   });
 
+  it("getExecutivePage's two parallel parts are disjoint and merge back into the whole", async () => {
+    // The page asks for {part: "exec"} and {part: "mttr"} concurrently (gas_shared/store.js
+    // `swrParts`) and shallow-merges them: they must rebuild the single-call payload exactly.
+    const { api } = await syncedRegister();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const whole = (api.getExecutivePage({}) as unknown as Rec)["data"] as Rec;
+      const exec = (api.getExecutivePage({ part: "exec" }) as unknown as Rec)["data"] as Rec;
+      const mttr = (api.getExecutivePage({ part: "mttr" }) as unknown as Rec)["data"] as Rec;
+      expect(Object.keys(mttr)).toEqual(["mttr"]);
+      expect(Object.keys(exec)).not.toContain("mttr");
+      expect({ ...exec, ...mttr }).toEqual(whole);
+      // Each part logs only its own laps — the mttr part never builds executiveModel.
+      const lines = stageLines(log, "executive");
+      expect(Object.keys(lines[2]!).sort()).toEqual(["mttr", "stage"]);
+      expect(Object.keys(lines[1]!).sort()).toEqual(["byScope", "executiveModel", "stage"]);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it("bootstrap logs its core and live parts, and the core's own parts when it computes", async () => {
     const { api } = await syncedRegister();
     const log = vi.spyOn(console, "log").mockImplementation(() => {});

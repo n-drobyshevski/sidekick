@@ -811,10 +811,22 @@ export function getExecutivePage(p?: unknown): ApiResult {
     // they run — the landing page's own attribution, beside entry.js's whole-RPC line.
     // test/api.test.ts pins the lap names so a refactor cannot drop one.
     const laps = stageLaps("executive");
+    // TWO PARTS, asked for IN PARALLEL by the page (`swrParts`, gas_shared/store.js): Apps
+    // Script runs each google.script.run call as its own execution, concurrently, so a cold
+    // front door costs the slower of the two models rather than both. `part: "mttr"` is the
+    // hero's model alone; `part: "exec"` is everything else. No part: the whole payload in
+    // one execution, key for key as before (the warm, the tests, any older client).
+    const part = (p as Rec | undefined)?.["part"];
+    if (part === "mttr") {
+      const mttr = execMttrSlice(readModels.mttrModel(params));
+      laps.lap("mttr");
+      laps.log();
+      return { mttr };
+    }
     const exec = readModels.executiveModel(params);
     laps.lap("executiveModel");
-    const mttr = execMttrSlice(readModels.mttrModel(params));
-    laps.lap("mttr");
+    const mttr = part === "exec" ? undefined : execMttrSlice(readModels.mttrModel(params));
+    if (part !== "exec") laps.lap("mttr");
     const byScope = execGroupSlice(exec["byScope"]);
     laps.lap("byScope");
     laps.log();
@@ -823,7 +835,7 @@ export function getExecutivePage(p?: unknown): ApiResult {
       scope: exec["scope"],
       severities: exec["severities"],
       showNoFix: exec["showNoFix"],
-      mttr,
+      ...(mttr === undefined ? {} : { mttr }),
       byScope,
       trackingSince: exec["trackingSince"],
       // Already minimal — a per-severity tally, a delta pair, the tier table and the coverage
