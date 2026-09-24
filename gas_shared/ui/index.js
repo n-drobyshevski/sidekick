@@ -62,6 +62,8 @@
 //                 ring, dot grid, unit squares), two labelled splits, a short ranked list and
 //                 the one status line — pure geometry models plus their DOM/SVG marks — and
 //                 the clock by severity (each half-life against its target, log axis)
+//   accessSave.js what Settings → Access needs to never lose an edit silently: which sent
+//                 addresses the server did not keep (pure), and the leave-page guard
 //   bandBar.js    a distribution across ordered bands at the size of a table cell: the
 //                 shared-scale model (pure) and the one role=img bar it draws
 //   verdict.js    a verdict as a dot AND a word, over one slug->tone table shared by the
@@ -140,6 +142,7 @@ export {
   dotGrid, dotGridModel, foldTail, ringMark, ringModel, shareTrack, slopeMark, slopeModel,
   splitModel, unitSquares,
 } from "./briefing.js";
+export { guardUnsaved, notKept } from "./accessSave.js";
 export { bandBar, bandBarModel } from "./bandBar.js";
 export { VERDICT_KINDS, verdictMark } from "./verdict.js";
 export {

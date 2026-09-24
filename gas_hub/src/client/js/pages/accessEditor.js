@@ -20,7 +20,9 @@
 // template literal.
 
 import { call } from "../../../../../gas_shared/api.js";
-import { clear, confirmDialog, el, settingsPanel, statusPill, toast } from "../ui.js";
+import {
+  clear, confirmDialog, el, guardUnsaved, notKept, settingsPanel, statusPill, toast,
+} from "../ui.js";
 import { ADD_REJECTION, isAddable, isDirty, outsideDomain, pendingSaves, removals, splitRoster } from "./accessModel.js";
 
 /**
@@ -66,6 +68,11 @@ export async function renderAccessPanel() {
     if (isDirty(state, saved)) dirtyHost.append(statusPill("warn", "Unsaved changes"));
   }
 
+  // The two "Add … by email" inputs, by placeholder, so Save can pick up an address that was
+  // typed but never added — see save(). Each redraw replaces its row's entry.
+  const addInputs = new Map();
+  const typedButNotAdded = () => [...addInputs.values()].some((a) => a.input.value.trim());
+
   function personRow(email, onRemove) {
     return el("div", { class: "access-row" },
       el("span", { class: "access-row__email" }, email),
@@ -86,20 +93,29 @@ export async function renderAccessPanel() {
 
   function addRow(placeholder, list, add) {
     const input = el("input", { type: "text", placeholder, "aria-label": placeholder });
-    const commit = () => {
+    // `true` when the box is empty or its address was added. Save's flush treats an address
+    // that is already listed (or is the owner) as nothing left to do, not as a reason to stop.
+    const commit = (flushing) => {
       const verdict = isAddable(input.value, list(), owner);
       if (!verdict.ok) {
-        if (verdict.reason !== "empty") toast(ADD_REJECTION[verdict.reason], "error");
-        return;
+        if (verdict.reason === "empty") return true;
+        if (flushing && verdict.reason !== "not-an-address") {
+          input.value = "";
+          return true;
+        }
+        toast(ADD_REJECTION[verdict.reason], "error");
+        return false;
       }
       input.value = "";
       add(verdict.value);
+      return true;
     };
+    addInputs.set(placeholder, { input, commit });
     input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") { e.preventDefault(); commit(); }
+      if (e.key === "Enter") { e.preventDefault(); commit(false); }
     });
     return el("div", { class: "access-add" }, input,
-      el("button", { class: "link", type: "button", onclick: commit }, "Add"));
+      el("button", { class: "link", type: "button", onclick: () => commit(false) }, "Add"));
   }
 
   function drawUsers() {
@@ -149,6 +165,16 @@ export async function renderAccessPanel() {
   }
 
   async function save() {
+    // AN ADDRESS TYPED BUT NOT ADDED IS PART OF THE SAVE. It used to be ignored: the diff saw
+    // nothing, no RPC ran, the toast still said "Access updated." and the new admin was gone
+    // on the next reload. A bad entry stops the save here, with its own message.
+    for (const { commit } of [...addInputs.values()]) {
+      if (!commit(true)) return;
+    }
+    if (!isDirty(state, saved)) {
+      toast("No changes to save.");
+      return;
+    }
     // REMOVALS GET A CONFIRMATION NAMING NAMES. Adding someone is recoverable by removing
     // them; removing someone locks them out on their very next request, and a count would be
     // enough for a dialog but not enough for a decision.
@@ -163,13 +189,19 @@ export async function renderAccessPanel() {
       if (!ok) return;
     }
     const pending = pendingSaves(state, saved, info.canEditAdmins);
+    const sentUsers = pending.users ? state.users.slice() : [];
+    const sentAdmins = pending.admins ? state.admins.slice() : [];
     try {
       if (pending.users) await call("api_saveAccess", { users: state.users.join(", ") });
       if (pending.admins) await call("api_saveAdmins", { admins: state.admins.join(", ") });
-      toast("Access updated.", "success");
       // Re-read rather than trusting the local arrays: saveAccess writes the owner back in,
       // so what is on disk is not always what was sent.
       const fresh = await call("api_getAccess");
+      // SAY WHAT THE SERVER KEPT, not what was sent. A save that came back without an address
+      // it was given is an error the reader must see, not a success they will disprove later.
+      const lost = notKept(sentUsers, fresh.users || []).concat(notKept(sentAdmins, fresh.admins || []));
+      if (lost.length) toast("Not saved: " + lost.join(", ") + " — reload and try again.", "error");
+      else toast("Access updated.", "success");
       const next = splitRoster(fresh);
       state.users = next.users;
       state.admins = next.admins;
@@ -212,6 +244,9 @@ export async function renderAccessPanel() {
       dirtyHost,
     ],
   });
+
+  // A reload with unsaved edits — an added row, or an address still in its box — asks first.
+  guardUnsaved(panel, () => isDirty(state, saved) || typedButNotAdded());
 
   // The owner plus everyone on the list — the count the page's hero states. Read off
   // `baseline` rather than `state` so it is what is on disk, not what is staged.

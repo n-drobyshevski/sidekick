@@ -10,7 +10,9 @@
 // stops there rather than letting admins make admins.
 
 import { call } from "../../../../../gas_shared/api.js";
-import { clear, confirmDialog, el, settingsPanel, statusPill, toast } from "../ui.js";
+import {
+  clear, confirmDialog, el, guardUnsaved, notKept, settingsPanel, statusPill, toast,
+} from "../ui.js";
 
 /**
  * The Access card, or **null** when the caller may not edit it — settings.js appends only
@@ -36,14 +38,20 @@ export async function renderAccessPanel() {
   const domain = String(info.domain || "");
   let users = (info.users || []).filter((e) => e !== owner);
   let admins = (info.admins || []).slice();
-  const savedUsers = users.join(",");
-  const savedAdmins = admins.join(",");
+  // `let`, and re-read after every save: as `const` they kept the list as first loaded, so a
+  // saved panel still read "Unsaved changes" and the next save sent everything again.
+  let savedUsers = users.join(",");
+  let savedAdmins = admins.join(",");
 
   const usersHost = el("div", { class: "access-list" });
   const adminsHost = el("div", { class: "access-list" });
   const dirtyHost = el("span", {});
 
   const dirty = () => users.join(",") !== savedUsers || admins.join(",") !== savedAdmins;
+  // The two "Add … by email" inputs, by placeholder, so Save can pick up an address that was
+  // typed but never added — see save(). Each redraw replaces its row's entry.
+  const addInputs = new Map();
+  const typedButNotAdded = () => [...addInputs.values()].some((a) => a.input.value.trim());
   function refreshDirty() {
     clear(dirtyHost);
     if (dirty()) dirtyHost.append(statusPill("warn", "Unsaved changes"));
@@ -120,12 +128,17 @@ export async function renderAccessPanel() {
       style: "flex:1; min-height:30px" });
     const commit = () => {
       const v = input.value.trim().toLowerCase();
-      if (!v) return;
+      if (!v) return true;
       // Matches the server's rule, so the same edit is not accepted here and refused there.
-      if (v.indexOf("@") < 0) { toast("That doesn't look like an email address.", "error"); return; }
+      if (v.indexOf("@") < 0) {
+        toast("That doesn't look like an email address.", "error");
+        return false;
+      }
       input.value = "";
       add(v);
+      return true;
     };
+    addInputs.set(placeholder, { input, commit });
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter") { e.preventDefault(); commit(); }
     });
@@ -134,6 +147,16 @@ export async function renderAccessPanel() {
   }
 
   async function save() {
+    // AN ADDRESS TYPED BUT NOT ADDED IS PART OF THE SAVE. It used to be ignored: the diff saw
+    // nothing, no RPC ran, the toast still said "Access updated." and the new admin was gone
+    // on the next reload. A bad entry stops the save here, with its own message.
+    for (const { commit } of [...addInputs.values()]) {
+      if (!commit()) return;
+    }
+    if (!dirty()) {
+      toast("No changes to save.");
+      return;
+    }
     // Removals get a confirmation naming names: adding someone is recoverable by removing
     // them, but removing someone locks them out on their very next request.
     const goneUsers = (info.users || []).filter((e) => e !== owner && users.indexOf(e) < 0);
@@ -148,17 +171,25 @@ export async function renderAccessPanel() {
       });
       if (!ok) return;
     }
+    const sentUsers = users.join(",") !== savedUsers ? users.slice() : [];
+    // Only sent when the owner actually changed it — an admin's panel never reaches here,
+    // and sending an unchanged list would earn a refusal for a no-op.
+    const sentAdmins = info.canEditAdmins && admins.join(",") !== savedAdmins ? admins.slice() : [];
     try {
       if (users.join(",") !== savedUsers) await call("api_saveAccess", { users: users.join(", ") });
-      // Only sent when the owner actually changed it — an admin's panel never reaches here,
-      // and sending an unchanged list would earn a refusal for a no-op.
       if (info.canEditAdmins && admins.join(",") !== savedAdmins) {
         await call("api_saveAdmins", { admins: admins.join(", ") });
       }
-      toast("Access updated.", "success");
       const fresh = await call("api_getAccess");
+      // SAY WHAT THE SERVER KEPT, not what was sent. A save that came back without an address
+      // it was given is an error the reader must see, not a success they will disprove later.
+      const lost = notKept(sentUsers, fresh.users || []).concat(notKept(sentAdmins, fresh.admins || []));
+      if (lost.length) toast("Not saved: " + lost.join(", ") + " — reload and try again.", "error");
+      else toast("Access updated.", "success");
       users = (fresh.users || []).filter((e) => e !== owner);
       admins = (fresh.admins || []).slice();
+      savedUsers = users.join(",");
+      savedAdmins = admins.join(",");
       drawUsers();
       drawAdmins();
       refreshDirty();
@@ -177,7 +208,7 @@ export async function renderAccessPanel() {
   // The Save button stays. This roster writes Script Properties through its own endpoints and
   // its own validation, so it is a second FORM rather than a knob the page's save bar withheld —
   // which is exactly the split the page header describes.
-  return settingsPanel({
+  const panel = settingsPanel({
     title: "Access",
     description: "Who can open this dashboard. Everyone here must be signed in to "
       + (domain ? domain : "this Workspace domain")
@@ -197,4 +228,7 @@ export async function renderAccessPanel() {
     ],
     footer: [el("button", { class: "primary", onclick: save }, "Save access"), dirtyHost],
   });
+  // A reload with unsaved edits — an added row, or an address still in its box — asks first.
+  guardUnsaved(panel, () => dirty() || typedButNotAdded());
+  return panel;
 }
