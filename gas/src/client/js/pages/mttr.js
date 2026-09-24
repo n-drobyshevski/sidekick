@@ -1702,7 +1702,7 @@ export async function renderMttr(main, _params, ctx) {
     heroHost.append(el("div", { class: "brief" },
       briefFigures(
         briefFigure({
-          label: tipLabel("Remediation half-life" + (domain ? " — " + domain : ""), heroHelp(view)),
+          label: tipLabel("MTTR" + (domain ? " — " + domain : ""), heroHelp(view)),
           value: view.measured && num(view.days) !== null
             ? (view.isLowerBound ? "≥ " : "") + fmtCount(Math.round(view.days))
             : view.value,
@@ -1715,7 +1715,7 @@ export async function renderMttr(main, _params, ctx) {
           // the ring of resolved/tracked is then the figure's second encoding instead.
           visual: sparkPath(trendValues, { w: 200, h: 48 }).d
             ? sparkline(trendValues, {
-              label: "Remediation half-life over time", unit: "days", w: 200, h: 48,
+              label: "MTTR over time", unit: "days", w: 200, h: 48,
             })
             : ringMark({
               part: view.resolved,
@@ -1879,7 +1879,7 @@ export async function renderMttr(main, _params, ctx) {
    *
    * `kmHalfLifeView` puts "at least 297 days" in the 2rem slot, so the words are already on the
    * surface and only the explanation moves. The term stays `half-life` in every state — the
-   * trigger is on the words "Remediation half-life", so that is the entry Enter goes to, and a
+   * trigger is on the word "MTTR", so that is the entry Enter goes to, and a
    * control whose destination changes with the data is one a reader cannot learn. The bound's
    * own sentence LEADS the lines instead; `lower-bound` stays reachable from the Key sheet, and
    * `km-median` from this page's own title header.

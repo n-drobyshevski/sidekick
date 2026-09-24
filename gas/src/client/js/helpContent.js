@@ -312,9 +312,9 @@ const ENTRIES = [
   {
     // pages/executive.js's hero label, and its by-domain half-life column.
     id: "half-life",
-    term: "Remediation half-life",
+    term: "MTTR",
     lines: [
-      "How long it takes for half of what is open today to be remediated.",
+      "Median time to remediate: how long it takes for half of what is open today to be remediated (the remediation half-life).",
       "Off a Kaplan–Meier curve, so still-open findings count as evidence, not as gaps.",
       "Preferred to a mean because remediation is long-tailed: a mean moves when a batch of easy findings closes, and can improve while real exposure does not.",
     ],

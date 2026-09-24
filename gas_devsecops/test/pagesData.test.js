@@ -1565,15 +1565,15 @@ describe("history: KPIs, KM points and the SLA-trend gap", () => {
       // What must be true: the tile's value is `v.halfLife.value` verbatim, so every outcome
       // pinned above is what a reader actually reads.
       expect(HISTORY_SRC)
-        .toMatch(/glossaryTip\("Remediation half-life", "half-life"\), v\.halfLife\.value/);
+        .toMatch(/glossaryTip\("MTTR", "half-life"\), v\.halfLife\.value/);
       expect(HISTORY_SRC).not.toMatch(/v\.medianMttr/);
     });
 
     /**
      * ONE STATISTIC, ONE NAME. The retired claim is the label "Median MTTR", which this card
      * carried while the MTTR page's hero called the same figure over the same population
-     * "Remediation half-life" — both pointing at the `half-life` glossary entry, itself
-     * titled "Remediation half-life". Nothing was wrong with the arithmetic; what was wrong
+     * "Remediation half-life" — both pointing at the `half-life` glossary entry. All three
+     * now say "MTTR" (the entry's lines say it is the remediation half-life). Nothing was wrong with the arithmetic; what was wrong
      * is that a reader moving between the two pages had to work out that two names were one
      * number, which is the drift the "one vocabulary for figures" wave exists to stop.
      */
@@ -1582,7 +1582,7 @@ describe("history: KPIs, KM points and the SLA-trend gap", () => {
       const mttrSrc = readFileSync(
         new URL("../src/client/js/pages/mttr.js", import.meta.url), "utf8",
       );
-      expect(mttrSrc).toContain('tipLabel("Remediation half-life"');
+      expect(mttrSrc).toContain('tipLabel("MTTR"');
     });
   });
 

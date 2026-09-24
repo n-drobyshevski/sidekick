@@ -119,7 +119,7 @@ dry-run stand-in, so "scan" is not a euphemism, it is the operation's name.
 
 Every GAS sidekick's front door is now the same shape, this one included: a static title
 block (the only `h1`, which waits on no RPC), then a metric header from the shared
-`pageHeader()`: the hero stat ("Remediation half-life", read through `kmHalfLifeView` so a
+`pageHeader()`: the hero stat ("MTTR", the remediation half-life, read through `kmHalfLifeView` so a
 censored curve prints "at least N days" and an unread ledger prints "Not measured"), a
 movement aside of per-severity rows against the newest scan a week or more older, and a
 stat strip closed by a hairline; then the open severity strip with its key row WHERE THAT
@@ -240,7 +240,7 @@ the same cliff. Against zero a 2% move reads as nearly flat, which is what it is
 
 The MTTR page opens with the same briefing shape as Executive, then keeps every chart below it.
 
-- **Four figures:** remediation half-life (days, "≥" for a lower bound, "Not measured" in words;
+- **Four figures:** MTTR, the KM remediation half-life (days, "≥" for a lower bound, "Not measured" in words;
   its picture is the half-life sparkline when `sparkPath` draws one, the resolved/tracked ring
   otherwise), In SLA, Open past SLA and Awaiting a fix. Each rate is a `briefFigure` with a
   `denominator` (tip + `data-denominator`), and every track takes `meterPctFor`'s decision —

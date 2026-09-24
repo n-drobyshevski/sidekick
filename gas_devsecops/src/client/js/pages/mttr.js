@@ -1379,14 +1379,14 @@ export async function renderMttr(host, params, _ctx) {
     heroHost.append(brief);
     brief.append(briefFigures(
       briefFigure({
-        label: tipLabel("Remediation half-life", heroHelp(view)),
+        label: tipLabel("MTTR", heroHelp(view)),
         value: numeric ? fmtCount(Math.round(view.days)) : view.value,
         valueClass: numeric ? null : "brief-value--text",
         unit: numeric ? pluralize(Math.round(view.days), "day") : null,
         // The trend when it says something, the ring of closed/observed when it does not.
         visual: sparkPath(trendValues, { w: 200, h: 48 }).d
           ? sparkline(trendValues, {
-            label: "Remediation half-life over time", unit: "days", w: 200, h: 48,
+            label: "MTTR over time", unit: "days", w: 200, h: 48,
           })
           : ringMark({
             part: num(view.events, 0),
@@ -1539,7 +1539,7 @@ export async function renderMttr(host, params, _ctx) {
    * Same decision Executive's own hero makes, and for the same reason: `kmHalfLifeView` puts
    * "Not reached" in the 2rem slot, so the words are already on the surface and only the
    * explanation moves. The term stays `half-life` in every state — the trigger is on the
-   * words "Remediation half-life", so that is the entry Enter goes to, and a control whose
+   * word "MTTR", so that is the entry Enter goes to, and a control whose
    * destination changes with the data is one a reader cannot learn. The bound's own sentence
    * LEADS the lines instead; `lower-bound` stays reachable from the Key sheet.
    */
@@ -2303,7 +2303,7 @@ export async function renderMttr(host, params, _ctx) {
       return;
     }
     const reconstructed = drawn.filter((p) => p.reconstructed).length;
-    const canvas = el("canvas", { "aria-label": "Remediation half-life over time, in days" });
+    const canvas = el("canvas", { "aria-label": "MTTR over time, in days" });
     trendHost.append(el("section", { class: "chart-card" },
       // THE LEGEND IS THE COUNT AND THE WORD, not the sentence. "reconstructed" is the
       // honesty word and it stays on the surface with its number beside it (R2); what the

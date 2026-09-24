@@ -458,7 +458,7 @@ export function briefClocks(c) {
   const head = el("div", { class: "brief-clocks__row brief-clocks__row--head" },
     el("span", {}, ""),
     axis,
-    el("span", { class: "brief-clocks__col" }, "Half-life"),
+    el("span", { class: "brief-clocks__col" }, "MTTR"),
     el("span", { class: "brief-clocks__col" }, "In SLA"),
     el("span", { class: "brief-clocks__col" }, "Open past SLA"));
   box.append(head);
@@ -467,7 +467,7 @@ export function briefClocks(c) {
     const track = el("span", {
       class: "brief-clocks__track",
       role: "img",
-      "aria-label": r.sev + ": half-life " + (r.bounded ? "at least " : "") + r.halfText
+      "aria-label": r.sev + ": MTTR " + (r.bounded ? "at least " : "") + r.halfText
         + (r.target ? ", against a " + fmtCount(r.target) + "-day target" : ", no target")
         + (r.ageText ? "; open findings' median age " + r.ageText : ""),
     });
@@ -506,7 +506,7 @@ export function briefClocks(c) {
   });
   box.append(el("div", { class: "brief-clocks__key" },
     el("span", {}, el("span", { class: "brief-clocks__key-target", "aria-hidden": "true" }), " SLA target"),
-    el("span", {}, el("span", { class: "brief-clocks__key-half", "aria-hidden": "true" }), " half-life"),
+    el("span", {}, el("span", { class: "brief-clocks__key-half", "aria-hidden": "true" }), " MTTR"),
     el("span", {}, el("span", { class: "brief-clocks__key-bound", "aria-hidden": "true" }), " at least (curve never fell to half)"),
     m.rows.some((g) => g.agePos !== null)
       ? el("span", {}, el("span", { class: "brief-clocks__key-age", "aria-hidden": "true" }), " median age of what is open")
