@@ -90,7 +90,7 @@ describe("executiveFirstRunView", () => {
     }
 
     const figures = view.items.map((i) => i.figure).join(" | ");
-    expect(figures).toMatch(/half-life/i);
+    expect(figures).toMatch(/MTTR/);
     expect(figures).toMatch(/movement/i);
     expect(figures).toMatch(/SLA/i);
     // One per register — a count that is missing because the register is switched off is a

@@ -113,16 +113,16 @@ account is `gas/DESIGN.md` §6a). What is this register's own:
 
 - **Open findings** compares two SYNCS, not scans, and the status line turns amber with the
   sync's age in words past seven days — every figure here is as of that sync.
-- **Half-life** prints `kmHalfLifeView`'s value as-is ("Not reached", "Not measured"), with its
+- **MTTR** (the KM remediation half-life) prints `kmHalfLifeView`'s value as-is ("Not reached", "Not measured"), with its
   `secondary` ("under 25% fixed within N days") as the caption. This page does not re-decide.
-- **By register** carries each register's sync-on-sync change; the three half-lives ride in its
-  foot, never summed ("three registers, three clocks"), and each share keeps its
+- **By register** carries each register's sync-on-sync change; the three MTTRs ride in its
+  foot ("MTTR per register"), never summed ("three registers, three clocks"), and each share keeps its
   `data-denominator` and the empty-base rule in a line of its own.
-- **Fix next** follows the splits as one block: shut, its top three rows sit under the
-  heading; opened, the full list replaces them in place. There is no separate Fix first
-  preview any more — it drew the same groups twice.
+- **Fix first** follows the splits: the top three ranked groups as a small table, its head
+  saying "Top 3 of N groups", with the cap note under it. The folded full Fix next list is
+  gone; Act now's caption still carries "N of M open findings ranked".
 - **Read with care** keeps the tracking-since line, the window line and the end-of-life note on
-  the surface, as a list under the worklist, last on the page.
+  the surface, as a list under the Fix first table, last on the page.
 - The cold zone's denominator sentence — window, relative-mode clause, clock caveat and the
   scopes-without-scan clause — is unchanged, now on the figure's tip and `data-denominator`.
 

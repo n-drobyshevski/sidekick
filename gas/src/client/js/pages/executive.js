@@ -53,12 +53,10 @@ import { bootstrap, swrParts } from "../../../../../gas_shared/store.js";
 import {
   briefDelta, briefFigure, briefFigures, briefList, briefSkeleton, briefSplit, briefSplits,
   briefStatus,
-  clear, collapsibleSection, dataTable, disclosure, dotGrid, el, motionOk, emptyState, errorState,
+  clear, dotGrid, el, emptyState, errorState,
   fmtCount, fmtDate, fmtDateTime, fmtDays, fmtSpan, foldTail, num, pageHeader,
   pluralize, relativeAge, ringMark,
-  scopeBar, sectionLabel, slopeMark, statusPill, tipLabel, unitSquares,
-  FINE_UNITS, unitRow, unitScale,
-  absent, days1,
+  scopeBar, slopeMark, statusPill, tipLabel, unitSquares,
   absentText, pct1,
 } from "../ui.js";
 // THE HALF-LIFE DECISION IS IMPORTED, NOT REPEATED. `execMttrSlice` is a slice of the MTTR
@@ -507,7 +505,7 @@ export function executiveMovementView(weekTrend) {
   if (!weekTrend) {
     return {
       show: false,
-      reason: "Under a week of history, or the half-life was not observable at one of the two"
+      reason: "Under a week of history, or the MTTR was not observable at one of the two"
         + " endpoints. No comparison is published rather than a made-up one.",
     };
   }
@@ -525,8 +523,8 @@ export function executiveMovementView(weekTrend) {
     direction,
     // Up = slower remediation = worse. Stated in words so the arrow is never the only cue.
     label: direction === "flat"
-      ? "Half-life unchanged versus last week"
-      : "Half-life " + direction + " " + magnitude
+      ? "MTTR unchanged versus last week"
+      : "MTTR " + direction + " " + magnitude
         + " versus last week, so remediation is " + (direction === "up" ? "slower" : "faster"),
     magnitude: direction === "flat"
       ? "unchanged"
@@ -908,7 +906,7 @@ export function executiveFirstRunView(payload, boot) {
       + " them is shown as one.",
     items: [
       {
-        figure: "Remediation half-life",
+        figure: "MTTR",
         unlock: "One closed lifecycle with a readable clock. A finding is dated closed at the"
           + " scan that stopped seeing it, so the first close needs a second scan.",
         route: null,
@@ -922,7 +920,7 @@ export function executiveFirstRunView(payload, boot) {
         routeLabel: RUN_SCAN,
       },
       {
-        figure: "Fix next",
+        figure: "Fix first",
         unlock: "Risk signals captured by a scan: whether a finding is known-exploited,"
           + " whether a fix is published, and whether its host is reachable from outside."
           + " Nothing can be ranked before any of them is on record.",
@@ -987,11 +985,8 @@ export async function renderExecutive(main, _params, ctx) {
   const noticeHost = el("div", {});
   const figuresHost = el("div", {});
   const splitsHost = el("div", {});
-  // LAST ON THE PAGE, AND SHUT: the worklist, for a different reader on a different errand.
-  // `fixOpen` outlives the paint — swrCall paints twice on a warm cache, so a section whose
-  // open state lived on the node would snap shut under a reader who had just expanded it.
+  // Last on the page: the top three of the ranking, a small table.
   const fixHost = el("div", {});
-  let fixOpen = false;
   // THE TITLE BLOCK IS STATIC, AND THE h1 DOES NOT WAIT ON AN RPC.
   main.append(pageHeader({ route: "executive" }));
   // The scope chip qualifies every figure below it. Null when nothing is scoped.
@@ -1143,7 +1138,7 @@ export async function renderExecutive(main, _params, ctx) {
       ? "Not measured"
       : (view.isLowerBound ? "≥ " : "") + fmtCount(Math.round(view.days));
     return briefFigure({
-      label: tipLabel("Half-life", heroHelp(view)),
+      label: tipLabel("MTTR", heroHelp(view)),
       value,
       valueClass: view.measured ? null : "brief-value--text",
       unit: view.measured ? pluralize(Math.round(view.days), "day") : null,
@@ -1179,7 +1174,7 @@ export async function renderExecutive(main, _params, ctx) {
         term: "half-life",
         lines: [
           "The curve never falls to half inside the window, so there is no median.",
-          "The half-life is at least the longest thing observed — the figure above.",
+          "The MTTR is at least the longest thing observed — the figure above.",
         ],
       };
     }
@@ -1188,7 +1183,7 @@ export async function renderExecutive(main, _params, ctx) {
         term: "half-life",
         lines: [
           "No lifecycle has a readable clock yet: not measured, not zero.",
-          "The half-life needs at least one observation to rest on.",
+          "The MTTR needs at least one observation to rest on.",
         ],
       };
     }
@@ -1223,7 +1218,6 @@ export async function renderExecutive(main, _params, ctx) {
         label: legend.join(", "),
       }),
       caption: legend.join(" · ") + ". " + view.rankedShort + ".",
-      action: fixButton("Fix next"),
     });
   }
 
@@ -1390,202 +1384,50 @@ export async function renderExecutive(main, _params, ctx) {
     return t.charAt(0) + t.slice(1).toLowerCase();
   }
 
-  // ------------------------------------------------------------------------ fix next
-
-  /** Opens the folded Fix next section and brings it into view. */
-  function fixButton(text) {
-    return el("button", {
-      type: "button",
-      class: "brief-more",
-      onclick: () => {
-        const details = fixHost.querySelector("details");
-        if (!details) return;
-        details.open = true;
-        fixOpen = true;
-        // No glide for a reader who asked for less motion — helpPage.js makes the same call.
-        details.scrollIntoView({ block: "start", behavior: motionOk() ? "smooth" : "auto" });
-      },
-    }, text, el("span", { "aria-hidden": "true" }, " →"));
-  }
+  // ------------------------------------------------------------------------ fix first
 
   /**
-   * The ranked list of GROUPS — last on the page, and behind its own heading.
+   * The ranked list, cut to its top three GROUPS: the briefing's small table, and the only
+   * copy of the ranking on the page. (The full, folded Fix next table under it is gone — the
+   * same groups drawn twice, and a worklist on a page read at a glance.)
    *
-   * NO CHART AND NO CANVAS, which is the module header's hard rule and is not relaxed for a
-   * ranking. The order IS the claim, so it is a table with a rank column rather than a stack
-   * of divs: a screen reader hears "row 1 of 8" and gets the same argument the page is making
-   * visually. (It was an `<ol>` until the prose round — see DESIGN.md §9.)
+   * EVERY ROW CARRIES ITS UNITS and links to the register filtered to what its tier means.
+   * The head says how much of the ranking the three rows are ("Top 3 of 8 groups"); how much
+   * of the BACKLOG the ranking is rides on the Act now figure's caption (`rankedShort`).
    *
-   * EVERY ROW CARRIES ITS UNITS. "7" is not a figure; "7 open findings" is. A group whose
-   * rows have no readable age, no CVE and no single domain simply says less, rather than
-   * printing a dash where each of those would have gone.
-   *
-   * SHUT, IT PREVIEWS; OPEN, IT LISTS. The shut section shows its top three rows (the
-   * briefing's `briefList`) under the heading, and opening it swaps them for the full table,
-   * so the same groups are never on screen twice.
-   *
-   * COLLAPSIBLE, AND SHUT UNTIL A READER OPENS IT. This is the page's one WORKLIST — a
-   * different reader on a different errand from the leader the hero is written for — and it
-   * is also its longest block by a wide margin. Everything it holds folds together, the
-   * caveats with the figures they qualify, so nothing in it is ever on screen without its
-   * caveat; the denominator rides on the heading so the shut section still says how much of
-   * the backlog is behind it. See the host declaration above for why `fixOpen` is the page's
-   * and not the node's.
+   * THE RANKING RULE IS A DEFINITION, so it lives where a definition lives: the `fix-next`
+   * entry, reached from the heading, with `linkNote` riding on the same card. The cap and an
+   * unmeasurable tier stay ON THE SURFACE under the rows — a constraint on the ranking is a
+   * fact a reader needs without opening anything.
    */
   function renderFixNext(payload) {
     const view = fixNextView(payload, boot);
     clear(fixHost);
+    const fixNextEntry = findEntry("fix-next");
+    const label = tipLabel("Fix first", {
+      term: "fix-next",
+      lines: [...(fixNextEntry ? fixNextEntry.lines : []), view.linkNote],
+    });
     if (!view.show) {
       if (view.missing) {
-        // NOT COLLAPSIBLE, and that is not an inconsistency. There is no section here to fold
-        // — one sentence saying why the list is absent is the whole block, and a toggle over
-        // a single sentence is a control that hides an honesty statement and buys nothing.
-        fixHost.append(sectionLabel("Fix next", { term: "fix-next" }));
-        fixHost.append(el("p", { class: "small muted" }, view.missingNote));
+        fixHost.append(el("section", { class: "brief-list" },
+          el("div", { class: "brief-list__head" }, el("h2", { class: "brief-label" }, label)),
+          el("p", { class: "small muted" }, view.missingNote)));
       }
       return;
     }
-
-    // THE RANKING RULE IS A DEFINITION, so it lives where a definition lives: the `fix-next`
-    // entry, reached from the heading. `linkNote` RIDES ALONG ON THE SAME TRIGGER rather than
-    // growing a second `?` beside it — it used to be its own surface paragraph under the list
-    // ("Each link opens the register unfiltered…"), which is an EXPLANATION of what a click
-    // does, not an honesty statement a reader needs without asking. The book's own two lines
-    // are read explicitly (`findEntry`, not the `{term}` shape `tipLabel` would otherwise
-    // resolve to) so the caller's line can sit alongside them in one card instead of replacing
-    // them — the same "own copy first, book's copy behind it" order `figureCard`'s
-    // `figureCardModel` uses for a denominator.
-    const fixNextEntry = findEntry("fix-next");
-    // THE DENOMINATOR IS THE SHUT SECTION'S OWN CAPTION. "25 of 70 open findings ranked" used
-    // to sit under the table as a surface paragraph; it is the one line that tells a reader
-    // what is behind the toggle and how much of the backlog it speaks for, so it rides on the
-    // heading instead and is legible whether the section is open or closed. It is NOT moved
-    // behind a signifier — the disclosure under it still holds the five reasons, exactly as
-    // before — it moved UP, onto the thing it measures.
-    const section = collapsibleSection("Fix next", {
-      help: {
-        term: "fix-next",
-        lines: [...(fixNextEntry ? fixNextEntry.lines : []), view.linkNote],
-      },
-      hint: view.rankedShort,
-      open: fixOpen,
-      // Per reader, across visits — the flag above only survives this page's own repaints.
-      remember: "execFixNext",
-      onToggle: (o) => { fixOpen = o; preview.hidden = o; },
-    });
-    const preview = previewOf(view);
-    preview.hidden = section.node.open;
-    fixHost.append(section.node, preview);
-    const fix = section.body;
-
     if (view.empty) {
-      fix.append(emptyState("Nothing is ranked.", view.emptyReason));
-    } else {
-      // A RANKED TABLE, NOT AN ORDERED LIST — and the order is still the claim. The `<ol>`
-      // this replaces drew each group as a pill, a link and a `·`-joined meta sentence ("2
-      // open findings · 1 host · CVE-2026-90001 (1) · oldest 210 days · domain CROSS"), which
-      // is five facts in five different units set as one run of prose. Eight of them were
-      // eight of this page's nine prose blocks under the density walker, and a reader
-      // comparing "oldest 210 days" against "oldest 46 days" three rows down was scanning
-      // sentences for a number. A table gives every fact its own column, so the ages compare
-      // down one column and the counts down another; the rank column keeps "1 of 8" as a
-      // statement a screen reader makes ("row 1 of 8"), which is what the `<ol>` was for.
-      //
-      // THE OPEN COLUMN CARRIES A TALLY, one unit for the whole table (the shipped DevSecOps
-      // Executive pattern), so the magnitudes read against each other at a glance. The fine
-      // ladder, capped at twelve marks, because these are small counts in a narrow column.
-      //
-      // `it.meta` STAYS ON THE VIEW and on every link's accessible name: the sentence is still
-      // the right shape for a screen reader announcing one row, and the tests pin it.
-      const tableUnit = unitScale(
-        view.items.reduce((m, it) => (it.count > m ? it.count : m), 0),
-        { units: FINE_UNITS, maxMarks: 12 },
-      );
-      fix.append(dataTable({
-        className: "fixnext-table",
-        columns: [
-          { key: "rank", label: "#", className: "num", cell: (r) => String(r.rank) },
-          { key: "tier", label: "Tier", cell: (r) => statusPill(r.kind, r.tierLabel) },
-          {
-            key: "owner",
-            label: "Group",
-            cell: (r) => el("span", {},
-              el("a", {
-                class: "linklike fixnext-repo",
-                href: r.href,
-                "aria-label": r.tierLabel + " — " + r.ownerText + ", " + r.meta + ". "
-                  + r.linkLabel,
-              }, r.ownerText),
-              r.ownerKindWord ? el("span", { class: "small muted" }, r.ownerKindWord) : null),
-          },
-          {
-            key: "count",
-            label: "Open",
-            className: "num",
-            cell: (r) => el("span", {},
-              unitRow(r.count, {
-                unit: tableUnit,
-                label: fmtCount(r.count) + " open, one mark per "
-                  + (tableUnit === 1 ? "finding" : fmtCount(tableUnit) + " findings"),
-              }),
-              el("span", { class: "num" }, fmtCount(r.count))),
-          },
-          {
-            key: "assets",
-            label: "Hosts",
-            className: "num",
-            cell: (r) => (r.assets > 0 ? fmtCount(r.assets) : absent()),
-          },
-          {
-            key: "cve",
-            label: "Leading CVE",
-            help: ["The CVE carried by the most findings in the group, and how many of them."],
-            cell: (r) => (r.topCve
-              ? el("span", {}, r.topCve.cve, " ",
-                el("span", { class: "small muted num" }, "(" + fmtCount(r.topCve.count) + ")"))
-              : absent()),
-          },
-          {
-            key: "oldest",
-            label: "Oldest",
-            className: "num",
-            // `days1` in a cell, `fmtDays` in a sentence — the grain is the context's, and the
-            // meta sentence on the link keeps its worded whole days.
-            cell: (r) => (r.oldestDays === null ? absent() : days1(r.oldestDays)),
-          },
-          { key: "domain", label: "Domain", cell: (r) => (r.domain === null ? absent() : r.domain) },
-        ],
-        rows: view.items,
-      }));
+      fixHost.append(el("section", { class: "brief-list" },
+        el("div", { class: "brief-list__head" }, el("h2", { class: "brief-label" }, label)),
+        emptyState("Nothing is ranked.", view.emptyReason)));
+      return;
     }
-
-    // The five reasons behind the unranked rest, in a closed `disclosure`. NOT a tip: the
-    // sentence is an ACCOUNTING, and a hover card is the wrong shape for something a reader
-    // may want to read twice and compare against the register pages. The two numbers it
-    // accounts for are on the section's own heading now — see `hint` above.
-    fix.append(disclosure(
-      "Why the rest are not ranked",
-      el("p", { class: "small muted" }, view.unrankedSentence),
-    ));
-    // KEPT ON THIS SECTION'S SURFACE. A cap is a task constraint — the reader is looking at a
-    // list that stops before the backlog does — and so is a tier that could not be measured at
-    // all. Neither is behind a second signifier: they fold with the table they qualify, which
-    // is the one arrangement in which a figure is never on screen without its caveat.
-    if (view.cutNote) fix.append(el("p", { class: "small muted" }, view.cutNote));
-    if (view.exposureNote) {
-      fix.append(el("p", { class: "small muted" }, view.exposureNote));
-    }
-    // `view.linkNote` ITSELF IS UNCHANGED AND STILL ON THE VIEW MODEL — only the render moved,
-    // onto the heading's own tip above. See that append for why.
-  }
-
-  /** The shut section's top three rows, and the way into the rest. Empty when nothing ranked. */
-  function previewOf(view) {
-    const preview = el("div", { class: "brief-fix__preview" });
-    if (view.empty) return preview;
-    preview.append(briefList({
-      label: null,
-      rows: view.items.slice(0, 3).map((r) => ({
+    const top = view.items.slice(0, 3);
+    fixHost.append(briefList({
+      label,
+      action: el("span", { class: "small muted" }, "Top " + fmtCount(top.length) + " of "
+        + fmtCount(view.items.length) + " " + pluralize(view.items.length, "group")),
+      rows: top.map((r) => ({
         tone: "t" + Math.min(Math.max(r.tier, 1), 3),
         primary: r.ownerText,
         secondary: r.tierLabel,
@@ -1595,10 +1437,9 @@ export async function renderExecutive(main, _params, ctx) {
         aria: r.tierLabel + " — " + r.ownerText + ", " + r.meta + ". " + r.linkLabel,
       })),
     }));
-    if (view.items.length > 3) {
-      preview.append(fixButton("All " + fmtCount(view.items.length) + " "
-        + pluralize(view.items.length, "group")));
+    if (view.cutNote) fixHost.append(el("p", { class: "small muted" }, view.cutNote));
+    if (view.exposureNote) {
+      fixHost.append(el("p", { class: "small muted" }, view.exposureNote));
     }
-    return preview;
   }
 }
