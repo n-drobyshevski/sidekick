@@ -52,7 +52,7 @@
 import { bootstrap, swrParts } from "../../../../../gas_shared/store.js";
 import {
   briefDelta, briefFigure, briefFigures, briefList, briefSkeleton, briefSplit, briefSplits,
-  briefStatus,
+  briefStatus, briefTrendDelta, sevWord, staleness, tierCounts, tierTone,
   clear, dotGrid, el, emptyState, errorState,
   fmtCount, fmtDate, fmtDateTime, fmtDays, fmtSpan, foldTail, num, pageHeader,
   pluralize, relativeAge, ringMark,
@@ -1067,10 +1067,9 @@ export async function renderExecutive(main, _params, ctx) {
       statusHost.append(briefStatus({ tone: "neutral", parts: ["No scan has run yet"] }));
       return;
     }
-    const t = typeof latest.ts === "number" ? latest.ts : Date.parse(latest.ts);
-    const stale = Number.isFinite(t) && Date.now() - t > 7 * 86400000;
+    const { stale, tone } = staleness(latest.ts);
     statusHost.append(briefStatus({
-      tone: stale ? "warn" : "ok",
+      tone,
       parts: [
         "Scan of " + fmtDateTime(latest.ts),
         el("span", { class: stale ? "brief-status__warn" : null }, relativeAge(latest.ts)),
@@ -1127,13 +1126,7 @@ export async function renderExecutive(main, _params, ctx) {
   /** The half-life, a ring of how much of the tracked backlog is fixed, and its honesty. */
   function halfLifeFigure(view, payload) {
     const half = executiveMovementView(payload && payload.weekTrend);
-    const delta = half.show
-      ? el("span", {
-        class: "brief-delta brief-delta--"
-          + (half.direction === "flat" ? "neutral" : half.direction === "up" ? "bad" : "ok"),
-        "aria-label": half.label,
-      }, half.magnitude)
-      : null;
+    const delta = briefTrendDelta(half);
     const value = !view.measured
       ? "Not measured"
       : (view.isLowerBound ? "≥ " : "") + fmtCount(Math.round(view.days));
@@ -1200,21 +1193,13 @@ export async function renderExecutive(main, _params, ctx) {
     if (view.empty) {
       return briefFigure({ label, value: "0", unit: "groups", caption: view.emptyReason });
     }
-    const byTier = new Map();
-    view.items.forEach((it) => {
-      const k = it.tier;
-      if (!byTier.has(k)) byTier.set(k, { label: it.tierLabel, n: 0 });
-      byTier.get(k).n += 1;
-    });
-    const legend = [...byTier.entries()]
-      .sort((a, b) => a[0] - b[0])
-      .map(([, v]) => fmtCount(v.n) + " " + v.label.toLowerCase());
+    const { legend } = tierCounts(view.items);
     return briefFigure({
       label,
       value: fmtCount(view.items.length),
       unit: pluralize(view.items.length, "group"),
       visual: unitSquares({
-        tones: view.items.map((it) => "t" + Math.min(Math.max(it.tier, 1), 3)),
+        tones: view.items.map((it) => tierTone(it.tier)),
         label: legend.join(", "),
       }),
       caption: legend.join(" · ") + ". " + view.rankedShort + ".",
@@ -1342,7 +1327,7 @@ export async function renderExecutive(main, _params, ctx) {
       parts = [...open.rows]
         .sort((a, b) => rank(a.severity) - rank(b.severity))
         .map((r) => ({
-          label: titleCase(r.severity),
+          label: sevWord(r.severity),
           value: r.open,
           tone: r.severity,
           note: briefDelta(r.chip, { form: "count" }),
@@ -1357,7 +1342,7 @@ export async function renderExecutive(main, _params, ctx) {
         movement: payload && payload.movement,
       });
       if (!view.show || view.pending || !view.tiles.length) return null;
-      parts = view.tiles.map((t) => ({ label: titleCase(t.sev), value: t.count, tone: t.sev }));
+      parts = view.tiles.map((t) => ({ label: sevWord(t.sev), value: t.count, tone: t.sev }));
       // THE POPULATION LINE STAYS ON THE SURFACE in the fallback, short form printed and its
       // reason on a tip — the tally can leave a level out, and the reader must be told.
       foot = view.populationExplain
@@ -1377,11 +1362,6 @@ export async function renderExecutive(main, _params, ctx) {
       foot,
       after: [note ? el("p", { class: "small muted" }, note) : null],
     });
-  }
-
-  function titleCase(s) {
-    const t = String(s || "");
-    return t.charAt(0) + t.slice(1).toLowerCase();
   }
 
   // ------------------------------------------------------------------------ fix first
@@ -1428,7 +1408,7 @@ export async function renderExecutive(main, _params, ctx) {
       action: el("span", { class: "small muted" }, "Top " + fmtCount(top.length) + " of "
         + fmtCount(view.items.length) + " " + pluralize(view.items.length, "group")),
       rows: top.map((r) => ({
-        tone: "t" + Math.min(Math.max(r.tier, 1), 3),
+        tone: tierTone(r.tier),
         primary: r.ownerText,
         secondary: r.tierLabel,
         figure: fmtCount(r.count) + " open",

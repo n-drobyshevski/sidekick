@@ -107,18 +107,17 @@
   .brief-fig:nth-child(even) { padding-right: 0; }
 }
 @media (max-width: 640px) {
+  /* The briefing's phone scale: the tokens, redefined once (tokens.base.css). */
+  :root {
+    --fs-brief-value: 38px; --fs-brief-value-text: 24px;
+    --brief-unit: 14px; --brief-dot: 5px; --brief-dot-gap: 2px; --brief-ring: 40px;
+  }
   .brief { gap: var(--space-6); }
   .brief-figures { column-gap: var(--space-4); }
   .brief-fig { padding: 0; border-left: 0; }
-  .brief-value { font-size: 38px; }
-  .brief-value--text { font-size: 24px; }
   .brief-unit-word { font-size: var(--fs-body); }
   .brief-visual { min-height: 0; }
   .brief-slope { width: 100%; height: auto; }
-  .brief-ring { width: 40px; height: 40px; }
-  .brief-dots { grid-template-columns: repeat(20, 5px); gap: 2px; }
-  .brief-dot { width: 5px; height: 5px; }
-  .brief-unit { width: 14px; height: 14px; }
   .brief-splits { grid-template-columns: minmax(0, 1fr); gap: var(--space-6); }
   /* The tier stays, under the owner: two ranked groups can share an owner and differ only by
      tier, and hiding it printed the same name twice with nothing telling the rows apart. */

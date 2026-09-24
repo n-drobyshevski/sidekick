@@ -16,7 +16,7 @@
 // computed without a DOM so the claims — zero-based slope, a share that never rounds a real
 // part to nothing, a split that refuses a zero total — are testable in node.
 
-import { el } from "./dom.js";
+import { el, motionOk } from "./dom.js";
 import { skeleton } from "./feedback.js";
 import { svgEl } from "../icons.js";
 import { figureCardModel, fmtCount, num } from "./figures.js";
@@ -522,4 +522,104 @@ export function briefExtras(...items) {
   const list = items.flat().filter(Boolean);
   if (!list.length) return null;
   return el("div", { class: "brief-extras" }, ...list);
+}
+
+// --------------------------------------------------------- shared by the briefing pages
+//
+// These were written four times — once per Executive and MTTR page in each register — before
+// they moved here. Each is the ONE place its rule lives now.
+
+/** A severity word for a split key or a caption: "CRITICAL" -> "Critical". */
+export function sevWord(sev) {
+  const t = String(sev || "");
+  return t.charAt(0) + t.slice(1).toLowerCase();
+}
+
+/** First letter up, the rest as written — for a view's lower-case `secondary` sentence. */
+export function sentenceStart(s) {
+  const t = String(s || "");
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+/**
+ * A Fix-next tier as a briefing tone. Tier 1 is the most urgent; anything past the three the
+ * ramp colours clamps to its ends rather than drawing nothing.
+ */
+export function tierTone(tier) {
+  const n = Number(tier);
+  return "t" + Math.min(Math.max(Number.isFinite(n) ? n : 3, 1), 3);
+}
+
+/**
+ * How many ranked groups sit in each tier, most urgent first — the Act-now figure's legend.
+ *
+ * @param {Array<{tier: number, tierLabel: string}>} items
+ * @returns {{counts: Array<{tier: number, label: string, n: number}>, legend: string[]}}
+ */
+export function tierCounts(items) {
+  const byTier = new Map();
+  (Array.isArray(items) ? items : []).forEach((it) => {
+    if (!byTier.has(it.tier)) byTier.set(it.tier, { tier: it.tier, label: it.tierLabel, n: 0 });
+    byTier.get(it.tier).n += 1;
+  });
+  const counts = [...byTier.values()].sort((a, b) => a.tier - b.tier);
+  return {
+    counts,
+    legend: counts.map((c) => fmtCount(c.n) + " " + String(c.label || "").toLowerCase()),
+  };
+}
+
+/**
+ * Whether the reading every figure rests on is stale, and the status-line tone that says so.
+ * A scan or sync older than `days` (a week by default) turns the dot amber.
+ */
+export function staleness(ts, now = Date.now(), days = 7) {
+  const t = typeof ts === "number" ? ts : Date.parse(ts);
+  const stale = Number.isFinite(t) && now - t > days * 86400000;
+  return { stale, tone: stale ? "warn" : "ok" };
+}
+
+/**
+ * The half-life's own change beside the figure, from an `executiveMovementView`-shaped
+ * reading: `{show, direction, magnitude, label}`. A LONGER half-life is the bad direction.
+ */
+export function briefTrendDelta(half) {
+  if (!half || !half.show) return null;
+  const kind = half.direction === "flat" ? "neutral" : half.direction === "up" ? "bad" : "ok";
+  return el("span", { class: "brief-delta brief-delta--" + kind, "aria-label": half.label },
+    half.magnitude);
+}
+
+/**
+ * The notes that qualify EVERY figure on a page — a tracking window, a stale sync, end-of-life
+ * repositories still counted. They are honesty statements, so they stay on the surface as a
+ * list, never in a tip. Null when there is nothing to say.
+ */
+export function briefNotes(notes, label = "Read with care") {
+  const list = (Array.isArray(notes) ? notes : []).filter(Boolean);
+  if (!list.length) return null;
+  return el("section", { class: "brief-notes" },
+    el("h2", { class: "brief-label" }, label),
+    el("ul", { class: "brief-notes__list" }, ...list.map((n) => el("li", { class: "small muted" }, n))));
+}
+
+/**
+ * Opens the folded section inside `host` (a `collapsibleSection`) and brings it into view.
+ * Returns whether there was one to open, so the caller can record its own open flag.
+ */
+export function openFolded(host) {
+  const details = host && host.querySelector("details");
+  if (!details) return false;
+  details.open = true;
+  if (typeof details.scrollIntoView === "function") {
+    // No glide for a reader who asked for less motion — the rule every scroll here follows.
+    details.scrollIntoView({ block: "start", behavior: motionOk() ? "smooth" : "auto" });
+  }
+  return true;
+}
+
+/** The "take me there" button a figure or list head carries: text, then an arrow. */
+export function briefMore(text, onClick) {
+  return el("button", { type: "button", class: "brief-more", onclick: onClick },
+    text, el("span", { "aria-hidden": "true" }, " →"));
 }

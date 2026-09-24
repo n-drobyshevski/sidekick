@@ -2406,12 +2406,12 @@ input[type="range"].cut-hist__range {
 .brief-fig:last-child { padding-right: 0; }
 .brief-value-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-2) var(--space-3); }
 .brief-value {
-  font-size: 52px; font-weight: var(--fw-semibold); line-height: 1; letter-spacing: -0.03em;
+  font-size: var(--fs-brief-value); font-weight: var(--fw-semibold); line-height: 1; letter-spacing: -0.03em;
   color: var(--ink); font-variant-numeric: tabular-nums;
 }
-.brief-value--text { font-size: 34px; letter-spacing: -0.02em; }
+.brief-value--text { font-size: var(--fs-brief-value-text); letter-spacing: -0.02em; }
 .brief-unit-word { font-size: var(--fs-display-sm); font-weight: var(--fw-semibold); color: var(--text-3); }
-.brief-visual { display: flex; align-items: center; gap: var(--space-4); min-height: 64px; }
+.brief-visual { display: flex; align-items: center; gap: var(--space-4); min-height: var(--brief-ring); }
 .brief-caption { margin: 0; max-width: var(--measure); font-size: var(--fs-label); line-height: 1.5; color: var(--text-2); }
 .brief-caption strong { color: var(--ink); font-weight: var(--fw-semibold); }
 .brief-link {
@@ -2420,7 +2420,7 @@ input[type="range"].cut-hist__range {
 }
 .brief-link:hover { text-decoration: underline; }
 
-.brief-delta { font-size: 15px; font-weight: var(--fw-hero); white-space: nowrap; }
+.brief-delta { font-size: var(--fs-brief-delta); font-weight: var(--fw-hero); white-space: nowrap; }
 .brief-delta--ok { color: var(--ok); }
 .brief-delta--bad { color: var(--bad); }
 .brief-delta--neutral { color: var(--text-3); }
@@ -2434,27 +2434,27 @@ input[type="range"].cut-hist__range {
 .brief-slope__lbl { font-size: 11px; fill: var(--svg-text-2); font-family: var(--font); font-variant-numeric: tabular-nums; }
 .brief-slope__lbl--now { fill: var(--ink); font-weight: 600; }
 
-.brief-ring { flex-shrink: 0; }
+.brief-ring { flex-shrink: 0; width: var(--brief-ring); height: var(--brief-ring); }
 .brief-ring__track { fill: none; stroke: var(--surface-2); stroke-width: 8; }
 .brief-ring__arc { fill: none; stroke: var(--ink); stroke-width: 8; }
 
-.brief-dots { display: grid; grid-template-columns: repeat(20, 7px); gap: 3px; }
-.brief-dot { width: 7px; height: 7px; border-radius: 1px; background: var(--hairline); }
+.brief-dots { display: grid; grid-template-columns: repeat(20, var(--brief-dot)); gap: var(--brief-dot-gap); }
+.brief-dot { width: var(--brief-dot); height: var(--brief-dot); border-radius: 1px; background: var(--hairline); }
 .brief-dot--on { background: var(--warn); }
 
 .brief-units { display: flex; flex-wrap: wrap; gap: 5px; max-width: 100%; }
-.brief-unit { width: 18px; height: 18px; border-radius: 4px; }
+.brief-unit { width: var(--brief-unit); height: var(--brief-unit); border-radius: var(--brief-mark-radius); }
 
-.brief-track { display: block; width: 100%; height: 18px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
-.brief-track__fill { display: block; height: 100%; background: var(--ink); border-radius: 4px; }
+.brief-track { display: block; width: 100%; height: var(--brief-track-h); border-radius: var(--brief-mark-radius); background: var(--surface-2); overflow: hidden; }
+.brief-track__fill { display: block; height: 100%; background: var(--ink); border-radius: var(--brief-mark-radius); }
 
 .brief-splits { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-7); }
 .brief-split { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
 .brief-split > p { margin: 0; }
-.brief-split__track { display: flex; gap: 3px; height: 28px; }
-.brief-split__seg { min-width: 48px; border-radius: 4px; }
+.brief-split__track { display: flex; gap: 3px; height: var(--brief-split-h); }
+.brief-split__seg { min-width: var(--brief-seg-min); border-radius: var(--brief-mark-radius); }
 .brief-split__keys { display: flex; gap: 3px; }
-.brief-split__key { display: flex; flex-direction: column; min-width: 48px; overflow: hidden; white-space: nowrap; font-size: var(--fs-label); }
+.brief-split__key { display: flex; flex-direction: column; min-width: var(--brief-seg-min); overflow: hidden; white-space: nowrap; font-size: var(--fs-label); }
 .brief-split__n { font-size: var(--fs-body); font-weight: var(--fw-semibold); color: var(--ink); }
 .brief-split__name { color: var(--text-2); overflow: hidden; text-overflow: ellipsis; }
 
@@ -2479,7 +2479,7 @@ input[type="range"].cut-hist__range {
 .brief-list__rows { list-style: none; margin: 0; padding: 0; }
 .brief-list__row {
   display: grid; grid-template-columns: 12px minmax(180px, 280px) minmax(0, 1fr) max-content max-content;
-  align-items: center; gap: var(--space-3); min-height: 44px; border-top: 1px solid var(--hairline);
+  align-items: center; gap: var(--space-3); min-height: var(--brief-row-min); border-top: 1px solid var(--hairline);
   font-size: var(--fs-body); color: var(--ink); text-decoration: none;
 }
 a.brief-list__row:hover .brief-list__primary { text-decoration: underline; }
@@ -2508,7 +2508,7 @@ a.brief-list__row:hover .brief-list__primary { text-decoration: underline; }
 .brief-clocks { display: flex; flex-direction: column; }
 .brief-clocks__row {
   display: grid; grid-template-columns: 110px minmax(0, 1fr) 110px 90px 110px;
-  align-items: center; gap: var(--space-4); min-height: 44px; border-top: 1px solid var(--hairline);
+  align-items: center; gap: var(--space-4); min-height: var(--brief-row-min); border-top: 1px solid var(--hairline);
 }
 .brief-clocks__row--head { min-height: 28px; border-top: 0; font-size: var(--fs-label); color: var(--text-3); }
 .brief-clocks__col { text-align: right; white-space: nowrap; }
@@ -2517,7 +2517,7 @@ a.brief-list__row:hover .brief-list__primary { text-decoration: underline; }
 .brief-clocks__axis { position: relative; height: 16px; }
 .brief-clocks__tick { position: absolute; transform: translateX(-50%); font-size: 11px; color: var(--text-3); white-space: nowrap; }
 .brief-clocks__track {
-  position: relative; height: 22px;
+  position: relative; height: var(--brief-clock-track-h);
   background: linear-gradient(var(--hairline), var(--hairline)) center / 100% 2px no-repeat;
 }
 .brief-clocks__target {
@@ -2525,7 +2525,8 @@ a.brief-list__row:hover .brief-list__primary { text-decoration: underline; }
   border-radius: 2px; background: var(--ink);
 }
 .brief-clocks__half {
-  position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px;
+  position: absolute; top: 50%; width: var(--brief-clock-dot); height: var(--brief-clock-dot);
+  margin: calc(var(--brief-clock-dot) / -2) 0 0 calc(var(--brief-clock-dot) / -2);
   border-radius: var(--radius-pill); background: var(--text-2); border: 2px solid var(--page);
   box-sizing: border-box; z-index: 1;
 }

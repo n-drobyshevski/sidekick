@@ -133,8 +133,9 @@ export { sparkLabel, sparkPath, sparkline } from "./sparkline.js";
 export { rowDrag, ruleGrip } from "./rowReorder.js";
 export { splitBar } from "./splitBar.js";
 export {
-  briefClocks, briefDelta, briefExtras, briefFigure, briefFigures, briefList, briefSkeleton,
-  briefSplit, briefSplits, briefStatus, clockModel,
+  briefClocks, briefDelta, briefExtras, briefFigure, briefFigures, briefList, briefMore,
+  briefNotes, briefSkeleton, briefSplit, briefSplits, briefStatus, briefTrendDelta, clockModel,
+  openFolded, sentenceStart, sevWord, staleness, tierCounts, tierTone,
   dotGrid, dotGridModel, foldTail, ringMark, ringModel, shareTrack, slopeMark, slopeModel,
   splitModel, unitSquares,
 } from "./briefing.js";

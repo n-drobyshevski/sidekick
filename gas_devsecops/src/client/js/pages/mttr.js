@@ -65,6 +65,7 @@ import { agingTableModel, sevPalette } from "./sca.js";
 // collapsing onto `pct1`.
 import { denominatorNode, fmtPct, rateCell, scopeParam } from "./_rates.js";
 import {
+  briefNotes, sentenceStart,
   briefClocks, collapsibleSection, briefExtras, briefFigure, briefFigures, ringMark, shareTrack,
   absentText, axisBar, axisSegments, chartTable, chartTableModel, clear, dataTable, el,
   emptyState, errorState, firstRunNotice, fmtCount, fmtDate, fmtDays, kpiCard, meter,
@@ -1394,9 +1395,7 @@ export async function renderMttr(host, params, _ctx) {
             label: fmtCount(num(view.events, 0)) + " of " + fmtCount(total)
               + " observations closed",
           }),
-        caption: view.secondary
-          ? view.secondary.charAt(0).toUpperCase() + view.secondary.slice(1) + "."
-          : view.qualifier,
+        caption: view.secondary ? sentenceStart(view.secondary) + "." : view.qualifier,
       }),
       first ? null : briefFigure({
         label: "In SLA",
@@ -1476,12 +1475,8 @@ export async function renderMttr(host, params, _ctx) {
     if (windowLine.show) notes.push(tipLabel(windowLine.text, WINDOW_LINE_HELP));
     const eol = endOfLifeExclusionNote(mttr && mttr.endOfLife);
     if (eol) notes.push(eol);
-    if (notes.length) {
-      brief.append(el("section", { class: "brief-notes" },
-        el("h2", { class: "brief-label" }, "Read with care"),
-        el("ul", { class: "brief-notes__list" },
-          ...notes.map((n) => el("li", { class: "small muted" }, n)))));
-    }
+    const noteBlock = briefNotes(notes);
+    if (noteBlock) brief.append(noteBlock);
     if (first) return;
     brief.append(renderTargets(mttr));
     const extras = briefExtras(

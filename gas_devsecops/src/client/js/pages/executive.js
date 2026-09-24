@@ -36,8 +36,9 @@ import { bootstrap, swrParts } from "../../../../../gas_shared/store.js";
 import { scopeParam } from "./_rates.js";
 import { SCOPE_LABELS_LONG as SCOPE_LABELS } from "./_scopeLabels.js";
 import {
-  absentText, briefDelta, briefFigure, briefFigures, briefList, briefSkeleton, briefSplit,
-  briefSplits, briefStatus, clear, days1, dotGrid, el, emptyState, errorState,
+  absentText, briefDelta, briefFigure, briefFigures, briefList, briefNotes, briefSkeleton,
+  briefSplit, briefSplits, briefStatus, briefTrendDelta, clear, days1, dotGrid, el, emptyState,
+  errorState, sentenceStart, sevWord, staleness, tierCounts, tierTone,
   fmtCount, fmtDate, fmtDateTime, fmtDays, num, pageHeader, pct1, pluralize, relativeAge,
   ringMark, slopeMark, statusPill, tipLabel, unitSquares,
 } from "../ui.js";
@@ -787,11 +788,10 @@ export async function renderExecutive(host, params, _ctx) {
       statusHost.append(briefStatus({ tone: "neutral", parts: ["No sync has run yet"] }));
       return;
     }
-    const t = typeof latest.ts === "number" ? latest.ts : Date.parse(latest.ts);
-    const stale = Number.isFinite(t) && Date.now() - t > 7 * 86400000;
+    const { stale, tone } = staleness(latest.ts);
     const scopes = Array.isArray(latest.scopes) ? latest.scopes : [];
     statusHost.append(briefStatus({
-      tone: stale ? "warn" : "ok",
+      tone,
       parts: [
         "Last sync " + fmtDateTime(latest.ts),
         el("span", { class: stale ? "brief-status__warn" : null }, relativeAge(latest.ts)),
@@ -850,13 +850,7 @@ export async function renderExecutive(host, params, _ctx) {
 
   function halfLifeFigure(view, payload) {
     const half = executiveMovementView(payload && payload.weekTrend);
-    const delta = half.show
-      ? el("span", {
-        class: "brief-delta brief-delta--"
-          + (half.direction === "flat" ? "neutral" : half.direction === "up" ? "bad" : "ok"),
-        "aria-label": half.label,
-      }, half.magnitude)
-      : null;
+    const delta = briefTrendDelta(half);
     const numeric = view.measured && !view.isLowerBound && num(view.days) !== null;
     return briefFigure({
       label: tipLabel("MTTR", heroHelp(view)),
@@ -879,14 +873,9 @@ export async function renderExecutive(host, params, _ctx) {
             el("strong", {}, fmtCount(view.open)), " still open"),
         ]
         : null,
-      caption: view.secondary ? capitalise(view.secondary) + "." : null,
+      caption: view.secondary ? sentenceStart(view.secondary) + "." : null,
       link: { href: "#/mttr", text: "MTTR & SLA" },
     });
-  }
-
-  function capitalise(s) {
-    const t = String(s || "");
-    return t.charAt(0).toUpperCase() + t.slice(1);
   }
 
   function heroHelp(view) {
@@ -922,20 +911,13 @@ export async function renderExecutive(host, params, _ctx) {
     if (view.empty) {
       return briefFigure({ label, value: "0", unit: "groups", caption: view.emptyReason });
     }
-    const byTier = new Map();
-    view.items.forEach((it) => {
-      if (!byTier.has(it.tier)) byTier.set(it.tier, { label: it.tierLabel, n: 0 });
-      byTier.get(it.tier).n += 1;
-    });
-    const legend = [...byTier.entries()]
-      .sort((a, b) => a[0] - b[0])
-      .map(([, v]) => fmtCount(v.n) + " " + v.label.toLowerCase());
+    const { legend } = tierCounts(view.items);
     return briefFigure({
       label,
       value: fmtCount(view.items.length),
       unit: pluralize(view.items.length, "group"),
       visual: unitSquares({
-        tones: view.items.map((it) => "t" + Math.min(Math.max(it.tier, 1), 3)),
+        tones: view.items.map((it) => tierTone(it.tier)),
         label: legend.join(", "),
       }),
       caption: legend.join(" · ") + ". " + view.rankedShort + ".",
@@ -1062,7 +1044,7 @@ export async function renderExecutive(host, params, _ctx) {
     const view = executiveSeverityView(payload, boot.severityOrder);
     if (!view.show) return null;
     const parts = view.tiles.map((t) => ({
-      label: t.sev.charAt(0) + t.sev.slice(1).toLowerCase(),
+      label: sevWord(t.sev),
       value: t.count,
       tone: t.sev,
     }));
@@ -1099,11 +1081,8 @@ export async function renderExecutive(host, params, _ctx) {
     if (windowLine.show) notes.push(tipLabel(windowLine.text, WINDOW_LINE_HELP));
     const eol = endOfLifeExclusionNote(payload && payload.endOfLife, "the MTTR figures");
     if (eol) notes.push(eol);
-    if (!notes.length) return;
-    notesHost.append(el("section", { class: "brief-notes" },
-      el("h2", { class: "brief-label" }, "Read with care"),
-      el("ul", { class: "brief-notes__list" },
-        ...notes.map((n) => el("li", { class: "small muted" }, n)))));
+    const block = briefNotes(notes);
+    if (block) notesHost.append(block);
   }
 
   // ----------------------------------------------------------------------- fix first
@@ -1135,7 +1114,7 @@ export async function renderExecutive(host, params, _ctx) {
       action: el("span", { class: "small muted" }, "Top " + fmtCount(top.length) + " of "
         + fmtCount(view.items.length) + " " + pluralize(view.items.length, "group")),
       rows: top.map((it) => ({
-        tone: "t" + Math.min(Math.max(it.tier, 1), 3),
+        tone: tierTone(it.tier),
         primary: it.repoText,
         secondary: it.tierLabel + " · " + it.scopeLabel,
         figure: it.countText,
