@@ -5400,7 +5400,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "1e6881c56ed9" : "dev";
+  var BUILD_ID = true ? "7cf112102f90" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
@@ -10866,10 +10866,17 @@ var Server = (() => {
     return run(() => {
       const params = modelParams(p);
       const laps = stageLaps("executive");
+      const part = p == null ? void 0 : p["part"];
+      if (part === "mttr") {
+        const mttr2 = execMttrSlice(mttrModel(params));
+        laps.lap("mttr");
+        laps.log();
+        return { mttr: mttr2 };
+      }
       const exec = executiveModel(params);
       laps.lap("executiveModel");
-      const mttr = execMttrSlice(mttrModel(params));
-      laps.lap("mttr");
+      const mttr = part === "exec" ? void 0 : execMttrSlice(mttrModel(params));
+      if (part !== "exec") laps.lap("mttr");
       const byScope3 = execGroupSlice(exec["byScope"]);
       laps.lap("byScope");
       laps.log();
@@ -10878,7 +10885,7 @@ var Server = (() => {
         scope: exec["scope"],
         severities: exec["severities"],
         showNoFix: exec["showNoFix"],
-        mttr,
+        ...mttr === void 0 ? {} : { mttr },
         byScope: byScope3,
         trackingSince: exec["trackingSince"],
         // Already minimal — a per-severity tally, a delta pair, the tier table and the coverage

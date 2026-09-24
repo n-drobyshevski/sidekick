@@ -648,6 +648,43 @@ describe("getExecutivePage timing line", () => {
   });
 });
 
+// The client asks for the page as four PARALLEL parts (gas_shared/store.js `swrParts`), one
+// google.script.run execution each. The merge is a shallow Object.assign, so the parts must
+// name disjoint keys and together rebuild the single-call payload exactly — or the page would
+// paint a different front door depending on which path loaded it.
+describe("getExecutivePage parts", () => {
+  const PARTS = ["mttr", "insights", "coldZone", "byDomain"];
+
+  it("four disjoint parts that merge back into the whole payload", () => {
+    const quiet = vi.spyOn(console, "log").mockImplementation(() => {});
+    const p = { domain: "", supportGroup: "", severities: null };
+    const whole = getExecutivePage(p).data as Rec;
+    const seen = new Set<string>();
+    const merged: Rec = {};
+    for (const part of PARTS) {
+      const res = getExecutivePage({ ...p, part });
+      expect(res.ok, part).toBe(true);
+      for (const k of Object.keys(res.data as Rec)) {
+        expect(seen.has(k), `${k} is in two parts`).toBe(false);
+        seen.add(k);
+      }
+      Object.assign(merged, res.data as Rec);
+    }
+    expect(merged).toEqual(whole);
+    quiet.mockRestore();
+  });
+
+  it("names its part on the timing line, and serves the whole page for an unknown part", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    getExecutivePage({ part: "coldZone" });
+    const line = log.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('"stage":"executive"')).pop()!;
+    expect(JSON.parse(line)).toMatchObject({ stage: "executive", part: "coldZone" });
+    const all = getExecutivePage({ part: "nope" }).data as Rec;
+    expect(Object.keys(all)).toEqual(expect.arrayContaining(["mttr", "byDomain", "severityCounts"]));
+    log.mockRestore();
+  });
+});
+
 // --------------------------------------------------------------------------------------- //
 //  Scoping runs once per execution, not once per read-model
 // --------------------------------------------------------------------------------------- //

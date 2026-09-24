@@ -30,7 +30,7 @@
 // kmMedianLowerBound, open}` — enough for the byScope table to run the same decision too,
 // rather than falling back to a bare dash with a footnote pointing at MTTR & SLA.
 
-import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
+import { bootstrap, swrParts } from "../../../../../gas_shared/store.js";
 // `scopeParam` used to be DEFINED here — see `./_rates.js`'s header for why one copy now
 // serves this page, mttr.js and program.js all three.
 import { scopeParam } from "./_rates.js";
@@ -690,9 +690,13 @@ export async function renderExecutive(host, params, _ctx) {
   const boot = await bootstrap();
   const scope = scopeParam(params);
 
+  // TWO PARTS, IN PARALLEL: the hero's MTTR model and everything else are separate
+  // google.script.run executions, which Apps Script runs concurrently — a cold front door
+  // costs the slower model, not both (api.ts `getExecutivePage`'s part table).
   let paint = null;
-  const data = swrCall(
+  const data = swrParts(
     "api_getExecutivePage",
+    ["exec", "mttr"],
     scope ? { scope } : {},
     (fresh) => paint && paint(fresh),
   );

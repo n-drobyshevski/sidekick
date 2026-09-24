@@ -6489,7 +6489,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "a3c576dccb78" : "dev";
+  var BUILD_ID = true ? "79f38be154f6" : "dev";
   var CACHE_EPOCH = "1";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
@@ -12465,18 +12465,32 @@ var Server = (() => {
           ms[label] = Date.now() - t0;
         }
       };
-      const out = {
-        mttr: timed("mttr", () => execMttrSlice(cachedMttrData(p))),
-        ...(_a2 = timed("insights", () => execInsightsSlice(cachedInsightsData(insightsParams)))) != null ? _a2 : {},
-        ...timed("coldZone", () => execColdSliceGuarded(coldParams)),
+      const PARTS = {
+        mttr: () => ({
+          mttr: timed("mttr", () => execMttrSlice(cachedMttrData(p))),
+          // Already minimal — four scalars and a per-severity tally — so these two ship whole.
+          weekTrend: timed("weekTrend", () => cachedExecutiveWeekTrend(p)),
+          severityCounts: timed("severityCounts", () => cachedExecutiveSeverityCounts(p))
+        }),
+        insights: () => {
+          var _a3;
+          return {
+            ...(_a3 = timed("insights", () => execInsightsSlice(cachedInsightsData(insightsParams)))) != null ? _a3 : {}
+          };
+        },
+        coldZone: () => ({ ...timed("coldZone", () => execColdSliceGuarded(coldParams)) }),
         // The same three-way dimension switch getMttrPage makes, through the same function so the
         // two pages cannot disagree about what a scope means — or miss each other's cache entry.
-        byDomain: timed("byDomain", () => execGroupSlice(cachedMttrGroupSplit(p))),
-        // Already minimal — four scalars and a per-severity tally — so these two ship whole.
-        weekTrend: timed("weekTrend", () => cachedExecutiveWeekTrend(p)),
-        severityCounts: timed("severityCounts", () => cachedExecutiveSeverityCounts(p))
+        byDomain: () => ({ byDomain: timed("byDomain", () => execGroupSlice(cachedMttrGroupSplit(p))) })
       };
-      console.log(JSON.stringify({ stage: "executive", ...ms }));
+      const part = String((_a2 = p == null ? void 0 : p["part"]) != null ? _a2 : "");
+      const out = PARTS[part] ? PARTS[part]() : {
+        ...PARTS["mttr"](),
+        ...PARTS["insights"](),
+        ...PARTS["coldZone"](),
+        ...PARTS["byDomain"]()
+      };
+      console.log(JSON.stringify({ stage: "executive", ...PARTS[part] ? { part } : {}, ...ms }));
       return out;
     });
   }

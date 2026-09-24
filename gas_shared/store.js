@@ -89,6 +89,42 @@ export function swrCall(name, params, onFresh) {
   return hit.p;
 }
 
+/**
+ * One page payload fetched as PARALLEL parts, merged back into one object.
+ *
+ * WHY. Apps Script runs each `google.script.run` call as its own server execution, and
+ * separate calls run CONCURRENTLY. A page whose endpoint composes several independent
+ * read-models one after another pays their SUM on a cold cache; asked for part by part, it
+ * pays roughly the slowest part plus one round trip. The Executive page is the case: a cold
+ * load was measured at 146 s, serial.
+ *
+ * Each part is its own `swrCall` (params plus `{part}`), so each is session-cached and
+ * revalidated on its own. The merge is a shallow `Object.assign` in `parts` order, so the parts
+ * must name disjoint keys — the server's part table guarantees it.
+ *
+ * ALL OR NOTHING, as the single call was: any part failing rejects, so a page never paints a
+ * payload missing a block it would read as "empty". `onFresh(merged)` fires when a background
+ * revalidation of any part changed it, with every part's latest value merged in.
+ *
+ * @param {string}   name    the RPC, e.g. "api_getExecutivePage"
+ * @param {string[]} parts   the part names the server's endpoint knows
+ * @param {object}   params  shared params for every part
+ * @param {(merged: object) => void} [onFresh]
+ * @returns {Promise<object>} the merged payload
+ */
+export function swrParts(name, parts, params, onFresh) {
+  const latest = new Array(parts.length).fill(null);
+  const merge = () => Object.assign({}, ...latest);
+  const calls = parts.map((part, i) => swrCall(name, { ...(params || {}), part }, (fresh) => {
+    latest[i] = fresh;
+    if (onFresh && latest.every((v) => v !== null)) onFresh(merge());
+  }).then((data) => {
+    latest[i] = data;
+    return data;
+  }));
+  return Promise.all(calls).then(merge);
+}
+
 // ------------------------------------------------------------------- hash routing
 
 const ROUTE_ALIASES = {};
