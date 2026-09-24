@@ -213,6 +213,23 @@
   /* The Executive briefing's neutral ramp (ui/briefing.js): parts of a split that are not
      severities, darkest first. Neutral on purpose — a domain is not a verdict. */
   --brief-r1: #27272a; --brief-r2: #52525b; --brief-r3: #71717a; --brief-r4: #a1a1aa; --brief-r5: #d4d4d8;
+  /* The briefing's scale (ui/briefing.js; Executive and MTTR). One figure size for a number,
+     a smaller one for a refusal in words ("Not reached"), and the marks' sizes. The phone
+     values are redefined once in overrides.css rather than per rule. */
+  --fs-brief-value: 52px;
+  --fs-brief-value-text: 34px;
+  --fs-brief-delta: 15px;
+  --brief-mark-radius: 4px;
+  --brief-row-min: 44px;
+  --brief-track-h: 18px;
+  --brief-split-h: 28px;
+  --brief-seg-min: 48px;
+  --brief-unit: 18px;
+  --brief-dot: 7px;
+  --brief-dot-gap: 3px;
+  --brief-ring: 64px;
+  --brief-clock-track-h: 22px;
+  --brief-clock-dot: 14px;
 
   /* The sixth radius, which was already the most-used one after the five tokens (12 bare
      literals) and never got named. Three of its uses sit on :focus-visible rules, so it is

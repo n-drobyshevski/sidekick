@@ -538,6 +538,46 @@ High Contrast without `forced-color-adjust: none` pinning near-black onto a poss
 ground. It is for NEW work: `axisBar`'s hatch and `.sevbar-seg--empty`'s keep their own rules,
 because repointing them changes shipped pictures and belongs in its own measured round.
 
+## The briefing — Executive and MTTR, read at a glance
+
+`ui/briefing.js` (styles in `styles/components.css`, the phone layout in `styles/overrides.css`,
+sizes in `styles/tokens.base.css`). Both registers' Executive and MTTR pages open with it: a
+status line, four headline figures with a picture each, then splits, a severity-by-target
+block and a short list. Every picture is DOM or SVG — never a canvas — and every one repeats,
+in its `role="img"` name, a figure printed beside it.
+
+**Blocks.**
+
+| Primitive | Draws | Rule it carries |
+| --- | --- | --- |
+| `briefStatus({tone, parts})` | the one line under the title: when the figures were measured | a stale reading (`staleness(ts)`, past 7 days) turns the dot amber and says the age in words |
+| `briefFigures(...)` / `briefFigure(f)` | the row of four, and one figure: label, value, unit, delta, picture, caption, link or action | `help` + `denominator` is `figureCard`'s contract — the base leads the tip and rides on `data-denominator`; `valueClass: "brief-value--text"` for a refusal in words ("Not reached") |
+| `briefSplit({label, parts, aria, foot, after})` / `briefSplits` | one track split into labelled parts | refuses a zero total; zero parts stay off the track; `after` keeps a cap note its own paragraph |
+| `briefClocks({label, rows})` | each severity's half-life against its own SLA target, on a log axis, plus the median open age | a lower bound is hollow with an open reach; no reading, no marker; the open age never decides the verdict |
+| `briefList({label, action, rows})` | a short ranked list (Fix first) | rows link where the full list would |
+| `briefNotes(notes)` | "Read with care": notes that qualify every figure | honesty statements stay on the surface, never in a tip |
+| `briefExtras(...)` | a row of small secondary stat rows | for the figures read second (P90, open age) |
+
+**Marks.** `slopeMark` (two readings, zero-based), `ringMark` (a part of a whole), `dotGrid`
+(a share out of 100), `unitSquares` (one square per item, toned), `shareTrack` (a proportion —
+callers pass `meterPctFor`'s decision, never a raw `rate.value`), `briefDelta` (a
+`deltaChipView` as glyph and words), `briefTrendDelta` (the half-life's own change; longer is
+bad), `briefMore` + `openFolded` (the button that opens a folded section and scrolls to it).
+
+**Pure models, tested in node** (`gas/test/briefing.test.js`): `slopeModel`, `ringModel`,
+`dotGridModel`, `splitModel`, `foldTail`, `clockModel`, and the helpers `sevWord`,
+`sentenceStart`, `tierTone`, `tierCounts`, `staleness`.
+
+**Tokens.** `--fs-brief-value` / `--fs-brief-value-text` / `--fs-brief-delta` (figure sizes),
+`--brief-track-h`, `--brief-split-h`, `--brief-seg-min`, `--brief-unit`, `--brief-dot`,
+`--brief-dot-gap`, `--brief-ring`, `--brief-clock-track-h`, `--brief-clock-dot`,
+`--brief-row-min`, `--brief-mark-radius`, and the neutral ramp
+`--brief-r1`…`--brief-r5` for split parts that are not severities. Phone values are
+redefined once, on `:root` inside `overrides.css`'s 640px query — never per rule. The
+briefing has no width cap: it runs the full content width, like the title rule above it. Tones:
+`sev-fill-<SEV>` for severities, `brief-tone--t1..t3` for Fix-next tiers (the rank ramp),
+`brief-tone--r1..r5` / `--rest` for the neutral ramp.
+
 ## The five-token accent contract
 
 The severity palette is byte-identical across all four surfaces — a severity means the same

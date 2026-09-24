@@ -75,3 +75,31 @@ describe("clockModel — each half-life against its own target", () => {
     expect(ninety).toBeGreaterThan(seven);
   });
 });
+
+describe("the helpers the four briefing pages share", () => {
+  it("sevWord and sentenceStart", async () => {
+    const { sevWord, sentenceStart } = await import("../../gas_shared/ui/briefing.js");
+    expect(sevWord("CRITICAL")).toBe("Critical");
+    expect(sentenceStart("under 25% fixed")).toBe("Under 25% fixed");
+  });
+  it("tierTone clamps to the three-step ramp instead of drawing nothing", async () => {
+    const { tierTone } = await import("../../gas_shared/ui/briefing.js");
+    expect([0, 1, 2, 3, 7, undefined].map(tierTone)).toEqual(["t1", "t1", "t2", "t3", "t3", "t3"]);
+  });
+  it("tierCounts orders the legend most urgent first", async () => {
+    const { tierCounts } = await import("../../gas_shared/ui/briefing.js");
+    const r = tierCounts([
+      { tier: 3, tierLabel: "Critical and late" },
+      { tier: 1, tierLabel: "Known exploited" },
+      { tier: 3, tierLabel: "Critical and late" },
+    ]);
+    expect(r.legend).toEqual(["1 known exploited", "2 critical and late"]);
+  });
+  it("staleness turns amber past a week, and not before", async () => {
+    const { staleness } = await import("../../gas_shared/ui/briefing.js");
+    const now = Date.parse("2026-09-24T12:00:00Z");
+    expect(staleness("2026-09-20T12:00:00Z", now).tone).toBe("ok");
+    expect(staleness("2026-06-15T10:00:00Z", now)).toEqual({ stale: true, tone: "warn" });
+    expect(staleness("not a date", now).stale).toBe(false);
+  });
+});
