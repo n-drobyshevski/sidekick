@@ -517,7 +517,7 @@ export async function renderProgram(host, params, _ctx) {
   );
 
   const noticeHost = el("div", {});
-  const heroHost = el("div", {});
+  const heroHost = el("div", { class: "brief-stack" });
   const matrixHost = el("div", {});
   const signalHost = el("div", {});
   const sensitivityHost = el("div", {});

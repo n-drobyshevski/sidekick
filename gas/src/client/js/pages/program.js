@@ -19,7 +19,7 @@ import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import {
   boundedTrack, briefExtras, briefFigure, briefFigures, shareTrack,
   DEFAULT_PAGE_SIZE, PAGE_SIZES, absent, absentText, bookTip, chartTable, clear, dataTable,
-  denomNote, downloadText, el, emptyState, errorState, fmtCount, fmtDate,
+  downloadText, el, emptyState, errorState, fmtCount, fmtDate,
   glossaryTip, meter, num, openSheet, pageHeader, pct1, quadModel, quadTable,
   scopeBar, sectionLabel, sevBadge, skeleton, statRow, statusPill, tableFooter, tipLabel,
   toast,
@@ -451,7 +451,7 @@ export async function renderProgram(main, _params, ctx) {
   const scopeChips = scopeBar({ domain, supportGroup, onClear: ctx.clearScope });
   if (scopeChips) main.append(scopeChips);
 
-  const heroHost = el("div", {});
+  const heroHost = el("div", { class: "brief-stack" });
   const matrixHost = el("div", {});
   const trendHost = el("div", {});
   const ruleHost = el("div", {});
@@ -679,8 +679,6 @@ export async function renderProgram(main, _params, ctx) {
         },
       ),
     ));
-
-    heroHost.append(denomNote(rateSub(covRate)));
 
     // Honest state, stated where it cannot be missed rather than buried in the methodology
     // block: a rate computed over a thin slice of the register is not a rate for the

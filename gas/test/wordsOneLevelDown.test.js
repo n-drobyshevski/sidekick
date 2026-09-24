@@ -230,13 +230,17 @@ describe("program — renderHero draws the shared briefing, not a local .hero bl
     }
   });
 
-  it("still prints the coverage bound on the surface, via denomNote — not inside a tip", () => {
+  it("still prints the coverage bound on the surface, as the Coverage figure's caption", () => {
+    // It was a separate `denomNote(rateSub(covRate))` paragraph under the hero; the briefing's
+    // Coverage figure now prints the same sentence as its caption, so the paragraph would say
+    // it twice. Still on the surface, never only in a tip or a disclosure.
     const fn = PROGRAM_CODE.slice(
       PROGRAM_CODE.indexOf("function renderHero("),
       PROGRAM_CODE.indexOf("function renderMatrix("),
     );
-    expect(fn).toContain("denomNote(rateSub(covRate))");
-    expect(insideDisclosure(fn, "denomNote(rateSub(covRate))")).toBe(false);
+    expect(fn).toContain("caption: rateSub(covRate),");
+    expect(insideDisclosure(fn, "caption: rateSub(covRate)")).toBe(false);
+    expect(fn).not.toContain("denomNote(rateSub(covRate))");
   });
 
   it("still prints the classified-count / no-signal population line as the hero's qualifier",

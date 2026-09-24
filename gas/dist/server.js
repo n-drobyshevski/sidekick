@@ -6489,7 +6489,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "7e0284904832" : "dev";
+  var BUILD_ID = true ? "0f02480cecfe" : "dev";
   var CACHE_EPOCH = "1";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
