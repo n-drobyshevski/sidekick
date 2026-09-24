@@ -273,7 +273,7 @@ export async function renderHistory(main, _params, ctx) {
       // account; `v.halfLife` is the same three-outcome decision the MTTR page's hero
       // renders, over the same population.
       sparkCard(
-        kpiCard(glossaryTip("Remediation half-life", "half-life"), v.halfLife.value),
+        kpiCard(glossaryTip("MTTR", "half-life"), v.halfLife.value),
         series.halfLife,
         "Remediation half-life over time",
         { unit: "days", caption: kmSparkCaption(latestTrend) },

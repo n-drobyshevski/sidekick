@@ -147,10 +147,10 @@ describe("kpiView never reads kpis.medianMttr", () => {
   });
 
   it("the label this card carries names the SAME statistic the half-life entry defines", () => {
-    // `history.js` hardcodes `glossaryTip("Remediation half-life", "half-life")` — pinning
+    // `history.js` hardcodes `glossaryTip("MTTR", "half-life")` — pinning
     // the entry's own term here, and pinning the literal string in test/historyDom.test.js,
     // is what keeps the two from drifting apart silently.
-    expect(findEntry("half-life").term).toBe("Remediation half-life");
+    expect(findEntry("half-life").term).toBe("MTTR");
   });
 
   it("PERTURBATION PROOF: a rewrite reading kpis.medianMttr under this label prints the WRONG statistic", () => {

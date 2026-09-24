@@ -88,8 +88,8 @@ describe("meterPctFor: an unmeasured rate draws NO meter, never an empty one", (
   });
 
   it("the page hands the meter this decision and never the raw rate", () => {
-    // Five call sites on this page: the four hero stat rows that carry a meter, and the SLA
-    // table's two rate cells (through `rateMeter`). None of them may reach for `rate.value`.
+    // The briefing's three tracks (In SLA, Open past SLA, Awaiting a fix) and the SLA table's
+    // rate cells (through `rateMeter`). None of them may reach for `rate.value`.
     expect(MTTR_SRC).toMatch(/const pct = meterPctFor\(rate\);/);
     expect(MTTR_SRC).not.toMatch(/meter\(rate\.value/);
     expect((MTTR_SRC.match(/meterPctFor\(/g) || []).length).toBeGreaterThanOrEqual(4);
@@ -183,9 +183,10 @@ describe("halfLifeTrendPoints: the sparkline and the line chart read the SAME se
   });
 
   it("the page derives the series ONCE and hands it to the header", () => {
-    // `renderHero` calls `trendAside(halfLifeTrendPoints(trends))` on the same `trends` object
-    // `renderCharts` plots, rather than each filtering its own copy.
-    expect(MTTR_SRC).toContain("trendAside(halfLifeTrendPoints(trends))");
-    expect(MTTR_SRC).toContain("const values = list.map((p) => p.km_median_days);");
+    // `renderHero` reads `halfLifeTrendPoints(trends)` on the same `trends` object
+    // `renderCharts` plots, rather than each filtering its own copy — the briefing's
+    // half-life figure draws that series as its sparkline (DESIGN.md §6b).
+    expect(MTTR_SRC).toContain("const points = halfLifeTrendPoints(trends);");
+    expect(MTTR_SRC).toContain("const trendValues = points.map((p) => p.km_median_days);");
   });
 });

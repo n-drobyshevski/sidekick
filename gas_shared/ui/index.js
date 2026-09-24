@@ -60,7 +60,8 @@
 //                 beneath it — an in/out proportion, or a severity mix
 //   briefing.js   the Executive briefing: four headline figures with a picture each (slope,
 //                 ring, dot grid, unit squares), two labelled splits, a short ranked list and
-//                 the one status line — pure geometry models plus their DOM/SVG marks
+//                 the one status line — pure geometry models plus their DOM/SVG marks — and
+//                 the clock by severity (each half-life against its target, log axis)
 //   bandBar.js    a distribution across ordered bands at the size of a table cell: the
 //                 shared-scale model (pure) and the one role=img bar it draws
 //   verdict.js    a verdict as a dot AND a word, over one slug->tone table shared by the
@@ -132,8 +133,9 @@ export { sparkLabel, sparkPath, sparkline } from "./sparkline.js";
 export { rowDrag, ruleGrip } from "./rowReorder.js";
 export { splitBar } from "./splitBar.js";
 export {
-  briefDelta, briefFigure, briefFigures, briefList, briefSkeleton, briefSplit, briefSplits,
-  briefStatus, dotGrid, dotGridModel, foldTail, ringMark, ringModel, shareTrack, slopeMark, slopeModel,
+  briefClocks, briefDelta, briefExtras, briefFigure, briefFigures, briefList, briefSkeleton,
+  briefSplit, briefSplits, briefStatus, clockModel,
+  dotGrid, dotGridModel, foldTail, ringMark, ringModel, shareTrack, slopeMark, slopeModel,
   splitModel, unitSquares,
 } from "./briefing.js";
 export { bandBar, bandBarModel } from "./bandBar.js";

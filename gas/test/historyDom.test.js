@@ -31,10 +31,10 @@ describe("the four KPI cards each go through sparkCard(", () => {
     expect(CODE).toContain("sparkline(values,");
   });
 
-  it("the fourth card's label carries glossaryTip(\"Remediation half-life\", \"half-life\")", () => {
+  it("the fourth card's label carries glossaryTip(\"MTTR\", \"half-life\")", () => {
     // The exact literal test/historyModel.test.js pins against `findEntry(\"half-life\").term`
     // — together the two tests hold both halves of "one statistic, one name".
-    expect(CODE).toContain('glossaryTip("Remediation half-life", "half-life")');
+    expect(CODE).toContain('glossaryTip("MTTR", "half-life")');
   });
 
   it("the Resolved card carries denomNote(...) — its own share of everything tracked", () => {

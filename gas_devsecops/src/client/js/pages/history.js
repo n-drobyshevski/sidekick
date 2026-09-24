@@ -706,7 +706,7 @@ export async function renderHistory(host, _params, _ctx) {
       // one number; the wave that ended with this fix was called "one vocabulary for
       // figures", and a second name under one term is exactly the drift it exists to stop.
       sparkCard(
-        kpiCard(glossaryTip("Remediation half-life", "half-life"), v.halfLife.value),
+        kpiCard(glossaryTip("MTTR", "half-life"), v.halfLife.value),
         series.kmMedian,
         "Remediation half-life over time",
         { unit: "days", caption: kmSparkCaption },

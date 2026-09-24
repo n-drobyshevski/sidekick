@@ -13,10 +13,10 @@ import { groupCutNote } from "./_groupSplit.js";
 // three pages describe one blind spot in one voice.
 import { backlogSplitView } from "./_backlog.js";
 import {
+  briefClocks, briefExtras, briefFigure, briefFigures, collapsibleSection, ringMark, shareTrack, sparkPath,
   absent, absentText, boundedDays, changeChip, chartTable, clear, dataTable, denomNote,
-  el, emptyState, errorState, firstRunNotice, fmtCount, fmtDays, fmtSpan, heroLines,
-  heroStat, meter, num, pageHeader, pluralize, scopeBar, sectionLabel,
-  segmented, sevBadge, skeleton, sparkLabel, sparkPath, sparkline, statRow, survivalTableModel,
+  el, emptyState, errorState, firstRunNotice, fmtCount, fmtDays, fmtSpan, meter, num, pageHeader, pluralize, scopeBar, sectionLabel,
+  segmented, sevBadge, skeleton, sparkline, statRow, survivalTableModel,
   tip, tipLabel,
 } from "../ui.js";
 
@@ -1677,35 +1677,179 @@ export async function renderMttr(main, _params, ctx) {
       mttr.slaPct, view.resolved, fmtCount(view.resolved) + " resolved",
     );
 
-    heroHost.append(pageHeader({
-      hero: heroStat(
-        "Remediation half-life" + (domain ? " — " + domain : ""),
-        view.value,
-        heroLines(
-          view.qualifier,
-          naiveClause(km, prev, scoped),
-          latencyLine(rem?.vendorLatency, rem?.disclosureLatency),
-          // NEVER FOLDED IN — its own line, dropped outright by `heroLines` when there is
-          // nothing unobserved.
-          view.backlogLine,
-        ),
-        heroHelp(view),
+    // THE BRIEFING (2026-09-24, DESIGN.md §6b). Four figures with a picture each, then the
+    // clock by severity — each half-life against its own target — and the secondary figures
+    // below them. The hero's honesty is unchanged: "at least" for a lower bound, the naive
+    // closed-only median beside the estimate as its qualifier, every rate with its base.
+    const points = halfLifeTrendPoints(trends);
+    const trendValues = points.map((p) => p.km_median_days);
+    const openNow = num(mttr.overall && mttr.overall.open, 0);
+    const pastCount = openPastSla ? num(openPastSla.breached, 0) : null;
+    const pastBase = openPastSla ? num(openPastSla.open, 0) : 0;
+    const awaitingShown = awaiting && awaiting.overall !== null && awaiting.overall !== undefined
+      && boot.settings.showNoFix !== false;
+    // EVERY TRACK TAKES `meterPctFor`'s DECISION, never a raw `rate.value`: an unmeasured rate
+    // draws no track at all rather than an empty one that reads as "0%".
+    const slaTrackPct = meterPctFor(overallSla);
+    const pastRate = rateView(openPastSla ? openPastSla.pct : null, pastBase,
+      fmtCount(pastBase) + " open on the clock", "nothing open is on the clock");
+    const pastTrackPct = meterPctFor(pastRate);
+    const awaitingBase = awaiting ? num(awaiting.openTotal, 0) : 0;
+    const awaitingTrackPct = awaiting
+      ? meterPctFor(rateView(awaiting.pctOfOpen, awaitingBase,
+        fmtCount(awaitingBase) + " open findings", "no finding is open"))
+      : null;
+    heroHost.append(el("div", { class: "brief" },
+      briefFigures(
+        briefFigure({
+          label: tipLabel("MTTR" + (domain ? " — " + domain : ""), heroHelp(view)),
+          value: view.measured && num(view.days) !== null
+            ? (view.isLowerBound ? "≥ " : "") + fmtCount(Math.round(view.days))
+            : view.value,
+          valueClass: view.measured && num(view.days) !== null ? null : "brief-value--text",
+          unit: view.measured && num(view.days) !== null
+            ? pluralize(Math.round(view.days), "day")
+            : null,
+          // THE TREND WHEN IT SAYS SOMETHING, the ring when it does not: `sparkPath` refuses a
+          // series too narrow to draw honestly (a flat line is "no change", not a picture), and
+          // the ring of resolved/tracked is then the figure's second encoding instead.
+          visual: sparkPath(trendValues, { w: 200, h: 48 }).d
+            ? sparkline(trendValues, {
+              label: "MTTR over time", unit: "days", w: 200, h: 48,
+            })
+            : ringMark({
+              part: view.resolved,
+              whole: view.resolved + view.open,
+              label: fmtCount(view.resolved) + " of " + fmtCount(view.resolved + view.open)
+                + " tracked lifecycles resolved",
+            }),
+          caption: el("span", {}, view.qualifier, el("br"), naiveClause(km, prev, scoped)),
+        }),
+        briefFigure({
+          label: "In SLA",
+          help: {
+            term: "sla-target",
+            lines: [
+              "Taken over what CLOSED: of what resolved, the share inside its severity's target.",
+              "The comparison is inclusive — on or before the target.",
+            ],
+          },
+          denominator: overallSla.baseEmpty
+            ? overallSla.emptyLabel
+            : "Of " + overallSla.denominatorLabel + ".",
+          value: overallSla.baseEmpty ? "Not measured" : overallSla.text,
+          valueClass: overallSla.baseEmpty ? "brief-value--text" : null,
+          visual: slaTrackPct === null
+            ? null
+            : shareTrack({
+              part: slaTrackPct, whole: 100,
+              label: overallSla.text + " of " + overallSla.denominatorLabel + " closed in SLA",
+            }),
+          caption: overallSla.baseEmpty
+            ? overallSla.emptyLabel
+            : "of " + overallSla.denominatorLabel,
+        }),
+        briefFigure({
+          label: "Open past SLA",
+          help: {
+            term: "sla-band",
+            lines: [
+              "Taken over what is still RUNNING: of what is open, the share past its target.",
+              "Measured from when a vendor fix became available.",
+            ],
+          },
+          denominator: pastBase ? "Of " + fmtCount(pastBase) + " open findings on the clock." : null,
+          value: pastCount === null ? absentText : fmtCount(pastCount),
+          visual: pastTrackPct !== null
+            ? shareTrack({
+              part: pastTrackPct, whole: 100,
+              label: fmtCount(pastCount) + " of " + fmtCount(pastBase)
+                + " open findings on the clock are past their target",
+            })
+            : null,
+          caption: pastBase
+            ? fmtOpenPastSla(openPastSla) + " of " + fmtCount(pastBase) + " on the clock"
+            : "Nothing open is on the clock.",
+        }),
+        awaitingShown
+          ? briefFigure({
+            label: "Awaiting a fix",
+            help: { term: "awaiting-fix" },
+            denominator: num(awaiting.openTotal, 0)
+              ? "Of " + fmtCount(num(awaiting.openTotal, 0)) + " open findings."
+              : null,
+            value: fmtCount(awaiting.overall),
+            visual: awaitingTrackPct !== null
+              ? shareTrack({
+                part: awaitingTrackPct, whole: 100,
+                label: fmtCount(awaiting.overall) + " of " + fmtCount(awaiting.openTotal)
+                  + " open findings have no published fix",
+              })
+              : null,
+            caption: "no published fix yet — outside every deadline until one exists",
+          })
+          : briefFigure({
+            label: "Open now",
+            help: { term: "age" },
+            value: fmtCount(openNow),
+            caption: "open findings in scope",
+          }),
       ),
-      aside: trendAside(halfLifeTrendPoints(trends)),
-      stats: [
-        slaStatRow(overallSla, prev, scoped),
-        pastSlaStatRow(openPastSla, prev, scoped, view.backlogCaption),
+      renderClocks(mttr),
+      briefExtras(
         p90StatRow(overallKmP90 !== undefined ? overallKmP90 : overallPctiles?.p90, km),
         openAgeStatRow(mttr, prev, scoped),
-        ...(awaiting && awaiting.overall !== null && awaiting.overall !== undefined
-          && boot.settings.showNoFix !== false
-          ? [awaitingStatRow(awaiting)]
-          : []),
-      ],
-    }));
-    // THE SHARED CAPTION, ON THE SURFACE — what "unobserved" means here, not an explanation of
-    // a number already on screen, so it stays out of any tip. Null prints nothing.
+      ),
+    ));
+    const latency = latencyLine(rem?.vendorLatency, rem?.disclosureLatency);
+    if (latency) heroHost.append(el("p", { class: "small muted" }, latency));
     if (view.backlogCaption) heroHost.append(denomNote(view.backlogCaption));
+  }
+
+  /**
+   * Each severity's half-life against its own target — the briefing's second block. The
+   * same readings as the "Remediation by severity" table below (kmMedianPerSev, the bound,
+   * sla_pct and the actionable open-past-SLA), drawn so the gap is seen before it is read.
+   */
+  function renderClocks(mttr) {
+    const sevs = boot.palette.order.filter((s) => mttr.perSev[s] && sevScope.includes(s));
+    const targets = (mttr.remediation && mttr.remediation.aging
+      && mttr.remediation.aging.slaTargets) || {};
+    const rows = sevs.map((sev) => {
+      const kmMedian = mttr.remediation?.kmMedianPerSev?.[sev];
+      const median = kmMedian !== undefined ? kmMedian : mttr.perSev[sev].mttr_median;
+      const bound = mttr.remediation?.kmLowerBoundPerSev?.[sev];
+      const bd = boundedDays(median, bound);
+      const past = mttr.remediation?.openPastSlaActionable?.perSev?.[sev]
+        ?? mttr.remediation?.openPastSla?.perSev?.[sev];
+      const resolved = num(mttr.perSev[sev].resolved, 0);
+      return {
+        sev,
+        badge: sevBadge(sev),
+        days: num(median) !== null ? num(median) : num(bound),
+        bounded: bd.bounded,
+        halfText: bd.text,
+        target: num(targets[sev]),
+        age: num(mttr.perSev[sev].open_age_p50),
+        ageText: num(mttr.perSev[sev].open_age_p50) === null
+          ? null
+          : fmtSpan(mttr.perSev[sev].open_age_p50),
+        rate: rateView(mttr.perSev[sev].sla_pct, resolved, fmtCount(resolved) + " resolved",
+          "nothing has closed at this severity"),
+        past: past ? fmtOpenPastSla(past) : null,
+      };
+    });
+    return briefClocks({
+      label: tipLabel("Against the target, by severity", {
+        term: "sla-band",
+        lines: [
+          "Each severity's Kaplan–Meier half-life against its own SLA target.",
+          "Red: the half-life is past the target. Green: inside it. Hollow: a lower bound.",
+          "The diamond is the median age of what is still open.",
+        ],
+      }),
+      rows,
+    });
   }
 
   /**
@@ -1735,7 +1879,7 @@ export async function renderMttr(main, _params, ctx) {
    *
    * `kmHalfLifeView` puts "at least 297 days" in the 2rem slot, so the words are already on the
    * surface and only the explanation moves. The term stays `half-life` in every state — the
-   * trigger is on the words "Remediation half-life", so that is the entry Enter goes to, and a
+   * trigger is on the word "MTTR", so that is the entry Enter goes to, and a
    * control whose destination changes with the data is one a reader cannot learn. The bound's
    * own sentence LEADS the lines instead; `lower-bound` stays reachable from the Key sheet, and
    * `km-median` from this page's own title header.
@@ -1751,152 +1895,6 @@ export async function renderMttr(main, _params, ctx) {
         + " true.",
       ],
     };
-  }
-
-  /**
-   * The header's one qualifying aside: where this number is GOING.
-   *
-   * `pageHeader({aside})` is documented for exactly this ("a small curve"), and it was empty on
-   * this page while the series it wants sat in the "MTTR over time" card a screen further down.
-   * `sparkline` is inline SVG with no library, `role="img"`, and an `aria-label` that always
-   * states first / last / low / high — so the picture has a text alternative and the caption
-   * underneath does not have to be one.
-   *
-   * BORDERLESS AND CAPPED (`.trend-aside`, pages.css): DESIGN.md's Hero Stat rule is that the
-   * hero's dominance comes from size and whitespace, so a bordered card here would out-weigh it.
-   *
-   * FEWER THAN TWO READINGS DRAWS THE LABEL, NEVER NOTHING. `sparkPath` returns `d: ""` for a
-   * single reading (one point is not a trend) and for none at all; `sparkLabel` is the words for
-   * both cases, and they are printed as the caption rather than the picture silently
-   * disappearing from a slot that is there on every other paint. AND WHEN NOTHING IS DRAWN THE
-   * BOX GOES WITH IT: this aside is a single strip, so an empty 220x40 box between the label and
-   * the caption is a hole with nothing to align to.
-   *
-   * A NULL READING IS A GAP, NOT A ZERO. `km_median_days` is null on every reconstructed date
-   * whose curve never reached half, and `halfLifeTrendPoints` keeps those slots so the x axis
-   * stays time rather than compressing to the measured readings; `sparkPath` counts them and
-   * the caption prints the count.
-   */
-  function trendAside(points) {
-    const list = Array.isArray(points) ? points : [];
-    const values = list.map((p) => p.km_median_days);
-    const model = sparkPath(values, { w: 220, h: 40 });
-    const measured = model.gaps
-      ? fmtCount(model.n) + " of " + fmtCount(values.length) + " readings measured"
-      : fmtCount(model.n) + " readings";
-    // A FLAT SERIES SAYS IT IS FLAT. "199 days to 199 days" is two readings of one fact; the
-    // sparkline draws a straight line for exactly this case and the caption should agree with
-    // the picture rather than restate an endpoint twice.
-    const range = model.first === model.last
-      ? "flat at " + fmtDays(model.first)
-      : fmtDays(model.first) + " to " + fmtDays(model.last);
-    // FEWER THAN TWO READINGS STILL OWES A DENOMINATOR, and on this register that is the
-    // NORMAL case rather than the edge one. Measured on the dev harness: 211 evaluated dates,
-    // exactly ONE of which carries a half-life — the register's curve does not reach half on
-    // any earlier date, so `km_median_days` is null on the other 210. `sparkLabel` alone says
-    // "one reading, 31.9 days", which reads as a young series rather than as an old one nobody
-    // could measure, so the gap count joins it whenever there are gaps to name.
-    const caption = model.n >= 2
-      ? measured + ", " + range
-      : model.gaps
-        ? sparkLabel(model, "", "days") + " (" + measured + ")"
-        : sparkLabel(model, "", "days");
-    return el("div", { class: "page-strip trend-aside" },
-      el("div", { class: "kpi-label" }, tipLabel("Half-life over time", {
-        lines: [
-          "One reading per saved scan, plus one per day of pre-scan history reconstructed from"
-          + " first-detection dates.",
-          "The full line, and which readings are reconstructed, is in the MTTR over time card"
-          + " below.",
-        ],
-      })),
-      (model.d || model.end)
-        ? sparkline(values, {
-          label: "Remediation half-life over time", unit: "days", w: 220, h: 40,
-        })
-        : null,
-      el("div", { class: "small muted" }, caption));
-  }
-
-  /**
-   * "In SLA (of resolved)" as a stat cell rather than a bare percentage.
-   *
-   * The `meter` is `statRow`'s own slot and takes the rate; a rate with no base gets NO meter
-   * rather than an empty track, because `meter(null)` would resolve to a confident 0% fill —
-   * `Number(null)` is 0 and finite, CLAUDE.md's third recording of it — over a population
-   * nobody measured. The empty case keeps its own words in both places: "not measured" is the
-   * value (`rateView.text`), and the missing population is named in the sub-line.
-   */
-  function slaStatRow(rate, prev, scoped) {
-    const chip = !scoped && prev && prev.sla_pct !== null && prev.sla_pct !== undefined
-      && rate.measured
-      ? changeChip(rate.value, prev.sla_pct, { invert: true, suffix: "%" })
-      : null;
-    return statRow(
-      "In SLA (of resolved)",
-      chip ? el("span", {}, rate.text, chip) : rate.text,
-      rate.baseEmpty ? "nothing has closed yet" : "of " + rate.denominatorLabel,
-      meterPctFor(rate),
-      {
-        term: "sla-target",
-        lines: [
-          rate.baseEmpty
-            ? "Not measured: nothing has closed yet, so there is no resolved population."
-            : "Taken over what CLOSED: of what resolved, the share inside target.",
-          "The clock starts at a vendor fix, and the comparison is inclusive.",
-        ],
-      },
-    );
-  }
-
-  /**
-   * "Open past SLA" — the COUNT, with its share of the open backlog as the meter.
-   *
-   * TWO DIFFERENT DENOMINATORS SIT IN THIS STRIP and mixing them is the mistake this shape
-   * stops. "In SLA" is taken over RESOLVED findings; this one is taken over OPEN findings whose
-   * SLA status is actually KNOWABLE — `openPastSla`'s `breached + on-the-clock` — of the ones
-   * still running, how many have already blown it. A single "SLA %" over everything would be
-   * neither, and the two sub-lines name their own base for that reason.
-   */
-  // `backlogCaption` is the hero's own split explanation (`view.backlogCaption`,
-  // `mttrHeroView`'s reading of `mttr.backlog`) — REUSED HERE, NOT RECOMPUTED, as general
-  // context for why a blind spot exists at all. The population LINE itself (`view.backlogLine`,
-  // "N present · M unobserved since <date>") stays on the hero, drawn once, so it is not
-  // repeated here. O1c's `openPastSla()` now gives this stat its OWN precise count instead —
-  // `unknown`: unobserved rows that had not yet breached at their last sighting, counted apart
-  // from both "breached" and the rate's own "on the clock" base, never folded into either.
-  function pastSlaStatRow(openPastSla, prev, scoped, backlogCaption) {
-    const open = num(openPastSla && openPastSla.open, 0);
-    const breached = num(openPastSla && openPastSla.breached);
-    const unknown = num(openPastSla && openPastSla.unknown, 0);
-    const rate = rateView(
-      openPastSla && openPastSla.pct, open, fmtCount(open) + " on the clock",
-      "no finding is open",
-    );
-    const chip = !scoped && prev && prev.open_past_sla !== null
-      && prev.open_past_sla !== undefined && breached !== null
-      ? changeChip(breached, prev.open_past_sla)
-      : null;
-    const value = fmtCount(breached);
-    return statRow(
-      "Open past SLA",
-      chip ? el("span", {}, value, chip) : value,
-      (rate.baseEmpty ? rate.emptyLabel : rate.text + " of " + rate.denominatorLabel)
-        + (unknown ? " · " + fmtCount(unknown) + " unknown" : ""),
-      meterPctFor(rate),
-      {
-        term: "sla-target",
-        lines: [
-          "Taken over what is still RUNNING: of what is open, the share past target.",
-          "Unlike In SLA, an aged-out open CRITICAL counts here.",
-          ...(unknown
-            ? ["Unobserved findings that had not yet breached by their last sighting are "
-              + "unknown, never in-SLA — we cannot say what happened after we stopped looking."]
-            : []),
-          ...(backlogCaption ? [backlogCaption] : []),
-        ],
-      },
-    );
   }
 
   /** The slow tail, and the sub-line it is allowed to carry — `kmP90View` owns the three-state
@@ -1925,37 +1923,6 @@ export async function renderMttr(main, _params, ctx) {
       "nine in ten open findings are younger",
       null,
       { term: "age" },
-    );
-  }
-
-  /**
-   * "Awaiting vendor fix" as a stat cell, with its share of the open backlog as the meter.
-   *
-   * The figure is the COUNT of open findings with no published fix; the meter is that count's
-   * share of the open backlog, which is the rate the old source-line sentence carried. Both
-   * were in one clause before, and the count was the only one of the two a reader could act on.
-   * Dropped entirely when the vendor-fix filter is off — the count arrives zeroed then, and a
-   * zero that means "we excluded them" is exactly the zero this register refuses to print.
-   */
-  function awaitingStatRow(awaiting) {
-    const openTotal = num(awaiting.openTotal, 0);
-    const rate = rateView(
-      awaiting.pctOfOpen, openTotal, fmtCount(openTotal) + " open findings",
-      "no finding is open",
-    );
-    return statRow(
-      "Awaiting vendor fix",
-      fmtCount(awaiting.overall),
-      rate.baseEmpty ? rate.emptyLabel : rate.text + " of " + rate.denominatorLabel,
-      meterPctFor(rate),
-      {
-        term: "awaiting-fix",
-        lines: [
-          "Open findings with no published fix, outside every deadline until one exists.",
-          "Which is why the actionable clock starts at the fix and not at detection.",
-          "Still censored in the estimate above, not dropped.",
-        ],
-      },
     );
   }
 
@@ -2584,7 +2551,14 @@ export async function renderMttr(main, _params, ctx) {
     // than a paragraph under the table ("A column heading is asked once", below).
     const split = backlogSplitView(mttr.backlog);
 
-    slaHost.append(sectionLabel("Remediation by severity", { term: "sla-band" }));
+    // FOLDED, NOT DROPPED (DESIGN.md §6b): the clock-by-severity block in the briefing draws
+    // these readings; the table keeps the exact cells (P90, open counts, the bound's words) for
+    // the reader who opens it, and remembers that it was opened.
+    const slaSection = collapsibleSection("Remediation by severity — every cell", {
+      remember: "mttrSlaTable",
+      hint: "the table behind the clocks above",
+    });
+    slaHost.append(slaSection.node);
     // Trimmed to the high-signal columns — Resolved, Awaiting, Open age p90 and the SLA
     // target column are dropped from the default view (the target folds into the In-SLA
     // header helpTip). Column headers carry each metric's definition via helpTip so the
@@ -2633,7 +2607,7 @@ export async function renderMttr(main, _params, ctx) {
     // Same conversion as the by-domain table above: six static columns, one header row, no
     // colspan, so the hand-rolled table had nothing the shared component lacks — and gains the
     // right-aligned numeric headings its own `td.num` cells always implied.
-    slaHost.append(dataTable({
+    slaSection.body.append(dataTable({
       columns: [
         {
           key: "sev",

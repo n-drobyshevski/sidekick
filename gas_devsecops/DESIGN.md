@@ -125,6 +125,12 @@ account is `gas/DESIGN.md` §6a). What is this register's own:
   the surface, as a list under the Fix first table, last on the page.
 - The cold zone's denominator sentence — window, relative-mode clause, clock caveat and the
   scopes-without-scan clause — is unchanged, now on the figure's tip and `data-denominator`.
+- **MTTR** opens with the same briefing (`gas/DESIGN.md` §6b): MTTR, the half-life ("Not reached" in words,
+  its `secondary` as the caption), In SLA, Still open (censored, with its base) and Awaiting a
+  vendor (with the refused count), the reading notes on the surface, then "Against the target,
+  by severity". Where a curve never halved there is no half-life marker; the median open age
+  (diamond) still shows the gap to the target. "SLA by severity — every cell" is folded, and
+  remembered; everything else on the page is unchanged.
 
 ## Measuring a page, and what the unit-chart round moved
 
