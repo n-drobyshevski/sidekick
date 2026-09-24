@@ -335,12 +335,13 @@ function hostOrder(src) {
     : [];
 }
 
-describe("Fix next is the page's LAST block, and it is collapsible", () => {
-  it("appends fixHost after every other host, the fix-first preview included", () => {
-    // The briefing (DESIGN.md "The briefing"): status line, figures, splits, the three-row
-    // preview and the reading notes all come first; what this test is about is the tail.
+describe("Fix next is one collapsible block, straight after the splits", () => {
+  it("appends fixHost after the splits and before the reading notes", () => {
+    // The briefing (DESIGN.md "The briefing"): status line, figures, splits, then the ranked
+    // list — its own top three while shut — and the reading notes last, so the notes qualify
+    // everything above them.
     expect(hostOrder(SRC)).toEqual([
-      "statusHost", "noticeHost", "figuresHost", "splitsHost", "topHost", "notesHost", "fixHost",
+      "statusHost", "noticeHost", "figuresHost", "splitsHost", "fixHost", "notesHost",
     ]);
     // Perturbed, because "is fixHost in the list" would pass on the arrangement this replaces.
     // The ranked list spent its whole life directly under the hero, which put the page's
@@ -349,14 +350,26 @@ describe("Fix next is the page's LAST block, and it is collapsible", () => {
     const before = "  host.append(\n    pageHeader({ route: \"executive\" }),\n"
       + "    noticeHost, heroHost, fixHost, coldHost, sevHost, registerHost, scanHost,\n  );";
     expect(hostOrder(before).at(-1)).toBe("scanHost");
-    expect(hostOrder(SRC).at(-1)).toBe("fixHost");
+    expect(hostOrder(SRC).at(-1)).toBe("notesHost");
+  });
+
+  it("is ONE block: no separate Fix first preview, and the shut preview hides when it opens", () => {
+    // The same top three used to be drawn twice — a "Fix first" preview above, and the folded
+    // Fix next list below starting with the same groups. The preview now lives inside the
+    // Fix next block and steps aside whenever the section is open.
+    expect(SRC).not.toContain("topHost");
+    expect(SRC).not.toContain('label: "Fix first"');
+    const fn = SRC.slice(SRC.indexOf("function renderFixNext("));
+    expect(fn).toMatch(/const preview = previewOf\(view\);/);
+    expect(fn).toMatch(/preview\.hidden = section\.node\.open;/);
+    expect(fn).toMatch(/fixHost\.append\(section\.node, preview\);/);
   });
 
   it("builds the section through collapsibleSection, with the page holding the open flag", () => {
     const fn = SRC.slice(SRC.indexOf("function renderFixNext("));
     expect(fn).toContain('collapsibleSection("Fix next", {');
     expect(fn).toMatch(/open: fixOpen,/);
-    expect(fn).toMatch(/onToggle: \(o\) => \{ fixOpen = o; \},/);
+    expect(fn).toMatch(/onToggle: \(o\) => \{ fixOpen = o; preview\.hidden = o; \},/);
     // Remembered per reader across visits — the closure flag only survives this page's own
     // repaints, and swrCall paints twice on a warm cache.
     expect(fn).toMatch(/remember: "execFixNext",/);
@@ -367,5 +380,21 @@ describe("Fix next is the page's LAST block, and it is collapsible", () => {
     expect(fn).toMatch(/hint: view\.rankedShort,/);
     // And it is no longer ALSO a paragraph under the list — one statement, one place.
     expect(fn).not.toContain('el("p", { class: "small muted" }, view.rankedShort)');
+  });
+});
+
+describe("the loading stubs are the briefing's own layout", () => {
+  it("stubs the figures, the splits and the list in their hosts, and each render clears its own", () => {
+    const s = SRC.slice(SRC.indexOf("const stub = briefSkeleton();"));
+    expect(s).toMatch(/clear\(figuresHost\)\.append\(stub\.figures\);/);
+    expect(s).toMatch(/clear\(splitsHost\)\.append\(stub\.splits\);/);
+    expect(s).toMatch(/clear\(fixHost\)\.append\(stub\.list\);/);
+    // A stub left standing under real content is the defect this guards: every host the stub
+    // fills is cleared by its render (and by the first-run branch for the last two).
+    for (const [fn, host] of [["renderFigures", "figuresHost"], ["renderSplits", "splitsHost"],
+      ["renderFixNext", "fixHost"]]) {
+      const body = SRC.slice(SRC.indexOf("function " + fn + "("));
+      expect(body.slice(0, 400), fn).toContain("clear(" + host + ")");
+    }
   });
 });

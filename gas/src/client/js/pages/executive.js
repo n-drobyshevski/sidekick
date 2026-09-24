@@ -51,11 +51,12 @@
 
 import { bootstrap, swrParts } from "../../../../../gas_shared/store.js";
 import {
-  briefDelta, briefFigure, briefFigures, briefList, briefSplit, briefSplits, briefStatus,
+  briefDelta, briefFigure, briefFigures, briefList, briefSkeleton, briefSplit, briefSplits,
+  briefStatus,
   clear, collapsibleSection, dataTable, disclosure, dotGrid, el, motionOk, emptyState, errorState,
   fmtCount, fmtDate, fmtDateTime, fmtDays, fmtSpan, foldTail, num, pageHeader,
   pluralize, relativeAge, ringMark,
-  scopeBar, sectionLabel, skeleton, slopeMark, statusPill, tipLabel, unitSquares,
+  scopeBar, sectionLabel, slopeMark, statusPill, tipLabel, unitSquares,
   FINE_UNITS, unitRow, unitScale,
   absent, days1,
   absentText, pct1,
@@ -975,16 +976,17 @@ export async function renderExecutive(main, _params, ctx) {
   );
 
   // THE BRIEFING (2026-09-24, DESIGN.md §6a). The page is four headline figures, two splits
-  // and a three-row list, read at a glance — every figure carrying a small picture of its own
+  // and the ranked list, read at a glance — every figure carrying a small picture of its own
   // claim (gas_shared/ui/briefing.js). The honesty rules did not move: a lower bound still
-  // says "at least", an unread ledger still says "Not measured", every picture repeats a
-  // figure printed beside it, and the full ranked list — with its cap and exposure caveats
-  // folded in beside it — is still the last block on the page, shut until opened.
+  // says "at least", an unread ledger still says "Not measured", and every picture repeats a
+  // figure printed beside it. The ranked list is ONE block, Fix next, last on the page: shut,
+  // it shows its top three; opened, the full list — with its cap and exposure caveats folded
+  // in beside it — replaces them in place. (It was a "Fix first" preview above a separate,
+  // folded Fix next: the same groups twice, under two names.)
   const statusHost = el("div", {});
   const noticeHost = el("div", {});
   const figuresHost = el("div", {});
   const splitsHost = el("div", {});
-  const topHost = el("div", {});
   // LAST ON THE PAGE, AND SHUT: the worklist, for a different reader on a different errand.
   // `fixOpen` outlives the paint — swrCall paints twice on a warm cache, so a section whose
   // open state lived on the node would snap shut under a reader who had just expanded it.
@@ -997,7 +999,7 @@ export async function renderExecutive(main, _params, ctx) {
   if (scopeChips) main.append(scopeChips);
   const brief = el("div", { class: "brief" });
   main.append(brief);
-  brief.append(statusHost, noticeHost, figuresHost, splitsHost, topHost, fixHost);
+  brief.append(statusHost, noticeHost, figuresHost, splitsHost, fixHost);
 
   // This is the default landing page, so a single failing section must never blank the whole
   // view. Each section renders inside a guard: on error it logs a tagged trace and drops an
@@ -1012,11 +1014,12 @@ export async function renderExecutive(main, _params, ctx) {
     }
   }
 
-  clear(figuresHost).append(
-    el("div", { role: "status", "aria-label": "Computing the headline figures" },
-      skeleton("line", { width: "220px" }),
-      skeleton("stat", { width: "260px", height: "56px" })),
-  );
+  // Stubs in the briefing's own grid, so nothing jumps when the parts land. Each render
+  // clears its host first; the first-run branch clears the splits and the list.
+  const stub = briefSkeleton();
+  clear(figuresHost).append(stub.figures);
+  clear(splitsHost).append(stub.splits);
+  clear(fixHost).append(stub.list);
   guard("the scan status", statusHost, renderStatus);
 
   paint = (payload) => {
@@ -1027,12 +1030,10 @@ export async function renderExecutive(main, _params, ctx) {
     // what each of these waits on.
     if (first.show) {
       clear(splitsHost);
-      clear(topHost);
       clear(fixHost);
       return;
     }
     guard("the splits", splitsHost, () => renderSplits(payload));
-    guard("the fix-first list", topHost, () => renderTop(payload));
     guard("the fix-next list", fixHost, () => renderFixNext(payload));
   };
 
@@ -1389,28 +1390,7 @@ export async function renderExecutive(main, _params, ctx) {
     return t.charAt(0) + t.slice(1).toLowerCase();
   }
 
-  // --------------------------------------------------------------------- fix first
-
-  /** The first three ranked groups, and the way into the full list below. */
-  function renderTop(payload) {
-    clear(topHost);
-    const view = fixNextView(payload, boot);
-    if (!view.show || view.empty) return;
-    topHost.append(briefList({
-      label: "Fix first",
-      action: fixButton("All " + fmtCount(view.items.length) + " "
-        + pluralize(view.items.length, "group") + " · " + view.rankedShort),
-      rows: view.items.slice(0, 3).map((r) => ({
-        tone: "t" + Math.min(Math.max(r.tier, 1), 3),
-        primary: r.ownerText,
-        secondary: r.tierLabel,
-        figure: fmtCount(r.count) + " open",
-        meta: r.oldestDays === null ? "" : fmtDays(r.oldestDays),
-        href: r.href,
-        aria: r.tierLabel + " — " + r.ownerText + ", " + r.meta + ". " + r.linkLabel,
-      })),
-    }));
-  }
+  // ------------------------------------------------------------------------ fix next
 
   /** Opens the folded Fix next section and brings it into view. */
   function fixButton(text) {
@@ -1439,6 +1419,10 @@ export async function renderExecutive(main, _params, ctx) {
    * EVERY ROW CARRIES ITS UNITS. "7" is not a figure; "7 open findings" is. A group whose
    * rows have no readable age, no CVE and no single domain simply says less, rather than
    * printing a dash where each of those would have gone.
+   *
+   * SHUT, IT PREVIEWS; OPEN, IT LISTS. The shut section shows its top three rows (the
+   * briefing's `briefList`) under the heading, and opening it swaps them for the full table,
+   * so the same groups are never on screen twice.
    *
    * COLLAPSIBLE, AND SHUT UNTIL A READER OPENS IT. This is the page's one WORKLIST — a
    * different reader on a different errand from the leader the hero is written for — and it
@@ -1487,9 +1471,11 @@ export async function renderExecutive(main, _params, ctx) {
       open: fixOpen,
       // Per reader, across visits — the flag above only survives this page's own repaints.
       remember: "execFixNext",
-      onToggle: (o) => { fixOpen = o; },
+      onToggle: (o) => { fixOpen = o; preview.hidden = o; },
     });
-    fixHost.append(section.node);
+    const preview = previewOf(view);
+    preview.hidden = section.node.open;
+    fixHost.append(section.node, preview);
     const fix = section.body;
 
     if (view.empty) {
@@ -1591,5 +1577,28 @@ export async function renderExecutive(main, _params, ctx) {
     }
     // `view.linkNote` ITSELF IS UNCHANGED AND STILL ON THE VIEW MODEL — only the render moved,
     // onto the heading's own tip above. See that append for why.
+  }
+
+  /** The shut section's top three rows, and the way into the rest. Empty when nothing ranked. */
+  function previewOf(view) {
+    const preview = el("div", { class: "brief-fix__preview" });
+    if (view.empty) return preview;
+    preview.append(briefList({
+      label: null,
+      rows: view.items.slice(0, 3).map((r) => ({
+        tone: "t" + Math.min(Math.max(r.tier, 1), 3),
+        primary: r.ownerText,
+        secondary: r.tierLabel,
+        figure: fmtCount(r.count) + " open",
+        meta: r.oldestDays === null ? "" : fmtDays(r.oldestDays),
+        href: r.href,
+        aria: r.tierLabel + " — " + r.ownerText + ", " + r.meta + ". " + r.linkLabel,
+      })),
+    }));
+    if (view.items.length > 3) {
+      preview.append(fixButton("All " + fmtCount(view.items.length) + " "
+        + pluralize(view.items.length, "group")));
+    }
+    return preview;
   }
 }

@@ -127,4 +127,6 @@
   .brief-list__figure { grid-column: 3; grid-row: 1 / span 2; }
   .brief-list__mark { grid-row: 1 / span 2; }
   .brief-list__meta { display: none; }
+  .brief-skel__row { grid-template-columns: 10px minmax(0, 1fr) 64px; }
+  .brief-skel__row > :nth-child(3), .brief-skel__row > :nth-child(4), .brief-skel__row > :nth-child(6) { display: none; }
 }

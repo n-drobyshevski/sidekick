@@ -17,6 +17,7 @@
 // part to nothing, a split that refuses a zero total — are testable in node.
 
 import { el } from "./dom.js";
+import { skeleton } from "./feedback.js";
 import { svgEl } from "../icons.js";
 import { figureCardModel, fmtCount, num } from "./figures.js";
 import { tipLabel } from "./tip.js";
@@ -231,6 +232,34 @@ export function briefFigure(f) {
     f.action || null);
 }
 
+/**
+ * The briefing's loading stubs, drawn IN ITS OWN GRID: four figure columns with their rules,
+ * two splits with a track, a ranked list's rows. The stub is the layout — a stub shaped like
+ * some other page makes the real content jump when it lands. Everything is `aria-hidden`
+ * (`skeleton()`); the figures stub carries the one `role="status"` a screen reader hears.
+ */
+export function briefSkeleton() {
+  const line = (width, height) => skeleton("line", { width, height });
+  const figures = el("div", { class: "brief-figures brief-skel", role: "status",
+    "aria-label": "Computing the headline figures" },
+    ...[0, 1, 2, 3].map((i) => el("div", { class: "brief-fig" },
+      line(i % 2 ? "72px" : "96px"),
+      skeleton("stat", { width: i % 2 ? "150px" : "110px", height: "52px", radius: "8px" }),
+      skeleton("", { width: "70%", height: "56px" }),
+      line("88%"), line("56%"))));
+  const splits = el("div", { class: "brief-splits brief-skel" },
+    ...[0, 1].map(() => el("div", { class: "brief-split" },
+      line("96px"), skeleton("", { height: "28px", radius: "4px" }),
+      el("div", { class: "brief-skel__keys" }, ...[0, 1, 2, 3].map(() => line("48px"))),
+      line("40%"))));
+  const list = el("div", { class: "brief-skel" },
+    line("120px", "16px"),
+    el("div", { class: "brief-skel__rows" }, ...[0, 1, 2].map((i) => el("div", { class: "brief-skel__row" },
+      skeleton("", { width: "10px", height: "10px", radius: "3px" }),
+      line(["180px", "220px", "160px"][i]), line("140px"), el("span", {}), line("64px"), line("72px")))));
+  return { figures, splits, list };
+}
+
 /** The row the four figures sit in. */
 export function briefFigures(...figures) {
   return el("div", { class: "brief-figures" }, ...figures.flat());
@@ -281,7 +310,10 @@ export function briefSplits(...splits) {
 /**
  * A short ranked list: tone mark, primary, secondary, a figure, a meta figure.
  *
- * @param {{label: Node|string, action?: Node|null, rows: Array<{tone: string, primary: string,
+ * `label: null` draws no head — for a list that sits under a heading of its own, such as the
+ * Executive page's Fix next preview under its collapsible section's summary.
+ *
+ * @param {{label: Node|string|null, action?: Node|null, rows: Array<{tone: string, primary: string,
  *          secondary?: string|null, figure?: string|null, meta?: string|null,
  *          href?: string|null, aria?: string|null}>}} l
  */
@@ -300,9 +332,11 @@ export function briefList(l) {
           ? el("a", { class: "brief-list__row", href: r.href, "aria-label": r.aria || null }, ...inner)
           : el("div", { class: "brief-list__row" }, ...inner));
     }));
-  return el("section", { class: "brief-list" },
-    el("div", { class: "brief-list__head" }, el("h2", { class: "brief-label" }, l.label), l.action || null),
-    list);
+  const head = l.label || l.action
+    ? el("div", { class: "brief-list__head" },
+      l.label ? el("h2", { class: "brief-label" }, l.label) : null, l.action || null)
+    : null;
+  return el("section", { class: "brief-list" }, head, list);
 }
 
 /**

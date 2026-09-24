@@ -132,8 +132,8 @@ export { sparkLabel, sparkPath, sparkline } from "./sparkline.js";
 export { rowDrag, ruleGrip } from "./rowReorder.js";
 export { splitBar } from "./splitBar.js";
 export {
-  briefDelta, briefFigure, briefFigures, briefList, briefSplit, briefSplits, briefStatus,
-  dotGrid, dotGridModel, foldTail, ringMark, ringModel, shareTrack, slopeMark, slopeModel,
+  briefDelta, briefFigure, briefFigures, briefList, briefSkeleton, briefSplit, briefSplits,
+  briefStatus, dotGrid, dotGridModel, foldTail, ringMark, ringModel, shareTrack, slopeMark, slopeModel,
   splitModel, unitSquares,
 } from "./briefing.js";
 export { bandBar, bandBarModel } from "./bandBar.js";

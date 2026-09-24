@@ -205,7 +205,7 @@ which carry the count, hosts, leading CVE, age and domain that its shorter list 
 ### 6a. The briefing (2026-09-24) — supersedes the stack above
 
 The front door is now read at a glance rather than top to bottom: a status line, four
-headline figures, two splits, a three-row preview, and the folded worklist. The primitives are
+headline figures, two splits, and the folded worklist showing its top three. The primitives are
 shared (`gas_shared/ui/briefing.js`, styles in `components.css`, phone rules in
 `overrides.css`), so `gas_devsecops` draws the same shape.
 
@@ -215,7 +215,7 @@ shared (`gas_shared/ui/briefing.js`, styles in `components.css`, phone rules in
 | Severity strip / movement rows | **By severity** split, each part carrying its week-on-week change |
 | MTTR-by-domain table | **By domain** split (top four + "N others"); the KM medians that reached half ride in its foot |
 | Last-scan section | The status line under the title; amber, with the age in words, past seven days |
-| Fix next (shut, last) | Unchanged and still last and shut; a **Fix first** preview of its top three sits above it, and "All N groups" opens it |
+| Fix next (shut, last) | Still last and shut, and one block: shut, it shows its top three rows under the heading; opened (the heading, "All N groups" or Act now's "Fix next →"), the full table replaces them in place. A separate **Fix first** preview above it drew the same groups twice and is gone |
 
 **What did not move.** Every picture is DOM or SVG (no canvas, no Chart.js) and every one
 repeats a figure printed beside it in its `role="img"` name. The half-life still says "at
@@ -223,7 +223,7 @@ least" for a lower bound and "Not measured" for an unread ledger. The cold zone 
 denominator sentence — `briefFigure` carries `figureCard`'s `denominator` contract (tip +
 `data-denominator`). The population line, the by-asset cap note and the Fix next caveats stay
 on the surface. The first-run branch still suppresses every counted figure (`actFigure`,
-`coldFigure`) and clears the splits, the preview and the worklist.
+`coldFigure`) and clears the splits and the worklist.
 
 **It loads in parallel.** The page asks `api_getExecutivePage` for four parts at once:
 `mttr`, `insights`, `coldZone` and `byDomain`. It uses `swrParts` in `gas_shared/store.js`.
