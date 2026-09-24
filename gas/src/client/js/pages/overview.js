@@ -29,6 +29,7 @@ import {
   provenance, readRegisterParams, registerFirstRunView, registerParamPatch,
 } from "./registerModel.js";
 import { findingRowLabel, openFindingSheet } from "./findingSheet.js";
+import { wizLinkColumn } from "../../../../../gas_shared/ui/wizLinks.js";
 import { rateCell } from "./_rates.js";
 import { meterPctFor, rateView } from "./mttr.js";
 // THE PRESENT/UNOBSERVED SPLIT IS IMPORTED, NOT REPEATED — shared with `pages/executive.js`
@@ -1419,6 +1420,9 @@ export async function renderOverview(main, params, ctx) {
         ] },
         cell: (r) => PROVENANCE_LABEL[provenance(r)],
       },
+      // Wiz's own link to the finding, in a new tab — the register reads, Wiz is where a
+      // finding is acted on. Nothing drawn where the ledger holds no link (ui/wizLinks.js).
+      wizLinkColumn((r) => r.cve),
     ];
   }
 

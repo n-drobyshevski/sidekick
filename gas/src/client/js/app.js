@@ -25,6 +25,8 @@ import {
 } from "./ui.js";
 import { LANE_ICONS, ROUTE_ICONS, RUN_ICON } from "./routeIcons.js";
 import { PAGES } from "./pages.js";
+import { pagesFor } from "./scopedRoutes.js";
+import { scopeBadge } from "../../../../gas_shared/ui/scopedPages.js";
 import { findEntry } from "./helpContent.js";
 import { loadCharts } from "./chartsLoader.js";
 
@@ -206,6 +208,8 @@ function clearScope(kind) {
  */
 function appbarScope(data) {
   bootData = data;
+  // A scoped viewer's scope is not theirs to switch: a locked badge instead of the control.
+  if (data && data.role === "scoped") return scopeBadge(data);
   const kinds = scopeKinds(data);
   const chrome = scopeChrome(data);
   return scopeControl(
@@ -254,6 +258,9 @@ let scanDetails = null; // open scan-details drawer handle, kept live by the pol
  * ("Not in this register — showing 0 of N", scopeSwitchView).
  */
 function renderScanZone(data) {
+  // No scan controls, job card or rail status for a scoped viewer — none of it is theirs, and
+  // the server refuses them every one of those endpoints anyway.
+  if (data && data.role === "scoped") return null;
   const zone = el("div",
     { class: `scan-zone${activeDomain || activeSupportGroup ? " filtering" : ""}` });
   const runBtn = el("button", { class: "primary", onclick: () => startScan(false, runBtn) },
@@ -504,6 +511,8 @@ function stopWatch() {
 // route has settled, and only when the browser is idle. `loadCharts` is memoized, so any chart
 // route opened afterwards awaits this same request instead of starting its own.
 function prefetchCharts() {
+  // The scoped shell draws no Chart.js chart, and the bundle's RPC is outside its fence.
+  if (bootData && bootData.role === "scoped") return;
   const go = () => { loadCharts().catch(() => {}); }; // a refusal is cached, shown where charts draw
   if (typeof window.requestIdleCallback === "function") window.requestIdleCallback(go, { timeout: 3000 });
   else setTimeout(go, 1000);
@@ -512,6 +521,8 @@ function prefetchCharts() {
 const shell = createAppShell({
   pages: PAGES,
   routeAliases: ROUTE_ALIASES,
+  // The scoped viewer's two-page table (scopedRoutes.js) when the boot payload says so.
+  pagesFor,
   appbarScope,
   railFooter: renderScanZone,
   // The panel asks the shell what it holds each time it opens. Nothing yet — see the

@@ -53,7 +53,8 @@ import {
 import {
   inProject, parseProjects, type projectCatalogue,
 } from "../domain/projectScope";
-import type { domainCatalogue } from "../domain/domainScope";
+import { inDomain, type DomainCarrier, type domainCatalogue } from "../domain/domainScope";
+import { SEVERITY_ORDER } from "../domain/config";
 import * as repoTags from "./repoTags";
 import * as settingsImpact from "../domain/settingsImpact";
 import type { Rec } from "../domain/util";
@@ -78,6 +79,7 @@ import { TAB_HEADERS, TABS } from "./sheetsDb";
 import * as bootCore from "./bootCore";
 import { stageLaps } from "./stageLog";
 import * as access from "./access";
+import { rosterRows, serializeScoped, validateScoped } from "../../../gas_shared/domain/scopedAccess";
 import { canEditUsers } from "./access";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
 import { activeJob, getJob, isStaleJob, isTerminalPhase, listJobs, type JobRow } from "./jobsStore";
@@ -301,6 +303,10 @@ export interface Bootstrap {
  * as `{"stage":"bootCore",…}` when it is actually computed. test/api.test.ts pins both.
  */
 export function bootstrap(_p?: unknown): ApiResult<Bootstrap> {
+  // A SCOPED VIEWER NEVER RECEIVES THE CORE: it carries every project's and every domain's
+  // name and count and the settings, none of which are theirs. See `scopedBoot`.
+  const viewer = access.enforcedScope();
+  if (viewer) return run(() => scopedBoot(viewer, readModels.scopeSummaryModel(viewer)) as unknown as Bootstrap);
   return run(() => {
     const laps = stageLaps("bootstrap");
     const core = bootCore.bootCoreModel();
@@ -324,6 +330,11 @@ export function bootstrap(_p?: unknown): ApiResult<Bootstrap> {
  * (esbuild.config.mjs `NOT_RPCS`, test/entryPoints.test.js).
  */
 export function bootstrapIfWarm(): ApiResult<Bootstrap> {
+  // The scoped boot is small and live apart from its summary, and the summary's warm entry is
+  // a durable file: not worth a second peek path. The client asks over `api_bootstrap`.
+  if (access.enforcedScope()) {
+    return { ok: false, error: "scoped bootstrap is not inlined", errorKind: "cold" };
+  }
   const t0 = Date.now();
   const core = bootCore.peekBootCore();
   const t1 = Date.now();
@@ -396,6 +407,128 @@ export function testWizConnection(
  * the current value alone, which says who has access and nothing about who let them in or
  * when.
  */
+// --------------------------------------------------------------------------------------- //
+//  Scoped viewers
+// --------------------------------------------------------------------------------------- //
+//
+// The reduced, read-only shell (see access.ts, "the scoped tier"): one small boot carrying
+// the summary, the findings list per register, and CSV. Every endpoint FORCES the viewer's
+// scope from `access.enforcedScope()`; a scope a request carries is honoured only for a FULL
+// user, where it can only narrow what they could already see — the Settings → Access preview.
+
+/** The viewer scope a request carries, sanitized; null when none. */
+function readViewerScope(p: unknown): readModels.ViewerScope | null {
+  const raw = ((p ?? {}) as Rec)["viewerScope"];
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Rec;
+  const list = (v: unknown) => (Array.isArray(v) ? (v as unknown[]).map(String).filter(Boolean) : []);
+  const out = { domains: list(r["domains"]), projects: list(r["projects"]) };
+  return out.domains.length || out.projects.length ? out : null;
+}
+
+/** The scope this request is answered at: the viewer's own, else a full user's preview. */
+function viewerFor(p: unknown): readModels.ViewerScope | null {
+  return access.enforcedScope() ?? readViewerScope(p);
+}
+
+function scopedBoot(viewer: readModels.ViewerScope, summary: Rec): Rec {
+  return {
+    role: "scoped",
+    product: access.PRODUCT,
+    buildId: BUILD_ID,
+    scope: viewer,
+    severityOrder: SEVERITY_ORDER,
+    hubUrl: readHubUrl(),
+    summary,
+  };
+}
+
+/** The summary for the caller's scope, or — for a full user — the scope the request names. */
+export function getScopeSummary(p?: unknown): ApiResult {
+  return run(() => {
+    const viewer = viewerFor(p);
+    if (!viewer) throw new Error("No scope to summarize — pick at least one domain or project.");
+    return readModels.scopeSummaryModel(viewer);
+  });
+}
+
+function scopedRosterRows(): Rec[] {
+  return rosterRows(access.currentScoped()).map((r) => ({
+    email: r.email,
+    scope: access.toViewerScope(r.scope),
+  }));
+}
+
+/**
+ * The picker's vocabulary off the cached boot core — domains by name, projects by slug with
+ * their name as the label — so opening the Access tab costs no ledger pass. Best-effort: a
+ * core that cannot be built costs the picker its suggestions, never the roster.
+ */
+function scopeCatalogue(): Rec | null {
+  try {
+    const core = bootCore.bootCoreModel() as unknown as Rec;
+    const fo = (core["filterOptions"] ?? {}) as Rec;
+    const domains = (Array.isArray(fo["domainList"]) ? fo["domainList"] : []) as Rec[];
+    const projects = (Array.isArray(fo["projectList"]) ? fo["projectList"] : []) as Rec[];
+    return {
+      dims: [
+        {
+          key: "d", label: "Domains",
+          options: domains.map((d) => ({ value: String(d["name"]), count: Number(d["findings"] ?? 0) })),
+        },
+        {
+          key: "p", label: "Projects",
+          options: projects.map((x) => ({
+            value: String(x["slug"]), label: String(x["name"] ?? x["slug"]),
+            count: Number(x["findings"] ?? 0),
+          })),
+        },
+      ],
+    };
+  } catch (e) {
+    console.warn(`Scope catalogue unavailable: ${e}`);
+    return null;
+  }
+}
+
+/**
+ * Replace the scoped-viewer roster. Owner or admin. Refuses the owner and admins, and moves
+ * anyone added here out of ALLOWED_USERS in the same save — the tiers are exclusive, and the
+ * narrower grant would win anyway (access.ts `decide`).
+ */
+export function saveScoped(p?: unknown): ApiResult {
+  return run(() => {
+    if (!access.canEditUsers()) throw new Error("Only the owner or an admin can change access.");
+    const raw = ((p ?? {}) as Rec)["scoped"];
+    const entries = (Array.isArray(raw) ? raw : []).map((e) => {
+      const r = (e ?? {}) as Rec;
+      const scope = (r["scope"] ?? {}) as Rec;
+      const list = (v: unknown) => (Array.isArray(v) ? (v as unknown[]).map(String) : []);
+      return {
+        email: r["email"],
+        scope: access.fromViewerScope({ domains: list(scope["domains"]), projects: list(scope["projects"]) }),
+      };
+    });
+    const roster = validateScoped(entries, access.SCOPE_DIMS);
+    const owner = access.ownerEmail().trim().toLowerCase();
+    const admins = access.currentAdmins();
+    const refused = Object.keys(roster).filter((e) => e === owner || admins.indexOf(e) >= 0);
+    if (refused.length) {
+      throw new Error(`The owner and admins always have full access: ${refused.join(", ")}`);
+    }
+    const before = Object.keys(access.currentScoped());
+    setProp(PROP_KEYS.scopedUsers, serializeScoped(roster));
+    logAccessChange("scoped", access.check().email, before, Object.keys(roster));
+    const users = access.currentUsers();
+    const kept = users.filter((e) => !roster[e]);
+    if (kept.length !== users.length) {
+      setProp(PROP_KEYS.allowedUsers, kept.join(", "));
+      logAccessChange("users", access.check().email, users, kept);
+    }
+    return { scoped: scopedRosterRows(), users: kept };
+  });
+}
+
 function logAccessChange(what: string, actor: string, before: string[], after: string[]): void {
   const added = after.filter((e) => before.indexOf(e) < 0);
   const removed = before.filter((e) => after.indexOf(e) < 0);
@@ -420,6 +553,8 @@ export function getAccess(_p?: unknown): ApiResult<Record<string, unknown>> {
       domain: access.ownerDomain(),
       users: access.currentUsers(),
       admins: access.currentAdmins(),
+      scoped: scopedRosterRows(),
+      catalogue: scopeCatalogue(),
     };
   });
 }
@@ -443,6 +578,14 @@ export function saveAccess(p?: { users?: unknown }): ApiResult<{ users: string[]
     const withOwner = owner && list.indexOf(owner) < 0 ? [owner].concat(list) : list;
     setProp(PROP_KEYS.allowedUsers, withOwner.join(", "));
     logAccessChange("users", access.check().email, before, withOwner);
+    // THE TIERS ARE EXCLUSIVE: granting full access un-scopes the person in the same save.
+    const roster = access.currentScoped();
+    const moved = withOwner.filter((e) => roster[e]);
+    if (moved.length) {
+      for (const e of moved) delete roster[e];
+      setProp(PROP_KEYS.scopedUsers, serializeScoped(roster));
+      logAccessChange("scoped", access.check().email, moved, []);
+    }
     return { users: withOwner };
   });
 }
@@ -842,6 +985,8 @@ export function getRegisterRows(p?: unknown): ApiResult {
     const r = (p ?? {}) as Rec;
     const params: readModels.RowPageParams = {
       ...modelParams(p),
+      // Forced for a scoped viewer, whatever the request said; a full user's own preview.
+      viewerScope: viewerFor(p),
       page: r["page"],
       pageSize: r["pageSize"],
       sort: r["sort"],
@@ -852,8 +997,12 @@ export function getRegisterRows(p?: unknown): ApiResult {
       // cannot bite on secrets. Vetting here as well would put that rule in two files.
       validation: r["validation"],
       confidence: r["confidence"],
+      groupBy: r["groupBy"],
+      groupValue: r["groupValue"],
     };
     const model = readModels.registerRowsModel(scope, params);
+    // A groups answer carries no rows — and the groups' `raw` is one categorical cell value.
+    if (Array.isArray(model["groups"])) return model;
     return { ...model, rows: registerRowsSlice(model["rows"], scope) };
   });
 }
@@ -1174,15 +1323,26 @@ export function getExportCsv(p?: unknown): ApiResult {
     const statuses = Array.isArray(statusRaw) && statusRaw.length
       ? new Set(statusRaw.map((s) => String(s).toUpperCase()))
       : null;
-    const projectView = loadSettings().projectView || null;
+    const settings = loadSettings();
+    const viewer = viewerFor(p);
+    // A viewer scope REPLACES the header's global views, exactly as in readModels.norm().
+    const projectView = viewer ? null : settings.projectView || null;
+    const domainView = viewer ? null : settings.domainView || null;
 
-    const rows = (ledgerStore.loadBaseRows(scope ? { scope } : {}) as unknown as Rec[])
+    const base = ledgerStore.loadBaseRows(scope ? { scope } : {}) as unknown as Rec[];
+    // `_domain` is resolved on read and never stored, so the domain filters need the join.
+    if (viewer || domainView) repoTags.attachRepoTags(base);
+    const rows = base
       .filter((r) => !severities || severities.has(normalizeSeverity(r["severity"])))
       .filter((r) => !statuses || statuses.has(String(r["status"] ?? "").toUpperCase()))
       .filter((r) =>
         !projectView
         || inProject(parseProjects(r["projects_json"] as string | null | undefined), projectView),
-      );
+      )
+      // The header's DOMAIN view used to be ignored here, so an export taken under a domain
+      // scope handed back the whole register. Same `inDomain` every page filters through.
+      .filter((r) => !domainView || inDomain(r as DomainCarrier, domainView))
+      .filter((r) => !viewer || inViewerScope(r, viewer));
 
     const cols = TAB_HEADERS[TABS.ledger] ?? [];
     const lines = [cols.join(",")];
@@ -1194,8 +1354,19 @@ export function getExportCsv(p?: unknown): ApiResult {
       columns: cols.length,
       scope,
       projectView,
+      domainView,
     };
   });
+}
+
+/** CSV-side twin of readModels' `inViewer`, over a raw row carrying `_domain`. */
+function inViewerScope(r: Rec, v: readModels.ViewerScope): boolean {
+  for (const d of v.domains) if (inDomain(r as DomainCarrier, d)) return true;
+  if (v.projects.length) {
+    const projects = parseProjects(r["projects_json"] as string | null | undefined);
+    for (const x of v.projects) if (inProject(projects, x)) return true;
+  }
+  return false;
 }
 
 /**

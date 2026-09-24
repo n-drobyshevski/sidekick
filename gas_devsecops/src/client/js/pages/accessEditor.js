@@ -6,7 +6,7 @@
 // is the common case, because the roster is not offered to people who cannot edit it.
 //
 // A third list sits under them: SCOPED VIEWERS, who see only a summary and the findings of
-// their own domains / support groups (gas_shared/ui/scopedAccessEditor.js). It saves on its
+// their own domains / projects (gas_shared/ui/scopedAccessEditor.js). It saves on its
 // own button because it has its own endpoint and its own confirmation.
 //
 // Two tiers, and the difference between them is the whole point: the owner may promote admins,
@@ -186,7 +186,7 @@ export async function renderAccessPanel() {
   // list above is redrawn from what the server says it now holds.
   const scopedBlock = scopedAccessSection({
     info,
-    dims: ["d", "g"],
+    dims: ["d", "p"],
     onSaved: (fresh) => {
       users = (fresh.users || []).filter((e) => e !== owner);
       savedUsers = users.join(",");

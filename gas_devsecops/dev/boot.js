@@ -92,6 +92,25 @@
     console.log(`[dev] Hub URL seeded: ${HUB_URL} (cd gas_hub && npm run dev) — ?nohub to unset.`);
   }
 
+  // ?scoped[=<project slug>] opens the app as a SCOPED VIEWER (viewer@example.com), limited to
+  // that project (default ce-transport) — the reduced two-page shell, exactly as
+  // server/access.ts decides it. Set BEFORE anything asks access.check(): the decision is
+  // memoized for the life of the module, which in GAS is one request but here is the page.
+  // The RPC shim below applies the same `denyResult` fence dist/entry.js does in this mode.
+  const SCOPED_AS = new URLSearchParams(location.search).get("scoped");
+  if (SCOPED_AS !== null) {
+    // `?scoped=d:<domain>` scopes by business domain instead of project.
+    const project = SCOPED_AS || "ce-transport";
+    const scope = project.indexOf("d:") === 0 ? { d: [project.slice(2)] } : { p: [project] };
+    PropertiesService.getScriptProperties().setProperty("SCOPED_USERS",
+      JSON.stringify({ "viewer@example.com": scope }));
+    window.Session = {
+      getActiveUser: () => ({ getEmail: () => "viewer@example.com" }),
+      getEffectiveUser: () => ({ getEmail: () => "dev@example.com" }),
+    };
+    console.log("[dev] ?scoped — signed in as viewer@example.com, scoped to project " + project);
+  }
+
   console.log("[dev] " + Server.setup().split("\n").join("\n[dev] "));
 
   // ?noseed: skip seeding outright, so the empty-state rendering stays reachable and
@@ -290,7 +309,11 @@
           setTimeout(() => {
             try {
               let result;
-              if (prop.startsWith("api_") && typeof Server.api[prop.slice(4)] === "function") {
+              const denied = SCOPED_AS !== null && prop.startsWith("api_")
+                ? Server.access.denyResult(prop.slice(4)) : null;
+              if (denied) {
+                result = denied;
+              } else if (prop.startsWith("api_") && typeof Server.api[prop.slice(4)] === "function") {
                 result = Server.api[prop.slice(4)](params);
                 // The one RPC the harness remembers across a reload — see the scope block
                 // above for why it is remembered HERE, at the platform seam, rather than by

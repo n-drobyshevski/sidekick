@@ -990,6 +990,97 @@ just nothing in the DOM. Every successful change writes one Stackdriver line nam
 and the addresses added and removed; a delegated grant power with no record of who used it is
 what makes a feature like this regrettable later.
 
+### Scoped viewers: one domain or team, and a smaller app
+
+A third kind of access, for someone who should see **their own slice** of the register and
+nothing else — a domain owner, a support-group lead. They are listed in the
+`SCOPED_USERS` Script Property, as JSON:
+
+```json
+{"lead@example.com": {"d": ["Payments"], "g": ["CS-CORE"]}}
+```
+
+`d` holds business domains (the resolved `_domain`, tag first), and `g` holds support groups.
+A viewer sees the **union** of every value. The owner and admins edit this list under
+**Settings → Access → Scoped viewers**. The editor offers:
+
+- a searchable picker of every domain and team, each with its open count;
+- a per-viewer reach figure;
+- a **Preview**, which shows the viewer's own summary before you save;
+- a warning chip on any value that no longer exists in the data. The value is kept, not
+  dropped.
+
+|                                     | Opens the app | Sees                                                              |
+| ----------------------------------- | ------------- | ----------------------------------------------------------------- |
+| **Scoped** (in `SCOPED_USERS`)      | yes           | **My scope** (MTTR, open / past-SLA / awaiting-fix, severity split, trend) and **My findings** (read-only, paged, CSV). Nothing else. |
+
+What keeps them in their slice:
+
+- **The fence is on the server.** `access.denyResult` refuses a scoped caller every RPC
+  outside `SCOPED_RPCS`. The only calls let through are `bootstrap`, `getScopeSummary`,
+  `getRegisterRows` and `getExportCsv`. Settings, scans, purges, imports and every
+  register-wide read answer `forbidden`.
+- **The scope is forced, never trusted.** Inside the fence, every endpoint replaces the
+  request's domain, support group and viewer scope with the viewer's own
+  (`access.enforcedScope()`). A console call asking for someone else's domain, or for `""`
+  (the whole register), still gets their rows.
+- **They never receive the bootstrap core.** It carries every domain's name and count. A
+  scoped viewer gets the small `scopedBoot3` payload instead, with their summary inside it.
+- **Fail closed.** Unparseable JSON, a non-object, or an entry with an empty scope admits
+  nobody. Nothing is ever read as "scoped to everything".
+- **The narrower grant wins.** An address hand-edited onto both lists is treated as scoped.
+- **The lists are exclusive.** Saving someone as a scoped viewer removes them from
+  `ALLOWED_USERS`, and granting full access un-scopes them.
+- **The owner and admins cannot be scoped.**
+
+**MTTR by group.** Below the MTTR chart, the summary splits the headline three ways: by
+support group, by domain and by asset. Each group goes through the same Kaplan-Meier
+estimator as the headline: median ("≥" when it is only a lower bound), p90, open, fixed and
+past SLA. A bar compares each group's median with the slowest group. Groups are ranked by
+open backlog; each split keeps the top 20 and says what it left out.
+
+A split only appears when it splits something. A viewer scoped to a domain, or to several
+support groups, sees MTTR by support group; a viewer holding one support group does not,
+because that split would restate the headline. Computed server-side in `scopeSplits`, with
+the shared `buildSplit` in `gas_shared/domain/scopeSummary.ts`.
+
+**Why it opens fast.** Scoping still starts from the whole ledger, because there is no
+per-domain shard, so a *cold* scoped summary costs about what a cold MTTR page does. The
+scheduled warm (`warmScopedViews`) therefore precomputes each **distinct** scope set in
+`SCOPED_USERS` into the durable read-model layer. Ten viewers sharing a domain cost one
+compute. A viewer's first open is then one small cache read with no ledger load. Saving the
+roster schedules a warm for any new viewer. Cache namespaces: `scopedBoot3`,
+`scopeSummary3`. Register rows key on the viewer scope only when one is present, so no
+unscoped entry was orphaned.
+
+**The summary leads with MTTR.** The hero is the Kaplan-Meier median time to remediate, which
+reads "at least N days" when fewer than half are fixed. Beside it is MTTR per severity against
+each SLA target, with lower bounds where a median is not observable yet. Below it, MTTR over
+time is the page's one chart, and it is KM-only: it never falls back to the naive median.
+Open, past-SLA, closed-within-SLA and awaiting-fix are the secondary strip. **My findings** can
+be grouped by severity, asset, CVE, tier, support group, domain, subscription or fix
+availability. Grouping runs on the server over the whole filtered set (`groupBy` /
+`groupValue` on `getRegisterRows`, `gas_shared/domain/rowGroups.ts`), worst severity first.
+Each group expands into its own paged rows.
+
+### Links to Wiz
+
+Every place a finding is drawn now leads to Wiz (`gas_shared/ui/wizLinks.js`):
+
+- **Tables.** A **Wiz ↗** cell on each row opens the finding in the console, in a new tab.
+  It is Wiz's own `portalUrl`, stored as `portal_url` and re-checked by `safeWizUrl` at
+  render time.
+- **Finding sheet.** **Open in Wiz** is the sheet's primary action. A **Wiz CVE page** row
+  links the CVE to Wiz's public vulnerability database, which covers exploit status and
+  mitigation.
+- **CVE groups.** When the findings table is grouped by CVE, each group links to the same
+  database page.
+
+The register **never builds a console URL.** The console's filtered-view links use an
+undocumented hash format, and a link that silently opens the wrong view is worse than none.
+A row with no stored link draws no link rather than a dead one. The CVE page is built only
+from an id matching `CVE-YYYY-NNNN…`, onto a fixed public origin.
+
 ### The entry screen
 
 An allowed caller does not land straight in the dashboard. `welcome.gate()`

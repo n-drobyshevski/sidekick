@@ -71,6 +71,10 @@ export function railItems(pages, opts) {
       route: key,
       lane: page.group || null,
       pages: [entry],
+      // A route table outside PAGES (the scoped viewer's, via the shell's `pagesFor`) carries
+      // its marks on its own entries, because the manifest's ROUTE_ICONS is held to PAGES
+      // exactly by the navGroups contract. Only when present, so no PAGES item changes shape.
+      ...(page.icon ? { icon: page.icon } : {}),
     });
   }
   // A lane of one is that one page. Its `lane` is kept, because the rail still marks the lane

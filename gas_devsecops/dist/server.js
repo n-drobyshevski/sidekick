@@ -54,6 +54,7 @@ var Server = (() => {
     getRegisterRows: () => getRegisterRows,
     getReposPage: () => getReposPage,
     getScanHistory: () => getScanHistory,
+    getScopeSummary: () => getScopeSummary,
     getSecretsPage: () => getSecretsPage,
     getSettings: () => getSettings,
     getSettingsImpact: () => getSettingsImpact,
@@ -65,6 +66,7 @@ var Server = (() => {
     saveAccess: () => saveAccess,
     saveAdmins: () => saveAdmins,
     saveHubUrl: () => saveHubUrl,
+    saveScoped: () => saveScoped,
     setDomainView: () => setDomainView,
     setProjectView: () => setProjectView,
     testWizConnection: () => testWizConnection
@@ -2871,8 +2873,8 @@ var Server = (() => {
       if (ok) return merged;
     }
     if (coerced && typeof coerced === "object" && !Array.isArray(coerced)) {
-      const obj = coerced;
-      const data = obj["data"];
+      const obj2 = coerced;
+      const data = obj2["data"];
       if (data && typeof data === "object" && !Array.isArray(data)) {
         for (const v of Object.values(data)) {
           if (v && typeof v === "object" && !Array.isArray(v) && "nodes" in v) {
@@ -2880,7 +2882,7 @@ var Server = (() => {
           }
         }
       }
-      if ("nodes" in obj) return (_b = obj["nodes"]) != null ? _b : [];
+      if ("nodes" in obj2) return (_b = obj2["nodes"]) != null ? _b : [];
     }
     if (Array.isArray(coerced)) return coerced;
     return [coerced];
@@ -3429,6 +3431,35 @@ var Server = (() => {
     }
   }
 
+  // src/domain/domainScope.ts
+  var DOMAIN_FIELD = "_domain";
+  function domainOfRow(row) {
+    const v = row ? row._domain : null;
+    return typeof v === "string" ? v.trim() : "";
+  }
+  function domainCatalogue(rows) {
+    const byName = /* @__PURE__ */ new Map();
+    for (const row of rows) {
+      const name = domainOfRow(row);
+      if (!name) continue;
+      const seen = byName.get(name);
+      if (seen) seen.findings += 1;
+      else byName.set(name, { name, findings: 1 });
+    }
+    return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }
+  function inDomain(row, name) {
+    if (!name) return false;
+    return domainOfRow(row) === name;
+  }
+  function noDomainCount(rows) {
+    let count = 0;
+    for (const row of rows) {
+      if (!domainOfRow(row)) count += 1;
+    }
+    return count;
+  }
+
   // src/domain/domainTag.ts
   var DEFAULT_DOMAIN_TAG_KEY = "domain";
   function resolveDomainTagKey(configured) {
@@ -3508,35 +3539,6 @@ var Server = (() => {
     return tagValue(tags, key);
   }
 
-  // src/domain/domainScope.ts
-  var DOMAIN_FIELD = "_domain";
-  function domainOfRow(row) {
-    const v = row ? row._domain : null;
-    return typeof v === "string" ? v.trim() : "";
-  }
-  function domainCatalogue(rows) {
-    const byName = /* @__PURE__ */ new Map();
-    for (const row of rows) {
-      const name = domainOfRow(row);
-      if (!name) continue;
-      const seen = byName.get(name);
-      if (seen) seen.findings += 1;
-      else byName.set(name, { name, findings: 1 });
-    }
-    return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
-  }
-  function inDomain(row, name) {
-    if (!name) return false;
-    return domainOfRow(row) === name;
-  }
-  function noDomainCount(rows) {
-    let count = 0;
-    for (const row of rows) {
-      if (!domainOfRow(row)) count += 1;
-    }
-    return count;
-  }
-
   // src/domain/lifecycleTag.ts
   var DEFAULT_LIFECYCLE_TAG_KEY = "lifecycle";
   function resolveLifecycleTagKey(configured) {
@@ -3601,6 +3603,11 @@ var Server = (() => {
     // Unset means owner-only, like its sibling. Admins are allowed into the app by being admins,
     // not by also appearing in ALLOWED_USERS.
     allowedAdmins: "ALLOWED_ADMINS",
+    // Scoped viewers: people who may open the app but see only their own domains / projects,
+    // through a reduced read-only shell. JSON — `{"a@x.com":{"d":["Payments"],"p":["team-a"]}}`
+    // — owned by gas_shared/domain/scopedAccess.ts. Unset or unparseable means nobody, like the
+    // lists above. Edited by the owner or an admin from Settings → Access.
+    scopedUsers: "SCOPED_USERS",
     // The /exec URL of the hub launcher (gas_hub), pasted from its Deploy > Manage deployments,
     // or set from Settings > System. A PROPERTY RATHER THAN CODE for the platform's reason, not
     // a preference: `ScriptApp.getService().getUrl()` answers for this deployment only and there
@@ -5393,7 +5400,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "9e902149ed16" : "dev";
+  var BUILD_ID = true ? "dcd42cf16cc0" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
@@ -5793,8 +5800,8 @@ var Server = (() => {
         episodes: v2.episodes
       };
     }
-    const obj = parsed;
-    return looksLikeLedgerState(obj) ? obj : null;
+    const obj2 = parsed;
+    return looksLikeLedgerState(obj2) ? obj2 : null;
   }
   function backupFileName(jobId) {
     return `backup-${safeName(jobId)}.json.gz`;
@@ -5805,8 +5812,8 @@ var Server = (() => {
   function readBackup(jobId) {
     const parsed = readGzJson(subfolder("backups"), backupFileName(jobId));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    const obj = parsed;
-    return looksLikeLedgerState(obj) ? obj : null;
+    const obj2 = parsed;
+    return looksLikeLedgerState(obj2) ? obj2 : null;
   }
   function trashBackup(jobId) {
     trashNamed("backups", backupFileName(jobId));
@@ -6698,6 +6705,8 @@ var Server = (() => {
     ACCESS_MAX_BYTES: () => ACCESS_MAX_BYTES,
     ACCESS_MAX_ENTRIES: () => ACCESS_MAX_ENTRIES,
     PRODUCT: () => PRODUCT,
+    SCOPED_RPCS: () => SCOPED_RPCS,
+    SCOPE_DIMS: () => SCOPE_DIMS,
     __resetMemosForTest: () => __resetMemosForTest2,
     accountChooserUrl: () => accountChooserUrl,
     assertAllowed: () => assertAllowed,
@@ -6706,18 +6715,124 @@ var Server = (() => {
     check: () => check,
     contactMailto: () => contactMailto,
     currentAdmins: () => currentAdmins,
+    currentScoped: () => currentScoped,
     currentUsers: () => currentUsers,
     decide: () => decide,
     deniedHtml: () => deniedHtml,
     deniedPage: () => deniedPage,
     denyResult: () => denyResult,
+    enforcedScope: () => enforcedScope,
+    fromViewerScope: () => fromViewerScope,
     isOwner: () => isOwner,
     ownerDomain: () => ownerDomain,
     ownerEmail: () => ownerEmail,
     parseAllowlist: () => parseAllowlist,
     serviceUrl: () => serviceUrl,
+    toViewerScope: () => toViewerScope,
     validateAddresses: () => validateAddresses
   });
+
+  // ../gas_shared/domain/scopedAccess.ts
+  var SCOPED_MAX_BYTES = 8e3;
+  var SCOPED_MAX_ENTRIES = 200;
+  function cleanValues(raw) {
+    if (!Array.isArray(raw)) return [];
+    const seen = {};
+    const out = [];
+    for (const v of raw) {
+      const s2 = typeof v === "string" ? v.trim() : "";
+      if (!s2 || seen[s2]) continue;
+      seen[s2] = true;
+      out.push(s2);
+    }
+    return out.sort();
+  }
+  function cleanScope(raw, dims) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    const src = raw;
+    const out = {};
+    let total = 0;
+    for (const d of dims) {
+      const vals = cleanValues(src[d]);
+      out[d] = vals;
+      total += vals.length;
+    }
+    return total > 0 ? out : null;
+  }
+  function parseScoped(raw, dims) {
+    if (!raw) return {};
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (_e) {
+      return {};
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const out = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      const email = k.trim().toLowerCase();
+      if (!email || email.indexOf("@") < 0) continue;
+      const scope = cleanScope(v, dims);
+      if (scope) out[email] = scope;
+    }
+    return out;
+  }
+  function serializeScoped(roster) {
+    const out = {};
+    for (const email of Object.keys(roster).sort()) {
+      const s2 = {};
+      for (const [d, vals] of Object.entries(roster[email])) if (vals.length) s2[d] = vals;
+      out[email] = s2;
+    }
+    return JSON.stringify(out);
+  }
+  function scopeKey(scope) {
+    return Object.keys(scope).sort().filter((d) => (scope[d] || []).length).map((d) => d + "=" + (scope[d] || []).slice().sort().join("")).join("");
+  }
+  function distinctScopes(roster) {
+    const out = /* @__PURE__ */ new Map();
+    for (const scope of Object.values(roster)) {
+      const k = scopeKey(scope);
+      if (!out.has(k)) out.set(k, scope);
+    }
+    return out;
+  }
+  function validateScoped(raw, dims) {
+    var _a;
+    const list = Array.isArray(raw) ? raw : [];
+    const out = {};
+    const bad = [];
+    const empty = [];
+    for (const item of list) {
+      const email = String((_a = item == null ? void 0 : item.email) != null ? _a : "").trim().toLowerCase();
+      if (!email) continue;
+      if (email.indexOf("@") < 0 || /[,;\s]/.test(email)) {
+        bad.push(email);
+        continue;
+      }
+      const scope = cleanScope(item == null ? void 0 : item.scope, dims);
+      if (!scope) {
+        empty.push(email);
+        continue;
+      }
+      const prev = out[email];
+      out[email] = prev ? cleanScope(Object.fromEntries(dims.map((d) => [d, (prev[d] || []).concat(scope[d] || [])])), dims) : scope;
+    }
+    if (bad.length) throw new Error(`Not an email address: ${bad.join(", ")}`);
+    if (empty.length) throw new Error(`Pick at least one domain or team for: ${empty.join(", ")}`);
+    const n2 = Object.keys(out).length;
+    if (n2 > SCOPED_MAX_ENTRIES) {
+      throw new Error(`Too many scoped viewers (${n2}); the limit is ${SCOPED_MAX_ENTRIES}.`);
+    }
+    const bytes = serializeScoped(out).length;
+    if (bytes > SCOPED_MAX_BYTES) {
+      throw new Error(`That list is too long to store (${bytes} of ${SCOPED_MAX_BYTES} bytes).`);
+    }
+    return out;
+  }
+  function rosterRows(roster) {
+    return Object.keys(roster).sort().map((email) => ({ email, scope: roster[email] }));
+  }
 
   // src/server/pageShell.ts
   var MARK_COMPACT_VIEWBOX = "12.2 8.4 52.7 74";
@@ -6806,10 +6921,12 @@ var Server = (() => {
   }
 
   // src/server/access.ts
+  var SCOPE_DIMS = ["d", "p"];
   var PRODUCT = "Wiz Sidekick DevSecOps";
   var DENIAL_MESSAGE = {
     anonymous: "This app can't identify your Google account. It only recognizes accounts signed in to the same Google Workspace domain as the app.",
-    "not-listed": "Your account isn't on this app's access list."
+    "not-listed": "Your account isn't on this app's access list.",
+    scoped: "Your access covers your own domains' summary and findings only."
   };
   function parseAllowlist(raw) {
     if (!raw) return [];
@@ -6838,7 +6955,7 @@ var Server = (() => {
     }
     return list;
   }
-  function decide(active, owner, raw, adminsRaw) {
+  function decide(active, owner, raw, adminsRaw, scopedRaw) {
     const email = (active || "").trim();
     const key = email.toLowerCase();
     if (!key) return { allowed: false, email: "", reason: "anonymous" };
@@ -6847,6 +6964,8 @@ var Server = (() => {
     if (parseAllowlist(adminsRaw != null ? adminsRaw : null).indexOf(key) >= 0) {
       return { allowed: true, email, reason: "admin" };
     }
+    const scope = parseScoped(scopedRaw != null ? scopedRaw : null, SCOPE_DIMS)[key];
+    if (scope) return { allowed: true, email, reason: "scoped", scope };
     return parseAllowlist(raw).indexOf(key) >= 0 ? { allowed: true, email, reason: "listed" } : { allowed: false, email, reason: "not-listed" };
   }
   var memo;
@@ -6856,10 +6975,38 @@ var Server = (() => {
         Session.getActiveUser().getEmail(),
         Session.getEffectiveUser().getEmail(),
         getProp(PROP_KEYS.allowedUsers),
-        getProp(PROP_KEYS.allowedAdmins)
+        getProp(PROP_KEYS.allowedAdmins),
+        getProp(PROP_KEYS.scopedUsers)
       );
     }
     return memo;
+  }
+  var SCOPED_RPCS = [
+    // Not an RPC but the gate `include()` asks through: the page's own scriptlets need it.
+    "include",
+    "bootstrap",
+    "getScopeSummary",
+    "getRegisterRows",
+    "getExportCsv"
+  ];
+  function enforcedScope() {
+    let d;
+    try {
+      d = check();
+    } catch (_e) {
+      return null;
+    }
+    if (d.reason !== "scoped" || !d.scope) return null;
+    return toViewerScope(d.scope);
+  }
+  function toViewerScope(scope) {
+    return { domains: (scope["d"] || []).slice(), projects: (scope["p"] || []).slice() };
+  }
+  function fromViewerScope(v) {
+    return { d: v.domains.slice().sort(), p: v.projects.slice().sort() };
+  }
+  function currentScoped() {
+    return parseScoped(getProp(PROP_KEYS.scopedUsers), SCOPE_DIMS);
   }
   function __resetMemosForTest2() {
     memo = void 0;
@@ -6869,7 +7016,7 @@ var Server = (() => {
   }
   function denyResult(op) {
     const d = check();
-    if (d.allowed) return null;
+    if (d.allowed && (d.reason !== "scoped" || SCOPED_RPCS.indexOf(op) >= 0)) return null;
     logDenial(op, d);
     const env = {
       ok: false,
@@ -6885,7 +7032,7 @@ var Server = (() => {
   }
   function assertAllowed(op) {
     const d = check();
-    if (d.allowed) return;
+    if (d.allowed && d.reason !== "scoped") return;
     logDenial(op, d);
     throw new Error(DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"]);
   }
@@ -7023,6 +7170,7 @@ var Server = (() => {
     registerModel: () => registerModel,
     registerRowsModel: () => registerRowsModel,
     reposModel: () => reposModel,
+    scopeSummaryModel: () => scopeSummaryModel,
     secretsModel: () => secretsModel,
     signalCoverage: () => signalCoverage,
     storageModel: () => storageModel,
@@ -8281,6 +8429,179 @@ var Server = (() => {
     return { date, stats: readGzJson(subfolder(FOLDER2), fileName(date)) };
   }
 
+  // ../gas_shared/domain/scopeSummary.ts
+  var DEFAULT_SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
+  var SUMMARY_TREND_POINTS = 60;
+  function numOrNull(v) {
+    return typeof v === "number" && Number.isFinite(v) ? v : null;
+  }
+  function numOr0(v) {
+    return typeof v === "number" && Number.isFinite(v) ? v : 0;
+  }
+  function obj(v) {
+    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+  }
+  function thinPoints(points, max) {
+    if (points.length <= max || max < 2) return points.slice(-Math.max(max, 1));
+    const out = [];
+    const step2 = (points.length - 1) / (max - 1);
+    for (let i = 0; i < max; i++) out.push(points[Math.round(i * step2)]);
+    return out;
+  }
+  function scopeSummaryOf(mttr, trend, meta, severityOrder = DEFAULT_SEVERITY_ORDER) {
+    var _a;
+    const perSev = obj(mttr["perSev"]);
+    const overall = obj(mttr["overall"]);
+    const rem = obj(mttr["remediation"]);
+    const km = obj(rem["km"]);
+    const kmMedianPerSev = obj(rem["kmMedianPerSev"]);
+    const kmP90PerSev = obj(rem["kmP90PerSev"]);
+    const kmLowerBoundPerSev = obj(rem["kmLowerBoundPerSev"]);
+    const past = obj(rem["openPastSla"]);
+    const pastPerSev = obj(past["perSev"]);
+    const pastOverall = obj(past["overall"]);
+    const awaiting = obj(rem["awaiting"]);
+    const awaitingPerSev = obj(awaiting["perSev"]);
+    const backlog = obj(mttr["backlog"]);
+    const seen = Object.keys(perSev);
+    const ordered = severityOrder.filter((s2) => seen.indexOf(s2) >= 0).concat(seen.filter((s2) => severityOrder.indexOf(s2) < 0));
+    const sevRows = [];
+    for (const sev2 of ordered) {
+      const st = obj(perSev[sev2]);
+      const open = numOr0(st["open"]);
+      const resolved = numOr0(st["resolved"]);
+      if (!open && !resolved) continue;
+      sevRows.push({
+        sev: sev2,
+        open,
+        resolved,
+        kmMedian: numOrNull(kmMedianPerSev[sev2]),
+        kmP90: numOrNull(kmP90PerSev[sev2]),
+        kmLowerBound: numOrNull(kmLowerBoundPerSev[sev2]),
+        slaPct: numOrNull(st["sla_pct"]),
+        pastSla: numOr0(obj(pastPerSev[sev2])["breached"]),
+        slaTarget: numOrNull(st["sla_target"]),
+        awaiting: numOr0(awaitingPerSev[sev2])
+      });
+    }
+    const points = Array.isArray(trend["trend"]) ? trend["trend"] : [];
+    const trendOut = thinPoints(points, SUMMARY_TREND_POINTS).map((p) => {
+      var _a2;
+      return {
+        date: String((_a2 = p["date"]) != null ? _a2 : ""),
+        open: numOrNull(p["open"]),
+        // THE KAPLAN-MEIER MEDIAN ONLY — the estimator the hero reads. Falling back to the naive
+        // closed-only median where KM is unobservable put "30 days" at the end of this line under a
+        // hero reading "at least 210 days": two estimators on one page, the lower one looking like
+        // the answer. A point with no KM median is a gap in the line, not a different number.
+        medianDays: numOrNull(p["km_median_days"])
+      };
+    });
+    return {
+      asOf: meta.asOf,
+      scan: meta.scan,
+      open: numOr0(overall["open"]),
+      resolved: numOr0(overall["resolved"]),
+      mttr: {
+        median: numOrNull(km["median"]),
+        medianLowerBound: numOrNull(km["medianLowerBound"]),
+        // gas publishes the overall p90 beside the curve; gas_devsecops inside it.
+        p90: (_a = numOrNull(rem["kmP90"])) != null ? _a : numOrNull(km["p90"]),
+        naiveMedian: numOrNull(km["naiveMedian"])
+      },
+      sla: {
+        attainmentPct: numOrNull(mttr["slaPct"]),
+        pastSla: numOr0(pastOverall["breached"]),
+        pastSlaPct: numOrNull(pastOverall["pct"]),
+        unknown: numOr0(pastOverall["unknown"])
+      },
+      awaiting: {
+        count: numOr0(awaiting["overall"]),
+        pctOfOpen: numOrNull(awaiting["pctOfOpen"])
+      },
+      backlog: Object.keys(backlog).length ? { observed: numOr0(backlog["observed"]), unobserved: numOr0(backlog["unobserved"]) } : null,
+      perSev: sevRows,
+      trend: trendOut
+    };
+  }
+  var SPLIT_NONE = "(none)";
+  var SPLIT_CAP = 20;
+  function buildSplit(rows, keyOf2, isOpen9, stat, meta) {
+    var _a;
+    const buckets = /* @__PURE__ */ new Map();
+    for (const r of rows) {
+      const k = keyOf2(r) || SPLIT_NONE;
+      let b = buckets.get(k);
+      if (!b) buckets.set(k, b = { rows: [], open: 0 });
+      b.rows.push(r);
+      if (isOpen9(r)) b.open += 1;
+    }
+    const ranked = [...buckets.entries()].sort(([a, x], [b, y]) => {
+      if (a === SPLIT_NONE && b !== SPLIT_NONE) return 1;
+      if (b === SPLIT_NONE && a !== SPLIT_NONE) return -1;
+      return y.open - x.open || y.rows.length - x.rows.length || (a < b ? -1 : a > b ? 1 : 0);
+    });
+    const cap = (_a = meta.cap) != null ? _a : SPLIT_CAP;
+    const kept = ranked.slice(0, cap);
+    const cut = ranked.slice(cap);
+    return {
+      dimension: meta.dimension,
+      label: meta.label,
+      rows: kept.map(([g, b]) => stat(g, b.rows)),
+      truncated: { groups: cut.length, open: cut.reduce((a, [, b]) => a + b.open, 0) }
+    };
+  }
+  function informativeSplits(splits) {
+    return splits.filter((s2) => s2.rows.length + s2.truncated.groups >= 2);
+  }
+
+  // ../gas_shared/domain/rowGroups.ts
+  var NONE_GROUP = "\0none";
+  function groupKeyOf2(row, column) {
+    const v = row[column];
+    if (v === null || v === void 0 || v === "") return NONE_GROUP;
+    return String(v);
+  }
+  function rowsInGroup(rows, column, value) {
+    return rows.filter((r) => groupKeyOf2(r, column) === value);
+  }
+  function groupRows(rows, column, opts) {
+    var _a;
+    const rank = (s2) => {
+      const i = s2 === null ? -1 : opts.severityOrder.indexOf(s2);
+      return i < 0 ? opts.severityOrder.length : i;
+    };
+    const byKey = /* @__PURE__ */ new Map();
+    for (const r of rows) {
+      const key = groupKeyOf2(r, column);
+      let g = byKey.get(key);
+      if (!g) {
+        g = {
+          value: key,
+          raw: key === NONE_GROUP ? null : r[column],
+          count: 0,
+          open: 0,
+          worstSeverity: null,
+          oldestOpenDays: null
+        };
+        byKey.set(key, g);
+      }
+      g.count += 1;
+      const sev2 = r["severity"] === null || r["severity"] === void 0 ? null : String(r["severity"]).toUpperCase();
+      if (sev2 !== null && rank(sev2) < rank(g.worstSeverity)) g.worstSeverity = sev2;
+      if (opts.isOpen(r)) {
+        g.open += 1;
+        const age = r["age_days"];
+        if (typeof age === "number" && Number.isFinite(age) && (g.oldestOpenDays === null || age > g.oldestOpenDays)) {
+          g.oldestOpenDays = age;
+        }
+      }
+    }
+    const groups = Array.from(byKey.values()).sort((x, y) => rank(x.worstSeverity) - rank(y.worstSeverity) || y.open - x.open || y.count - x.count || (x.value < y.value ? -1 : x.value > y.value ? 1 : 0));
+    const cap = (_a = opts.cap) != null ? _a : 500;
+    return { groups: groups.slice(0, cap), truncated: Math.max(0, groups.length - cap) };
+  }
+
   // src/server/readModels.ts
   var DAY_MS11 = 864e5;
   var WEEK_MS = 7 * DAY_MS11;
@@ -8299,12 +8620,14 @@ var Server = (() => {
     const domainRaw = settings.domainView;
     const domain = domainRaw ? domainRaw : null;
     const cold = effectiveColdZoneSettings(settings);
+    const viewer = normViewer(p == null ? void 0 : p.viewerScope);
     return {
       scope,
       severities,
       showNoFix: (p == null ? void 0 : p.showNoFix) !== false,
-      project: project2,
-      domain,
+      project: viewer ? null : project2,
+      domain: viewer ? null : domain,
+      viewer,
       slaTargets: effectiveSlaTargets(settings),
       coldAfterDays: cold.coldAfterDays,
       coldZoneMode: cold.mode,
@@ -8317,14 +8640,31 @@ var Server = (() => {
       mttrExcludeEndOfLife: effectiveExcludeEndOfLifeFromMttr(settings)
     };
   }
+  function normViewer(v) {
+    if (!v || typeof v !== "object") return null;
+    const clean2 = (xs) => Array.isArray(xs) ? Array.from(new Set(xs.map(String).filter(Boolean))).sort() : [];
+    const out = { domains: clean2(v.domains), projects: clean2(v.projects) };
+    return out.domains.length || out.projects.length ? out : null;
+  }
   function keyOf(n2) {
     return {
       scope: n2.scope,
       severities: n2.severities,
       showNoFix: n2.showNoFix,
       project: n2.project,
-      domain: n2.domain
+      domain: n2.domain,
+      // ONLY WHEN PRESENT, so every unscoped key hashes exactly as it did before scoped viewers
+      // existed and no live cache entry or durable file is orphaned by them.
+      ...n2.viewer ? { viewer: n2.viewer } : {}
     };
+  }
+  function inViewer(r, v) {
+    for (const d of v.domains) if (inDomain(r, d)) return true;
+    if (v.projects.length) {
+      const projects = parseProjects(r.projects_json);
+      for (const p of v.projects) if (inProject(projects, p)) return true;
+    }
+    return false;
   }
   var baseMemo;
   function baseSnapshot() {
@@ -8412,6 +8752,7 @@ var Server = (() => {
   function scopedRows(rows, n2) {
     let out = rows;
     if (n2.scope) out = out.filter((r) => r.scope === n2.scope);
+    if (n2.viewer) out = out.filter((r) => inViewer(r, n2.viewer));
     if (n2.project) out = out.filter((r) => inProject(parseProjects(r.projects_json), n2.project));
     if (n2.domain) out = out.filter((r) => inDomain(r, n2.domain));
     if (n2.severities) {
@@ -9011,6 +9352,19 @@ var Server = (() => {
       CLOCK_TTL_SEC
     );
   }
+  var REGISTER_GROUP_COLUMNS = [
+    "severity",
+    "identifier",
+    "component",
+    "repo_name",
+    "language",
+    "cwe",
+    "secret_kind",
+    "validation_state",
+    "awaiting_vendor_fix",
+    "fixed_version",
+    "status"
+  ];
   function normRowStatus(v) {
     const s2 = String(v != null ? v : "").toLowerCase();
     return s2 === "open" || s2 === "resolved" ? s2 : "all";
@@ -9031,7 +9385,7 @@ var Server = (() => {
     return s2 === "" ? "UNKNOWN" : s2;
   }
   function registerRowsModel(scope, p) {
-    var _a;
+    var _a, _b;
     const n2 = norm(p);
     const snap = baseSnapshot();
     const severityFilterSupported = scope !== "secrets";
@@ -9053,11 +9407,29 @@ var Server = (() => {
       }
       return !confidence.length || confidence.includes(String((_a2 = r.confidence) != null ? _a2 : "").trim().toUpperCase());
     }) : byStatus;
-    const def = REGISTER_ROW_DEFAULT_SORT[scope];
     const columns = registerRowColumns(scope);
+    const askedGroup = String((_a = p == null ? void 0 : p.groupBy) != null ? _a : "");
+    const groupBy = REGISTER_GROUP_COLUMNS.includes(askedGroup) && columns.includes(askedGroup) ? askedGroup : "";
+    if (groupBy && ((p == null ? void 0 : p.groupValue) === void 0 || (p == null ? void 0 : p.groupValue) === null)) {
+      const { groups, truncated } = groupRows(rows, groupBy, {
+        severityOrder: SEVERITY_ORDER,
+        isOpen: (r) => isOpen8(r["status"])
+      });
+      return {
+        asOf: snap.now,
+        scope,
+        groupBy,
+        groups,
+        truncated,
+        total: rows.length,
+        status
+      };
+    }
+    const grouped = groupBy ? rowsInGroup(rows, groupBy, String(p == null ? void 0 : p.groupValue)) : rows;
+    const def = REGISTER_ROW_DEFAULT_SORT[scope];
     const asked = typeof (p == null ? void 0 : p.sort) === "string" ? p.sort : "";
     const sort = columns.includes(asked) ? asked : def.sort;
-    const askedDir = String((_a = p == null ? void 0 : p.dir) != null ? _a : "").toLowerCase();
+    const askedDir = String((_b = p == null ? void 0 : p.dir) != null ? _b : "").toLowerCase();
     const dir = askedDir === "asc" || askedDir === "desc" ? askedDir : sort === def.sort ? def.dir : "asc";
     const pageSize = clampInt(
       p == null ? void 0 : p.pageSize,
@@ -9065,7 +9437,7 @@ var Server = (() => {
       1,
       REGISTER_ROWS_PAGE_SIZE_CAP
     );
-    const sorted = sortRegisterRows(rows, {
+    const sorted = sortRegisterRows(grouped, {
       value: registerSortValue(sort),
       descending: dir === "desc",
       // The row identity, and it is unique by construction (`lifecycle.findingKey`), so the
@@ -9319,6 +9691,7 @@ var Server = (() => {
   }
   function movementPopulation(rows, n2) {
     let scoped = rows;
+    if (n2.viewer) scoped = scoped.filter((r) => inViewer(r, n2.viewer));
     if (n2.project) {
       scoped = scoped.filter((r) => inProject(parseProjects(r.projects_json), n2.project));
     }
@@ -9482,6 +9855,76 @@ var Server = (() => {
   function storageModel() {
     return durablyCached("dsStorage1", null, () => buildStorage());
   }
+  function scopeSummaryModel(viewer) {
+    const params = { scope: null, severities: null, showNoFix: true, viewerScope: viewer };
+    const n2 = norm(params);
+    return durablyCached(
+      // "dsScopeSummary2" -> "dsScopeSummary3": the payload gained `splits` (MTTR by team /
+      // domain / repository); a warm "2" entry would draw the summary with no split at all.
+      "dsScopeSummary3",
+      { ...keyOf(n2), slaTargets: n2.slaTargets, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
+      () => {
+        const latest = latestScanRowOf(loadScanRows());
+        const summary = scopeSummaryOf(mttrModel(params), historyModel(params), {
+          asOf: (/* @__PURE__ */ new Date()).toISOString(),
+          // Each register syncs on its own; the newest of them is the freshness caption, and no
+          // single scan total describes a union of registers.
+          scan: latest ? { ts: latest.ts, total: null } : null
+        }, SEVERITY_ORDER);
+        summary.splits = scopeSplits(n2);
+        return summary;
+      }
+    );
+  }
+  function scopeSplits(n2) {
+    const snap = baseSnapshot();
+    const rows = liveRepoRows(visibleRows(snap.rows, n2), n2.mttrExcludeEndOfLife).rows;
+    const stat = (group, rs) => {
+      var _a, _b;
+      const km = kaplanMeier(rs, KM_OPTS);
+      const { overall } = mttrFromLedger(rs, { now: snap.now, slaTargets: n2.slaTargets });
+      return {
+        group,
+        kmMedian: km.median,
+        kmLowerBound: km.median === null ? km.medianLowerBound : null,
+        p90: kmQuantileFromCurve(km.curve, 0.9),
+        open: (_a = overall.open) != null ? _a : 0,
+        resolved: (_b = overall.resolved) != null ? _b : 0,
+        pastSla: openPastSla(rs, { slaTargets: n2.slaTargets }).overall.breached
+      };
+    };
+    const open = (r) => isOpen8(r.status);
+    const text = (v) => String(v != null ? v : "").trim();
+    const field = (r, k) => text(r[k]);
+    return informativeSplits([
+      buildSplit(
+        rows,
+        (r) => field(r, "_supportGroup"),
+        open,
+        stat,
+        { dimension: "team", label: "Team" }
+      ),
+      buildSplit(
+        rows,
+        (r) => field(r, "_domain"),
+        open,
+        stat,
+        { dimension: "domain", label: "Domain" }
+      ),
+      buildSplit(
+        rows,
+        (r) => text(r.repo_name),
+        open,
+        stat,
+        { dimension: "repository", label: "Repository" }
+      )
+    ]);
+  }
+  function latestScanRowOf(scans) {
+    let best = null;
+    for (const s2 of scans) if (!best || String(s2.ts) > String(best.ts)) best = s2;
+    return best;
+  }
   function warmTargets() {
     const all = { scope: null, severities: null, showNoFix: true };
     const targets = [
@@ -9501,6 +9944,16 @@ var Server = (() => {
     ];
     for (const scope of SCOPES) {
       targets.push({ label: `register:${scope}`, run: () => registerModel(scope, all) });
+    }
+    let roster = {};
+    try {
+      roster = currentScoped();
+    } catch (e) {
+      console.warn(`Cache warm: scoped roster unreadable: ${e}`);
+    }
+    for (const [key, scope] of distinctScopes(roster)) {
+      const viewer = toViewerScope(scope);
+      targets.push({ label: `scoped:${key.slice(0, 40)}`, run: () => scopeSummaryModel(viewer) });
     }
     return targets;
   }
@@ -10148,6 +10601,8 @@ var Server = (() => {
     }));
   }
   function bootstrap(_p) {
+    const viewer = enforcedScope();
+    if (viewer) return run(() => scopedBoot(viewer, scopeSummaryModel(viewer)));
     return run(() => {
       const laps = stageLaps("bootstrap");
       const core = bootCoreModel();
@@ -10159,6 +10614,9 @@ var Server = (() => {
     });
   }
   function bootstrapIfWarm() {
+    if (enforcedScope()) {
+      return { ok: false, error: "scoped bootstrap is not inlined", errorKind: "cold" };
+    }
     const t0 = Date.now();
     const core = peekBootCore();
     const t1 = Date.now();
@@ -10200,6 +10658,111 @@ var Server = (() => {
       return { ...res, at };
     });
   }
+  function readViewerScope(p) {
+    const raw = (p != null ? p : {})["viewerScope"];
+    if (!raw || typeof raw !== "object") return null;
+    const r = raw;
+    const list = (v) => Array.isArray(v) ? v.map(String).filter(Boolean) : [];
+    const out = { domains: list(r["domains"]), projects: list(r["projects"]) };
+    return out.domains.length || out.projects.length ? out : null;
+  }
+  function viewerFor(p) {
+    var _a;
+    return (_a = enforcedScope()) != null ? _a : readViewerScope(p);
+  }
+  function scopedBoot(viewer, summary) {
+    return {
+      role: "scoped",
+      product: PRODUCT,
+      buildId: BUILD_ID,
+      scope: viewer,
+      severityOrder: SEVERITY_ORDER,
+      hubUrl: readHubUrl(),
+      summary
+    };
+  }
+  function getScopeSummary(p) {
+    return run(() => {
+      const viewer = viewerFor(p);
+      if (!viewer) throw new Error("No scope to summarize \u2014 pick at least one domain or project.");
+      return scopeSummaryModel(viewer);
+    });
+  }
+  function scopedRosterRows() {
+    return rosterRows(currentScoped()).map((r) => ({
+      email: r.email,
+      scope: toViewerScope(r.scope)
+    }));
+  }
+  function scopeCatalogue() {
+    var _a;
+    try {
+      const core = bootCoreModel();
+      const fo = (_a = core["filterOptions"]) != null ? _a : {};
+      const domains = Array.isArray(fo["domainList"]) ? fo["domainList"] : [];
+      const projects = Array.isArray(fo["projectList"]) ? fo["projectList"] : [];
+      return {
+        dims: [
+          {
+            key: "d",
+            label: "Domains",
+            options: domains.map((d) => {
+              var _a2;
+              return { value: String(d["name"]), count: Number((_a2 = d["findings"]) != null ? _a2 : 0) };
+            })
+          },
+          {
+            key: "p",
+            label: "Projects",
+            options: projects.map((x) => {
+              var _a2, _b;
+              return {
+                value: String(x["slug"]),
+                label: String((_a2 = x["name"]) != null ? _a2 : x["slug"]),
+                count: Number((_b = x["findings"]) != null ? _b : 0)
+              };
+            })
+          }
+        ]
+      };
+    } catch (e) {
+      console.warn(`Scope catalogue unavailable: ${e}`);
+      return null;
+    }
+  }
+  function saveScoped(p) {
+    return run(() => {
+      if (!canEditUsers()) throw new Error("Only the owner or an admin can change access.");
+      const raw = (p != null ? p : {})["scoped"];
+      const entries = (Array.isArray(raw) ? raw : []).map((e) => {
+        var _a;
+        const r = e != null ? e : {};
+        const scope = (_a = r["scope"]) != null ? _a : {};
+        const list = (v) => Array.isArray(v) ? v.map(String) : [];
+        return {
+          email: r["email"],
+          scope: fromViewerScope({ domains: list(scope["domains"]), projects: list(scope["projects"]) })
+        };
+      });
+      const roster = validateScoped(entries, SCOPE_DIMS);
+      const owner = ownerEmail().trim().toLowerCase();
+      const admins = currentAdmins();
+      const refused = Object.keys(roster).filter((e) => e === owner || admins.indexOf(e) >= 0);
+      if (refused.length) {
+        throw new Error(`The owner and admins always have full access: ${refused.join(", ")}`);
+      }
+      const before = Object.keys(currentScoped());
+      setProp(PROP_KEYS.scopedUsers, serializeScoped(roster));
+      logAccessChange("scoped", check().email, before, Object.keys(roster));
+      const users = currentUsers();
+      const kept = users.filter((e) => !roster[e]);
+      if (kept.length !== users.length) {
+        setProp(PROP_KEYS.allowedUsers, kept.join(", "));
+        logAccessChange("users", check().email, users, kept);
+      }
+      return { scoped: scopedRosterRows(), users: kept };
+    });
+  }
   function logAccessChange(what, actor, before, after) {
     const added = after.filter((e) => before.indexOf(e) < 0);
     const removed = before.filter((e) => after.indexOf(e) < 0);
@@ -10214,7 +10777,9 @@ var Server = (() => {
         owner: ownerEmail(),
         domain: ownerDomain(),
         users: currentUsers(),
-        admins: currentAdmins()
+        admins: currentAdmins(),
+        scoped: scopedRosterRows(),
+        catalogue: scopeCatalogue()
       };
     });
   }
@@ -10227,6 +10792,13 @@ var Server = (() => {
       const withOwner = owner && list.indexOf(owner) < 0 ? [owner].concat(list) : list;
       setProp(PROP_KEYS.allowedUsers, withOwner.join(", "));
       logAccessChange("users", check().email, before, withOwner);
+      const roster = currentScoped();
+      const moved = withOwner.filter((e) => roster[e]);
+      if (moved.length) {
+        for (const e of moved) delete roster[e];
+        setProp(PROP_KEYS.scopedUsers, serializeScoped(roster));
+        logAccessChange("scoped", check().email, moved, []);
+      }
       return { users: withOwner };
     });
   }
@@ -10390,6 +10962,8 @@ var Server = (() => {
       const r = p != null ? p : {};
       const params = {
         ...modelParams(p),
+        // Forced for a scoped viewer, whatever the request said; a full user's own preview.
+        viewerScope: viewerFor(p),
         page: r["page"],
         pageSize: r["pageSize"],
         sort: r["sort"],
@@ -10399,9 +10973,12 @@ var Server = (() => {
         // one place that decides a scope cannot carry them, exactly as it decides `severities`
         // cannot bite on secrets. Vetting here as well would put that rule in two files.
         validation: r["validation"],
-        confidence: r["confidence"]
+        confidence: r["confidence"],
+        groupBy: r["groupBy"],
+        groupValue: r["groupValue"]
       };
       const model = registerRowsModel(scope, params);
+      if (Array.isArray(model["groups"])) return model;
       return { ...model, rows: registerRowsSlice(model["rows"], scope) };
     });
   }
@@ -10557,13 +11134,18 @@ var Server = (() => {
       const severities = Array.isArray(sevRaw) && sevRaw.length ? new Set(sevRaw.map((s2) => normalizeSeverity(s2))) : null;
       const statusRaw = params["statuses"];
       const statuses = Array.isArray(statusRaw) && statusRaw.length ? new Set(statusRaw.map((s2) => String(s2).toUpperCase())) : null;
-      const projectView = loadSettings().projectView || null;
-      const rows = loadBaseRows(scope ? { scope } : {}).filter((r) => !severities || severities.has(normalizeSeverity(r["severity"]))).filter((r) => {
+      const settings = loadSettings();
+      const viewer = viewerFor(p);
+      const projectView = viewer ? null : settings.projectView || null;
+      const domainView = viewer ? null : settings.domainView || null;
+      const base = loadBaseRows(scope ? { scope } : {});
+      if (viewer || domainView) attachRepoTags(base);
+      const rows = base.filter((r) => !severities || severities.has(normalizeSeverity(r["severity"]))).filter((r) => {
         var _a2;
         return !statuses || statuses.has(String((_a2 = r["status"]) != null ? _a2 : "").toUpperCase());
       }).filter(
         (r) => !projectView || inProject(parseProjects(r["projects_json"]), projectView)
-      );
+      ).filter((r) => !domainView || inDomain(r, domainView)).filter((r) => !viewer || inViewerScope(r, viewer));
       const cols = (_a = TAB_HEADERS[TABS.ledger]) != null ? _a : [];
       const lines = [cols.join(",")];
       for (const r of rows) lines.push(cols.map((c) => csvCell(r[c])).join(","));
@@ -10573,9 +11155,18 @@ var Server = (() => {
         rowCount: rows.length,
         columns: cols.length,
         scope,
-        projectView
+        projectView,
+        domainView
       };
     });
+  }
+  function inViewerScope(r, v) {
+    for (const d of v.domains) if (inDomain(r, d)) return true;
+    if (v.projects.length) {
+      const projects = parseProjects(r["projects_json"]);
+      for (const x of v.projects) if (inProject(projects, x)) return true;
+    }
+    return false;
   }
   var RECENT_ERROR_LIMIT = 50;
   function getRecentErrors(p) {

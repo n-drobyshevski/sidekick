@@ -82,7 +82,7 @@ export function railItem(item) {
   const { LANE_ICONS, ROUTE_ICONS } = appConfig();
   const icon = item.kind === "lane"
     ? (LANE_ICONS || {})[item.id]
-    : (ROUTE_ICONS || {})[item.route];
+    : (ROUTE_ICONS || {})[item.route] || item.icon;
   const node = el("div", { class: "rail-item", "data-nav-item": item.id });
   const link = el(
     "a",
@@ -165,7 +165,7 @@ export function renderStackedNav(sidebar, pages, experimental) {
           target: "_self",
           "aria-current": key === active ? "page" : null,
         },
-        iconSpan(ROUTE_ICONS[key]),
+        iconSpan(ROUTE_ICONS[key] || page.icon),
         el("span", { class: "nav-label" }, page.title),
       ),
     );

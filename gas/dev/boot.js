@@ -43,6 +43,26 @@
     console.log("[dev] Hub URL seeded: " + HUB_URL + " (cd gas_hub && npm run dev) - ?nohub to unset.");
   }
 
+  // ?scoped[=<support group>] opens the app as a SCOPED VIEWER (viewer@example.com), limited to
+  // that support group (default CS-CORE-PLATFORM) — the reduced two-page shell, exactly as
+  // server/access.ts decides it. Set BEFORE anything asks access.check(): the decision is
+  // memoized for the life of the module, which in GAS is one request but here is the page.
+  // The RPC shim below applies the same `denyResult` fence dist/entry.js does in this mode, so
+  // a call outside SCOPED_RPCS answers `forbidden` here too.
+  const SCOPED_AS = new URLSearchParams(location.search).get("scoped");
+  if (SCOPED_AS !== null) {
+    // `?scoped=d:SUPPLY` scopes by business domain instead of support group.
+    const group = SCOPED_AS || "CS-CORE-PLATFORM";
+    const scope = group.indexOf("d:") === 0 ? { d: [group.slice(2)] } : { g: [group] };
+    PropertiesService.getScriptProperties().setProperty("SCOPED_USERS",
+      JSON.stringify({ "viewer@example.com": scope }));
+    window.Session = {
+      getActiveUser: () => ({ getEmail: () => "viewer@example.com" }),
+      getEffectiveUser: () => ({ getEmail: () => "dev@example.com" }),
+    };
+    console.log("[dev] ?scoped — signed in as viewer@example.com, scoped to " + group);
+  }
+
   console.log("[dev] " + Server.setup().split("\n").join("\n[dev] "));
 
   // Seed a subscription → Support Group map so the sidebar Support-group selector, the
@@ -266,7 +286,11 @@
           setTimeout(() => {
             try {
               let result;
-              if (prop.startsWith("api_") && typeof Server.api[prop.slice(4)] === "function") {
+              const denied = SCOPED_AS !== null && prop.startsWith("api_")
+                ? Server.access.denyResult(prop.slice(4)) : null;
+              if (denied) {
+                result = denied;
+              } else if (prop.startsWith("api_") && typeof Server.api[prop.slice(4)] === "function") {
                 result = Server.api[prop.slice(4)](params);
               } else if (typeof Server[prop] === "function") {
                 result = Server[prop](params);

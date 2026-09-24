@@ -57,6 +57,15 @@ import { beginRouteLoading, endRouteLoading, mountRouteOverlay } from "./routeOv
  * @property {() => object}  [pageContext] extra fields merged into every page.render's third
  *                                     argument (gas passes its two client-side scopes and
  *                                     two callbacks; the siblings pass nothing)
+ * @property {(data: object|null) => ({pages: object, defaultRoute: string}|null)} [pagesFor]
+ *                                     a DIFFERENT route table for this payload, or null for
+ *                                     `pages`. Read once per boot. gas and gas_devsecops use it
+ *                                     for the scoped viewer's reduced shell: a payload with
+ *                                     `role: "scoped"` swaps the whole IA for two read-only
+ *                                     pages, and every other route — Settings included —
+ *                                     resolves to that table's front door and is REWRITTEN,
+ *                                     so a bookmark to a page they cannot open does not sit in
+ *                                     the address bar over a page it does not name.
  * @property {() => void}    [afterFirstRoute] called once the first route after a boot has
  *                                     settled (rendered, or failed) — the moment the front
  *                                     door has its data on screen and the rest of the session
@@ -73,7 +82,9 @@ import { beginRouteLoading, endRouteLoading, mountRouteOverlay } from "./routeOv
  * @param {ShellSpec} spec
  */
 export function createAppShell(spec) {
-  const pages = spec.pages;
+  // Reassigned per boot by `pagesFor`; `spec.pages` is the table whenever it answers null.
+  let pages = spec.pages;
+  let homeRoute = null;
   const aliases = spec.routeAliases || {};
 
   const app = document.getElementById("app");
@@ -192,6 +203,9 @@ export function createAppShell(spec) {
       hideBootSplash(); // reveal the error card
       return;
     }
+    const alt = spec.pagesFor ? spec.pagesFor(data) : null;
+    pages = alt && alt.pages ? alt.pages : spec.pages;
+    homeRoute = alt && alt.pages ? alt.defaultRoute : null;
     renderChrome(data);
     renderSidebar(data);
     route(); // paints the page's skeleton synchronously up to its first data await
@@ -221,6 +235,12 @@ export function createAppShell(spec) {
     let key = aliases[parsed.route] || parsed.route;
     let params = parsed.params;
     if (key !== parsed.route && pages[key]) {
+      history.replaceState(null, "", buildHash(key, params));
+    }
+    if (!pages[key] && homeRoute) {
+      // An alternate table's front door, REWRITTEN — see `pagesFor`.
+      key = homeRoute;
+      params = {};
       history.replaceState(null, "", buildHash(key, params));
     }
     if (!pages[key]) key = defaultRoute();

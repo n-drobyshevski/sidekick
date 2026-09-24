@@ -9,6 +9,14 @@
 // behave exactly as with the real sample — just at volume.
 
 import { SAMPLE_FLAT as REAL_FLAT } from "../src/server/sampleData";
+
+// A plausible Wiz console link per finding, so the "Wiz" links are visible in the harness.
+// Built with join("/"): the dev bundle is checked for bare double slashes like any other.
+const DEV_WIZ_PORTAL = ["https:", "", "app.wiz.io", ""].join("/");
+function devPortalUrl(id: unknown): string {
+  return DEV_WIZ_PORTAL + "explorer/vulnerability-findings#~(entity~(~'" + String(id) + "*2cSECURITY_TOOL_FINDING))";
+}
+
 export { SAMPLE_GROUPED } from "../src/server/sampleData";
 
 type Rec = Record<string, any>;
@@ -259,6 +267,7 @@ function makeNode(spec: CveSpec, asset: AssetSpec, idx: number): Rec {
   node["epssPercentile"] = Math.round(rnd() * 1000) / 1000;
   node["publishedDate"] = iso(firstMs - (10 + rnd() * 200) * DAY);
   node["firstDetectedAt"] = iso(firstMs);
+  node["portalUrl"] = devPortalUrl(node["id"]);
   node["description"] =
     `A vulnerability in ${spec.pkg} (${spec.cve}) affecting ${spec.version}; ` +
     `fixed in ${spec.fixed}. ${String(node["description"] ?? "")}`.slice(0, 300);

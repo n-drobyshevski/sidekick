@@ -265,6 +265,12 @@ vi.mock("../src/server/ledgerStore", async (importOriginal) => {
 /** Access is decided by `Session` in the real module; the RPC layer only asks one question. */
 vi.mock("../src/server/access", () => ({
   canEditUsers: () => true,
+  // A full user: no viewer scope is forced, and nobody is on the scoped roster. The scoped
+  // tier itself is exercised in test/scopedViewer.test.ts.
+  enforcedScope: () => null,
+  currentScoped: () => ({}),
+  toViewerScope: (s: Record<string, string[]>) => ({ domains: s["d"] ?? [], projects: s["p"] ?? [] }),
+  PRODUCT: "Wiz Sidekick DevSecOps",
 }));
 
 /* --------------------------------------------------------------- the fake tenant */

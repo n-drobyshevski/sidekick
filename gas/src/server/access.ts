@@ -26,8 +26,21 @@
 // untrusted boundary: google.script.run reaches top-level globals directly, and dev/boot.js
 // dispatches straight into Server.api without passing through entry.js at all.
 
+import { parseScoped, type Scope, type ScopedRoster } from "../../../gas_shared/domain/scopedAccess";
 import { cardPage, escapeHtml, secondaryAction } from "./pageShell";
 import { getProp, PROP_KEYS } from "./props";
+
+/**
+ * The scope dimensions this app assigns a scoped viewer: `d` business domain (the resolved
+ * `_domain`), `g` support group (`_supportGroup`). A viewer sees the UNION of every value.
+ */
+export const SCOPE_DIMS = ["d", "g"] as const;
+
+/** A scoped viewer's scope in this app's own vocabulary. */
+export interface ViewerScope {
+  domains: string[];
+  supportGroups: string[];
+}
 
 /** The one place the product is named on the standalone pages. */
 export const PRODUCT = "Wiz Sidekick OS";
@@ -36,7 +49,9 @@ export interface AccessDecision {
   allowed: boolean;
   /** The address the app actually saw, or "" when the caller could not be identified. */
   email: string;
-  reason: "owner" | "admin" | "listed" | "anonymous" | "not-listed";
+  reason: "owner" | "admin" | "scoped" | "listed" | "anonymous" | "not-listed";
+  /** Present only for `scoped`: what this viewer may see. Never empty. */
+  scope?: Scope;
 }
 
 /**
@@ -55,6 +70,7 @@ const DENIAL_MESSAGE: Record<string, string> = {
     "This app can't identify your Google account. It only recognizes accounts signed in to " +
     "the same Google Workspace domain as the app.",
   "not-listed": "Your account isn't on this app's access list.",
+  scoped: "Your access covers your own domains' summary and findings only.",
 };
 
 /**
@@ -85,6 +101,7 @@ export function parseAllowlist(raw: string | null): string[] {
  *                                                                context with no active user
  *   active === owner (both non-empty)   → allow  (owner)       — regardless of either list
  *   active in the admins list           → allow  (admin)
+ *   active in the scoped roster         → allow  (scoped)      — reduced, read-only shell
  *   active in the users list            → allow  (listed)
  *   otherwise                           → deny   (not-listed)  — including unset lists
  *
@@ -103,6 +120,7 @@ export function decide(
   owner: string | null,
   raw: string | null,
   adminsRaw?: string | null,
+  scopedRaw?: string | null,
 ): AccessDecision {
   const email = (active || "").trim();
   const key = email.toLowerCase();
@@ -117,6 +135,12 @@ export function decide(
   if (parseAllowlist(adminsRaw ?? null).indexOf(key) >= 0) {
     return { allowed: true, email, reason: "admin" };
   }
+
+  // SCOPED BEFORE LISTED, so the narrower grant wins. The editor keeps the two lists exclusive,
+  // but a hand edit in Project Settings can put one address in both — and reading that as a
+  // full grant would widen access nobody chose to widen. Fail toward less.
+  const scope = parseScoped(scopedRaw ?? null, SCOPE_DIMS)[key];
+  if (scope) return { allowed: true, email, reason: "scoped", scope };
 
   return parseAllowlist(raw).indexOf(key) >= 0
     ? { allowed: true, email, reason: "listed" }
@@ -137,9 +161,62 @@ export function check(): AccessDecision {
       Session.getEffectiveUser().getEmail(),
       getProp(PROP_KEYS.allowedUsers),
       getProp(PROP_KEYS.allowedAdmins),
+      getProp(PROP_KEYS.scopedUsers),
     );
   }
   return memo;
+}
+
+// ---------------------------------------------------------------- the scoped tier
+//
+// A scoped viewer is admitted, but only to the handful of endpoints the reduced shell calls,
+// and every one of those FORCES the viewer's scope server-side (`enforcedScope`) whatever the
+// request carried. The allowlist below is the fence; the forcing is what makes the data inside
+// it theirs. Both are needed: the fence alone would let `getRegisterRows({domain:""})` return
+// the whole register, and the forcing alone would leave settings saves, scans and purges open.
+
+/**
+ * The RPCs a scoped viewer may call. Everything else answers `forbidden` from `denyResult`,
+ * before the endpoint runs — settings, scans, imports, purges and every register-wide read.
+ */
+export const SCOPED_RPCS: readonly string[] = [
+  // Not an RPC but the gate `include()` asks through: the page's own scriptlets need it.
+  "include",
+  "bootstrap",
+  "getScopeSummary",
+  "getRegisterRows",
+  "getExportCsv",
+];
+
+/** The caller's enforced scope: `null` for a full user, their domains/groups when scoped. */
+export function enforcedScope(): ViewerScope | null {
+  // NULL WHEN THERE IS NO CALLER TO ASK ABOUT, and that is not failing open. Every untrusted
+  // entry (doGet, include, each api_*) has already run `check()` through the gate in
+  // dist/entry.js, so on those paths the decision is memoized and cannot throw here. The only
+  // callers that reach this without the gate are the scheduled warm and the unit tests, where
+  // there is no viewer at all — and a warm that computes the whole-register payloads is
+  // exactly what it is for.
+  let d: AccessDecision;
+  try {
+    d = check();
+  } catch (_e) {
+    return null;
+  }
+  if (d.reason !== "scoped" || !d.scope) return null;
+  return toViewerScope(d.scope);
+}
+
+export function toViewerScope(scope: Scope): ViewerScope {
+  return { domains: (scope["d"] || []).slice(), supportGroups: (scope["g"] || []).slice() };
+}
+
+export function fromViewerScope(v: ViewerScope): Scope {
+  return { d: v.domains.slice().sort(), g: v.supportGroups.slice().sort() };
+}
+
+/** The current scoped roster, parsed. Callers must have checked they may see it. */
+export function currentScoped(): ScopedRoster {
+  return parseScoped(getProp(PROP_KEYS.scopedUsers), SCOPE_DIMS);
 }
 
 /**
@@ -157,7 +234,7 @@ function logDenial(op: string, d: AccessDecision): void {
  */
 export function denyResult(op: string): DenyEnvelope | null {
   const d = check();
-  if (d.allowed) return null;
+  if (d.allowed && (d.reason !== "scoped" || SCOPED_RPCS.indexOf(op) >= 0)) return null;
   logDenial(op, d);
   const env: DenyEnvelope = {
     ok: false,
@@ -187,7 +264,8 @@ export interface DenyEnvelope {
 /** The guard for the editor-run maintenance globals, where a throw is the natural refusal. */
 export function assertAllowed(op: string): void {
   const d = check();
-  if (d.allowed) return;
+  // The editor-run maintenance globals are never a scoped viewer's to run.
+  if (d.allowed && d.reason !== "scoped") return;
   logDenial(op, d);
   throw new Error(DENIAL_MESSAGE[d.reason] || DENIAL_MESSAGE["not-listed"]!);
 }
