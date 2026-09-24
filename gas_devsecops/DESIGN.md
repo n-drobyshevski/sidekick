@@ -106,6 +106,23 @@ scale, the whisper-or-lift elevation rule, and the motion durations.
 today. If this register ever grows a maturity or posture ramp, the brand colour will equal
 tier 2 of 4 — and at that point the **ramp moves, not the brand**.
 
+## The briefing (2026-09-24)
+
+The Executive page uses the shared briefing shape (`gas_shared/ui/briefing.js`; the full
+account is `gas/DESIGN.md` §6a). What is this register's own:
+
+- **Open findings** compares two SYNCS, not scans, and the status line turns amber with the
+  sync's age in words past seven days — every figure here is as of that sync.
+- **Half-life** prints `kmHalfLifeView`'s value as-is ("Not reached", "Not measured"), with its
+  `secondary` ("under 25% fixed within N days") as the caption. This page does not re-decide.
+- **By register** carries each register's sync-on-sync change; the three half-lives ride in its
+  foot, never summed ("three registers, three clocks"), and each share keeps its
+  `data-denominator` and the empty-base rule in a line of its own.
+- **Read with care** keeps the tracking-since line, the window line and the end-of-life note on
+  the surface, as a list above the folded worklist.
+- The cold zone's denominator sentence — window, relative-mode clause, clock caveat and the
+  scopes-without-scan clause — is unchanged, now on the figure's tip and `data-denominator`.
+
 ## Measuring a page, and what the unit-chart round moved
 
 `npm run density` runs this app's own walker (`dev/density.mjs --root . --port 8787`) over its

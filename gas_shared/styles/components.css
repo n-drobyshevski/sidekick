@@ -2364,3 +2364,125 @@ input[type="range"].cut-hist__range {
 .scoped-split__mttr .num { min-width: 7ch; }
 .scoped-split__bar { flex: 1; height: 6px; background: var(--track-bg); border-radius: var(--radius-pill); overflow: hidden; }
 .scoped-split__bar > span { display: block; height: 100%; background: var(--graphite); border-radius: inherit; }
+
+/* ---------------------------------------------------------------- the Executive briefing
+   gas_shared/ui/briefing.js. Four headline figures in a row, two labelled splits, one short
+   list — the front door read at a glance. No card chrome: the figures are separated by a
+   hairline and by space, and saturated colour stays rationed to severity, tier and state
+   (the cold-zone amber is --warn, the same token every "no movement" reading uses). */
+
+.brief { display: flex; flex-direction: column; gap: var(--space-7); max-width: 1320px; }
+/* An empty host (no first-run panel, a suppressed block) must not cost the page a gap. */
+.brief > :empty { display: none; }
+.brief-status {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
+  margin: 0; font-size: var(--fs-label); color: var(--text-2);
+}
+.brief-status__dot { width: 7px; height: 7px; border-radius: var(--radius-pill); background: var(--hairline-strong); }
+.brief-status__dot--ok { background: var(--ok); }
+.brief-status__dot--warn { background: var(--sev-medium); }
+.brief-status__sep { color: var(--hairline-strong); }
+.brief-status__warn { color: var(--warn); font-weight: var(--fw-semibold); }
+
+.brief-label {
+  margin: 0; font-size: var(--fs-label); font-weight: var(--fw-semibold);
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3);
+}
+
+.brief-figures { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.brief-fig {
+  display: flex; flex-direction: column; gap: var(--space-3); min-width: 0;
+  padding: 0 var(--space-6); border-left: 1px solid var(--hairline);
+}
+.brief-fig:first-child { padding-left: 0; border-left: 0; }
+.brief-fig:last-child { padding-right: 0; }
+.brief-value-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-2) var(--space-3); }
+.brief-value {
+  font-size: 52px; font-weight: var(--fw-semibold); line-height: 1; letter-spacing: -0.03em;
+  color: var(--ink); font-variant-numeric: tabular-nums;
+}
+.brief-value--text { font-size: 34px; letter-spacing: -0.02em; }
+.brief-unit-word { font-size: var(--fs-display-sm); font-weight: var(--fw-semibold); color: var(--text-3); }
+.brief-visual { display: flex; align-items: center; gap: var(--space-4); min-height: 64px; }
+.brief-caption { margin: 0; font-size: var(--fs-label); line-height: 1.5; color: var(--text-2); }
+.brief-caption strong { color: var(--ink); font-weight: var(--fw-semibold); }
+.brief-link {
+  margin-top: auto; align-self: flex-start; font-size: var(--fs-label); font-weight: var(--fw-semibold);
+  color: var(--accent-text); text-decoration: none;
+}
+.brief-link:hover { text-decoration: underline; }
+
+.brief-delta { font-size: 15px; font-weight: var(--fw-hero); white-space: nowrap; }
+.brief-delta--ok { color: var(--ok); }
+.brief-delta--bad { color: var(--bad); }
+.brief-delta--neutral { color: var(--text-3); }
+.brief-split .brief-delta { font-size: var(--fs-label); }
+
+.brief-slope { display: block; overflow: visible; }
+.brief-slope__base { stroke: var(--hairline); stroke-width: 1; }
+.brief-slope__line { stroke: var(--ink); stroke-width: 2.5; stroke-linecap: round; }
+.brief-slope__from { fill: var(--page); stroke: var(--hairline-strong); stroke-width: 2; }
+.brief-slope__to { fill: var(--ink); }
+.brief-slope__lbl { font-size: 11px; fill: var(--svg-text-2); font-family: var(--font); font-variant-numeric: tabular-nums; }
+.brief-slope__lbl--now { fill: var(--ink); font-weight: 600; }
+
+.brief-ring { flex-shrink: 0; }
+.brief-ring__track { fill: none; stroke: var(--surface-2); stroke-width: 8; }
+.brief-ring__arc { fill: none; stroke: var(--ink); stroke-width: 8; }
+
+.brief-dots { display: grid; grid-template-columns: repeat(20, 7px); gap: 3px; }
+.brief-dot { width: 7px; height: 7px; border-radius: 1px; background: var(--hairline); }
+.brief-dot--on { background: var(--warn); }
+
+.brief-units { display: flex; flex-wrap: wrap; gap: 5px; max-width: 100%; }
+.brief-unit { width: 18px; height: 18px; border-radius: 4px; }
+
+.brief-track { display: block; width: 100%; height: 18px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
+.brief-track__fill { display: block; height: 100%; background: var(--ink); border-radius: 4px; }
+
+.brief-splits { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-7); }
+.brief-split { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.brief-split > p { margin: 0; }
+.brief-split__track { display: flex; gap: 3px; height: 28px; }
+.brief-split__seg { min-width: 48px; border-radius: 4px; }
+.brief-split__keys { display: flex; gap: 3px; }
+.brief-split__key { display: flex; flex-direction: column; min-width: 48px; overflow: hidden; white-space: nowrap; font-size: var(--fs-label); }
+.brief-split__n { font-size: var(--fs-body); font-weight: var(--fw-semibold); color: var(--ink); }
+.brief-split__name { color: var(--text-2); overflow: hidden; text-overflow: ellipsis; }
+
+/* Ramp tones for a split whose parts are not severities: darkest first, the folded rest last. */
+.brief-tone--r1 { background: var(--brief-r1); }
+.brief-tone--r2 { background: var(--brief-r2); }
+.brief-tone--r3 { background: var(--brief-r3); }
+.brief-tone--r4 { background: var(--brief-r4); }
+.brief-tone--r5, .brief-tone--rest { background: var(--brief-r5); }
+/* Fix-next tiers: the shared rank ramp, solid. */
+.brief-tone--t1 { background: var(--rank-4-solid); }
+.brief-tone--t2 { background: var(--rank-3-solid); }
+.brief-tone--t3 { background: var(--rank-2-solid); }
+.brief-tone--muted { background: var(--hairline-strong); }
+.brief-tone--warn { background: var(--sev-medium); }
+@media (forced-colors: active) {
+  .brief-split__seg, .brief-unit, .brief-dot--on, .brief-list__mark, .brief-track__fill { forced-color-adjust: none; }
+}
+
+.brief-list { display: flex; flex-direction: column; }
+.brief-list__head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-4); padding-bottom: var(--space-2); }
+.brief-list__rows { list-style: none; margin: 0; padding: 0; }
+.brief-list__row {
+  display: grid; grid-template-columns: 12px minmax(180px, 280px) minmax(0, 1fr) max-content max-content;
+  align-items: center; gap: var(--space-3); min-height: 44px; border-top: 1px solid var(--hairline);
+  font-size: var(--fs-body); color: var(--ink); text-decoration: none;
+}
+a.brief-list__row:hover .brief-list__primary { text-decoration: underline; }
+.brief-list__mark { width: 10px; height: 10px; border-radius: 3px; }
+.brief-list__primary { font-weight: var(--fw-semibold); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brief-list__secondary { color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brief-list__figure { text-align: right; white-space: nowrap; }
+.brief-list__meta { min-width: 90px; text-align: right; white-space: nowrap; color: var(--text-2); }
+.brief-fig > .brief-more { margin-top: auto; align-self: flex-start; }
+.brief-more { min-height: 0; box-shadow: none; font-size: var(--fs-label); font-weight: var(--fw-semibold); color: var(--accent-text); text-decoration: none; background: none; border: 0; padding: 0; cursor: pointer; font-family: inherit; }
+.brief-more:hover { text-decoration: underline; }
+.brief-notes { display: flex; flex-direction: column; gap: var(--space-2); }
+.brief-notes__list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
+.brief-notes__list li { padding: var(--space-2) 0; border-top: 1px solid var(--hairline); line-height: 1.5; }

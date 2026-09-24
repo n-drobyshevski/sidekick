@@ -329,16 +329,18 @@ describe("the front door still draws no chart", () => {
  * two lines here, hence the `[\s\S]`.
  */
 function hostOrder(src) {
-  const m = src.match(/host\.append\(([\s\S]*?)\);/);
+  const m = src.match(/(?<![A-Za-z])(?:brief|host)\.append\(([^;]*Host[^;]*)\);/);
   return m
     ? m[1].split(",").map((s) => s.trim()).filter((s) => s.endsWith("Host"))
     : [];
 }
 
 describe("Fix next is the page's LAST block, and it is collapsible", () => {
-  it("appends fixHost after every other host, the last-sync caption included", () => {
+  it("appends fixHost after every other host, the fix-first preview included", () => {
+    // The briefing (DESIGN.md "The briefing"): status line, figures, splits, the three-row
+    // preview and the reading notes all come first; what this test is about is the tail.
     expect(hostOrder(SRC)).toEqual([
-      "noticeHost", "heroHost", "coldHost", "sevHost", "registerHost", "scanHost", "fixHost",
+      "statusHost", "noticeHost", "figuresHost", "splitsHost", "topHost", "notesHost", "fixHost",
     ]);
     // Perturbed, because "is fixHost in the list" would pass on the arrangement this replaces.
     // The ranked list spent its whole life directly under the hero, which put the page's

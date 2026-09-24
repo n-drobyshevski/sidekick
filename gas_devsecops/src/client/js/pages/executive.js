@@ -36,10 +36,10 @@ import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import { scopeParam } from "./_rates.js";
 import { SCOPE_LABELS_LONG as SCOPE_LABELS } from "./_scopeLabels.js";
 import {
-  absent, absentText, clear, collapsibleSection, dataTable, days1, disclosure, el, emptyState,
-  errorState, figureCard, fmtCount, fmtDate, fmtDateTime, fmtDays, heroStat, num, pageHeader,
-  pct1, pluralize, sectionLabel, sevKeyRow, sevSegmentBar, skeleton, statRow, statusPill,
-  tipLabel, unitCounts, unitRow, unitScale,
+  absent, absentText, briefDelta, briefFigure, briefFigures, briefList, briefSplit, briefSplits,
+  briefStatus, clear, collapsibleSection, days1, disclosure, dotGrid, el, emptyState, errorState,
+  fmtCount, fmtDate, fmtDateTime, fmtDays, num, pageHeader, pct1, pluralize, relativeAge,
+  ringMark, skeleton, slopeMark, statusPill, tipLabel, unitSquares,
 } from "../ui.js";
 // THE HALF-LIFE DECISION IS IMPORTED, NOT REPEATED. `execMttrSlice` is a slice of the MTTR
 // page's own payload (api.ts says so), so the rule that turns `{median, medianLowerBound}`
@@ -697,50 +697,29 @@ export async function renderExecutive(host, params, _ctx) {
     (fresh) => paint && paint(fresh),
   );
 
+  // THE BRIEFING (2026-09-24, gas_devsecops/DESIGN.md "The briefing"). Four headline figures,
+  // two splits, a three-row preview of the ranked list and the notes a reader must not miss,
+  // read at a glance (gas_shared/ui/briefing.js). The honesty rules did not move: "Not
+  // reached" still says so, the tracking window and end-of-life notes stay on the surface,
+  // every picture repeats a figure printed beside it, and the full ranked list is still the
+  // last block, shut until opened.
+  const statusHost = el("div", {});
   const noticeHost = el("div", {});
-  const heroHost = el("div", {});
-  // FIRST OF THE QUALIFYING BLOCKS, now that the ranked list has left the slot above it. It
-  // used to sit between "what to fix next" and "what is open by severity" because it answered
-  // the question between them; with the worklist at the foot of the page it opens that run
-  // instead — how much of the backlog nobody is spending any hour on, then how big the backlog
-  // is, then how it splits across the three registers.
-  const coldHost = el("div", {});
-  const sevHost = el("div", {});
-  const registerHost = el("div", {});
-  const scanHost = el("div", {});
-  // LAST ON THE PAGE, AND SHUT. Same call as the OS register's front door, for the same
-  // reason: the ranked list is the page's longest block and its only WORKLIST — a different
-  // reader on a different errand from the leader the hero is written for — so it no longer
-  // stands between the one figure this page opens with and the three one-glance blocks that
-  // qualify it.
-  //
-  // `fixOpen` OUTLIVES THE PAINT. swrCall paints twice on a warm cache (the stored answer,
-  // then the fresh one), so a section whose open state lived on the node would snap shut under
-  // a reader who had just expanded it. The flag is the page's; the node is handed it and hands
-  // back every change.
+  const figuresHost = el("div", {});
+  const splitsHost = el("div", {});
+  const topHost = el("div", {});
+  const notesHost = el("div", {});
   const fixHost = el("div", {});
   let fixOpen = false;
-  // THE TITLE BLOCK IS STATIC, AND THE h1 DOES NOT WAIT ON AN RPC. The metric header below is
-  // built inside `renderHero`, which runs only once the fetch resolves — so the loading
-  // skeleton, the fetch-failure errorState and (on Coverage & efficiency) the no-figures empty
-  // state each rendered a page with NO `<h1>` in it at all. Appended here instead, once, ahead
-  // of every host: the page's name is not a function of its data. Two stacked `.page-header`
-  // blocks is the shape gas_ai's `problems` / `combos` / `config` already have — a title
-  // header, then the figure and its stat strip.
-  host.append(
-    pageHeader({ route: "executive" }),
-    noticeHost, heroHost, coldHost, sevHost, registerHost, scanHost, fixHost,
-  );
+  const brief = el("div", { class: "brief" });
+  host.append(pageHeader({ route: "executive" }), brief);
+  brief.append(statusHost, noticeHost, figuresHost, splitsHost, topHost, notesHost, fixHost);
 
-  // One failing section must never blank the front door.
   function guard(label, target, fn) {
     try {
       fn();
     } catch (e) {
       console.error("[executive] " + label + " render failed:", e);
-      // A render that THREW is a defect, not an absence — see feedback.js. `emptyState` here
-      // announced a crash in a role="status" box, in the same voice this page uses for "no
-      // sync saved yet", and swallowed the exception entirely.
       clear(target).append(errorState(
         "Couldn't render " + label + ".",
         { detail: String((e && e.message) || e) },
@@ -748,38 +727,34 @@ export async function renderExecutive(host, params, _ctx) {
     }
   }
 
-  clear(heroHost).append(
-    el("div", { role: "status", "aria-label": "Computing the remediation half-life" },
+  clear(figuresHost).append(
+    el("div", { role: "status", "aria-label": "Computing the headline figures" },
       skeleton("line", { width: "220px" }),
       skeleton("stat", { width: "260px", height: "56px" })),
   );
-  guard("the last-sync caption", scanHost, renderScan);
+  guard("the sync status", statusHost, renderStatus);
 
   paint = (payload) => {
     const first = executiveFirstRunView(payload, boot);
     guard("the first-run panel", noticeHost, () => renderFirstRun(first));
-    guard("the half-life", heroHost, () => renderHero(payload, first));
-    // SUPPRESSED, not dashed. See `executiveFirstRunView`: a dash still holds a figure's slot
-    // and reads as "coming", while the panel above has already named what each of these
-    // waits on. Both blocks are cleared so a stale paint cannot leave zeros behind them.
+    guard("the headline figures", figuresHost, () => renderFigures(payload, first));
+    guard("the reading notes", notesHost, () => renderNotes(payload));
     if (first.show) {
       clear(fixHost);
-      clear(coldHost);
-      clear(sevHost);
-      clear(registerHost);
+      clear(splitsHost);
+      clear(topHost);
       return;
     }
+    guard("the splits", splitsHost, () => renderSplits(payload));
+    guard("the fix-first list", topHost, () => renderTop(payload));
     guard("the fix-next list", fixHost, () => renderFixNext(payload));
-    guard("the cold-zone share", coldHost, () => renderColdShare(payload));
-    guard("open findings by severity", sevHost, () => renderSeverity(payload));
-    guard("the register split", registerHost, () => renderRegisters(payload));
   };
 
   try {
     paint(await data);
   } catch (e) {
     console.error("[executive] api_getExecutivePage failed:", e);
-    clear(heroHost).append(errorState(
+    clear(figuresHost).append(errorState(
       "Couldn't load remediation data.",
       { detail: String((e && e.message) || e) },
     ));
@@ -796,87 +771,122 @@ export async function renderExecutive(host, params, _ctx) {
     }));
   }
 
-  // ------------------------------------------------------------------------------ hero
-
-  function renderHero(payload, first) {
-    const view = executiveHeroView(payload);
-    clear(heroHost);
-
-    const stats = [
-      // "IN THIS ESTIMATE", NOT "IN THE LEDGER". This figure is the estimator's population and
-      // always was — a scope or severity filter already narrowed it — but until the
-      // remediation-speed exclusion existed the loose wording never produced a visible
-      // contradiction. It does now: with the switch on, this reads 477 while "413 open of 554
-      // tracked" sits under the severity bar on the same page, and both are right about
-      // different populations. Naming the population is what tells them apart; the note under
-      // the hero is what says why they differ.
-      statRow("Tracked", fmtCount(view.tracked), "lifecycles in this estimate"),
-      statRow("Resolved", fmtCount(view.resolved), "closed findings — the estimator's events"),
-      statRow(
-        "Still open",
-        fmtCount(view.open),
-        "kept in as right-censored observations",
-        null,
-        { term: "censoring" },
-      ),
-    ];
-
-    // NO `route`: the h1 is in the title block appended once at the top of renderExecutive.
-    heroHost.append(pageHeader({
-      hero: heroStat("Remediation half-life", view.value, view.qualifier, heroHelp(view)),
-      aside: renderMovement(payload),
-      // "Tracked 0 · Resolved 0 · Still open 0" is three zeros over a ledger nobody has read.
-      // The hero's own "Not measured" and its qualifier already carry the honest version, and
-      // the panel above names what the counts wait on.
-      stats: first && first.show ? [] : stats,
-    }));
-    // PRODUCT.md's seventh principle, beside the figure it qualifies. `trackingSinceView` is
-    // mttr.js's own — reached across a page module the way this file already reaches for
-    // `kmHalfLifeView` — because it reads the same `{trackingSince, scope}` shape off whatever
-    // payload carries it, and `payload` here carries both at its own top level (api.ts's
-    // `getExecutivePage`) exactly as `mttr` does on MTTR & SLA.
-    const tracking = trackingSinceView(payload);
-    if (tracking.show) heroHost.append(el("p", { class: "small muted" }, tracking.text));
-    // THE WINDOW ITSELF, directly under the date it opens — same reasoning and the same shared
-    // helper MTTR & SLA's own hero uses (`mttr.js`'s `windowLineView`), so the front door and
-    // the detail page cannot state the window in two different sentences. `km` is read straight
-    // off `payload.mttr.remediation.km` — the widened `execMttrSlice` block `executiveHeroView`
-    // above already reads from, not a second RPC — because `events`/`total`/`excludedPreEntry`
-    // are the window's own sample size, not the hero's qualifier (see this file's own header).
-    const km = (payload && payload.mttr && payload.mttr.remediation
-      && payload.mttr.remediation.km) || null;
-    const windowLine = windowLineView(payload, km);
-    if (windowLine.show) {
-      heroHost.append(el("p", { class: "small muted" }, tipLabel(windowLine.text, WINDOW_LINE_HELP)));
-    }
-    heroHost.append(curveNote());
-    // THE ONE PAGE WHERE THE SENTENCE HAS TO NAME ITS FAMILY. The switch narrows the half-life
-    // above and leaves every severity tile below whole — a retired repository's open findings
-    // are real and stay in the backlog — so a note reading "these figures" here would claim
-    // the tiles moved too. `endOfLifeExclusionNote`'s `what` parameter exists for exactly this.
-    const eol = endOfLifeExclusionNote(payload && payload.endOfLife, "the half-life figures");
-    if (eol) heroHost.append(el("p", { class: "small muted" }, eol));
-  }
+  // ---------------------------------------------------------------------- the status line
 
   /**
-   * The hero label's tip: the STATE picks the lines, and the LABEL picks the term.
-   *
-   * Two paragraphs used to sit under the hero — 43 words explaining the bound, 23 explaining
-   * "not measured" — and each was the second statement of something the VALUE already says:
-   * `kmHalfLifeView` renders the unreached-median states as "Not reached" and the absence as
-   * "Not measured", in the 2rem slot, before either paragraph was reached. Those words stay on
-   * the surface (R2: an honesty statement never leaves the page for a tip); the EXPLANATION
-   * moves one level down, onto the label, behind the dotted trigger.
-   *
-   * THE TERM DOES NOT MOVE WITH THE STATE, and a first draft had it doing so — routing to
-   * `lower-bound` whenever the value was a bound. Reviewed and reversed: the trigger sits on
-   * the words "Remediation half-life", so the entry it navigates to on Enter is that figure's
-   * own definition, whatever the figure happens to read this week. A control whose
-   * destination changes with the data is a control a reader cannot learn. The state-specific
-   * sentence LEADS the lines instead, which is the same shape `figureCard` uses for a
-   * denominator — the specific reading first, the book's general one behind it — and
-   * `lower-bound` stays reachable from the Key sheet, which lists every entry.
+   * When every figure below was measured, in one line — the "Last sync" section's successor.
+   * A sync older than a week turns the dot amber and says how old in words: every number on
+   * this page is as of that sync, and a stale one is the first thing a reader must know.
    */
+  function renderStatus() {
+    clear(statusHost);
+    const latest = boot.latestSync;
+    if (!latest) {
+      statusHost.append(briefStatus({ tone: "neutral", parts: ["No sync has run yet"] }));
+      return;
+    }
+    const t = typeof latest.ts === "number" ? latest.ts : Date.parse(latest.ts);
+    const stale = Number.isFinite(t) && Date.now() - t > 7 * 86400000;
+    const scopes = Array.isArray(latest.scopes) ? latest.scopes : [];
+    statusHost.append(briefStatus({
+      tone: stale ? "warn" : "ok",
+      parts: [
+        "Last sync " + fmtDateTime(latest.ts),
+        el("span", { class: stale ? "brief-status__warn" : null }, relativeAge(latest.ts)),
+        fmtCount(latest.total) + " " + pluralize(Number(latest.total || 0), "finding")
+          + " across " + fmtCount(scopes.length) + " " + pluralize(scopes.length, "register"),
+        boot.hasCredentials ? null : statusPill("neutral", "Dry run", {
+          lines: [
+            "No Wiz credentials are configured, so these figures come from a dry run rather"
+            + " than from the tenant.",
+          ],
+        }),
+        el("a", { class: "linklike", href: "#/history" }, "Scan history"),
+      ],
+    }));
+  }
+
+  // ------------------------------------------------------------------ the four figures
+
+  function renderFigures(payload, first) {
+    clear(figuresHost);
+    const hero = executiveHeroView(payload);
+    const open = openMovementView(payload && payload.movement);
+    figuresHost.append(briefFigures(
+      openFigure(open, hero),
+      halfLifeFigure(hero, payload),
+      first && first.show ? null : actFigure(payload),
+      first && first.show ? null : renderColdShare(payload),
+    ));
+  }
+
+  function openFigure(open, hero) {
+    const label = tipLabel("Open findings", { term: "movement" });
+    if (!open.show) {
+      return briefFigure({
+        label,
+        value: hero.tracked ? fmtCount(hero.open) : absentText,
+        caption: "No sync-on-sync comparison yet. " + open.reason,
+      });
+    }
+    const t = open.total;
+    return briefFigure({
+      label,
+      value: fmtCount(t.open),
+      delta: briefDelta(t.chip),
+      visual: slopeMark({
+        from: t.prevOpen,
+        to: t.open,
+        fromLabel: fmtCount(t.prevOpen) + " · " + fmtDate(open.since),
+        toLabel: fmtCount(t.open) + " · " + fmtDate(open.until),
+        label: "Open findings went from " + fmtCount(t.prevOpen) + " to " + fmtCount(t.open)
+          + " between " + fmtDate(open.since) + " and " + fmtDate(open.until),
+      }),
+      caption: "Syncs " + days1(open.days) + " apart",
+    });
+  }
+
+  function halfLifeFigure(view, payload) {
+    const half = executiveMovementView(payload && payload.weekTrend);
+    const delta = half.show
+      ? el("span", {
+        class: "brief-delta brief-delta--"
+          + (half.direction === "flat" ? "neutral" : half.direction === "up" ? "bad" : "ok"),
+        "aria-label": half.label,
+      }, half.magnitude)
+      : null;
+    const numeric = view.measured && !view.isLowerBound && num(view.days) !== null;
+    return briefFigure({
+      label: tipLabel("Half-life", heroHelp(view)),
+      // "Not reached" and "Not measured" are the value, in words, exactly as the MTTR page
+      // prints them — `kmHalfLifeView` decides, this page does not re-decide.
+      value: numeric ? fmtCount(Math.round(view.days)) : view.value,
+      valueClass: numeric ? null : "brief-value--text",
+      unit: numeric ? pluralize(Math.round(view.days), "day") : null,
+      delta,
+      visual: view.tracked
+        ? [
+          ringMark({
+            part: view.resolved,
+            whole: view.tracked,
+            label: fmtCount(view.resolved) + " of " + fmtCount(view.tracked)
+              + " tracked findings resolved",
+          }),
+          el("p", { class: "brief-caption" },
+            el("strong", {}, fmtCount(view.resolved)), " fixed", el("br"),
+            el("strong", {}, fmtCount(view.open)), " still open"),
+        ]
+        : null,
+      caption: view.secondary ? capitalise(view.secondary) + "." : null,
+      link: { href: "#/mttr", text: "MTTR & SLA" },
+    });
+  }
+
+  function capitalise(s) {
+    const t = String(s || "");
+    return t.charAt(0).toUpperCase() + t.slice(1);
+  }
+
   function heroHelp(view) {
     if (view.isLowerBound) {
       return {
@@ -885,9 +895,7 @@ export async function renderExecutive(host, params, _ctx) {
           "The survival curve never falls to half within the observed window, so there is no"
           + " median to publish.",
           view.state === "quartile"
-            // "quartile": a quarter of what is tracked has closed, even though half has not.
             ? "A quarter of what is tracked has already closed — " + view.secondary + "."
-            // "quartile-bound": not even a quarter has closed within the reliable window.
             : "Too few findings have closed within the reliable window to say even that much —"
               + " " + view.secondary + ".",
         ],
@@ -905,100 +913,234 @@ export async function renderExecutive(host, params, _ctx) {
     return { term: "half-life" };
   }
 
+  function actFigure(payload) {
+    const view = fixNextView(payload, boot);
+    const label = tipLabel("Act now", { term: "fix-next" });
+    if (!view.show) return briefFigure({ label, value: absentText });
+    if (view.empty) {
+      return briefFigure({ label, value: "0", unit: "groups", caption: view.emptyReason });
+    }
+    const byTier = new Map();
+    view.items.forEach((it) => {
+      if (!byTier.has(it.tier)) byTier.set(it.tier, { label: it.tierLabel, n: 0 });
+      byTier.get(it.tier).n += 1;
+    });
+    const legend = [...byTier.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([, v]) => fmtCount(v.n) + " " + v.label.toLowerCase());
+    return briefFigure({
+      label,
+      value: fmtCount(view.items.length),
+      unit: pluralize(view.items.length, "group"),
+      visual: unitSquares({
+        tones: view.items.map((it) => "t" + Math.min(Math.max(it.tier, 1), 3)),
+        label: legend.join(", "),
+      }),
+      caption: legend.join(" · ") + ". " + view.rankedShort + ".",
+      action: fixButton("Fix next"),
+    });
+  }
+
   /**
-   * Where the curve is, and why it is not here.
-   *
-   * The stub promised one figure with its censored count beside it, and that is what the
-   * hero draws. The CURVE itself is not in this payload — `execMttrSlice` ships two scalars
-   * — so this points at the page that has it rather than drawing an empty box on the front
-   * door or paying 170 KB for a chart the landing page was sliced to avoid.
-   *
-   * ONE LINE NOW, AND THE PROVENANCE IS THE TIP. The sentence "This page is sent the estimate
-   * only, not the curve behind it" is the reason the link exists, so it belongs ON the link's
-   * own words rather than after them: a cross-reference is the one kind of block R2 calls a
-   * DELETE candidate outright, and this is what is left once the reference itself is all that
-   * survives.
+   * The cold zone as a figure. Its DENOMINATOR SENTENCE is the one the old card carried, word
+   * for word — the window, the relative-mode clause, the clock caveat and the coverage gap —
+   * in the label's tip and on the node (`briefFigure`'s figureCard contract). The coverage gap
+   * folds into that same sentence rather than becoming a second note.
    */
-  function curveNote() {
-    return el("p", { class: "small muted" },
-      tipLabel("Survival curve", {
+  function renderColdShare(payload) {
+    const view = coldShareView(payload);
+    if (!view.show) {
+      return briefFigure({
+        label: "Cold zone",
+        help: { term: "cold-zone" },
+        value: "Not measured",
+        valueClass: "brief-value--text",
+        caption: "Appears once a sync has saved the movement before it.",
+      });
+    }
+    const windowText = view.coldAfterDays === null
+      ? "the cold-zone window"
+      : `at least ${fmtDays(view.coldAfterDays)}`;
+    const targetText = `${fmtCount(view.targetSharePct)}%`;
+    const modeClause = view.mode !== "relative"
+      ? ""
+      : view.floorApplied === true
+        ? ` — the floor, which holds the zone smaller than the ${targetText} asked for`
+        : ` — the line relative mode set so the idlest ${targetText} of repositories with open`
+          + " findings are cold";
+    const clock = view.atLedgerClock
+      ? "Measured at the last scan, never against today."
+      : "Measured against the current time rather than the last scan — the clock the ledger"
+        + " was measured at could not be read, so this figure moves as the page is reopened.";
+    const coverageClause = view.scopesWithoutScan.length
+      ? ` No scan is on record for ${view.scopesWithoutScan.map((s) => SCOPE_LABELS[s] || s).join(", ")}`
+        + `, so this figure cannot say whether ${view.scopesWithoutScan.length === 1 ? "its" : "their"}`
+        + " repositories are cold."
+      : "";
+    return briefFigure({
+      label: "Cold zone",
+      help: { term: "cold-zone" },
+      denominator:
+        `${fmtCount(view.openInCold)} of ${fmtCount(view.openFindings)} open findings, on`
+        + ` ${fmtCount(view.coldRepos)} of ${fmtCount(view.reposWithOpen)} repositories with`
+        + " open findings where nothing has been resolved, removed or rotated for"
+        + ` ${windowText}${modeClause}. ${clock}${coverageClause}`,
+      value: view.pct === null ? absentText : pct1(view.pct),
+      visual: dotGrid({
+        sharePct: view.pct,
+        label: fmtCount(view.openInCold) + " of " + fmtCount(view.openFindings)
+          + " open findings sit on repositories with no movement for " + windowText,
+      }),
+      caption: el("span", {},
+        el("strong", {}, fmtCount(view.openInCold)), " of " + fmtCount(view.openFindings)
+        + " open findings, on ",
+        el("strong", {}, fmtCount(view.coldRepos)), " of " + fmtCount(view.reposWithOpen)
+        + " repositories idle for " + windowText + "."
+        + (view.atLedgerClock ? "" : " This figure moves as the page is reopened.")),
+      link: { href: "#/repos", text: "Repositories" },
+    });
+  }
+
+  // ------------------------------------------------------------------------- the splits
+
+  function renderSplits(payload) {
+    clear(splitsHost);
+    const splits = [renderRegisters(payload), renderSeverity(payload)].filter(Boolean);
+    if (splits.length) splitsHost.append(briefSplits(...splits));
+  }
+
+  /**
+   * The open backlog by register, each part carrying its sync-on-sync change. Three registers,
+   * three clocks — the half-lives are never summed, so they ride in the foot one per register.
+   */
+  function renderRegisters(payload) {
+    const view = executiveRegisterView(payload && payload.byScope);
+    if (!view.show) return null;
+    const open = openMovementView(payload && payload.movement);
+    const chips = new Map(open.show ? open.rows.map((r) => [r.scope, r.chip]) : []);
+    const parts = view.rows.map((r, i) => ({
+      label: r.label,
+      value: r.open,
+      tone: "r" + (i * 2 + 1),
+      note: briefDelta(chips.get(r.scope), { form: "count" }),
+    }));
+    return briefSplit({
+      label: "By register",
+      parts,
+      aria: "Open findings by register: "
+        + parts.map((p) => p.label + " " + fmtCount(p.value)).join(", "),
+      foot: el("span", {},
+        tipLabel("Half-life per register", {
+          term: "half-life",
+          lines: [
+            "Three registers, three clocks. The same CVE arriving through a dependency and"
+            + " through first-party code is two findings with two clocks, so these are never"
+            + " summed into one number.",
+          ],
+        }),
+        ": " + view.rows.map((r) => r.label + " " + r.kmText).join(" · ")),
+      // EACH SHARE CARRIES ITS BASE: the old table's share cell, one line, with the same
+      // empty-base rule — a register with nothing open states that, never "0% of 0".
+      after: [el("p", { class: "small muted" },
+        "Share of the open backlog: ",
+        ...view.rows.flatMap((r, i) => [
+          i ? " · " : "",
+          r.label + " ",
+          el("span", {
+            class: "num",
+            "data-denominator": r.share.denominator === null ? "none" : String(r.share.denominator),
+          }, r.share.baseEmpty ? "— " + r.share.emptyLabel : r.share.text),
+        ]),
+        view.rows.length && !view.rows[0].share.baseEmpty
+          ? " — of " + view.rows[0].share.denominatorLabel
+          : "")],
+    });
+  }
+
+  function renderSeverity(payload) {
+    const view = executiveSeverityView(payload, boot.severityOrder);
+    if (!view.show) return null;
+    const parts = view.tiles.map((t) => ({
+      label: t.sev.charAt(0) + t.sev.slice(1).toLowerCase(),
+      value: t.count,
+      tone: t.sev,
+    }));
+    return briefSplit({
+      label: tipLabel("By severity", {
         lines: [
-          "This page is sent the estimate only, not the curve behind it.",
-          "The curve, its censor markers and the per-severity split are on MTTR & SLA.",
+          "Severity is the grade Wiz put on the detection, over OPEN findings only.",
+          "On secrets it grades the detection, not whether the credential is live.",
         ],
       }),
-      " → ",
-      el("a", { class: "linklike", href: "#/mttr" }, "MTTR & SLA"));
+      parts,
+      aria: "Open findings by severity: "
+        + parts.map((p) => fmtCount(p.value) + " " + p.label).join(", "),
+      foot: fmtCount(view.open) + " open of " + fmtCount(view.total) + " tracked.",
+      after: [view.note ? el("p", { class: "small muted" }, view.note) : null],
+    });
   }
+
+  // --------------------------------------------------------------------- fix first
+
+  function renderTop(payload) {
+    clear(topHost);
+    const view = fixNextView(payload, boot);
+    if (!view.show || view.empty) return;
+    topHost.append(briefList({
+      label: "Fix first",
+      action: fixButton("All " + fmtCount(view.items.length) + " "
+        + pluralize(view.items.length, "group") + " · " + view.rankedShort),
+      rows: view.items.slice(0, 3).map((it) => ({
+        tone: "t" + Math.min(Math.max(it.tier, 1), 3),
+        primary: it.repoText,
+        secondary: it.tierLabel + " · " + it.scopeLabel,
+        figure: it.countText,
+        meta: it.oldestText,
+        href: it.href,
+        aria: it.tierLabel + " — " + it.repoText + ", " + it.countText + ", " + it.oldestText
+          + ". " + it.linkLabel,
+      })),
+    }));
+  }
+
+  function fixButton(text) {
+    return el("button", {
+      type: "button",
+      class: "brief-more",
+      onclick: () => {
+        const details = fixHost.querySelector("details");
+        if (!details) return;
+        details.open = true;
+        fixOpen = true;
+        details.scrollIntoView({ block: "start", behavior: "smooth" });
+      },
+    }, text, el("span", { "aria-hidden": "true" }, " →"));
+  }
+
+  // ------------------------------------------------------------------ the reading notes
 
   /**
-   * One row of the movement strip: a register, its chip, and the pair the chip is FROM.
-   *
-   * The raw pair rides beside the delta on purpose. A chip reading "−40" is a claim about two
-   * numbers, and a reader who cannot see both has to trust it; "280 open, was 320" is the
-   * arithmetic in the open. `null` chip means the previous count was not measurable, and that
-   * renders as words rather than as a ±0 (see `deltaChipView`).
+   * What qualifies every figure on the page, ON THE SURFACE: how long this register has been
+   * watching, the window line, and end-of-life repositories still counted. These are honesty
+   * statements, not explanations of a figure, so none of them may move into a tip.
    */
-  function movementRow(label, r) {
-    const row = el("div", { class: "movement-row" },
-      el("span", { class: "movement-label small" }, label));
-    if (r.chip) {
-      const glyph = r.chip.direction === "up" ? "▲" : r.chip.direction === "down" ? "▼" : "=";
-      row.append(el("span", {
-        class: "pill " + r.chip.kind,
-        // The glyph is decorative; the label spells the direction and the size in words.
-        "aria-label": label + ", " + r.chip.aria,
-      }, el("span", { "aria-hidden": "true" }, glyph), " " + r.chip.text));
-    } else {
-      row.append(el("span", { class: "small muted" }, "no comparison"));
-    }
-    row.append(el("span", { class: "small muted movement-counts" },
-      fmtCount(r.open) + " open, was " + fmtCount(r.prevOpen)));
-    return row;
+  function renderNotes(payload) {
+    clear(notesHost);
+    const notes = [];
+    const tracking = trackingSinceView(payload);
+    if (tracking.show) notes.push(tracking.text);
+    const km = (payload && payload.mttr && payload.mttr.remediation
+      && payload.mttr.remediation.km) || null;
+    const windowLine = windowLineView(payload, km);
+    if (windowLine.show) notes.push(tipLabel(windowLine.text, WINDOW_LINE_HELP));
+    const eol = endOfLifeExclusionNote(payload && payload.endOfLife, "the half-life figures");
+    if (eol) notes.push(eol);
+    if (!notes.length) return;
+    notesHost.append(el("section", { class: "brief-notes" },
+      el("h2", { class: "brief-label" }, "Read with care"),
+      el("ul", { class: "brief-notes__list" },
+        ...notes.map((n) => el("li", { class: "small muted" }, n)))));
   }
-
-  /**
-   * Movement, and what it is movement OF — now two measurements rather than one.
-   *
-   * THE OPEN BACKLOG LEADS. It is observable on any register that has synced twice; the
-   * half-life comparison below it is the better statement but needs a Kaplan-Meier median at
-   * BOTH endpoints, which a young register does not have (this seed: no median at all, a lower
-   * bound of 293.9 days). Where the half-life comparison exists it is drawn underneath, in its
-   * own words; where it does not, nothing is drawn for it — the open-backlog block above has
-   * already said what moved, and a second "no comparison" line would only restate the first.
-   */
-  function renderMovement(payload) {
-    const open = openMovementView(payload && payload.movement);
-    const half = executiveMovementView(payload && payload.weekTrend);
-    // THE METHOD SENTENCE IS NOW THE LABEL'S DEFINITION. "A rising count is worse. The
-    // comparison is between two syncs, not between two calendar dates…" is what the word
-    // "Movement" MEANS here; printed as a third line under the rows it was 27 words of body
-    // copy inside a header aside that must not out-weigh the hero beside it. The `movement`
-    // entry carries it verbatim, and the trigger's dotted underline is the signifier.
-    const box = el("div", { class: "page-strip" },
-      el("div", { class: "kpi-label" }, tipLabel("Movement", { term: "movement" })));
-
-    if (!open.show) {
-      box.append(el("div", { class: "small muted" },
-        "No open-backlog comparison. " + open.reason));
-    } else {
-      box.append(el("div", { class: "movement-rows" },
-        movementRow("All registers", open.total),
-        ...open.rows.map((r) => movementRow(r.label, r))));
-      box.append(el("div", { class: "small muted" }, open.dates));
-    }
-
-    if (half.show) {
-      const kind = half.direction === "flat" ? "neutral" : half.direction === "up" ? "bad" : "ok";
-      box.append(
-        statusPill(kind, half.magnitude),
-        el("div", { class: "small muted" }, half.label + "."),
-      );
-    }
-    return box;
-  }
-
-  // ------------------------------------------------------------------------- fix next
 
   /**
    * The ranked list, as an ordered list of GROUPS — last on the page, and behind its own
@@ -1087,327 +1229,5 @@ export async function renderExecutive(host, params, _ctx) {
     // list it qualifies, which is the one arrangement in which the list is never on screen
     // without it.
     if (view.cutNote) fix.append(el("p", { class: "small muted" }, view.cutNote));
-  }
-
-  // ------------------------------------------------------------------------- cold zone
-
-  /**
-   * One card: the share of the open backlog sitting where nothing is moving.
-   *
-   * ONE FIGURE AND NO TABLE, which is the same slice rule the hero follows. The Repositories
-   * page draws the whole family — every cold repository, every project, the idle-bucket grid
-   * and the scatter — and `coldZoneHeadline` (src/domain/coldZone.ts) is the projection that
-   * keeps the per-repository arrays off this payload entirely rather than shipping them and
-   * rendering one number out of them.
-   *
-   * THE LINK IS THE REST OF THE ANSWER. A reader who wants to know WHICH repositories is one
-   * click away, and that is a cross-reference rather than a second copy of the section.
-   */
-  function renderColdShare(payload) {
-    const view = coldShareView(payload);
-    clear(coldHost);
-    coldHost.append(sectionLabel("The cold zone", { term: "cold-zone" }));
-    if (!view.show) {
-      // A NOTICE, NEVER AN ERROR. No scan on record means there is no clock to measure
-      // idleness against — a state this block renders correctly, not a failure of it.
-      coldHost.append(emptyState(
-        "The cold zone is not measured yet.",
-        "Idle time is counted from the last scan back to the movement before it, so this"
-        + " figure appears once a sync has saved one.",
-        { variant: "notice" },
-      ));
-      return;
-    }
-    const windowText = view.coldAfterDays === null
-      ? "the cold-zone window"
-      : `at least ${fmtDays(view.coldAfterDays)}`;
-    // WHERE THAT WINDOW CAME FROM. Nothing here branches on the mode to read a NUMBER — the
-    // line above is the effective one in both modes — but a derived line and a chosen one are
-    // different claims about the same figure, and the floor case is the one where the zone is
-    // deliberately smaller than the share that was asked for.
-    const targetText = `${fmtCount(view.targetSharePct)}%`;
-    const modeClause = view.mode !== "relative"
-      ? ""
-      : view.floorApplied === true
-        ? ` — the floor, which holds the zone smaller than the ${targetText} asked for`
-        : ` — the line relative mode set so the idlest ${targetText} of repositories with open`
-          + " findings are cold";
-    const clock = view.atLedgerClock
-      ? "Measured at the last scan, never against today."
-      : "Measured against the current time rather than the last scan — the clock the ledger"
-        + " was measured at could not be read, so this figure moves as the page is reopened.";
-    // THE COVERAGE CAVEAT, FOLDED IN RATHER THAN GIVEN ITS OWN NOTE. This card is one number,
-    // and the Repositories page already carries the full sentence (`scopesWithoutScanNote`)
-    // naming these scopes and saying why their repositories are kept observed rather than
-    // accused of vanishing — a second copy of that argument here would be the "fifth standalone
-    // note" the repos page itself declined for a lesser count. But saying NOTHING would let a
-    // reader take this one percentage as covering the whole estate when a scope of it was never
-    // scanned at all, which is the silent failure `clock` just above already exists to refuse
-    // for the wall-clock case — so this is the same refusal for the scan-coverage case, in the
-    // same tooltip rather than as a second visible line.
-    const coverageClause = view.scopesWithoutScan.length
-      ? ` No scan is on record for ${view.scopesWithoutScan.map((s) => SCOPE_LABELS[s] || s).join(", ")}`
-        + `, so this figure cannot say whether ${view.scopesWithoutScan.length === 1 ? "its" : "their"}`
-        + " repositories are cold."
-      : "";
-    coldHost.append(el("div", { class: "kpi-row" }, figureCard({
-      label: "Backlog in the cold zone",
-      value: view.pct === null ? absentText : pct1(view.pct),
-      sub: `${fmtCount(view.openInCold)} of ${fmtCount(view.openFindings)} open findings`,
-      help: { term: "cold-zone" },
-      denominator:
-        `${fmtCount(view.openInCold)} of ${fmtCount(view.openFindings)} open findings, on`
-        + ` ${fmtCount(view.coldRepos)} of ${fmtCount(view.reposWithOpen)} repositories with`
-        + " open findings where nothing has been resolved, removed or rotated for"
-        + ` ${windowText}${modeClause}. ${clock}${coverageClause}`,
-    })));
-    coldHost.append(el("p", { class: "small muted" },
-      "Which repositories, and which projects → ",
-      el("a", { class: "linklike", href: "#/repos" }, "Repositories")));
-  }
-
-  // -------------------------------------------------------------------------- severity
-
-  /**
-   * The distribution as ONE PICTURE, which is the picture both register pages already draw.
-   *
-   * WHAT THIS REPLACES. Five or six `kpiCard`s — a bordered, surface-tinted box per severity,
-   * each holding a badge, a count and the word "open" — reading left to right as six figures
-   * of equal weight. A distribution drawn as six equal boxes is the one thing a distribution
-   * is not: the reader has to compare six numbers to recover the shape, and 12 CRITICAL beside
-   * 12 INFO looked identical. `sevSegmentBar` + `sevKeyRow` is the same data as a shape with
-   * every count still written out beside it, and it is what `sca.js` and `sast.js` put in
-   * their own headers, so the front door and the registers say this in one vocabulary.
-   *
-   * A ZERO LEVEL KEEPS ITS KEY, and that is why the entries are built from `view.tiles`
-   * rather than through `sevEntries` (which filters `count > 0` — right for a register page's
-   * hero, wrong here). `executiveSeverityView` includes every level in the order deliberately:
-   * "a missing tile reads as a render that failed; an honest 0 does not", and the key row is
-   * where that honest 0 now lives. The BAR is drawn only when something is open — a `--lg`
-   * bar with every segment at flex-grow 0 is an empty bordered box, which is the "broken
-   * widget" `sca.js`'s own comment records.
-   */
-  function renderSeverity(payload) {
-    const view = executiveSeverityView(payload, boot.severityOrder);
-    clear(sevHost);
-    // The 45-word method note is a DEFINITION of the axis — what a severity grades, and the
-    // one register where it grades something other than what a reader would assume — so it
-    // sits on the heading rather than under the picture.
-    const label = sectionLabel("Open findings by severity", {
-      lines: [
-        "Severity is the grade Wiz put on the detection, over OPEN findings only.",
-        "On secrets it grades the detection, not whether the credential is live.",
-        "Which is why that register is segmented differently on its own page.",
-      ],
-    });
-    sevHost.append(label);
-    if (!view.show) {
-      sevHost.append(emptyState("No severity tally recorded yet."));
-      return;
-    }
-    const entries = view.tiles.map((t) => ({ sev: t.sev, count: t.count }));
-    if (view.open > 0) {
-      sevHost.append(sevSegmentBar(entries.filter((e) => e.count > 0), {
-        size: "lg",
-        // CAPPED, because `.sevbar` is `width: 100%` and this is the only one of these bars
-        // in the app that is not inside a header column. Measured at 1280: uncapped it drew
-        // 1,140px of saturated severity fill across the page — the "wall of red and orange"
-        // DESIGN.md's anti-references name, from a component that reads correctly at the
-        // ~440px the register pages give it. A strip, not a band.
-        width: "min(100%, 44rem)",
-        label: "Open findings by severity: "
-          + entries.map((e) => fmtCount(e.count) + " " + e.sev).join(", "),
-      }));
-    }
-    sevHost.append(sevKeyRow(entries));
-    sevHost.append(el("p", { class: "small muted" },
-      fmtCount(view.open) + " open of " + fmtCount(view.total) + " tracked."));
-    if (view.note) sevHost.append(el("p", { class: "small muted" }, view.note));
-  }
-
-  // ------------------------------------------------------------------------- registers
-
-  function renderRegisters(payload) {
-    const view = executiveRegisterView(payload && payload.byScope);
-    clear(registerHost);
-    registerHost.append(sectionLabel("The three registers"));
-    if (!view.show) {
-      registerHost.append(emptyState(
-        "No per-register split yet.",
-        "It appears once a sync has saved findings for at least one register.",
-      ));
-      return;
-    }
-    // ONE UNIT FOR THE WHOLE TABLE, computed once here rather than per cell — see
-    // `unitScale`. Rows the cell will refuse to draw (a non-finite count) are kept out of
-    // the maximum too, so one unreadable row cannot pick the unit for the two readable ones.
-    const unit = unitScale(view.rows.reduce(
-      (m, r) => (typeof r.open === "number" && Number.isFinite(r.open) && r.open > m ? r.open : m),
-      0,
-    ));
-    let anyMarks = false;
-
-    /**
-     * The share, drawn as marks before it is written as a percentage.
-     *
-     * NOTHING IS DRAWN WHERE THERE IS NOTHING TO DIVIDE BY. `share.baseEmpty` means the whole
-     * open backlog is 0, i.e. nobody has measured this population — and a row of pictograms
-     * against an unmeasured denominator is the same confident zero this page suppresses
-     * everywhere else, except in picture form, which is harder to argue with. A count that is
-     * not a finite number is refused for the same reason.
-     *
-     * THE MARKS ARE NEVER THE READOUT. The percentage text below them is, and it stays exactly
-     * as it was; the pictogram is a second encoding of a figure that is already in words, which
-     * is what keeps this clear of "meaning by colour (or shape) alone". The marks are one
-     * `role="img"` with the count and the unit in its label rather than N nodes a screen reader
-     * would walk — `unitRow` builds that node now, and this closure keeps only the two refusals
-     * that are facts about THIS table.
-     *
-     * THE LABEL IS PASSED, NOT COMPOSED. `unitRow` would build the same sentence from `noun`,
-     * and the module's own default is this string; passing it explicitly is what lets the
-     * promotion be checked rather than trusted — the shipped wording is right here, in the
-     * file that shipped it, where a diff shows any change to it.
-     */
-    function isotype(r) {
-      if (r.share.baseEmpty) return null;
-      if (typeof r.open !== "number" || !Number.isFinite(r.open)) return null;
-      const { full, partialTenths } = unitCounts(r.open, unit);
-      if (full === 0 && partialTenths === 0) return null;
-      anyMarks = true;
-      return unitRow(r.open, {
-        unit,
-        label: fmtCount(r.open) + " open, one mark per " + fmtCount(unit),
-      });
-    }
-
-    registerHost.append(dataTable({
-      columns: [
-        { key: "label", label: "Register", cell: (r) => r.label },
-        {
-          key: "open",
-          label: "Open",
-          className: "num",
-          cell: (r) => fmtCount(r.open),
-        },
-        {
-          key: "share",
-          label: "Share of the open backlog",
-          cell: (r) => el("span", {},
-            isotype(r),
-            el("span", { class: "num" }, r.share.text),
-            " ",
-            // `baseEmpty` over the visible text, the raw denominator in the attribute —
-            // the same split mttr.js's `denominatorNode` makes, and for the same reason:
-            // "not measured 0 open across the registers" reads as a measurement of nothing.
-            el("span", {
-              class: "small muted",
-              "data-denominator": r.share.denominator === null ? "none" : String(r.share.denominator),
-            }, r.share.baseEmpty ? "— " + r.share.emptyLabel : r.share.denominatorLabel)),
-        },
-        {
-          key: "km",
-          label: "Half-life",
-          className: "num",
-          // THE COLUMN HEADING IS WHERE A COLUMN'S CAVEATS BELONG — asked once, not once per
-          // row, which is `ui/tip.js`'s own rule for a definition. `{term, lines}` keeps the
-          // trigger's route to the `half-life` entry while the line says what the entry
-          // cannot: why these three figures are never summed. The old second line explaining a
-          // bare dash is gone with the dash itself — `kmHalfLifeView` now runs on this table
-          // too, so a curve that never reaches half reads "Not reached" (with its own quartile
-          // reading, per row) rather than a dash pointing at another page.
-          help: {
-            term: "half-life",
-            lines: [
-              "Three registers, three clocks. The same CVE arriving through a dependency and"
-              + " through first-party code is two findings with two clocks, so these are never"
-              + " summed into one number.",
-            ],
-          },
-          cell: (r) => r.kmText,
-        },
-      ],
-      rows: view.rows,
-      className: "exec-registers",
-    }));
-    // The key, and only where marks were actually drawn. A legend for a picture nobody can see
-    // is a claim that a measurement happened.
-    // The key stays: it is the picture's UNIT, without which the marks are decoration. The
-    // two paragraphs that used to follow it are now lines on the Half-life column's own
-    // heading — see the column spec above.
-    if (anyMarks) {
-      registerHost.append(el("p", { class: "small muted" },
-        "One mark = " + fmtCount(unit) + " open findings."));
-    }
-  }
-
-  // ------------------------------------------------------------------------- last sync
-
-  /**
-   * When the register last looked. The CONTROL to look again is the Run sync button in the
-   * rail — one button in one place, so a reader is never offered two that could disagree
-   * about what is already running.
-   *
-   * ON AN EMPTY LEDGER THIS SECTION DEFERS RATHER THAN RESTATES. It used to print "No sync
-   * saved yet." over its own call to action — the same claim and the same instruction the
-   * first-run panel already carries at the top of this page, several screens up. Two copies
-   * of one sentence drift, and a second call to action invites a reader to hunt for a second
-   * control. The section still earns its place because it answers what the panel does not —
-   * WHEN did the register last look — so it answers that, and leaves the rest where it is.
-   */
-  function renderScan() {
-    clear(scanHost);
-    scanHost.append(sectionLabel("Last sync"));
-    const latest = boot.latestSync;
-    if (!latest) {
-      scanHost.append(emptyState(
-        "No sync has run yet.",
-        "What each figure is waiting for is listed at the top of this page.",
-        { variant: "notice" },
-      ));
-      return;
-    }
-    // EVERY REGISTER THE SYNC TOUCHED, not the one that sorted first. One run writes one
-    // `scans` row per scope; naming a single one here reported a third of the observation as
-    // the whole of it — on the page that argues two sections above that the three registers
-    // are three clocks and are never collapsed into one.
-    scanHost.append(el("p", { class: "scan-caption" },
-      fmtDateTime(latest.ts)
-      + " · " + fmtCount(latest.total) + " " + pluralize(Number(latest.total || 0), "finding")
-      + " across " + fmtCount(latest.scopes.length)
-      + " " + pluralize(latest.scopes.length, "register")));
-    scanHost.append(el("ul", { class: "scan-scopes small muted" },
-      ...latest.scopes.map((s) => el("li", {},
-        (SCOPE_LABELS[s.scope] || s.scope)
-        + " · " + fmtCount(s.total) + " " + pluralize(Number(s.total || 0), "finding")
-        // The coverage half of the caption. `null` means the severity gate was off for that
-        // register and it looked at everything — which is the SECRETS default, so rendering
-        // it as "none" would invert the most deliberate choice in this product.
-        + " · " + (s.severities ? "severities " + s.severities : "all severities"),
-      ))));
-    // A CROSS-LINK IS A LINK. The 37 words around this one explained what Scan history is
-    // sent and repeated the rail's own call to action; the first is provenance and rides on
-    // the phrase, the second was the third copy of "Run sync" on one page — the rail button
-    // is the control, and this page's first-run panel already names it.
-    scanHost.append(el("p", { class: "small muted" },
-      tipLabel("What that sync changed", {
-        lines: [
-          "Scan history is the page sent the per-scan arrival and closure counts — one row"
-          + " per register per sync.",
-        ],
-      }),
-      " → ",
-      el("a", { class: "linklike", href: "#/history" }, "Scan history")));
-    // A STATE, DRAWN AS A STATE. "Dry run" is what these figures ARE, and a pill is the
-    // component this design system already has for a state: two words plus a tint, with the
-    // sentence behind it. As a 21-word paragraph it read as a footnote to the caption above
-    // rather than as a qualifier on every number on the page.
-    if (!boot.hasCredentials) {
-      scanHost.append(el("p", { class: "small muted" }, statusPill("neutral", "Dry run", {
-        lines: [
-          "No Wiz credentials are configured, so these figures come from a dry run rather"
-          + " than from the tenant.",
-        ],
-      })));
-    }
   }
 }

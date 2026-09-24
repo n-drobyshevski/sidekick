@@ -717,23 +717,25 @@ describe("the cold-zone card's render half", () => {
     new URL("../src/client/js/pages/executive.js", import.meta.url), "utf8",
   );
 
+  // The briefing (DESIGN.md §6a) draws the cold zone as one of the four headline figures,
+  // `coldFigure`, rather than as its own section with a KPI card. The claims are the same.
+  const body = () => {
+    const at = SRC.indexOf("function coldFigure");
+    return SRC.slice(at, SRC.indexOf("// ------", at));
+  };
+
   it("points its cross-reference at the Cold zone route", () => {
-    expect(SRC).toContain('el("a", { class: "linklike", href: "#/coldZone" }, "Cold zone")');
-    expect(SRC).toContain("Which assets, and which support groups");
+    expect(SRC.indexOf("function coldFigure")).toBeGreaterThan(-1);
+    expect(body()).toContain('link: { href: "#/coldZone", text: "Cold zone" }');
   });
 
-  it("draws the absence as a notice rather than an error", () => {
-    const at = SRC.indexOf("function renderColdShare");
-    expect(at).toBeGreaterThan(-1);
-    const body = SRC.slice(at, SRC.indexOf("by domain", at));
-    expect(body).toContain('variant: "notice"');
-    expect(body).not.toContain("errorState(");
+  it("draws the absence as a refusal rather than an error", () => {
+    expect(body()).toContain('value: "Not measured"');
+    expect(body()).not.toContain("errorState(");
   });
 
   it("prints the muted dash rather than a percentage when the share is null", () => {
-    const at = SRC.indexOf("function renderColdShare");
-    const body = SRC.slice(at, SRC.indexOf("by domain", at));
-    expect(body).toContain("view.pct === null ? absentText : pct1(view.pct)");
+    expect(body()).toContain("view.pct === null ? absentText : pct1(view.pct)");
   });
 
   it("names the wall clock's consequence rather than only its name", () => {
@@ -741,8 +743,15 @@ describe("the cold-zone card's render half", () => {
   });
 
   it("labels the figure and takes its definition from the book", () => {
-    expect(SRC).toContain('label: "Backlog in the cold zone"');
-    expect(SRC).toContain('sectionLabel("The cold zone", { term: "cold-zone" })');
+    expect(body()).toContain('label: "Cold zone",');
+    expect(body()).toContain('help: { term: "cold-zone" },');
+    // And the rate never loses its base: the old card's denominator sentence, on the node.
+    expect(body()).toContain("denominator:");
+  });
+
+  it("draws the share as dots and repeats it in the picture's own name", () => {
+    expect(body()).toContain("dotGrid({");
+    expect(body()).toMatch(/label: fmtCount\(view\.openInCold\) \+ " of "/);
   });
 });
 
@@ -822,7 +831,7 @@ describe("executiveSeverityView — the movement strip supersedes it when it can
 
 describe("os: the page hands the severity view its movement, and paints it no earlier", () => {
   it("passes `movement` off the same payload the strip is drawn from", () => {
-    expect(EXEC_SRC).toMatch(/movement: data && data\.movement,/);
+    expect(EXEC_SRC).toMatch(/movement: payload && payload\.movement,/);
   });
 
   it("no longer paints the block from bootstrap before the payload lands", () => {
@@ -830,7 +839,7 @@ describe("os: the page hands the severity view its movement, and paints it no ea
     // about the payload, and answering it from bootstrap would be a second copy of
     // `insights.openMovement`'s own rule. The call is gone, not merely moved.
     expect(code(EXEC_SRC)).not.toContain("renderSeverity(null)");
-    expect(code(EXEC_SRC)).toMatch(/guard\("open findings by severity", sevHost, \(\) => renderSeverity\(payload\)\)/);
+    expect(code(EXEC_SRC)).toMatch(/guard\("the splits", splitsHost, \(\) => renderSplits\(payload\)\)/);
   });
 
   it("drops the scoped error box that existed only to replace that early paint", () => {
