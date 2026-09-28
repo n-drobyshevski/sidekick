@@ -8,16 +8,24 @@ import { mttrPaintPlan } from "./mttrPaintPlan.js";
 import { denominatorNode, fmtPct, rateCell } from "./_rates.js";
 import { agingTableModel, barsTableModel, trendTableModel } from "./_charts.js";
 import { groupCutNote } from "./_groupSplit.js";
+import { pickFindingColumns } from "./_findingColumns.js";
+import {
+  splitBucketNote, splitCountNote, splitGroupOf, splitRowLabel, splitSheetColumnKeys,
+  splitSheetDefaults, splitSheetRequests, splitSheetSortFor, splitSheetSubtitle,
+} from "./_splitSheet.js";
+import { findingRowLabel, openFindingSheet } from "./findingSheet.js";
+import { call } from "../../../../../gas_shared/api.js";
 // THE PRESENT/UNOBSERVED SPLIT IS IMPORTED, NOT REPEATED — shared with `pages/executive.js`
 // and `pages/overview.js` so the hero and the two "open findings by age" charts across all
 // three pages describe one blind spot in one voice.
 import { backlogSplitView } from "./_backlog.js";
 import {
   briefClocks, briefExtras, briefFigure, briefFigures, collapsibleSection, ringMark, shareTrack, sparkPath,
+  DEFAULT_PAGE_SIZE, PAGE_SIZES,
   absent, absentText, boundedDays, changeChip, chartTable, clear, dataTable, denomNote,
-  el, emptyState, errorState, firstRunNotice, fmtCount, fmtDays, fmtSpan, meter, num, pageHeader, pluralize, scopeBar, sectionLabel,
-  segmented, sevBadge, skeleton, sparkline, statRow, survivalTableModel,
-  tip, tipLabel,
+  el, emptyState, errorState, firstRunNotice, fmtCount, fmtDays, fmtSpan, meter, num, openSheet, pageHeader, pluralize, scopeBar, sectionLabel,
+  segmented, sevBadge, sheetSection, skeleton, skeletonStack, sparkline, statRow, survivalTableModel,
+  tableFooter, tip, tipLabel,
 } from "../ui.js";
 
 // Keep in sync with RESOLUTION_BUCKET_LABELS in src/domain/remediation.ts (the client
@@ -1030,6 +1038,35 @@ export async function renderMttr(main, _params, ctx) {
     await Promise.allSettled([summary, full]);
   }
 
+  /**
+   * The split table's column definitions, one copy — the table's headings and the row sheet's
+   * stat strip (`openSplitSheet`) name the same eight figures, and a definition that could
+   * drift between a heading and the tile restating it is two definitions. `split` is the
+   * backlog caption the "Open past SLA" column carries (see its call site).
+   */
+  function splitColumnHelp(dim, split) {
+    return {
+      group: [`The ${dim.noun} this row summarizes remediation for.`],
+      kmMedian: [`Kaplan–Meier median time-to-remediation for this ${dim.noun} — the principal figure.`,
+        "Still-open findings are censored, so fresh fast-patched vulns can't bias it low."],
+      median: [`Median days from first detection to remediation for this ${dim.noun}, counting closed `
+        + "findings only — no censoring. Biased low by a wave of fresh open findings, which is "
+        + "what the KM median corrects for; kept only for comparison."],
+      p90: ["Kaplan–Meier 90th-percentile time-to-remediation — the slow tail. Nine in ten " +
+        "findings beat it; one in ten is slower. Censoring-aware like the KM median (read off " +
+        "the same survival curve), so the tail isn't biased low by fresh fast-patched vulns; " +
+        "shows \"—\" when too much is still open to observe it."],
+      slaPct: ["Share of resolved findings closed within their severity's SLA target — " +
+        "CRITICAL 7d · HIGH 14d · MEDIUM 30d · LOW 90d · INFO 180d."],
+      openPastSla: ["Open findings already older than their severity's SLA target, measured from when " +
+        "a vendor fix became available. Unlike In-SLA % (which only scores resolved " +
+        "findings), an aged-out open CRITICAL counts here.",
+        ...(split.show ? [split.caption] : [])],
+      open: [`Findings in this ${dim.noun} not yet resolved.`],
+      resolved: [`Findings in this ${dim.noun} already resolved.`],
+    };
+  }
+
   /** Remediation breakdown that adapts to the sidebar scope (the server tags the payload with
    *  `dimension`): at the unscoped view it splits by manual group — so this is how each
    *  component is doing — and when a single manual group is selected
@@ -1070,6 +1107,7 @@ export async function renderMttr(main, _params, ctx) {
     // has no per-group split to attach — the register-wide caveat joins the "Open past SLA"
     // column's own tip instead, same as the per-severity table above.
     const split = backlogSplitView(mttr && mttr.backlog);
+    const help = splitColumnHelp(dim, split);
 
     // Chart pair over the group trend the server ships alongside the table. Each card swaps
     // its canvas for a muted message when there's nothing to draw (copied from overview.js's
@@ -1422,24 +1460,21 @@ export async function renderMttr(main, _params, ctx) {
         {
           key: "group",
           label: dim.Noun,
-          help: [`The ${dim.noun} this row summarizes remediation for.`],
+          help: help.group,
           cell: groupOf,
         },
         {
           key: "kmMedian",
           label: "Median MTTR (KM)",
           className: "num num--key",
-          help: [`Kaplan–Meier median time-to-remediation for this ${dim.noun} — the principal figure.`,
-            "Still-open findings are censored, so fresh fast-patched vulns can't bias it low."],
+          help: help.kmMedian,
           cell: (r) => fmtSpan(r.kmMedian),
         },
         {
           key: "median",
           label: "Median (naive)",
           className: "num",
-          help: [`Median days from first detection to remediation for this ${dim.noun}, counting closed `
-            + "findings only — no censoring. Biased low by a wave of fresh open findings, which is "
-            + "what the KM median corrects for; kept only for comparison."],
+          help: help.median,
           // `.muted small` rides on a span rather than on the column, because `col.className`
           // reaches the heading too: `.small` is 12px against a heading's 11px and `.muted` a
           // lighter grey, so spending them there would restyle one heading out of eight.
@@ -1449,18 +1484,14 @@ export async function renderMttr(main, _params, ctx) {
           key: "p90",
           label: "MTTR p90",
           className: "num",
-          help: ["Kaplan–Meier 90th-percentile time-to-remediation — the slow tail. Nine in ten " +
-            "findings beat it; one in ten is slower. Censoring-aware like the KM median (read off " +
-            "the same survival curve), so the tail isn't biased low by fresh fast-patched vulns; " +
-            "shows \"—\" when too much is still open to observe it."],
+          help: help.p90,
           cell: (r) => fmtSpan(r.p90),
         },
         {
           key: "slaPct",
           label: "In SLA (of resolved)",
           className: "num",
-          help: ["Share of resolved findings closed within their severity's SLA target — " +
-            "CRITICAL 7d · HIGH 14d · MEDIUM 30d · LOW 90d · INFO 180d."],
+          help: help.slaPct,
           // Null here means the group has closed nothing yet, so there is no share to state.
           cell: (r) => (r.slaPct != null ? `${r.slaPct.toFixed(0)}%` : absent()),
         },
@@ -1468,28 +1499,31 @@ export async function renderMttr(main, _params, ctx) {
           key: "openPastSla",
           label: "Open past SLA",
           className: "num",
-          help: ["Open findings already older than their severity's SLA target, measured from when " +
-            "a vendor fix became available. Unlike In-SLA % (which only scores resolved " +
-            "findings), an aged-out open CRITICAL counts here.",
-            ...(split.show ? [split.caption] : [])],
+          help: help.openPastSla,
           cell: (r) => fmtOpenPastSla(r.openPastSla),
         },
         {
           key: "open",
           label: "Open",
           className: "num",
-          help: [`Findings in this ${dim.noun} not yet resolved.`],
+          help: help.open,
           cell: (r) => (r.open ?? 0).toLocaleString(),
         },
         {
           key: "resolved",
           label: "Resolved",
           className: "num",
-          help: [`Findings in this ${dim.noun} already resolved.`],
+          help: help.resolved,
           cell: (r) => (r.resolved ?? 0).toLocaleString(),
         },
       ],
       rows: byDomain.rows,
+      // EVERY ROW OPENS ITS GROUP — the row's remediation by severity and the findings behind
+      // it, narrowed INSIDE the header scope this table was drawn under (`openSplitSheet`).
+      // The table answers "which group is slow"; the sheet answers "slow at what, on which
+      // findings", without leaving the page or losing the scope.
+      onRowOpen: (r) => openSplitSheet(r, byDomain.dimension, dim),
+      rowLabel: (r) => splitRowLabel(byDomain.dimension, r),
     });
 
     // Awaiting-vendor-fix findings aren't a column (they don't breach any SLA) — a footnote
@@ -1527,7 +1561,8 @@ export async function renderMttr(main, _params, ctx) {
     // page's width asked for inside an overlay; and the two cards answer "who is dragging the
     // headline figure" — the question the hero above raises — which is a poor thing to hide
     // one click away from the figure that raises it. The drawer stays for a RECORD (one
-    // finding, one scan's query): a thing you inspect and dismiss, not a section of the page.
+    // finding, one scan's query, one ROW of this table): a thing you inspect and dismiss, not
+    // a section of the page.
     //
     // THE PAYLOAD SPLIT SURVIVES THE MOVE, and deliberately. `api_getMttrPage` still does not
     // carry the two per-scan × per-group series behind these charts — the per-point KM replay
@@ -2497,6 +2532,179 @@ export async function renderMttr(main, _params, ctx) {
    * percentage is printed next to it — `ui/data.js`'s own contract for a meter whose figure is
    * already in words.
    */
+  /**
+   * One row of the remediation split, opened: the row's figures, its remediation BY SEVERITY,
+   * and the findings behind it — the record the table row summarises.
+   *
+   * THE ROW IS NARROWED INSIDE THE HEADER SCOPE, NEVER PAST IT. `splitSheetRequests` carries
+   * the page's domain / support group AND the row's bucket on both requests, so a support
+   * group opened under a domain is that group's findings IN that domain — the population its
+   * row counted — rather than the whole group across every domain it spans.
+   *
+   * THE STRIP PAINTS FROM THE ROW IN HAND; only the two things the row cannot carry are
+   * fetched, and only when the sheet opens (`test/mttrPrefetch.test.js` pins that the section
+   * itself never asks): the per-severity split (`api_getMttrGroup`, the page's own summary
+   * builder narrowed to the row) and the findings (`api_getRegisterRows`, the register's own
+   * endpoint, through its group filter).
+   *
+   * `state` is the findings list's status / sort / page, held in one object the controls
+   * mutate so a finding opened from here can come BACK to the list as it was left: the shared
+   * sheet swaps rather than stacks, so without `backTo` opening a finding would lose the group.
+   */
+  function openSplitSheet(row, dimension, dim, state) {
+    const group = splitGroupOf(row);
+    const scope = { domain, supportGroup };
+    const severities = scopeParam();
+    const req = splitSheetRequests(dimension, row, scope, severities);
+    const st = state || { ...splitSheetDefaults(row), page: 0, pageSize: DEFAULT_PAGE_SIZE };
+    // No backlog caption here: it is register-wide background the page's column tip carries,
+    // not a fact about this one row.
+    const help = splitColumnHelp(dim, { show: false });
+
+    openSheet((body) => {
+      const note = splitBucketNote(dimension, group);
+      if (note) body.append(el("p", { class: "small muted", style: "margin:0 0 12px" }, note));
+      body.append(remediationSection(), findingsSection());
+    }, {
+      title: group,
+      subtitle: splitSheetSubtitle(dimension, scope, severities),
+      // Wide enough for the eight-to-ten-column findings table without a scroll at desktop
+      // widths; resizable because a reader comparing the list against the page behind it
+      // decides how much of each they want.
+      width: "min(960px, 96vw)",
+      resizable: true,
+      closeOnRouteChange: true,
+    });
+
+    function remediationSection() {
+      const slaRate = rateView(row.slaPct, num(row.resolved, 0),
+        fmtCount(num(row.resolved, 0)) + " resolved", "nothing has closed here yet");
+      const showAwaiting = boot.settings.showNoFix !== false && num(row.awaiting, 0) > 0;
+      // TWO STRIPS OF FOUR, not one of eight: `.stat-list` is a one-line recipe (hairline
+      // dividers between cells, no gutter between rows), and eight cells wrap inside the
+      // sheet into a second row butted against the first. The split is the natural one —
+      // the row's clocks, then its counts.
+      const clocks = el("div", { class: "stat-list" },
+        statRow("Median MTTR (KM)", fmtSpan(row.kmMedian), "open findings censored", null,
+          help.kmMedian),
+        statRow("MTTR p90", fmtSpan(row.p90), "the slow tail", null, help.p90),
+        statRow("Median (naive)", fmtSpan(row.median), "closed findings only", null, help.median),
+        statRow("In SLA (of resolved)", slaRate.text, fmtCount(num(row.resolved, 0)) + " resolved",
+          meterPctFor(slaRate), help.slaPct));
+      const counts = el("div", { class: "stat-list" },
+        statRow("Open past SLA", fmtOpenPastSla(row.openPastSla), "breached (share of open)",
+          null, help.openPastSla),
+        statRow("Open", fmtCount(num(row.open, 0)), "not yet resolved", null, help.open),
+        statRow("Resolved", fmtCount(num(row.resolved, 0)), "already resolved", null,
+          help.resolved),
+        showAwaiting
+          ? statRow("Awaiting a fix", fmtCount(num(row.awaiting, 0)),
+            "open, no vendor fix yet — outside Open past SLA", null,
+            ["Open findings with no vendor fix available yet. They do not breach an SLA "
+              + "until a fix appears."])
+          : null);
+
+      const sevHost = el("div", { role: "status", "aria-label": "Loading remediation by severity",
+        style: "margin-top:12px" }, skeletonStack(3, { widths: ["100%", "100%", "80%"] }));
+      const paintSev = (mttr) => {
+        // A revalidation landing after the sheet closed has nowhere to paint.
+        if (!sevHost.isConnected) return;
+        const table = mttr ? severityTable(mttr) : null;
+        clear(sevHost).removeAttribute("aria-label");
+        sevHost.append(table || el("p", { class: "small muted" },
+          "No severity in scope has findings in this " + dim.noun + "."));
+      };
+      swrCall("api_getMttrGroup", req.mttr, paintSev).then(paintSev).catch((e) => {
+        clear(sevHost).removeAttribute("aria-label");
+        sevHost.append(errorState("Couldn't load this " + dim.noun + "'s remediation by severity.",
+          { detail: String((e && e.message) || e) }));
+      });
+      return sheetSection("Remediation", clocks, counts,
+        el("h4", { class: "label", style: "margin:16px 0 4px" }, "By severity"), sevHost);
+    }
+
+    function findingsSection() {
+      const tableHost = el("div", { class: "table-host" });
+      let first = true;
+      const toggle = segmented({
+        options: [
+          { value: "open", label: "Open" },
+          { value: "resolved", label: "Resolved" },
+          { value: "all", label: "All" },
+        ],
+        value: st.status,
+        ariaLabel: "Which findings to list",
+        onChange: (v) => {
+          if (st.status === v) return;
+          st.status = v;
+          Object.assign(st, splitSheetSortFor(v), { page: 0 });
+          toggle.set(v);
+          load();
+        },
+      });
+
+      function load() {
+        tableHost.replaceChildren(skeletonStack(5, { widths: ["100%", "100%", "100%", "90%", "70%"] }));
+        const p = { ...req.register, status: st.status, sort: st.sort, dir: st.dir,
+          page: st.page, pageSize: st.pageSize };
+        // `swrCall` for the list as it opens (a Back from a finding repaints from the session
+        // cache), a plain `call` for every page and sort after it — the overview register's rule.
+        const send = first ? swrCall("api_getRegisterRows", p) : call("api_getRegisterRows", p);
+        first = false;
+        send.then((data) => paint(data || {})).catch((e) => {
+          tableHost.replaceChildren(errorState("Couldn't load these findings.", {
+            detail: e && e.message ? e.message : String(e),
+            onRetry: load,
+          }));
+        });
+      }
+
+      function paint(data) {
+        const rows = Array.isArray(data.rows) ? data.rows : [];
+        // The server's echo is the truth — a clamped page or a refused sort answers back here.
+        st.page = num(data.page, st.page);
+        st.pageSize = num(data.pageSize, st.pageSize);
+        st.sort = data.sort || st.sort;
+        st.dir = data.dir === "asc" ? "asc" : "desc";
+        const table = dataTable({
+          columns: pickFindingColumns(splitSheetColumnKeys(dimension, st.status)),
+          rows,
+          sort: { key: st.sort, descending: st.dir === "desc" },
+          onSort: (key) => {
+            st.dir = st.sort === key && st.dir === "desc" ? "asc" : "desc";
+            st.sort = key;
+            st.page = 0;
+            load();
+          },
+          onRowOpen: (r) => openFindingSheet(r, {
+            rows,
+            backTo: { label: group, onBack: () => openSplitSheet(row, dimension, dim, st) },
+          }),
+          rowLabel: findingRowLabel,
+          emptyText: st.status === "open" ? "Nothing open in this " + dim.noun + "."
+            : st.status === "resolved" ? "Nothing resolved in this " + dim.noun + " yet."
+              : "No findings in this " + dim.noun + ".",
+        });
+        const footer = tableFooter({
+          page: st.page,
+          pageCount: num(data.pageCount, 1),
+          total: num(data.total, rows.length),
+          pageSize: st.pageSize,
+          sizes: PAGE_SIZES,
+          onPage: (pg) => { st.page = pg; load(); },
+          onPageSize: (size, nextPage) => { st.pageSize = size; st.page = nextPage; load(); },
+        });
+        const mismatch = splitCountNote(row, num(data.total, null), st.status);
+        tableHost.replaceChildren(table, footer);
+        if (mismatch) tableHost.append(el("p", { class: "small muted", style: "margin:8px 0 0" }, mismatch));
+      }
+
+      load();
+      return sheetSection("Findings",
+        el("div", { style: "margin-bottom:12px" }, toggle), tableHost);
+    }
+  }
+
   function rateMeter(rate) {
     const pct = meterPctFor(rate);
     return pct === null ? null : meter(pct, { className: "meter--stat", decorative: true });
@@ -2540,16 +2748,8 @@ export async function renderMttr(main, _params, ctx) {
 
   function renderSla(mttr) {
     clear(slaHost);
-    // The per-severity breakdown (table + posture bars) follows the severity dropdown,
-    // so it always matches the severities feeding the hero and trend above.
-    const sevs = boot.palette.order.filter((s) => mttr.perSev[s] && sevScope.includes(s));
-    if (!sevs.length) return;
-    // O1c's `openPastSla()` gives each severity its own `unknown` count now (`pastSlaCell`
-    // attaches it directly to the cell it qualifies), so this general backlog caption is kept
-    // only as background on WHY a blind spot can exist at all — it joins the "Open past SLA"
-    // column's own tip, the same place this table already sends a column's definition rather
-    // than a paragraph under the table ("A column heading is asked once", below).
-    const split = backlogSplitView(mttr.backlog);
+    const table = severityTable(mttr);
+    if (!table) return;
 
     // FOLDED, NOT DROPPED (DESIGN.md §6b): the clock-by-severity block in the briefing draws
     // these readings; the table keeps the exact cells (P90, open counts, the bound's words) for
@@ -2559,6 +2759,28 @@ export async function renderMttr(main, _params, ctx) {
       hint: "the table behind the clocks above",
     });
     slaHost.append(slaSection.node);
+    slaSection.body.append(table);
+  }
+
+  /**
+   * The per-severity remediation table over one MTTR summary payload — or null when no
+   * severity in scope has a row. Its own function, not a block of `renderSla`, because TWO
+   * payloads draw it now: the page's own summary under the fold above, and one split row's
+   * summary inside that row's sheet (`openSplitSheet`, fed by `api_getMttrGroup`, the same
+   * `mttrData` builder narrowed to the row). One table, so a severity reads the same in both.
+   */
+  function severityTable(mttr) {
+    // The per-severity breakdown (table + posture bars) follows the severity dropdown,
+    // so it always matches the severities feeding the hero and trend above.
+    const sevs = boot.palette.order.filter((s) => mttr.perSev && mttr.perSev[s] && sevScope.includes(s));
+    if (!sevs.length) return null;
+    // O1c's `openPastSla()` gives each severity its own `unknown` count now (`pastSlaCell`
+    // attaches it directly to the cell it qualifies), so this general backlog caption is kept
+    // only as background on WHY a blind spot can exist at all — it joins the "Open past SLA"
+    // column's own tip, the same place this table already sends a column's definition rather
+    // than a paragraph under the table ("A column heading is asked once", below).
+    const split = backlogSplitView(mttr.backlog);
+
     // Trimmed to the high-signal columns — Resolved, Awaiting, Open age p90 and the SLA
     // target column are dropped from the default view (the target folds into the In-SLA
     // header helpTip). Column headers carry each metric's definition via helpTip so the
@@ -2607,7 +2829,7 @@ export async function renderMttr(main, _params, ctx) {
     // Same conversion as the by-domain table above: six static columns, one header row, no
     // colspan, so the hand-rolled table had nothing the shared component lacks — and gains the
     // right-aligned numeric headings its own `td.num` cells always implied.
-    slaSection.body.append(dataTable({
+    return dataTable({
       columns: [
         {
           key: "sev",
@@ -2699,6 +2921,6 @@ export async function renderMttr(main, _params, ctx) {
       // deliberately not among these rows — it's still folded into every hero/table total
       // above, and the hero source line surfaces the count as "unclassified severity".
       rows: sevs,
-    }));
+    });
   }
 }

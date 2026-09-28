@@ -336,12 +336,18 @@ function kvRow(r) {
 export function openFindingSheet(r, opts) {
   const model = findingSheetModel(r);
   const rows = opts && Array.isArray(opts.rows) ? opts.rows : [];
+  // `backTo` ({ label, onBack }) — the sheet this finding was opened FROM, when it was opened
+  // from a sheet: the MTTR page's split-row sheet lists findings, and the shared sheet swaps
+  // rather than stacks, so without a way back opening one finding would lose the group. It
+  // rides through prev/next, because stepping to the next finding does not change where the
+  // list came from.
+  const backTo = (opts && opts.backTo) || null;
   const index = rows.indexOf(r);
   const records = index === -1 ? null : {
     ids: rows.map((x) => (x && x.vuln_key !== undefined ? x.vuln_key : null)),
     index,
     label: "finding",
-    open: (_id, i) => openFindingSheet(rows[i], { rows }),
+    open: (_id, i) => openFindingSheet(rows[i], { rows, backTo }),
   };
 
   const ctx = openSheet((body) => {
@@ -369,6 +375,7 @@ export function openFindingSheet(r, opts) {
     width: "min(520px, 92vw)",
     closeOnRouteChange: true,
     records,
+    backTo,
   });
 
   ctx.setHeading({

@@ -256,6 +256,11 @@ The MTTR page opens with the same briefing shape as Executive, then keeps every 
 - **Folded, not dropped:** "Remediation by severity — every cell" is the old table, behind a
   remembered `collapsibleSection`. Trends, the survival curve, the fan, the age bars and the
   by-domain section are unchanged below.
+- **A split row is a record** (2026-09-28): every row of the by-domain / support-group / asset
+  table opens a sheet with the row's clocks and counts as two stat strips, the same per-severity
+  table as the fold above (`severityTable`) over the row alone, and the row's findings. The
+  subtitle names the scope the row was drawn inside, and the notes for Unassigned, Not
+  attributable and "(none)" sit on the sheet's surface, not in a tip.
 
 ### 6c. The Coverage & efficiency briefing (2026-09-24)
 

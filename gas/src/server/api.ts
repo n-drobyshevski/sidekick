@@ -1300,10 +1300,15 @@ function latencySummary(rows: BaseRow[], origin: LatencyOrigin): Rec {
   };
 }
 
-function mttrData(p?: unknown): Rec {
+function mttrData(p?: unknown, row: MttrGroupRow | null = null): Rec {
   const domain = String((p as Rec)?.["domain"] ?? "");
   const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
   let rows = scopedBaseRows(domain, supportGroup, readViewerScope(p));
+  // ONE ROW OF THE REMEDIATION SPLIT, narrowed inside the header scope — the MTTR page's
+  // row sheet (`getMttrGroup`). An ARGUMENT, never a field of `p`: `cachedMttrData` hands `p`
+  // straight through and keys only on the scope, so a row read off `p` would let a stray param
+  // compute one group's figures into the whole scope's "mttr12" entry.
+  if (row) rows = narrowToMttrGroup(rows, row);
   rows = filterSeverities(rows, readSeverities(p));
   // The latency clocks measure the wait for a fix to EXIST, so their censored population is
   // EXACTLY the rows the show-no-fix toggle hides. Honoring the toggle would leave only the
@@ -1543,6 +1548,36 @@ function mttrTrendData(p?: unknown): Rec {
 // doesn't fragment the split. Same string `insights.rankGroups` folds blanks to.
 const NONE_BUCKET = "(none)";
 
+// THE SPLIT'S BUCKET KEYS, one definition each. The by-support-group and by-asset splits name
+// their rows with these, and `getMttrGroup` selects a row's findings with the SAME function —
+// so the row sheet's per-severity figures are taken over exactly the population the row it
+// was opened from summarises, "(none)" and a padded asset name included. Two copies of a
+// one-line keyer is how a sheet would come to disagree with its own row.
+function supportGroupBucket(r: Rec): string {
+  return String(r["_supportGroup"] ?? "") || NONE_BUCKET;
+}
+function assetBucket(r: Rec): string {
+  return String(r["asset_name"] ?? "").trim() || NONE_BUCKET;
+}
+
+/** One row of the MTTR remediation split, as `getMttrGroup` names it. */
+interface MttrGroupRow { by: "domain" | "supportGroup" | "asset"; value: string }
+const MTTR_GROUP_DIMENSIONS: readonly MttrGroupRow["by"][] = ["domain", "supportGroup", "asset"];
+
+/** The scoped base rows that fall in `row`'s bucket. The joins it reads are attached here
+ *  rather than assumed, because `scopedBaseRows` attaches them only when a scope is active —
+ *  and a by-domain row is opened from the unscoped view. */
+function narrowToMttrGroup(rows: Rec[], row: MttrGroupRow): Rec[] {
+  if (row.by === "supportGroup") {
+    supportGroups.attachSupportGroups(rows);
+    return rows.filter((r) => supportGroupBucket(r) === row.value);
+  }
+  if (row.by === "asset") return rows.filter((r) => assetBucket(r) === row.value);
+  const compiled = compileDomains(settingsStore.getDomains().items);
+  bizDomains.attachBizDomains(rows);
+  return rows.filter((r) => resolveDomainName(r, compiled) === row.value);
+}
+
 // How many assets the by-asset split lists. Domains and support groups are operator-configured,
 // so those splits list every bucket; assets are ESTATE-SIZED and cannot. The bound is not about
 // compute — `kmCurve` is quadratic WITHIN a bucket, so splitting the same rows into 2,000 asset
@@ -1698,7 +1733,7 @@ function mttrBySupportGroupData(p?: unknown): Rec {
   // either. Kept for the same reason as its by-domain twin: a future caller passing both scopes
   // should get a payload over the scoped population, not a silently wider one.
   if (supportGroup) rows = rows.filter((r) => String(r["_supportGroup"] ?? "") === supportGroup);
-  for (const r of rows) r["_supportGroup"] = String(r["_supportGroup"] ?? "") || NONE_BUCKET;
+  for (const r of rows) r["_supportGroup"] = supportGroupBucket(r);
   // Order the table by bucket size (largest support group first), "(none)" always last.
   const sizes = new Map<string, number>();
   for (const r of rows) {
@@ -1749,7 +1784,7 @@ function mttrByAssetData(p?: unknown): Rec {
   // resolving it would compile every manual rule's regex over every row for a column no reader
   // of this payload ever sees. The by-support-group sibling pays that cost because it scopes BY
   // domain; this one does not.
-  for (const r of rows) r["_asset"] = String(r["asset_name"] ?? "").trim() || NONE_BUCKET;
+  for (const r of rows) r["_asset"] = assetBucket(r);
   // RANK BEFORE STATTING. One counting pass decides which assets are worth a Kaplan-Meier curve,
   // so the cap bounds the table, the payload and the work in one place. Open backlog leads
   // because that is what the section is about — which hosts is this team carrying — with
@@ -2079,6 +2114,49 @@ function cachedMttrGroupSplit(p?: unknown): Rec {
 
 export function getMttr(p?: unknown): ApiResult {
   return run(() => cachedMttrData(p));
+}
+
+/**
+ * The MTTR summary for ONE ROW of the remediation split — the payload behind the MTTR page's
+ * row sheet, which draws this row's per-severity table beside its findings.
+ *
+ * The row is named the way the split names it (`groupBy` = the split's `dimension`,
+ * `groupValue` = the row's own label, "(none)" included) and is narrowed INSIDE the header
+ * scope the split was drawn under, so a support group opened under a domain is that group's
+ * findings in that domain — a support group can span domains, and the split row only counted
+ * the part inside this one.
+ *
+ * A DOMAIN ROW IS A HEADER SCOPE, so it is served from the ordinary `cachedMttrData` entry for
+ * that domain — the one the page itself warms when a reader picks the domain — rather than a
+ * second computation of the same answer under a new key. Every other row gets its own
+ * "mttrGroup" entry, keyed on the cleaned fields and never on a spread of `p`.
+ *
+ * Refuses an unknown `groupBy` rather than widening to the scope: a sheet titled with one
+ * group that silently showed the whole scope's figures would be the worst answer on offer.
+ */
+export function getMttrGroup(p?: unknown): ApiResult {
+  return run(() => {
+    const by = String((p as Rec)?.["groupBy"] ?? "") as MttrGroupRow["by"];
+    if (!MTTR_GROUP_DIMENSIONS.includes(by)) throw new Error("getMttrGroup: unknown groupBy " + JSON.stringify(by));
+    const value = String((p as Rec)?.["groupValue"] ?? "");
+    const severities = readSeverities(p);
+    if (by === "domain") {
+      return cachedMttrData({ domain: value, supportGroup: "", severities });
+    }
+    const q = {
+      domain: String((p as Rec)?.["domain"] ?? ""),
+      supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
+      severities,
+    };
+    return cached(
+      // New, not a bump of "mttr12": a different key shape over a narrower population. Bump
+      // whenever "mttr12" bumps (same builder), or when the split's bucket keys change.
+      "mttrGroup1",
+      { ...q, groupBy: by, groupValue: value, showNoFix: settingsStore.getShowNoFix() },
+      () => mttrData(q, { by, value }),
+      3600,
+    );
+  });
 }
 
 /** The Scan History page's trend series, and its only caller — the MTTR page reads its own

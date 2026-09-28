@@ -25,11 +25,12 @@ import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { overviewHeroView, populationLine, slaConsumedCaption } from "./overviewModel.js";
 import { agingTableModel, pieTableModel, trendTableModel } from "./_charts.js";
 import {
-  PROVENANCE_HELP, PROVENANCE_LABEL, activeRegisterFilters, filterSentence, fixLabel,
-  provenance, readRegisterParams, registerFirstRunView, registerParamPatch,
+  activeRegisterFilters, filterSentence, readRegisterParams, registerFirstRunView,
+  registerParamPatch,
 } from "./registerModel.js";
 import { findingRowLabel, openFindingSheet } from "./findingSheet.js";
-import { wizLinkColumn } from "../../../../../gas_shared/ui/wizLinks.js";
+// The register's columns live beside the MTTR row sheet that draws them too (_findingColumns.js).
+import { findingColumns } from "./_findingColumns.js";
 import { rateCell } from "./_rates.js";
 import { meterPctFor, rateView } from "./mttr.js";
 // THE PRESENT/UNOBSERVED SPLIT IS IMPORTED, NOT REPEATED — shared with `pages/executive.js`
@@ -41,9 +42,9 @@ import { bootstrap, navigate, setParams, swrCall } from "../../../../../gas_shar
 import {
   DEFAULT_PAGE_SIZE, absent, chartTable, clear, closeActiveSheet, dataTable, days1, denomNote,
   el, emptyState, errorState, firstRunNotice, fmtDate, glossaryTip, heroStat, kpiCard,
-  measuredEmpty, num, nvdUrl, openSheet, pageHeader, pct1, scopeBar, sectionLabel, segmented,
-  sevBadge, sevEntries, sevKeyRow, sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow,
-  tableFooter, tip, tipAnchor, tipLabel, togglePills, triCell,
+  measuredEmpty, num, nvdUrl, openSheet, pageHeader, scopeBar, sectionLabel, segmented,
+  sevEntries, sevKeyRow, sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow,
+  tableFooter, tip, tipAnchor, tipLabel, togglePills,
   statusPill,
 } from "../ui.js";
 
@@ -1326,106 +1327,6 @@ export async function renderOverview(main, params, ctx) {
     return bar;
   }
 
-  /** The columns, with a definition on every heading. Every `sortable` key is a member of
-   *  `REGISTER_ROW_COLUMNS`, so the server never falls back to its default order behind a
-   *  heading a reader just pressed. */
-  function registerColumns() {
-    return [
-      {
-        // SEVERITY SORTS BY MEANING, and the server ranks it against `SEVERITY_ORDER` where
-        // CRITICAL is 0 — so ASCENDING is worst-first. A register that defaulted this column
-        // to descending would open on LOW.
-        key: "severity", label: "Severity", sortable: true,
-        help: ["The finding's severity as the scan assigned it. Sorted by MEANING rather "
-          + "than alphabetically: ascending is worst-first."],
-        cell: (r) => sevBadge(r.severity),
-      },
-      {
-        key: "cve", label: "CVE", sortable: true,
-        help: ["The finding's CVE identifier. The link opens its NVD entry."],
-        cell: (r) => (r.cve
-          ? el("a", { href: nvdUrl(r.cve), target: "_blank", rel: "noopener" }, r.cve)
-          : absent()),
-      },
-      {
-        key: "risk_tier", label: "Tier", sortable: true,
-        help: { term: "unclassified", lines: [
-          "Which exploit signal put this finding where it is, under the rule in force.",
-          "Unclassified is a measurement gap, not a low score.",
-        ] },
-        cell: (r) => (r.risk_tier ? (TIER_LABELS[r.risk_tier] || r.risk_tier) : absent()),
-      },
-      {
-        key: "asset_name", label: "Asset", sortable: true,
-        help: ["The host workload carrying this finding."],
-        cell: (r) => r.asset_name || absent(),
-      },
-      {
-        key: "subscription_name", label: "Subscription", sortable: true,
-        help: ["The cloud subscription the asset belongs to."],
-        cell: (r) => r.subscription_name || absent(),
-      },
-      {
-        key: "support_group", label: "Support group", sortable: true,
-        help: ["The owning group, from the subscription map. A dash is a gap in attribution, "
-          + "not a finding nobody owns."],
-        cell: (r) => r.support_group || absent(),
-      },
-      {
-        key: "first_seen", label: "First seen", sortable: true,
-        help: ["The first scan that returned this finding, where the detection clock starts."],
-        cell: (r) => fmtDate(r.first_seen),
-      },
-      {
-        key: "awaiting_vendor_fix", label: "Fix", sortable: true,
-        help: { term: "awaiting-fix" },
-        cell: (r) => fixLabel(r.awaiting_vendor_fix),
-      },
-      {
-        key: "has_kev", label: "KEV", sortable: true,
-        help: { term: "kev" },
-        cell: (r) => triCell(r.has_kev),
-      },
-      {
-        key: "has_exploit", label: "Exploit", sortable: true,
-        help: { term: "known-exploit" },
-        cell: (r) => triCell(r.has_exploit),
-      },
-      {
-        key: "epss", label: "EPSS", className: "num", sortable: true,
-        help: { term: "epss" },
-        cell: (r) => (r.epss === null || r.epss === undefined
-          ? absent() : pct1(Number(r.epss) * 100)),
-      },
-      {
-        key: "internet_exposed", label: "Reachable", sortable: true,
-        help: { term: "internet-exposed", lines: [
-          "A dash is not a No.",
-          "Either the scan carried no exposure field, or the finding has left the frame.",
-        ] },
-        cell: (r) => triCell(r.internet_exposed),
-      },
-      {
-        key: "age_days", label: "Age", className: "num", sortable: true,
-        help: { term: "age" },
-        cell: (r) => days1(r.age_days),
-      },
-      {
-        // The server sorts the raw `status` column; the word below is a rendering of it and
-        // of `resolution_src` / `reopened_count`, which ride the same row unsorted.
-        key: "status", label: "State", sortable: true,
-        help: { term: "returned", lines: [
-          PROVENANCE_HELP.bounded,
-          PROVENANCE_HELP.returned,
-        ] },
-        cell: (r) => PROVENANCE_LABEL[provenance(r)],
-      },
-      // Wiz's own link to the finding, in a new tab — the register reads, Wiz is where a
-      // finding is acted on. Nothing drawn where the ledger holds no link (ui/wizLinks.js).
-      wizLinkColumn((r) => r.cve),
-    ];
-  }
-
   /** The paged table itself. `swrCall` for the first page (a revisit paints from the session
    *  cache while it revalidates); a plain `call` for every navigation after it, because a
    *  reader who pressed Next is asking for something the cache cannot already hold. */
@@ -1473,7 +1374,7 @@ export async function renderOverview(main, params, ctx) {
       state.sort = data.sort || state.sort;
       state.dir = data.dir === "asc" ? "asc" : "desc";
       const table = dataTable({
-        columns: registerColumns(),
+        columns: findingColumns(),
         rows,
         stickyHeader: true,
         sort: { key: state.sort, descending: state.dir === "desc" },

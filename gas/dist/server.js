@@ -60,6 +60,7 @@ var Server = (() => {
     getJobStatus: () => getJobStatus,
     getMttr: () => getMttr,
     getMttrByDomainTrend: () => getMttrByDomainTrend,
+    getMttrGroup: () => getMttrGroup,
     getMttrPage: () => getMttrPage,
     getMttrTrend: () => getMttrTrend,
     getOldestOpen: () => getOldestOpen,
@@ -6489,7 +6490,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "d25293f7e763" : "dev";
+  var BUILD_ID = true ? "10dbde3957d9" : "dev";
   var CACHE_EPOCH = "1";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
@@ -11320,11 +11321,12 @@ var Server = (() => {
       segments: latencySegments(rows, origin, now)
     };
   }
-  function mttrData(p) {
+  function mttrData(p, row = null) {
     var _a, _b, _c;
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
     const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
     let rows = scopedBaseRows(domain, supportGroup, readViewerScope(p));
+    if (row) rows = narrowToMttrGroup(rows, row);
     rows = filterSeverities(rows, readSeverities(p));
     const latencyRows = filterEolBase(rows, getIncludeEol2());
     rows = visibleBase(rows);
@@ -11487,6 +11489,25 @@ var Server = (() => {
     };
   }
   var NONE_BUCKET = "(none)";
+  function supportGroupBucket(r) {
+    var _a;
+    return String((_a = r["_supportGroup"]) != null ? _a : "") || NONE_BUCKET;
+  }
+  function assetBucket(r) {
+    var _a;
+    return String((_a = r["asset_name"]) != null ? _a : "").trim() || NONE_BUCKET;
+  }
+  var MTTR_GROUP_DIMENSIONS = ["domain", "supportGroup", "asset"];
+  function narrowToMttrGroup(rows, row) {
+    if (row.by === "supportGroup") {
+      attachSupportGroups(rows);
+      return rows.filter((r) => supportGroupBucket(r) === row.value);
+    }
+    if (row.by === "asset") return rows.filter((r) => assetBucket(r) === row.value);
+    const compiled = compileDomains(getDomains2().items);
+    attachBizDomains(rows);
+    return rows.filter((r) => resolveDomainName(r, compiled) === row.value);
+  }
   var ASSET_TOP_N = 20;
   function remediationGroups(rows, keyField, orderedNames, scanRows) {
     var _a, _b, _c, _d;
@@ -11569,7 +11590,7 @@ var Server = (() => {
     return { dimension: "domain", rows: out, trend };
   }
   function mttrBySupportGroupData(p) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c;
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
     const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
     let rows = filterSeverities(
@@ -11587,11 +11608,11 @@ var Server = (() => {
       var _a2;
       return String((_a2 = r["_supportGroup"]) != null ? _a2 : "") === supportGroup;
     });
-    for (const r of rows) r["_supportGroup"] = String((_c = r["_supportGroup"]) != null ? _c : "") || NONE_BUCKET;
+    for (const r of rows) r["_supportGroup"] = supportGroupBucket(r);
     const sizes = /* @__PURE__ */ new Map();
     for (const r of rows) {
       const g = String(r["_supportGroup"]);
-      sizes.set(g, ((_d = sizes.get(g)) != null ? _d : 0) + 1);
+      sizes.set(g, ((_c = sizes.get(g)) != null ? _c : 0) + 1);
     }
     const orderedNames = [...sizes.keys()].sort((a, b) => {
       var _a2, _b2;
@@ -11604,7 +11625,7 @@ var Server = (() => {
     return { dimension: "supportGroup", rows: out, trend };
   }
   function mttrByAssetData(p) {
-    var _a, _b, _c;
+    var _a, _b;
     const supportGroup = String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : "");
     let rows = filterSeverities(
       loadBaseRows(),
@@ -11616,13 +11637,13 @@ var Server = (() => {
       var _a2;
       return String((_a2 = r["_supportGroup"]) != null ? _a2 : "") === supportGroup;
     });
-    for (const r of rows) r["_asset"] = String((_b = r["asset_name"]) != null ? _b : "").trim() || NONE_BUCKET;
+    for (const r of rows) r["_asset"] = assetBucket(r);
     const sizes = /* @__PURE__ */ new Map();
     for (const r of rows) {
       const g = String(r["_asset"]);
       let acc = sizes.get(g);
       if (!acc) sizes.set(g, acc = { open: 0, resolved: 0 });
-      if (String((_c = r["resolved_at"]) != null ? _c : "").trim()) acc.resolved += 1;
+      if (String((_b = r["resolved_at"]) != null ? _b : "").trim()) acc.resolved += 1;
       else acc.open += 1;
     }
     const ranked = [...sizes.keys()].sort((a, b) => {
@@ -11910,6 +11931,31 @@ var Server = (() => {
   }
   function getMttr(p) {
     return run(() => cachedMttrData(p));
+  }
+  function getMttrGroup(p) {
+    return run(() => {
+      var _a, _b, _c, _d;
+      const by = String((_a = p == null ? void 0 : p["groupBy"]) != null ? _a : "");
+      if (!MTTR_GROUP_DIMENSIONS.includes(by)) throw new Error("getMttrGroup: unknown groupBy " + JSON.stringify(by));
+      const value = String((_b = p == null ? void 0 : p["groupValue"]) != null ? _b : "");
+      const severities = readSeverities(p);
+      if (by === "domain") {
+        return cachedMttrData({ domain: value, supportGroup: "", severities });
+      }
+      const q = {
+        domain: String((_c = p == null ? void 0 : p["domain"]) != null ? _c : ""),
+        supportGroup: String((_d = p == null ? void 0 : p["supportGroup"]) != null ? _d : ""),
+        severities
+      };
+      return cached(
+        // New, not a bump of "mttr12": a different key shape over a narrower population. Bump
+        // whenever "mttr12" bumps (same builder), or when the split's bucket keys change.
+        "mttrGroup1",
+        { ...q, groupBy: by, groupValue: value, showNoFix: getShowNoFix2() },
+        () => mttrData(q, { by, value }),
+        3600
+      );
+    });
   }
   function getMttrTrend(p) {
     return run(() => historyTrendSlice(cachedMttrTrendData(p)));

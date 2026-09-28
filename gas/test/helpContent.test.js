@@ -300,6 +300,9 @@ describe("os: the seeded entries reach their call sites", () => {
     // sentences below — its glossary triggers all carry `term:` and nothing else — which is
     // exactly the claim the second `it()` in this block makes about every file in it.
     "pages/coldZone.js",
+    // The register's finding columns moved here out of pages/overview.js, their glossary
+    // triggers with them (kev, epss, internet-exposed, age, returned, …).
+    "pages/_findingColumns.js",
   ].map(src).join("\n");
 
   // The original 21 (P7) plus the two later additions (sla-band, capacity) — the ids THIS
