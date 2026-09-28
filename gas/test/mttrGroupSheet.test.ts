@@ -55,6 +55,7 @@ vi.mock("../src/server/readModelStore", () => ({
 }));
 vi.mock("../src/server/ledgerStore", () => ({
   loadBaseRows: () => H.base.map((r) => ({ ...r })),
+  readBaseRows: () => H.base.map((r) => ({ ...r })),
   loadScanRows: () => [{ scan_id: "scan-flat", ts: iso(NOW), mode: "full", shape: "flat", total: 1 }],
   loadTrend: () => [],
   latestFlatScanRow: () => null,
@@ -73,7 +74,7 @@ vi.mock("../src/server/settingsStore", () => ({
 // which is the "(none)" bucket.
 vi.mock("../src/server/supportGroups", () => ({
   attachSupportGroups: (rows: Rec[]) => {
-    const MAP: Record<string, string> = { "sub-a": "Platform SRE", "sub-b": "Payments Ops" };
+    const MAP: Record<string, string> = { "sub-a": "Platform SRE", "sub-b": "Payments Ops", "sub-d": "Retail Ops" };
     for (const r of rows) {
       const sg = MAP[String(r["subscription_ext_id"] ?? "")];
       if (sg) r["_supportGroup"] = sg;
@@ -83,6 +84,7 @@ vi.mock("../src/server/supportGroups", () => ({
 // The Wiz/Domain tag, read off a fixture-only `biz` field. A row without one resolves by rule
 // (none configured → Unassigned) or, with no attribution input at all, to Not attributable.
 vi.mock("../src/server/bizDomains", () => ({
+  configuredDomainTagKey: () => "Wiz/Domain",
   attachBizDomains: (rows: Rec[]) => {
     for (const r of rows) r["_bizDomain"] = String(r["biz"] ?? "");
   },
@@ -98,7 +100,6 @@ function row(over: Record<string, unknown> = {}): Record<string, unknown> {
     vuln_key: "k" + seq,
     cve: "CVE-2026-" + String(1000 + seq),
     severity: "HIGH",
-    asset_id: "asset-1",
     asset_name: "host-01",
     asset_type: "VIRTUAL_MACHINE",
     cloud: "AWS",
@@ -119,6 +120,10 @@ function row(over: Record<string, unknown> = {}): Record<string, unknown> {
     seen_age_days: null,
     biz: "Payments",
     ...over,
+    // One asset per NAME unless a spec says otherwise — the current-domain rules key on the
+    // asset, so a fixture where every row shared one `asset_id` would be one host.
+    asset_id: "asset_id" in over ? over["asset_id"] : (over["asset_name"] === null ? null
+      : "id-" + String(over["asset_name"] ?? "host-01")),
   };
 }
 const resolved = (over: Record<string, unknown> = {}) => row({
@@ -195,8 +200,8 @@ describe("a split row's sheet opens on exactly the row's population", () => {
     H.base = [
       ...times(3, () => row()),
       ...times(2, () => resolved()),
-      ...times(2, () => row({ biz: "", subscription_ext_id: "sub-b" })),
-      ...times(1, () => resolved({ biz: "", subscription_ext_id: "sub-b" })),
+      ...times(2, () => row({ biz: "", subscription_ext_id: "sub-b", asset_name: "misc-01" })),
+      ...times(1, () => resolved({ biz: "", subscription_ext_id: "sub-b", asset_name: "misc-01" })),
       // Compacted history: no name, no subscription, no tags — Not attributable, resolved only.
       ...times(2, () => resolved({
         biz: "", asset_name: "(compacted)", asset_id: null,
@@ -208,22 +213,28 @@ describe("a split row's sheet opens on exactly the row's population", () => {
     expectRowsMatchSheets({}, "domain");
   });
 
-  // THE CASE THE FEATURE WAS ASKED FOR: under a domain scope, only that domain's support
-  // groups — on the table and on every sheet opened from it.
-  it("by support group inside a domain — never the group's findings in another domain", () => {
+  // THE CASE THE FEATURE WAS ASKED FOR: a support group is listed under exactly ONE domain —
+  // the one most of its current assets sit in — with every finding it carries.
+  it("by support group inside a domain — a group appears under its one pinned domain only", () => {
     H.base = [
-      ...times(3, () => row({ subscription_ext_id: "sub-a" })),
-      ...times(2, () => resolved({ subscription_ext_id: "sub-a" })),
-      ...times(2, () => row({ subscription_ext_id: "sub-b" })),
-      ...times(2, () => row({ subscription_ext_id: "sub-c" })), // maps to no group → (none)
-      // Platform SRE in ANOTHER domain: must reach neither the row nor its sheet.
-      ...times(5, () => row({ subscription_ext_id: "sub-a", biz: "Retail" })),
-      ...times(4, () => resolved({ subscription_ext_id: "sub-a", biz: "Retail" })),
+      // Platform SRE: one host in Payments, two in Retail → pinned to Retail.
+      ...times(3, () => row({ subscription_ext_id: "sub-a", asset_name: "pay-01" })),
+      ...times(2, () => resolved({ subscription_ext_id: "sub-a", asset_name: "pay-01" })),
+      ...times(4, () => row({ subscription_ext_id: "sub-a", biz: "Retail", asset_name: "shop-01" })),
+      ...times(1, () => row({ subscription_ext_id: "sub-a", biz: "Retail", asset_name: "shop-02" })),
+      ...times(2, () => row({ subscription_ext_id: "sub-b", asset_name: "ops-01" })),
+      ...times(2, () => row({ subscription_ext_id: "sub-c", asset_name: "x-01" })), // no group → (none)
+      // A Retail-only group, so the Retail split has two rows to compare.
+      ...times(1, () => row({ subscription_ext_id: "sub-d", biz: "Retail", asset_name: "shop-09" })),
     ];
-    const { rows } = splitRows({ domain: "Payments" });
-    expect(rows.map((r) => r["group"])).toEqual(["Platform SRE", "Payments Ops", "(none)"]);
-    expect(rows[0]!["open"]).toBe(3);
+    expect(splitRows({ domain: "Payments" }).rows.map((r) => r["group"])).toEqual(["Payments Ops", "(none)"]);
+    const retail = splitRows({ domain: "Retail" }).rows;
+    expect(retail.map((r) => r["group"])).toEqual(["Platform SRE", "Retail Ops"]);
+    // ALL of the group's findings, its Payments host included.
+    expect(retail[0]!["open"]).toBe(8);
+    expect(retail[0]!["resolved"]).toBe(2);
     expectRowsMatchSheets({ domain: "Payments" }, "supportGroup");
+    expectRowsMatchSheets({ domain: "Retail" }, "supportGroup");
   });
 
   it("by asset inside a support group, the nameless (none) bucket included", () => {
@@ -232,10 +243,27 @@ describe("a split row's sheet opens on exactly the row's population", () => {
       ...times(1, () => resolved({ asset_name: "host-01" })),
       ...times(2, () => row({ asset_name: "host-02" })),
       ...times(2, () => row({ asset_name: null })),
-      // Same host name under another support group: not this group's asset.
-      ...times(4, () => row({ asset_name: "host-01", subscription_ext_id: "sub-b" })),
+      // Same host NAME under another support group — a different asset: not this group's.
+      ...times(4, () => row({ asset_name: "host-01", asset_id: "other-host-01", subscription_ext_id: "sub-b" })),
     ];
     expectRowsMatchSheets({ supportGroup: "Platform SRE" }, "asset");
+  });
+});
+
+// THE DRIFT: a resolved finding keeps the tags of its LAST sighting. Its asset's newest
+// sighting decides the domain for all of its findings, history included.
+describe("a retagged asset's history follows it to its current domain", () => {
+  it("counts the old, resolved findings where the asset sits today", () => {
+    const old = iso(NOW - 90 * DAY);
+    H.base = [
+      // shop-01 was Retail when these closed…
+      ...times(4, () => resolved({ asset_name: "shop-01", biz: "Retail", last_seen: old, subscription_ext_id: "sub-x" })),
+      // …and is tagged Payments now.
+      ...times(1, () => row({ asset_name: "shop-01", biz: "Payments", subscription_ext_id: "sub-x" })),
+      ...times(1, () => row({ asset_name: "host-09", biz: "Retail", subscription_ext_id: "sub-x" })),
+    ];
+    const byDomain = Object.fromEntries(splitRows({}).rows.map((r) => [r["group"], [r["open"], r["resolved"]]]));
+    expect(byDomain).toEqual({ Payments: [1, 4], Retail: [1, 0] });
   });
 });
 
@@ -257,13 +285,13 @@ describe("getMttrGroup", () => {
   // answer exactly as it did without the row — same key, same payload.
   it("keeps a group row out of the scope's entry and leaves getMttr unchanged", () => {
     H.base = [
-      ...times(3, () => row({ subscription_ext_id: "sub-a" })),
-      ...times(2, () => row({ subscription_ext_id: "sub-b" })),
+      ...times(3, () => row({ subscription_ext_id: "sub-a", asset_name: "sre-01" })),
+      ...times(2, () => row({ subscription_ext_id: "sub-b", asset_name: "ops-01" })),
     ];
     const before = ok(getMttr({ domain: "Payments" }));
     H.keys = [];
     ok(getMttrGroup({ domain: "Payments", groupBy: "supportGroup", groupValue: "Platform SRE" }));
-    expect(H.keys.map((k) => k.ns)).toEqual(["mttrGroup2"]);
+    expect(H.keys.map((k) => k.ns)).toEqual(["mttrGroup3"]);
     expect(H.keys[0]!.params).toMatchObject({
       domain: "Payments", supportGroup: "", groupBy: "supportGroup", groupValue: "Platform SRE",
     });
@@ -278,9 +306,10 @@ describe("getMttrGroup", () => {
 // takes its asset's — so the sheet shows the spread across EVERY domain, with the route (tag or
 // rule) and the assets, not just the slice the header domain selected.
 describe("getMttrGroup — the domains a row's findings resolve to", () => {
-  const domainsOf = (p: Rec) => (ok<Rec>(getMttrGroup(p))["domains"] ?? []) as Rec[];
+  const groupOf = (p: Rec) => ok<Rec>(getMttrGroup(p));
+  const domainsOf = (p: Rec) => (groupOf(p)["domains"] ?? []) as Rec[];
 
-  it("lists every domain a support group spans, ignoring the header domain", () => {
+  it("lists where the group's hosts sit today, and the one domain it is pinned to", () => {
     H.base = [
       ...times(3, () => row({ subscription_ext_id: "sub-a", asset_name: "pay-01" })),
       ...times(2, () => resolved({ subscription_ext_id: "sub-a", asset_name: "pay-01" })),
@@ -288,34 +317,29 @@ describe("getMttrGroup — the domains a row's findings resolve to", () => {
       ...times(1, () => row({ subscription_ext_id: "sub-a", biz: "Retail", asset_name: "shop-02" })),
       // Untagged, no rule configured: Unassigned, by no route at all.
       ...times(1, () => row({ subscription_ext_id: "sub-a", biz: "", asset_name: "misc-01" })),
-      // Another group's findings in Payments: not this row's.
-      ...times(6, () => row({ subscription_ext_id: "sub-b" })),
+      // Another group's findings: not this row's.
+      ...times(6, () => row({ subscription_ext_id: "sub-b", asset_name: "ops-01" })),
     ];
-    const domains = domainsOf({
-      domain: "Payments", groupBy: "supportGroup", groupValue: "Platform SRE",
-    });
+    const p = { domain: "Retail", groupBy: "supportGroup", groupValue: "Platform SRE" };
     // Most findings first; a tie (five each here) falls back to the domain's name.
-    expect(domains).toEqual([
+    expect(domainsOf(p)).toEqual([
       { domain: "Payments", source: "tag", findings: 5, open: 3, assetCount: 1, assets: ["pay-01"] },
       { domain: "Retail", source: "tag", findings: 5, open: 5, assetCount: 2, assets: ["shop-01", "shop-02"] },
       { domain: "Unassigned", source: "none", findings: 1, open: 1, assetCount: 1, assets: ["misc-01"] },
     ]);
-    // The row itself still counts only its Payments slice.
-    const payRow = splitRows({ domain: "Payments" }).rows.find((r) => r["group"] === "Platform SRE")!;
-    expect(payRow["open"]).toBe(3);
+    // Two hosts in Retail beat one in Payments; the untagged host never wins a pin.
+    expect(groupOf(p)["pinnedDomain"]).toBe("Retail");
   });
 
-  it("an asset row: its findings' domains, inside the support group it was drawn under", () => {
+  it("an asset row: its domain from its NEWEST sighting, and its group's pin", () => {
     H.base = [
-      ...times(2, () => row({ asset_name: "host-01" })),
+      ...times(2, () => row({ asset_name: "host-01", last_seen: iso(NOW - 10 * DAY) })),
       ...times(1, () => row({ asset_name: "host-01", biz: "Retail" })),
-      // Same name under another support group: not this asset row.
-      ...times(4, () => row({ asset_name: "host-01", subscription_ext_id: "sub-b", biz: "Other" })),
+      ...times(4, () => row({ asset_name: "host-01", asset_id: "other-host-01", subscription_ext_id: "sub-b", biz: "Other" })),
     ];
-    const domains = domainsOf({
-      supportGroup: "Platform SRE", groupBy: "asset", groupValue: "host-01",
-    });
-    expect(domains.map((d) => [d["domain"], d["findings"]])).toEqual([["Payments", 2], ["Retail", 1]]);
+    const p = { supportGroup: "Platform SRE", groupBy: "asset", groupValue: "host-01" };
+    expect(domainsOf(p).map((d) => [d["domain"], d["findings"]])).toEqual([["Retail", 3]]);
+    expect(groupOf(p)["pinnedDomain"]).toBe("Retail");
   });
 
   it("carries nothing for a domain row — it IS a domain", () => {

@@ -364,15 +364,29 @@ const readPayloadForRow = (row: ScanRow): unknown | null =>
  * specific instant does.
  */
 export function loadBaseRows(now?: number): BaseRow[] {
+  if (now !== undefined) {
+    const state = loadState();
+    return baseRows(state, now, newestFlatScanBySeverity(state.scans));
+  }
+  return readBaseRows().map((r) => ({ ...r }));
+}
+
+/**
+ * The memoized base itself — NOT A COPY, and read-only by contract.
+ *
+ * For a reader that only LOOKS: `currentDomains` walks the whole base once per execution to
+ * find each asset's newest sighting, and a copy of every row for a pass that annotates nothing
+ * would cost more than the pass. Anything that writes a field onto a row takes `loadBaseRows`.
+ */
+export function readBaseRows(): readonly BaseRow[] {
   const state = loadState();
-  if (now !== undefined) return baseRows(state, now, newestFlatScanBySeverity(state.scans));
   if (baseRowsMemo === undefined || baseRowsMemo.state !== state) {
     const t0 = Date.now();
     baseRowsMemo = { state, rows: baseRows(state, undefined, newestFlatScanBySeverity(state.scans)) };
     // Same line shape as entry.js's timedApi_, so the derivation reads beside the RPC it served.
     console.log(JSON.stringify({ stage: "baseRows", rows: baseRowsMemo.rows.length, ms: Date.now() - t0 }));
   }
-  return baseRowsMemo.rows.map((r) => ({ ...r }));
+  return baseRowsMemo.rows;
 }
 
 // Ceiling on how many reconstructed (synthetic pre-scan) points get a full KM-median build in

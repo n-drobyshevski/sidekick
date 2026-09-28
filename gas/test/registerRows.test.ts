@@ -199,6 +199,7 @@ const H = vi.hoisted(() => ({
   frame: null as { scanId: string; ts: string; records: Rec[] } | null,
   latestFlat: null as Rec | null,
   version: 0,
+  stamp: 0,
 }));
 
 // Sheets/Drive never load: this file is about the read model, and api.ts's import graph
@@ -216,6 +217,9 @@ vi.mock("../src/server/serverCache", () => ({
   BUILD_ID: "test",
   cached: (_ns: string, _params: unknown, compute: () => unknown) => compute(),
   dataVersion: () => "1",
+  // Per spec, so the per-stamp memos (the scoped base, the domain assignment) never carry
+  // one spec's fixture into the next. `stamp` is bumped in beforeEach.
+  currentStamp: () => "stamp-" + H.stamp,
 }));
 vi.mock("../src/server/readModelStore", () => ({
   durablyCached: (_ns: string, _params: unknown, compute: () => unknown) => compute(),
@@ -227,6 +231,7 @@ vi.mock("../src/server/ledgerStore", () => ({
   // Fresh objects per call, exactly as the real `baseRows` builds them, so a spec that stamps
   // `risk_tier` on a row cannot leak into the next one.
   loadBaseRows: () => H.base.map((r) => ({ ...r })),
+  readBaseRows: () => H.base.map((r) => ({ ...r })),
   loadScanRows: () => [],
   latestFlatScanRow: () => H.latestFlat,
 }));
@@ -249,6 +254,7 @@ vi.mock("../src/server/supportGroups", () => ({
   },
 }));
 vi.mock("../src/server/bizDomains", () => ({
+  configuredDomainTagKey: () => "Wiz/Domain",
   attachBizDomains: (rows: Rec[]) => {
     for (const r of rows) r["_bizDomain"] = "";
   },
@@ -382,6 +388,7 @@ function seed(opts: { exposureKeys: boolean } = { exposureKeys: true }): void {
 
 beforeEach(() => {
   H.version = 1;
+  H.stamp += 1;
   seed();
 });
 

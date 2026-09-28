@@ -82,6 +82,9 @@ import {
 } from "../domain/resolveDomain";
 import * as bizDomains from "./bizDomains";
 import * as supportGroups from "./supportGroups";
+// Which domain a finding counts under — today's repartition, one answer for every path.
+import * as currentDomains from "./currentDomains";
+import { assetKeyOf } from "../domain/currentDomain";
 
 export interface ApiResult<T = unknown> {
   ok: boolean;
@@ -498,8 +501,7 @@ function insightsData(p?: unknown): Rec {
   // row like the frame's (findings.currentScan).
   supportGroups.attachSupportGroups(base as unknown as Rec[]);
   bizDomains.attachBizDomains(base as unknown as Rec[]);
-  const compiled = compileDomains(settingsStore.getDomains().items);
-  for (const r of base as unknown as Rec[]) r["_domain"] = resolveDomainName(r, compiled);
+  for (const r of base as unknown as Rec[]) r["_domain"] = currentDomains.domainOf(r);
   if (domain || sgActive) {
     if (sgActive) {
       recs = recs.filter((r) => sgMatch(String(r["_supportGroup"] ?? "")));
@@ -901,8 +903,7 @@ function groupTrendData(p?: unknown): Rec {
   let base = ledgerStore.loadBaseRows() as unknown as Rec[];
   supportGroups.attachSupportGroups(base);
   bizDomains.attachBizDomains(base);
-  const compiled = compileDomains(settingsStore.getDomains().items);
-  for (const r of base) r["_domain"] = resolveDomainName(r, compiled);
+  for (const r of base) r["_domain"] = currentDomains.domainOf(r);
   if (sgActive) base = base.filter((r) => sgMatch(String(r["_supportGroup"] ?? "")));
   if (domain) base = base.filter((r) => String(r["_domain"] ?? UNASSIGNED) === domain);
 
@@ -1190,19 +1191,18 @@ function scopedBaseRows(
     if (viewer) {
       // THE UNION, resolved exactly as the header scope resolves each of its halves below —
       // so a scoped viewer's domain is the same bucket a full user picking it would see.
-      const compiled = compileDomains(settingsStore.getDomains().items);
       bizDomains.attachBizDomains(rows);
       rows = rows.filter((r) => inViewerScope(
-        viewer, resolveDomainName(r, compiled), String(r["_supportGroup"] ?? ""),
+        viewer, currentDomains.domainOf(r), String(r["_supportGroup"] ?? ""),
       ));
     }
     if (supportGroup) rows = rows.filter((r) => String(r["_supportGroup"] ?? "") === supportGroup);
     if (domain) {
-      // Resolved, not rule-assigned: the scope has to name the same buckets the splits do, or
-      // picking a tag-derived domain would filter to nothing.
-      const compiled = compileDomains(settingsStore.getDomains().items);
+      // The CURRENT domain (`currentDomains`), not the row's own resolution: the scope has to
+      // name the same buckets the splits do — a support group sits in the one domain it is
+      // pinned to, and a retagged asset's history sits where the asset sits today.
       bizDomains.attachBizDomains(rows);
-      rows = rows.filter((r) => resolveDomainName(r, compiled) === domain);
+      rows = rows.filter((r) => currentDomains.domainOf(r) === domain);
     }
     scoped = rows;
     scopedMemo.byScope.set(key, scoped);
@@ -1600,10 +1600,15 @@ function splitRowDomains(supportGroup: string, severities: string[] | null, row:
   rows = narrowToMttrGroup(rows, row);
   bizDomains.attachBizDomains(rows);
   const compiled = compileDomains(settingsStore.getDomains().items);
+  // Each finding under its ASSET'S CURRENT domain (the asset's newest sighting), not its own
+  // possibly-stale tag bag — this table is "where do this group's hosts sit TODAY", the vote
+  // the group's pin was taken from. A row the ledger cannot tie to an asset keeps its own.
+  const assetDomain = currentDomains.domainAssignment().assetDomain;
   const acc = new Map<string, { domain: string; source: string; findings: number; open: number;
     assets: Map<string, number> }>();
   for (const r of rows) {
-    const { name, source } = resolveDomain(r, compiled);
+    const key0 = assetKeyOf(r);
+    const { name, source } = (key0 && assetDomain.get(key0)) || resolveDomain(r, compiled);
     const key = name + "\u0000" + source;
     let a = acc.get(key);
     if (!a) acc.set(key, (a = { domain: name, source, findings: 0, open: 0, assets: new Map() }));
@@ -1636,9 +1641,9 @@ function narrowToMttrGroup(rows: Rec[], row: MttrGroupRow): Rec[] {
     return rows.filter((r) => supportGroupBucket(r) === row.value);
   }
   if (row.by === "asset") return rows.filter((r) => assetBucket(r) === row.value);
-  const compiled = compileDomains(settingsStore.getDomains().items);
+  supportGroups.attachSupportGroups(rows);
   bizDomains.attachBizDomains(rows);
-  return rows.filter((r) => resolveDomainName(r, compiled) === row.value);
+  return rows.filter((r) => currentDomains.domainOf(r) === row.value);
 }
 
 // How many assets the by-asset split lists. Domains and support groups are operator-configured,
@@ -1752,12 +1757,16 @@ function mttrByDomainData(p?: unknown): Rec {
   // read a footnote about what is missing from the total.
   bizDomains.attachBizDomains(rows);
   const items = settingsStore.getDomains().items;
-  const compiled = compileDomains(items);
+  // The bucket universe is the ASSIGNED names, not the raw tags on these rows: a history row
+  // still carrying last year's tag must not conjure a bucket its finding no longer counts in,
+  // and `remediationGroups` drops any name missing from the list. Every assigned name that is
+  // not a manual group or a tail is a tag value, and orders as one.
+  const manual = new Set(domainNames(items));
   const seenTags = new Set<string>();
   for (const r of rows) {
-    r["_domain"] = resolveDomainName(r, compiled);
-    const tag = String(r["_bizDomain"] ?? "");
-    if (tag) seenTags.add(tag);
+    const name = currentDomains.domainOf(r);
+    r["_domain"] = name;
+    if (!manual.has(name) && name !== UNASSIGNED && name !== NOT_ATTRIBUTABLE) seenTags.add(name);
   }
   const scanRows = ledgerStore.loadScanRows() as unknown as Rec[];
   const { rows: out, trend } = remediationGroups(
@@ -1787,10 +1796,11 @@ function mttrBySupportGroupData(p?: unknown): Rec {
   supportGroups.attachSupportGroups(rows);
   // Scope to the selected domain (resolve, keep the matching rows) so the split shows the
   // support groups WITHIN it — mirroring how the hero is scoped.
-  const compiled = compileDomains(settingsStore.getDomains().items);
+  // By each finding's CURRENT domain — which, for a finding in a support group, is the one
+  // domain that group is pinned to. So a group is listed under exactly one domain.
   if (domain) {
     bizDomains.attachBizDomains(rows);
-    rows = rows.filter((r) => resolveDomainName(r, compiled) === domain);
+    rows = rows.filter((r) => currentDomains.domainOf(r) === domain);
   }
   // A header support-group scope routes to the by-asset split now, so this no longer fires
   // either. Kept for the same reason as its by-domain twin: a future caller passing both scopes
@@ -2216,11 +2226,17 @@ export function getMttrGroup(p?: unknown): ApiResult {
       // whenever "mttr12" bumps (same builder), or when the split's bucket keys change.
       // "mttrGroup1" → "mttrGroup2": the payload gained `domains` (`splitRowDomains`), which
       // the sheet's Domains section reads; a stale entry would draw that section empty.
-      "mttrGroup2",
+      // "mttrGroup2" → "mttrGroup3": `domains` now places each finding under its asset's
+      // CURRENT domain, and the payload gained `pinnedDomain` (currentDomains).
+      "mttrGroup3",
       { ...q, groupBy: by, groupValue: value, showNoFix: settingsStore.getShowNoFix() },
       () => ({
         ...mttrData(q, { by, value }),
         domains: splitRowDomains(q.supportGroup, severities, { by, value }),
+        // The one domain every finding of this row counts under, when a support group decides
+        // it: the row's own group, or for an asset row the group it was drawn inside.
+        pinnedDomain: currentDomains.domainAssignment().groupDomain.get(
+          by === "supportGroup" ? value : q.supportGroup) ?? null,
       }),
       3600,
     );
@@ -2790,10 +2806,9 @@ function registerRowsData(p: unknown, filters: RegisterRowFilters): Rec {
   );
   supportGroups.attachSupportGroups(base);
   bizDomains.attachBizDomains(base);
-  const compiled = compileDomains(settingsStore.getDomains().items);
   const rule = settingsStore.getRiskRule().rule;
   for (const r of base) {
-    r["_domain"] = resolveDomainName(r, compiled);
+    r["_domain"] = currentDomains.domainOf(r);
     r["risk_tier"] = program.riskTier(r as unknown as program.RiskRow, rule);
     const key = String(r["vuln_key"] ?? "");
     r["internet_exposed"] = !exposureKnown || !framedKeys.has(key)
@@ -3552,9 +3567,8 @@ export function getReport(p?: unknown): ApiResult {
         baseRows = baseRows.filter((r) => keep.has(String(r["_supportGroup"] ?? "")));
       }
       if (domains.length) {
-        const compiled = compileDomains(settingsStore.getDomains().items);
         bizDomains.attachBizDomains(baseRows);
-        baseRows = baseRows.filter((r) => domains.includes(resolveDomainName(r, compiled)));
+        baseRows = baseRows.filter((r) => domains.includes(currentDomains.domainOf(r)));
       }
     }
     baseRows = visibleBase(baseRows);
@@ -3982,8 +3996,7 @@ function scopeSplits(viewer: access.ViewerScope, severities: string[] | null) {
   const rows = visibleBase(filterSeverities(scopedBaseRows("", "", viewer), severities));
   // `_supportGroup` and `_bizDomain` were attached by the viewer scoping; `_domain` is resolved
   // here exactly as the scope filter resolved it, so a split row names the bucket it was kept for.
-  const compiled = compileDomains(settingsStore.getDomains().items);
-  for (const r of rows) r["_domain"] = resolveDomainName(r, compiled);
+  for (const r of rows) r["_domain"] = currentDomains.domainOf(r);
   const stat = (group: string, rs: Rec[]): ScopeSplitRow => {
     const base = rs as unknown as BaseRow[];
     const km = kaplanMeier(base);

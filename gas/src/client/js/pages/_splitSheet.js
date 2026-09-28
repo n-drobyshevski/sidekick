@@ -181,27 +181,38 @@ export function domainSourceLabel(source) {
 }
 
 /**
- * The Domains section's lead: how many domains this row's findings resolve to and, when it is
- * more than one, WHY a support group can be listed under a domain it is not "in" — a group
- * has no domain of its own, each finding takes its asset's. Null with nothing to describe.
+ * The Domains section's lead — where this row's findings are COUNTED, and why the table under
+ * it can list more than one domain. A support group is pinned to the one domain most of its
+ * current hosts sit in (server/currentDomains.ts), and every finding it carries counts there;
+ * the table is where those hosts actually sit today, which is the vote the pin came from.
+ * `pinned` is null for a row no support group decides ("(none)", a domain row). Null when
+ * there is nothing to describe.
  */
-export function splitDomainsLead(dimension, group, domains) {
+export function splitDomainsLead(dimension, group, domains, pinned) {
   const names = [...new Set((domains || []).map((d) => d.domain))];
   if (!names.length) return null;
   const who = group || "This " + ((NOUN[dimension] || NOUN.domain).toLowerCase());
-  if (names.length === 1) return `All of ${who}'s findings resolve to ${names[0]}.`;
-  const owner = dimension === "asset" ? "An asset" : "A support group";
-  return `${who}'s findings resolve to ${names.length} domains. ${owner} has no domain of `
-    + "its own — each finding takes its asset's domain: the Wiz/Domain tag first, else a "
-    + "manual rule.";
+  if (pinned) {
+    const why = dimension === "asset"
+      ? `the domain its support group is pinned to`
+      : `the domain most of its current assets are in`;
+    if (names.length === 1 && names[0] === pinned) {
+      return `${who} counts under ${pinned}, where all of its assets are today.`;
+    }
+    return `${who} counts under ${pinned} — ${why}. Every finding it carries is measured there, `
+      + `although its assets sit in ${names.length === 1 ? names[0] : names.length + " domains"} today.`;
+  }
+  if (names.length === 1) return `All of ${who}'s findings count under ${names[0]}, their assets' current domain.`;
+  return `${who}'s findings count under ${names.length} domains — each under its asset's current `
+    + "domain: the Wiz/Domain tag of its newest sighting first, else a manual rule.";
 }
 
-/** The Domains table's rows, the header scope's own domain marked `current`. */
-export function splitDomainsRows(domains, scopeDomain) {
+/** The Domains table's rows, the domain the row is counted under marked `counted`. */
+export function splitDomainsRows(domains, pinned) {
   return (domains || []).map((d) => ({
     ...d,
     sourceLabel: domainSourceLabel(d.source),
-    current: Boolean(scopeDomain) && d.domain === scopeDomain,
+    counted: Boolean(pinned) && d.domain === pinned,
   }));
 }
 
@@ -212,9 +223,13 @@ export function splitDomainAssetsText(d) {
   return names.join(", ") + (more ? ` +${more} more` : "");
 }
 
-/** The folded Domains section's summary: how many domains, and which one when it is one. */
-export function splitDomainsHint(domains) {
+/** The folded Domains section's summary: where the row counts, and how spread its hosts are. */
+export function splitDomainsHint(domains, pinned) {
   const names = [...new Set((domains || []).map((d) => d.domain))];
+  if (pinned) {
+    return names.length > 1 ? `counted under ${pinned} · assets in ${names.length} domains`
+      : `counted under ${pinned}`;
+  }
   if (!names.length) return "";
   return names.length === 1 ? `1 domain: ${names[0]}` : `${names.length} domains`;
 }

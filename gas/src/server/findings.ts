@@ -13,6 +13,7 @@ import * as ledgerStore from "./ledgerStore";
 import * as settingsStore from "./settingsStore";
 import { attachBizDomains } from "./bizDomains";
 import { attachSupportGroups } from "./supportGroups";
+import * as currentDomains from "./currentDomains";
 
 export interface CurrentScan {
   scanId: string;
@@ -79,9 +80,16 @@ export function currentScan(): CurrentScan | null {
   // to sit here — force every row to UNASSIGNED when no rules are configured — is gone with
   // it: a register with no rules but a tagged fleet is fully attributed now, and forcing
   // UNASSIGNED there would have thrown the tag away.
+  //
+  // `_domain` IS THE CURRENT ASSIGNMENT (`currentDomains`): a finding in a support group counts
+  // under the one domain that group is pinned to, the same bucket every ledger read puts it in
+  // — without this the Overview's frame-based panels and the MTTR page would disagree about
+  // which domain a finding is in. `_domainRaw` / `_domainSource` stay the row's OWN resolution:
+  // they feed the Attribution audit, which measures the tags and rules themselves.
   for (const flat of records) {
     const resolved = resolveDomain(flat, compiled);
-    flat["_domain"] = resolved.name;
+    flat["_domain"] = currentDomains.domainOf(flat);
+    flat["_domainRaw"] = resolved.name;
     flat["_domainSource"] = resolved.source;
   }
   memo = {

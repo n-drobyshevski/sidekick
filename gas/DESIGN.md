@@ -261,10 +261,11 @@ The MTTR page opens with the same briefing shape as Executive, then keeps every 
   table as the fold above (`severityTable`) over the row alone, and the row's findings. The
   subtitle names the scope the row was drawn inside, and the notes for Unassigned, Not
   attributable and "(none)" sit on the sheet's surface, not in a tip. A support-group or asset
-  sheet leads with **Domains**, collapsed by default under a summary that states the count
-  ("4 domains"): every domain its findings resolve to (not only the header's, which is marked
-  "this view"), how each got there (tag / rule), and the assets carrying them. It uses the
-  sheet's own `.disclosure`, not the page-sized `collapsibleSection`.
+  sheet leads with **Domains**, collapsed by default under a summary that says where the row
+  counts ("counted under CROSS · assets in 4 domains"): the domains its assets sit in today, the
+  one it is pinned to marked "counted here", how each got there (tag / rule), and the assets. It
+  uses the sheet's own `.disclosure`, not the page-sized `collapsibleSection`. (Why a group has
+  one domain: README, "Domains are counted as they stand today".)
 
 ### 6c. The Coverage & efficiency briefing (2026-09-24)
 
