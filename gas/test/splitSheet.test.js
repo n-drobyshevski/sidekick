@@ -8,7 +8,7 @@ import {
   NONE_GROUP, NOT_ATTRIBUTABLE, SPLIT_NONE, UNASSIGNED, splitBucketNote, splitCountNote,
   splitGroupOf, splitRowLabel, splitSheetColumnKeys, splitSheetDefaults, splitSheetRequests,
   splitSheetSortFor, splitSheetSubtitle, domainSourceLabel, splitDomainAssetsText,
-  splitDomainsLead, splitDomainsRows,
+  splitDomainsHint, splitDomainsLead, splitDomainsRows,
 } from "../src/client/js/pages/_splitSheet.js";
 import { NONE_GROUP as SHARED_NONE_GROUP } from "../../gas_shared/domain/rowGroups.ts";
 import { UNASSIGNED as RULES_UNASSIGNED } from "../src/domain/domainRules.ts";
@@ -175,5 +175,13 @@ describe("the Domains section", () => {
   it("lists the shipped assets and counts the rest", () => {
     expect(splitDomainAssetsText({ assets: ["a", "b"], assetCount: 2 })).toBe("a, b");
     expect(splitDomainAssetsText({ assets: ["a", "b"], assetCount: 7 })).toBe("a, b +5 more");
+  });
+});
+
+describe("the folded Domains summary", () => {
+  it("states the count, and names a lone domain", () => {
+    expect(splitDomainsHint([{ domain: "CROSS" }, { domain: "SAP" }, { domain: "CROSS" }])).toBe("2 domains");
+    expect(splitDomainsHint([{ domain: "CROSS" }])).toBe("1 domain: CROSS");
+    expect(splitDomainsHint([])).toBe("");
   });
 });

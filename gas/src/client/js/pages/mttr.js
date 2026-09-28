@@ -12,7 +12,7 @@ import { pickFindingColumns } from "./_findingColumns.js";
 import {
   splitBucketNote, splitCountNote, splitGroupOf, splitRowLabel, splitSheetColumnKeys,
   splitSheetDefaults, splitSheetRequests, splitSheetSortFor, splitSheetSubtitle,
-  splitDomainAssetsText, splitDomainsLead, splitDomainsRows,
+  splitDomainAssetsText, splitDomainsHint, splitDomainsLead, splitDomainsRows,
 } from "./_splitSheet.js";
 import { findingRowLabel, openFindingSheet } from "./findingSheet.js";
 import { call } from "../../../../../gas_shared/api.js";
@@ -2594,12 +2594,28 @@ export async function renderMttr(main, _params, ctx) {
      * fix for a group that should not be here is a tag in Wiz or a rule in Settings, and this
      * says which.
      */
+    //
+    // COLLAPSED BY DEFAULT: it is the diagnosis for a surprising listing, not what most visits
+    // to the sheet are for, so it folds away under its own summary — which states the count
+    // ("4 domains") once the payload lands, so the answer to "is this group spread?" needs no
+    // click. Not remembered: every sheet opens on its remediation, the thing it is about.
+    //
+    // The sheet's own disclosure (`.disclosure`, gas_shared/styles/sheet.css — "collapsible
+    // group inside a sheet"), not the page's `collapsibleSection`: that one is an h2-sized
+    // page heading with page-section spacing, and inside the sheet it outranked every other
+    // section label under it. Here the summary IS a section label, so the four read as one set.
     function domainsSection() {
-      const host = el("div", { role: "status", "aria-label": "Loading domains" },
-        skeletonStack(2, { widths: ["100%", "70%"] }));
+      const hint = el("span", { class: "small muted" }, "loading…");
+      const host = el("div", { role: "status", "aria-label": "Loading domains",
+        style: "padding-top:8px" }, skeletonStack(2, { widths: ["100%", "70%"] }));
+      const details = el("details", { class: "disclosure" },
+        el("summary", { class: "disclosure-toggle" },
+          el("span", { class: "label", style: "margin:0" }, "Domains"), hint),
+        host);
       groupSinks.push((m, err) => {
         if (!host.isConnected) return;
         clear(host).removeAttribute("aria-label");
+        if (hint) hint.textContent = err ? "" : splitDomainsHint((m && m.domains) || []);
         if (err) {
           host.append(errorState("Couldn't load which domains this " + dim.noun + " spans.",
             { detail: String((err && err.message) || err) }));
@@ -2653,7 +2669,7 @@ export async function renderMttr(main, _params, ctx) {
           emptyText: "No findings in this " + dim.noun + " in the page's severity scope.",
         }));
       });
-      return sheetSection("Domains", host);
+      return el("section", { class: "sheet-section" }, details);
     }
 
     function remediationSection() {

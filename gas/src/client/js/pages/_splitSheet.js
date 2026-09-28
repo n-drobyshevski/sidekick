@@ -211,3 +211,10 @@ export function splitDomainAssetsText(d) {
   const more = Math.max(0, (Number(d && d.assetCount) || 0) - names.length);
   return names.join(", ") + (more ? ` +${more} more` : "");
 }
+
+/** The folded Domains section's summary: how many domains, and which one when it is one. */
+export function splitDomainsHint(domains) {
+  const names = [...new Set((domains || []).map((d) => d.domain))];
+  if (!names.length) return "";
+  return names.length === 1 ? `1 domain: ${names[0]}` : `${names.length} domains`;
+}

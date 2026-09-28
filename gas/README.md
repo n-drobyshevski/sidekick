@@ -153,7 +153,7 @@ both to the row's open and resolved counts for every dimension and edge bucket.
 finding's subscription; the domain is resolved per finding off its asset (Wiz/Domain tag first,
 then a manual rule). So one group's findings can land in several domains, and the split under a
 domain lists every group with at least one finding there. A support-group or asset sheet opens on
-a **Domains** section: every domain the row's findings resolve to, across all domains rather than
+a **Domains** section, collapsed by default with the domain count in its summary: every domain the row's findings resolve to, across all domains rather than
 the header's, with the route (tag or rule) and the assets carrying them. That is where the fix
 for a group that looks misplaced lives (`getMttrGroup`'s `domains`, `splitRowDomains`).
 
