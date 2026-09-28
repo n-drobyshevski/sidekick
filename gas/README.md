@@ -138,6 +138,17 @@ group is a **team**, and the thing a team patches is a **host**: the split that 
 to go on Monday is the one over their assets. Anyone restoring the old view should do it on its
 own merits rather than on the strength of the sentence before this one.
 
+**On the MTTR page, every row of that split opens a sheet** (`pages/mttr.js` `openSplitSheet`,
+requests from `pages/_splitSheet.js`): the row's figures, its remediation by severity, and the
+findings behind it, paged and server-sorted, each opening the finding sheet with a way back. The
+row is narrowed **inside** the header scope, never past it: a support group opened under a
+domain is that group's findings in that domain, the population its row counted, because a group
+can span domains. Two endpoints serve it. `getMttrGroup` is the page's own `mttrData` narrowed
+to the row (a domain row is served from the domain scope's own `mttr` entry; any other row gets
+a `mttrGroup` entry), and `getRegisterRows` lists the findings through its group filter, where
+the split's "(none)" bucket is the register's `NONE_GROUP`. `test/mttrGroupSheet.test.ts` holds
+both to the row's open and resolved counts for every dimension and edge bucket.
+
 It is also the only one of the three that is **capped**, at 20 assets. Domains and support groups
 are configured by an operator, so the register knows how many there are and lists them all;
 assets come from the estate, and a team can own thousands. The cap is not about compute — the

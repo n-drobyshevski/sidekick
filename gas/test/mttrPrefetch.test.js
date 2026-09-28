@@ -34,4 +34,13 @@ describe("MTTR page prefetch", () => {
     expect(renderByDomain).not.toContain('"api_getMttrByDomainTrend"');
     expect(renderByDomain).toContain("domainTrend");
   });
+
+  // The row sheet's two requests belong to the sheet: a section that fetched them on render
+  // would pay one per row per paint for sheets nobody opened.
+  it("fetches a split row's sheet only when the sheet opens", () => {
+    expect(renderByDomain).not.toContain('"api_getMttrGroup"');
+    expect(renderByDomain).not.toContain('"api_getRegisterRows"');
+    expect(renderByDomain).toContain("openSplitSheet(");
+    expect(bodyOf("function openSplitSheet(")).toContain('"api_getMttrGroup"');
+  });
 });

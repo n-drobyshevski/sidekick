@@ -23,7 +23,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const PAGE_FILES = ["mttr.js", "overview.js", "program.js", "history.js", "attribution.js", "data.js"];
+const PAGE_FILES = ["mttr.js", "overview.js", "_findingColumns.js", "program.js", "history.js", "attribution.js", "data.js"];
 
 /**
  * Every `{ key: "...", ... }` object in `src` that is a real dataTable column (carries

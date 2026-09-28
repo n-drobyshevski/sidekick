@@ -89,6 +89,7 @@ function api_getMttr(p) { return timedApi_("getMttr", p); }
 function api_getMttrTrend(p) { return timedApi_("getMttrTrend", p); }
 function api_getMttrPage(p) { return timedApi_("getMttrPage", p); }
 function api_getMttrByDomainTrend(p) { return timedApi_("getMttrByDomainTrend", p); }
+function api_getMttrGroup(p) { return timedApi_("getMttrGroup", p); }
 function api_getExecutivePage(p) { return timedApi_("getExecutivePage", p); }
 function api_getProgramPage(p) { return timedApi_("getProgramPage", p); }
 function api_getColdZonePage(p) { return timedApi_("getColdZonePage", p); }
