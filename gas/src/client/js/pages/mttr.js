@@ -12,6 +12,7 @@ import { pickFindingColumns } from "./_findingColumns.js";
 import {
   splitBucketNote, splitCountNote, splitGroupOf, splitRowLabel, splitSheetColumnKeys,
   splitSheetDefaults, splitSheetRequests, splitSheetSortFor, splitSheetSubtitle,
+  splitDomainAssetsText, splitDomainsLead, splitDomainsRows,
 } from "./_splitSheet.js";
 import { findingRowLabel, openFindingSheet } from "./findingSheet.js";
 import { call } from "../../../../../gas_shared/api.js";
@@ -2560,10 +2561,16 @@ export async function renderMttr(main, _params, ctx) {
     // No backlog caption here: it is register-wide background the page's column tip carries,
     // not a fact about this one row.
     const help = splitColumnHelp(dim, { show: false });
+    // ONE `api_getMttrGroup` REQUEST, TWO READERS: the per-severity table and (for a support
+    // group or an asset) the Domains section both come off the same payload, so each section
+    // registers a sink and the request fires once the sheet's body exists. `(payload, error)`.
+    const groupSinks = [];
+    const hasDomains = dimension === "supportGroup" || dimension === "asset";
 
     openSheet((body) => {
       const note = splitBucketNote(dimension, group);
       if (note) body.append(el("p", { class: "small muted", style: "margin:0 0 12px" }, note));
+      if (hasDomains) body.append(domainsSection());
       body.append(remediationSection(), findingsSection());
     }, {
       title: group,
@@ -2575,6 +2582,79 @@ export async function renderMttr(main, _params, ctx) {
       resizable: true,
       closeOnRouteChange: true,
     });
+    const deliver = (m) => groupSinks.forEach((f) => f(m, null));
+    swrCall("api_getMttrGroup", req.mttr, deliver).then(deliver)
+      .catch((e) => groupSinks.forEach((f) => f(null, e)));
+
+    /**
+     * WHICH DOMAINS THIS GROUP'S FINDINGS RESOLVE TO, across every domain rather than the one
+     * in the header — the answer to "why is this support group listed under that domain?".
+     * A group has no domain of its own; each finding takes its asset's (tag first, else a
+     * manual rule), so the table names the route and the assets as well as the count: the
+     * fix for a group that should not be here is a tag in Wiz or a rule in Settings, and this
+     * says which.
+     */
+    function domainsSection() {
+      const host = el("div", { role: "status", "aria-label": "Loading domains" },
+        skeletonStack(2, { widths: ["100%", "70%"] }));
+      groupSinks.push((m, err) => {
+        if (!host.isConnected) return;
+        clear(host).removeAttribute("aria-label");
+        if (err) {
+          host.append(errorState("Couldn't load which domains this " + dim.noun + " spans.",
+            { detail: String((err && err.message) || err) }));
+          return;
+        }
+        const domains = (m && m.domains) || [];
+        const lead = splitDomainsLead(dimension, group, domains);
+        if (lead) host.append(el("p", { class: "small muted", style: "margin:0 0 8px" }, lead));
+        host.append(dataTable({
+          columns: [
+            {
+              key: "domain",
+              label: "Domain",
+              help: ["The domain these findings resolve to. \u201cThis view\u201d marks the "
+                + "domain picked in the header — the only one the table behind this sheet counts."],
+              cell: (d) => (d.current
+                ? el("span", {}, d.domain, el("span", { class: "small muted" }, " · this view"))
+                : d.domain),
+            },
+            {
+              key: "sourceLabel",
+              label: "Assigned by",
+              help: ["How each finding got its domain: the asset's Wiz/Domain tag (fix it on the "
+                + "asset in Wiz), a manual rule (Settings → Domains), or neither."],
+              cell: (d) => d.sourceLabel,
+            },
+            {
+              key: "findings",
+              label: "Findings",
+              className: "num",
+              help: ["Findings in this " + dim.noun + " resolving to this domain by this route, "
+                + "open and resolved, over the page's severity scope."],
+              cell: (d) => fmtCount(num(d.findings, 0)),
+            },
+            {
+              key: "open",
+              label: "Open",
+              className: "num",
+              help: ["Of those, the ones not yet resolved."],
+              cell: (d) => fmtCount(num(d.open, 0)),
+            },
+            {
+              key: "assets",
+              label: "Assets",
+              help: ["The assets carrying these findings, most findings first — where the tag "
+                + "or the rule's match lives."],
+              cell: (d) => el("span", { class: "small" }, splitDomainAssetsText(d)),
+            },
+          ],
+          rows: splitDomainsRows(domains, scope.domain),
+          emptyText: "No findings in this " + dim.noun + " in the page's severity scope.",
+        }));
+      });
+      return sheetSection("Domains", host);
+    }
 
     function remediationSection() {
       const slaRate = rateView(row.slaPct, num(row.resolved, 0),
@@ -2614,10 +2694,12 @@ export async function renderMttr(main, _params, ctx) {
         sevHost.append(table || el("p", { class: "small muted" },
           "No severity in scope has findings in this " + dim.noun + "."));
       };
-      swrCall("api_getMttrGroup", req.mttr, paintSev).then(paintSev).catch((e) => {
+      groupSinks.push((m, err) => {
+        if (!err) { paintSev(m); return; }
+        if (!sevHost.isConnected) return;
         clear(sevHost).removeAttribute("aria-label");
         sevHost.append(errorState("Couldn't load this " + dim.noun + "'s remediation by severity.",
-          { detail: String((e && e.message) || e) }));
+          { detail: String((err && err.message) || err) }));
       });
       return sheetSection("Remediation", clocks, counts,
         el("h4", { class: "label", style: "margin:16px 0 4px" }, "By severity"), sevHost);

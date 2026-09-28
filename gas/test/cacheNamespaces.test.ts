@@ -30,7 +30,7 @@ describe("cache namespaces", () => {
   it("finds the read-models this spec expects", () => {
     const names = namespaces();
     expect(names.length).toBeGreaterThan(15);
-    for (const n of ["bootstrapCore8", "mttr12", "mttrGroup1", "coldZone1", "eolKeys1"]) expect(names).toContain(n);
+    for (const n of ["bootstrapCore8", "mttr12", "mttrGroup2", "coldZone1", "eolKeys1"]) expect(names).toContain(n);
   });
 
   it("names every one with a version to bump", () => {

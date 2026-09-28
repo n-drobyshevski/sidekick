@@ -260,7 +260,9 @@ The MTTR page opens with the same briefing shape as Executive, then keeps every 
   table opens a sheet with the row's clocks and counts as two stat strips, the same per-severity
   table as the fold above (`severityTable`) over the row alone, and the row's findings. The
   subtitle names the scope the row was drawn inside, and the notes for Unassigned, Not
-  attributable and "(none)" sit on the sheet's surface, not in a tip.
+  attributable and "(none)" sit on the sheet's surface, not in a tip. A support-group or asset
+  sheet leads with **Domains**: every domain its findings resolve to (not only the header's,
+  which is marked "this view"), how each got there (tag / rule), and the assets carrying them.
 
 ### 6c. The Coverage & efficiency briefing (2026-09-24)
 
