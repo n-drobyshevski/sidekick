@@ -68,6 +68,7 @@ vi.mock("../src/server/readModelStore", () => ({
 }));
 vi.mock("../src/server/ledgerStore", () => ({
   loadBaseRows: () => H.base.map((r) => ({ ...r })),
+  readBaseRows: () => H.base.map((r) => ({ ...r })),
   loadScanRows: () => [],
   latestFlatScanRow: () => ({ scan_id: "scan-9", severities: null }),
   latestScanRow: () => ({ scan_id: "scan-9", ts: "2026-06-01T00:00:00Z", total: H.base.length }),

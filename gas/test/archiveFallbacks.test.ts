@@ -49,7 +49,8 @@ vi.mock("../src/server/settingsStore", () => ({
   getShowNoFix: () => true,
 }));
 vi.mock("../src/server/supportGroups", () => ({ attachSupportGroups: () => {} }));
-vi.mock("../src/server/bizDomains", () => ({ attachBizDomains: () => {} }));
+vi.mock("../src/server/bizDomains", () => ({
+  configuredDomainTagKey: () => "Wiz/Domain", attachBizDomains: () => {} }));
 vi.mock("../src/server/errorLog", () => ({ recordError: () => {}, recentErrors: () => [] }));
 
 // EVERY Drive call fails — the shape of the incident, where the service itself is the thing that

@@ -79,6 +79,7 @@ vi.mock("../src/server/readModelStore", () => ({
 
 vi.mock("../src/server/ledgerStore", () => ({
   loadBaseRows: () => H.base.map((r) => ({ ...r })),
+  readBaseRows: () => H.base.map((r) => ({ ...r })),
   loadScanRows: () => H.scans.map((r) => ({ ...r })),
   latestFlatScanRow: () => null,
 }));
@@ -99,6 +100,7 @@ vi.mock("../src/server/supportGroups", () => ({
   },
 }));
 vi.mock("../src/server/bizDomains", () => ({
+  configuredDomainTagKey: () => "Wiz/Domain",
   attachBizDomains: (rows: Rec[]) => { for (const r of rows) r["_bizDomain"] = ""; },
 }));
 vi.mock("../src/server/errorLog", () => ({

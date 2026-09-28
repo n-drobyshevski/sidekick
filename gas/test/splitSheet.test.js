@@ -155,21 +155,30 @@ describe("the Domains section", () => {
     expect(domainSourceLabel("missing")).toBe("no attribution input");
   });
 
-  it("explains a spread, and states a single domain plainly", () => {
+  it("leads with the one domain a pinned group counts under", () => {
     const two = [{ domain: "CROSS" }, { domain: "RETAIL" }, { domain: "CROSS" }];
-    expect(splitDomainsLead("supportGroup", "CS-SANDBOX", two))
-      .toMatch(/^CS-SANDBOX's findings resolve to 2 domains\. A support group has no domain of its own/);
-    expect(splitDomainsLead("asset", "web-01", two)).toMatch(/An asset has no domain/);
-    expect(splitDomainsLead("supportGroup", "CS-SANDBOX", [{ domain: "CROSS" }]))
-      .toBe("All of CS-SANDBOX's findings resolve to CROSS.");
-    expect(splitDomainsLead("supportGroup", "X", [])).toBeNull();
+    expect(splitDomainsLead("supportGroup", "CS-SANDBOX", two, "CROSS"))
+      .toBe("CS-SANDBOX counts under CROSS — the domain most of its current assets are in. "
+        + "Every finding it carries is measured there, although its assets sit in 2 domains today.");
+    expect(splitDomainsLead("asset", "web-01", [{ domain: "RETAIL" }], "CROSS"))
+      .toMatch(/^web-01 counts under CROSS — the domain its support group is pinned to\..*sit in RETAIL today\.$/);
+    expect(splitDomainsLead("supportGroup", "CS-SANDBOX", [{ domain: "CROSS" }], "CROSS"))
+      .toBe("CS-SANDBOX counts under CROSS, where all of its assets are today.");
   });
 
-  it("marks the header's domain, and only when one is picked", () => {
+  it("without a pin, says each finding counts under its asset's current domain", () => {
+    const two = [{ domain: "CROSS" }, { domain: "RETAIL" }];
+    expect(splitDomainsLead("supportGroup", "(none)", two, null)).toMatch(/^\(none\)'s findings count under 2 domains/);
+    expect(splitDomainsLead("supportGroup", "(none)", [{ domain: "CROSS" }], null))
+      .toBe("All of (none)'s findings count under CROSS, their assets' current domain.");
+    expect(splitDomainsLead("supportGroup", "X", [], "CROSS")).toBeNull();
+  });
+
+  it("marks the domain the row is counted under, and only with a pin", () => {
     const rows = splitDomainsRows([{ domain: "CROSS", source: "tag" }, { domain: "RETAIL", source: "rule" }], "CROSS");
-    expect(rows.map((r) => [r.domain, r.current, r.sourceLabel]))
+    expect(rows.map((r) => [r.domain, r.counted, r.sourceLabel]))
       .toEqual([["CROSS", true, "Wiz/Domain tag"], ["RETAIL", false, "manual rule"]]);
-    expect(splitDomainsRows([{ domain: "CROSS" }], "").every((r) => !r.current)).toBe(true);
+    expect(splitDomainsRows([{ domain: "CROSS" }], null).every((r) => !r.counted)).toBe(true);
   });
 
   it("lists the shipped assets and counts the rest", () => {
@@ -179,9 +188,15 @@ describe("the Domains section", () => {
 });
 
 describe("the folded Domains summary", () => {
-  it("states the count, and names a lone domain", () => {
-    expect(splitDomainsHint([{ domain: "CROSS" }, { domain: "SAP" }, { domain: "CROSS" }])).toBe("2 domains");
-    expect(splitDomainsHint([{ domain: "CROSS" }])).toBe("1 domain: CROSS");
-    expect(splitDomainsHint([])).toBe("");
+  it("says where the row counts, and how spread its hosts are", () => {
+    const spread = [{ domain: "CROSS" }, { domain: "SAP" }, { domain: "CROSS" }];
+    expect(splitDomainsHint(spread, "CROSS")).toBe("counted under CROSS · assets in 2 domains");
+    expect(splitDomainsHint([{ domain: "CROSS" }], "CROSS")).toBe("counted under CROSS");
+  });
+
+  it("without a pin, states the count, and names a lone domain", () => {
+    expect(splitDomainsHint([{ domain: "CROSS" }, { domain: "SAP" }], null)).toBe("2 domains");
+    expect(splitDomainsHint([{ domain: "CROSS" }], null)).toBe("1 domain: CROSS");
+    expect(splitDomainsHint([], null)).toBe("");
   });
 });

@@ -42,7 +42,13 @@ export const BUILD_ID = typeof __BUILD_ID__ === "string" ? __BUILD_ID__ : "dev";
  * A stale payload that slips past both is bounded anyway: DATA_VERSION moves on every scan and
  * settings save, and no L1 entry outlives CacheService's six hours.
  */
-export const CACHE_EPOCH = "1";
+//
+// "1" → "2": the CURRENT-DOMAIN ASSIGNMENT (currentDomains.ts). Every read-model that puts a
+// finding in a domain — the scope filter, every split, the register, the scoped fence, the frame
+// — now counts it under its asset's current domain and its support group's one pinned domain,
+// rather than the tags of its last sighting. That changes the MEANING of every domain-scoped
+// payload at once, which is the case this constant exists for rather than twenty namespace bumps.
+export const CACHE_EPOCH = "2";
 const CHUNK_CHARS = 90_000; // base64 chars per entry, safely under the 100 KB cap
 const DEFAULT_TTL_SEC = 21_600; // the CacheService maximum (6 h)
 

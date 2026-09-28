@@ -588,7 +588,8 @@ var Server = (() => {
   var SUB_COL = "vulnerableAsset.subscriptionName";
   var EXT_COL = "vulnerableAsset.subscriptionExternalId";
   var SG_COL = "_supportGroup";
-  var DOMAIN_COL = "_domain";
+  var DOMAIN_COL = "_domainRaw";
+  var COUNTED_DOMAIN_COL = "_domain";
   var SOURCE_COL = "_domainSource";
   var NONE = "(none)";
   var MAX_TAG_KEYS = 12;
@@ -601,7 +602,8 @@ var Server = (() => {
     sg: "support group"
   };
   function domainOf(r) {
-    const v = r[DOMAIN_COL];
+    var _a;
+    const v = (_a = r[DOMAIN_COL]) != null ? _a : r[COUNTED_DOMAIN_COL];
     return present(v) ? String(v) : UNASSIGNED;
   }
   function sourceOf(r) {
@@ -3283,8 +3285,8 @@ var Server = (() => {
     const openAsOfD = firstMs !== null && firstMs <= d && (resolvedMs === null || resolvedMs > d);
     return openAsOfD && (fixAvailMs === null || fixAvailMs > d);
   }
-  function censoredAsOf(d, lastSeenMs) {
-    return lastSeenMs !== null && lastSeenMs < d ? lastSeenMs : d;
+  function censoredAsOf(d, lastSeenMs2) {
+    return lastSeenMs2 !== null && lastSeenMs2 < d ? lastSeenMs2 : d;
   }
   function trendFromFrames(scans, base, severities = null, opts = {}) {
     var _a;
@@ -6215,9 +6217,9 @@ var Server = (() => {
   }
   function narrowScanScope(severitiesText, set) {
     var _a;
-    const current = (_a = parseSeverities(severitiesText)) != null ? _a : [...SELECTABLE_SEVERITIES];
-    const remaining = current.filter((s) => !set.has(s));
-    if (!remaining.length || remaining.length === current.length) return severitiesText;
+    const current2 = (_a = parseSeverities(severitiesText)) != null ? _a : [...SELECTABLE_SEVERITIES];
+    const remaining = current2.filter((s) => !set.has(s));
+    if (!remaining.length || remaining.length === current2.length) return severitiesText;
     return serializeSeverities(remaining);
   }
   function purgeStateBySeverity(state, severities) {
@@ -6490,8 +6492,8 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "66e40b485d0d" : "dev";
-  var CACHE_EPOCH = "1";
+  var BUILD_ID = true ? "3baf82ae0de1" : "dev";
+  var CACHE_EPOCH = "2";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -7287,14 +7289,20 @@ var Server = (() => {
   }
   var readPayloadForRow = (row) => readScanPayload(row.raw_ref);
   function loadBaseRows(now) {
+    if (now !== void 0) {
+      const state = loadState();
+      return baseRows(state, now, newestFlatScanBySeverity(state.scans));
+    }
+    return readBaseRows().map((r) => ({ ...r }));
+  }
+  function readBaseRows() {
     const state = loadState();
-    if (now !== void 0) return baseRows(state, now, newestFlatScanBySeverity(state.scans));
     if (baseRowsMemo === void 0 || baseRowsMemo.state !== state) {
       const t0 = Date.now();
       baseRowsMemo = { state, rows: baseRows(state, void 0, newestFlatScanBySeverity(state.scans)) };
       console.log(JSON.stringify({ stage: "baseRows", rows: baseRowsMemo.rows.length, ms: Date.now() - t0 }));
     }
-    return baseRowsMemo.rows.map((r) => ({ ...r }));
+    return baseRowsMemo.rows;
   }
   var KM_TREND_MAX_RECONSTRUCTED = 48;
   function loadTrend(severities = null, showNoFix = true, baseOverride) {
@@ -7990,11 +7998,11 @@ var Server = (() => {
     };
   }
   function withRiskRule(settings, rule) {
-    const current = getRiskRule(settings);
+    const current2 = getRiskRule(settings);
     const clean2 = cleanRiskRule(
       rule && typeof rule === "object" && !Array.isArray(rule) ? rule : {}
     );
-    return { ...settings, risk_rule: { version: current.version + 1, rule: clean2 } };
+    return { ...settings, risk_rule: { version: current2.version + 1, rule: clean2 } };
   }
   function cleanDomainItems(items) {
     if (!Array.isArray(items)) return [];
@@ -8013,10 +8021,10 @@ var Server = (() => {
     return { version, items: cleanDomainItems(r["items"]) };
   }
   function withDomains(settings, items) {
-    const current = getDomains(settings);
+    const current2 = getDomains(settings);
     return {
       ...settings,
-      domains: { version: current.version + 1, items: cleanDomainItems(items) }
+      domains: { version: current2.version + 1, items: cleanDomainItems(items) }
     };
   }
   function cleanStringMap(map) {
@@ -8659,17 +8667,128 @@ var Server = (() => {
     return stats;
   }
 
-  // src/server/findings.ts
+  // src/domain/currentDomain.ts
+  function assetKeyOf(r) {
+    var _a, _b, _c;
+    const id = (_a = r["asset_id"]) != null ? _a : r["vulnerableAsset.id"];
+    if (id !== null && id !== void 0 && String(id) !== "") return "id:" + String(id);
+    const name = String((_c = (_b = r["asset_name"]) != null ? _b : r["vulnerableAsset.name"]) != null ? _c : "").trim();
+    return name && name !== "(compacted)" ? "name:" + name : "";
+  }
+  function lastSeenMs(r) {
+    var _a;
+    const t = Date.parse(String((_a = r["last_seen"]) != null ? _a : ""));
+    return Number.isFinite(t) ? t : -Infinity;
+  }
+  var isTail = (name) => name === UNASSIGNED || name === NOT_ATTRIBUTABLE;
+  function buildDomainAssignment(rows, annotate, resolve) {
+    var _a, _b, _c, _d, _e;
+    const newest = /* @__PURE__ */ new Map();
+    const openAssets = /* @__PURE__ */ new Set();
+    const findingsOf = /* @__PURE__ */ new Map();
+    for (const r of rows) {
+      const key = assetKeyOf(r);
+      if (!key) continue;
+      const prev = newest.get(key);
+      if (!prev || lastSeenMs(r) > lastSeenMs(prev)) newest.set(key, r);
+      if (!String((_a = r["resolved_at"]) != null ? _a : "").trim()) openAssets.add(key);
+      findingsOf.set(key, ((_b = findingsOf.get(key)) != null ? _b : 0) + 1);
+    }
+    const heads = [...newest.values()].map((r) => ({ ...r }));
+    annotate(heads);
+    const keys = [...newest.keys()];
+    const assetDomain = /* @__PURE__ */ new Map();
+    const groupAssets = /* @__PURE__ */ new Map();
+    keys.forEach((key, i) => {
+      var _a2;
+      const head = heads[i];
+      assetDomain.set(key, resolve(head));
+      const sg = String((_a2 = head["_supportGroup"]) != null ? _a2 : "");
+      if (!sg) return;
+      let list = groupAssets.get(sg);
+      if (!list) groupAssets.set(sg, list = []);
+      list.push(key);
+    });
+    const groupDomain = /* @__PURE__ */ new Map();
+    for (const [sg, assets] of groupAssets) {
+      const current2 = assets.filter((a) => openAssets.has(a));
+      const counted = current2.length ? current2 : assets;
+      const votes = /* @__PURE__ */ new Map();
+      const findings = /* @__PURE__ */ new Map();
+      for (const a of counted) {
+        const d = assetDomain.get(a).name;
+        votes.set(d, ((_c = votes.get(d)) != null ? _c : 0) + 1);
+      }
+      for (const a of assets) {
+        const d = assetDomain.get(a).name;
+        findings.set(d, ((_d = findings.get(d)) != null ? _d : 0) + ((_e = findingsOf.get(a)) != null ? _e : 0));
+      }
+      const ranked = [...votes.entries()].sort((x, y) => {
+        var _a2, _b2;
+        return Number(isTail(x[0])) - Number(isTail(y[0])) || y[1] - x[1] || ((_a2 = findings.get(y[0])) != null ? _a2 : 0) - ((_b2 = findings.get(x[0])) != null ? _b2 : 0) || (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0);
+      });
+      if (ranked.length) groupDomain.set(sg, ranked[0][0]);
+    }
+    return { groupDomain, assetDomain };
+  }
+  function assignedDomain(r, a, resolveRow) {
+    var _a;
+    const sg = String((_a = r["_supportGroup"]) != null ? _a : "");
+    const pinned = sg ? a.groupDomain.get(sg) : void 0;
+    if (pinned !== void 0) return { name: pinned, source: "group" };
+    const key = assetKeyOf(r);
+    const asset = key ? a.assetDomain.get(key) : void 0;
+    if (asset) return { name: asset.name, source: "asset" };
+    return { name: resolveRow(r).name, source: "row" };
+  }
+
+  // src/server/currentDomains.ts
   var memo;
+  function current() {
+    const stamp2 = currentStamp();
+    if (!memo || memo.stamp !== stamp2) {
+      const t0 = Date.now();
+      const compiled = compileDomains(getDomains2().items);
+      const tagKey = configuredDomainTagKey();
+      const resolveRow = (r) => resolveDomain(r, compiled, tagKey);
+      const assignment = buildDomainAssignment(
+        // The memo itself, not copies: this pass only reads, and copies only the heads it annotates.
+        readBaseRows(),
+        (heads) => {
+          attachSupportGroups(heads);
+          attachBizDomains(heads);
+        },
+        resolveRow
+      );
+      memo = { stamp: stamp2, assignment, resolveRow };
+      console.log(JSON.stringify({
+        stage: "domainAssignment",
+        assets: assignment.assetDomain.size,
+        groups: assignment.groupDomain.size,
+        ms: Date.now() - t0
+      }));
+    }
+    return memo;
+  }
+  function domainOf2(r) {
+    const m = current();
+    return assignedDomain(r, m.assignment, m.resolveRow).name;
+  }
+  function domainAssignment() {
+    return current().assignment;
+  }
+
+  // src/server/findings.ts
+  var memo2;
   function invalidateFrameMemo() {
-    memo = void 0;
+    memo2 = void 0;
   }
   function currentScan() {
-    if (memo !== void 0) return memo;
+    if (memo2 !== void 0) return memo2;
     const row = latestFlatScanRow();
     if (!row) {
-      memo = null;
-      return memo;
+      memo2 = null;
+      return memo2;
     }
     const domains = getDomains2();
     const compiled = compileDomains(domains.items);
@@ -8697,10 +8816,11 @@ var Server = (() => {
     attachBizDomains(records);
     for (const flat of records) {
       const resolved = resolveDomain(flat, compiled);
-      flat["_domain"] = resolved.name;
+      flat["_domain"] = domainOf2(flat);
+      flat["_domainRaw"] = resolved.name;
       flat["_domainSource"] = resolved.source;
     }
-    memo = {
+    memo2 = {
       scanId: row.scan_id,
       ts: row.ts,
       mode: row.mode,
@@ -8709,7 +8829,7 @@ var Server = (() => {
       severities: row.severities,
       records
     };
-    return memo;
+    return memo2;
   }
   function applyFilters(records, f) {
     var _a, _b, _c, _d, _e, _f;
@@ -9192,10 +9312,10 @@ var Server = (() => {
     if (scope) return { allowed: true, email, reason: "scoped", scope };
     return parseAllowlist(raw).indexOf(key) >= 0 ? { allowed: true, email, reason: "listed" } : { allowed: false, email, reason: "not-listed" };
   }
-  var memo2;
+  var memo3;
   function check() {
-    if (memo2 === void 0) {
-      memo2 = decide(
+    if (memo3 === void 0) {
+      memo3 = decide(
         Session.getActiveUser().getEmail(),
         Session.getEffectiveUser().getEmail(),
         getProp(PROP_KEYS.allowedUsers),
@@ -9203,7 +9323,7 @@ var Server = (() => {
         getProp(PROP_KEYS.scopedUsers)
       );
     }
-    return memo2;
+    return memo3;
   }
   var SCOPED_RPCS = [
     // Not an RPC but the gate `include()` asks through: the page's own scriptlets need it.
@@ -10707,8 +10827,7 @@ var Server = (() => {
     let base = loadBaseRows();
     attachSupportGroups(base);
     attachBizDomains(base);
-    const compiled = compileDomains(getDomains2().items);
-    for (const r of base) r["_domain"] = resolveDomainName(r, compiled);
+    for (const r of base) r["_domain"] = domainOf2(r);
     if (domain || sgActive) {
       if (sgActive) {
         recs = recs.filter((r) => {
@@ -11045,8 +11164,7 @@ var Server = (() => {
     let base = loadBaseRows();
     attachSupportGroups(base);
     attachBizDomains(base);
-    const compiled = compileDomains(getDomains2().items);
-    for (const r of base) r["_domain"] = resolveDomainName(r, compiled);
+    for (const r of base) r["_domain"] = domainOf2(r);
     if (sgActive) base = base.filter((r) => {
       var _a2;
       return sgMatch(String((_a2 = r["_supportGroup"]) != null ? _a2 : ""));
@@ -11258,13 +11376,12 @@ var Server = (() => {
       const t1 = Date.now();
       attachSupportGroups(rows);
       if (viewer) {
-        const compiled = compileDomains(getDomains2().items);
         attachBizDomains(rows);
         rows = rows.filter((r) => {
           var _a;
           return inViewerScope(
             viewer,
-            resolveDomainName(r, compiled),
+            domainOf2(r),
             String((_a = r["_supportGroup"]) != null ? _a : "")
           );
         });
@@ -11274,9 +11391,8 @@ var Server = (() => {
         return String((_a = r["_supportGroup"]) != null ? _a : "") === supportGroup;
       });
       if (domain) {
-        const compiled = compileDomains(getDomains2().items);
         attachBizDomains(rows);
-        rows = rows.filter((r) => resolveDomainName(r, compiled) === domain);
+        rows = rows.filter((r) => domainOf2(r) === domain);
       }
       scoped = rows;
       scopedMemo.byScope.set(key, scoped);
@@ -11504,9 +11620,11 @@ var Server = (() => {
     rows = narrowToMttrGroup(rows, row);
     attachBizDomains(rows);
     const compiled = compileDomains(getDomains2().items);
+    const assetDomain = domainAssignment().assetDomain;
     const acc = /* @__PURE__ */ new Map();
     for (const r of rows) {
-      const { name, source } = resolveDomain(r, compiled);
+      const key0 = assetKeyOf(r);
+      const { name, source } = key0 && assetDomain.get(key0) || resolveDomain(r, compiled);
       const key = name + "\0" + source;
       let a = acc.get(key);
       if (!a) acc.set(key, a = { domain: name, source, findings: 0, open: 0, assets: /* @__PURE__ */ new Map() });
@@ -11530,9 +11648,9 @@ var Server = (() => {
       return rows.filter((r) => supportGroupBucket(r) === row.value);
     }
     if (row.by === "asset") return rows.filter((r) => assetBucket(r) === row.value);
-    const compiled = compileDomains(getDomains2().items);
+    attachSupportGroups(rows);
     attachBizDomains(rows);
-    return rows.filter((r) => resolveDomainName(r, compiled) === row.value);
+    return rows.filter((r) => domainOf2(r) === row.value);
   }
   var ASSET_TOP_N = 20;
   function remediationGroups(rows, keyField, orderedNames, scanRows) {
@@ -11584,7 +11702,7 @@ var Server = (() => {
     return { rows: out, trend: { groups, points, kmPoints } };
   }
   function mttrByDomainData(p) {
-    var _a, _b;
+    var _a;
     const supportGroup = String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : "");
     let rows = filterSeverities(
       loadBaseRows(),
@@ -11598,12 +11716,12 @@ var Server = (() => {
     });
     attachBizDomains(rows);
     const items = getDomains2().items;
-    const compiled = compileDomains(items);
+    const manual = new Set(domainNames(items));
     const seenTags = /* @__PURE__ */ new Set();
     for (const r of rows) {
-      r["_domain"] = resolveDomainName(r, compiled);
-      const tag = String((_b = r["_bizDomain"]) != null ? _b : "");
-      if (tag) seenTags.add(tag);
+      const name = domainOf2(r);
+      r["_domain"] = name;
+      if (!manual.has(name) && name !== UNASSIGNED && name !== NOT_ATTRIBUTABLE) seenTags.add(name);
     }
     const scanRows = loadScanRows();
     const { rows: out, trend } = remediationGroups(
@@ -11625,10 +11743,9 @@ var Server = (() => {
     );
     rows = visibleBase(rows);
     attachSupportGroups(rows);
-    const compiled = compileDomains(getDomains2().items);
     if (domain) {
       attachBizDomains(rows);
-      rows = rows.filter((r) => resolveDomainName(r, compiled) === domain);
+      rows = rows.filter((r) => domainOf2(r) === domain);
     }
     if (supportGroup) rows = rows.filter((r) => {
       var _a2;
@@ -11978,12 +12095,22 @@ var Server = (() => {
         // whenever "mttr12" bumps (same builder), or when the split's bucket keys change.
         // "mttrGroup1" → "mttrGroup2": the payload gained `domains` (`splitRowDomains`), which
         // the sheet's Domains section reads; a stale entry would draw that section empty.
-        "mttrGroup2",
+        // "mttrGroup2" → "mttrGroup3": `domains` now places each finding under its asset's
+        // CURRENT domain, and the payload gained `pinnedDomain` (currentDomains).
+        "mttrGroup3",
         { ...q, groupBy: by, groupValue: value, showNoFix: getShowNoFix2() },
-        () => ({
-          ...mttrData(q, { by, value }),
-          domains: splitRowDomains(q.supportGroup, severities, { by, value })
-        }),
+        () => {
+          var _a2;
+          return {
+            ...mttrData(q, { by, value }),
+            domains: splitRowDomains(q.supportGroup, severities, { by, value }),
+            // The one domain every finding of this row counts under, when a support group decides
+            // it: the row's own group, or for an asset row the group it was drawn inside.
+            pinnedDomain: (_a2 = domainAssignment().groupDomain.get(
+              by === "supportGroup" ? value : q.supportGroup
+            )) != null ? _a2 : null
+          };
+        },
         3600
       );
     });
@@ -12296,10 +12423,9 @@ var Server = (() => {
     );
     attachSupportGroups(base);
     attachBizDomains(base);
-    const compiled = compileDomains(getDomains2().items);
     const rule = getRiskRule2().rule;
     for (const r of base) {
-      r["_domain"] = resolveDomainName(r, compiled);
+      r["_domain"] = domainOf2(r);
       r["risk_tier"] = riskTier(r, rule);
       const key = String((_d = r["vuln_key"]) != null ? _d : "");
       r["internet_exposed"] = !exposureKnown || !framedKeys.has(key) ? null : exposedKeys.has(key);
@@ -12465,13 +12591,13 @@ var Server = (() => {
     const now = Date.now();
     const weekAgo = now - WEEK_MS;
     if (!Number.isFinite(earliest) || earliest > weekAgo) return null;
-    const current = kmMedianAsOf(base, severities, now, { hideNoFix });
+    const current2 = kmMedianAsOf(base, severities, now, { hideNoFix });
     const previous = kmMedianAsOf(base, severities, weekAgo, { hideNoFix });
-    if (current === null || previous === null) return null;
+    if (current2 === null || previous === null) return null;
     return {
-      current,
+      current: current2,
       previous,
-      deltaDays: Math.round((current - previous) * 1e3) / 1e3,
+      deltaDays: Math.round((current2 - previous) * 1e3) / 1e3,
       days: 7
     };
   }
@@ -12849,9 +12975,8 @@ var Server = (() => {
           });
         }
         if (domains.length) {
-          const compiled = compileDomains(getDomains2().items);
           attachBizDomains(baseRows2);
-          baseRows2 = baseRows2.filter((r) => domains.includes(resolveDomainName(r, compiled)));
+          baseRows2 = baseRows2.filter((r) => domains.includes(domainOf2(r)));
         }
       }
       baseRows2 = visibleBase(baseRows2);
@@ -13169,8 +13294,7 @@ var Server = (() => {
   }
   function scopeSplits(viewer, severities) {
     const rows = visibleBase(filterSeverities(scopedBaseRows("", "", viewer), severities));
-    const compiled = compileDomains(getDomains2().items);
-    for (const r of rows) r["_domain"] = resolveDomainName(r, compiled);
+    for (const r of rows) r["_domain"] = domainOf2(r);
     const stat = (group, rs) => {
       var _a, _b;
       const base = rs;

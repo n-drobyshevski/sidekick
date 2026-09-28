@@ -149,13 +149,31 @@ a `mttrGroup` entry), and `getRegisterRows` lists the findings through its group
 the split's "(none)" bucket is the register's `NONE_GROUP`. `test/mttrGroupSheet.test.ts` holds
 both to the row's open and resolved counts for every dimension and edge bucket.
 
-**A support group has no domain of its own**, and the sheet says so. The group comes off a
-finding's subscription; the domain is resolved per finding off its asset (Wiz/Domain tag first,
-then a manual rule). So one group's findings can land in several domains, and the split under a
-domain lists every group with at least one finding there. A support-group or asset sheet opens on
-a **Domains** section, collapsed by default with the domain count in its summary: every domain the row's findings resolve to, across all domains rather than
-the header's, with the route (tag or rule) and the assets carrying them. That is where the fix
-for a group that looks misplaced lives (`getMttrGroup`'s `domains`, `splitRowDomains`).
+**Domains are counted as they stand today** (`domain/currentDomain.ts`, served by
+`server/currentDomains.ts`). A ledger row keeps its asset's tags as of its last sighting, so a
+resolved finding is frozen at the day it closed: retag a host from RETAIL to CROSS and its
+history stayed in RETAIL while its backlog moved. Two rules now decide where every finding counts,
+on every page:
+
+1. **An asset has one current domain**: the one its newest sighting resolves to (Wiz/Domain tag
+   first, then a manual rule). All of its findings, resolved ones included, count there.
+2. **A support group is pinned to one domain**: the one most of its current assets are in (an
+   asset is current while it carries an open finding; a group with none falls back to all its
+   assets). Every finding the group carries counts there. A named domain beats Unassigned / Not
+   attributable, and ties go to more findings, then to the name. So a support group is listed
+   under exactly one domain.
+
+Findings with no support group keep rule 1 alone; compacted history with no asset identity keeps
+its own resolution. The Attribution page's audit (tag vs rule coverage, rule health) still reads
+each finding's **own** resolution (`_domainRaw`), because it measures the tags and rules
+themselves. The assignment is built once per cache stamp from one read-only pass over the ledger
+(`ledgerStore.readBaseRows`), and `CACHE_EPOCH` moved to "2" with it.
+
+A support-group or asset sheet opens on a **Domains** section, collapsed by default, whose summary
+says where the row counts ("counted under CROSS · assets in 4 domains"). The table lists where the
+row's assets sit today, by route (tag or rule), with the assets carrying them: the vote behind the
+pin, and where to fix a group pinned to the wrong domain (`getMttrGroup`'s `domains` and
+`pinnedDomain`).
 
 It is also the only one of the three that is **capped**, at 20 assets. Domains and support groups
 are configured by an operator, so the register knows how many there are and lists them all;

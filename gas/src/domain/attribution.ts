@@ -26,7 +26,13 @@ const TYPE_COL = "vulnerableAsset.type";
 const SUB_COL = "vulnerableAsset.subscriptionName";
 const EXT_COL = "vulnerableAsset.subscriptionExternalId";
 const SG_COL = "_supportGroup";
-const DOMAIN_COL = "_domain";
+// `_domainRaw` — the row's OWN resolution (its tag, else a rule) — where the frame carries it,
+// and it does: `_domain` is where the finding is COUNTED (server/currentDomains.ts: a support
+// group's one pinned domain), which is not what an audit of the tags and rules is about. An
+// audit read off `_domain` would call a finding "attributed by tag to CROSS" when it has no
+// tag at all and only counts in CROSS because its group does.
+const DOMAIN_COL = "_domainRaw";
+const COUNTED_DOMAIN_COL = "_domain";
 const SOURCE_COL = "_domainSource";
 const NONE = "(none)";
 
@@ -48,7 +54,7 @@ const KIND_LABEL: Record<CondSpec["kind"], string> = {
 
 /** The server-attached domain, defaulting to Unassigned when absent. */
 function domainOf(r: Rec): string {
-  const v = r[DOMAIN_COL];
+  const v = r[DOMAIN_COL] ?? r[COUNTED_DOMAIN_COL];
   return present(v) ? String(v) : UNASSIGNED;
 }
 

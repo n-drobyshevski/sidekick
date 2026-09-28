@@ -2587,17 +2587,17 @@ export async function renderMttr(main, _params, ctx) {
       .catch((e) => groupSinks.forEach((f) => f(null, e)));
 
     /**
-     * WHICH DOMAINS THIS GROUP'S FINDINGS RESOLVE TO, across every domain rather than the one
-     * in the header — the answer to "why is this support group listed under that domain?".
-     * A group has no domain of its own; each finding takes its asset's (tag first, else a
-     * manual rule), so the table names the route and the assets as well as the count: the
-     * fix for a group that should not be here is a tag in Wiz or a rule in Settings, and this
-     * says which.
+     * WHERE THIS ROW IS COUNTED, AND WHERE ITS HOSTS SIT TODAY. A support group counts under
+     * ONE domain — the one most of its current assets are in (server/currentDomains.ts) — and
+     * every finding it carries is measured there. The table is the vote behind that pin: each
+     * current domain its assets sit in, by which route (tag or rule), and which assets. The
+     * fix for a group pinned to the wrong domain is a tag in Wiz or a rule in Settings, and
+     * this says which.
      */
     //
     // COLLAPSED BY DEFAULT: it is the diagnosis for a surprising listing, not what most visits
-    // to the sheet are for, so it folds away under its own summary — which states the count
-    // ("4 domains") once the payload lands, so the answer to "is this group spread?" needs no
+    // to the sheet are for, so it folds away under its own summary — which states where the row
+    // counts ("counted under CROSS · assets in 4 domains") once the payload lands, so it needs no
     // click. Not remembered: every sheet opens on its remediation, the thing it is about.
     //
     // The sheet's own disclosure (`.disclosure`, gas_shared/styles/sheet.css — "collapsible
@@ -2615,24 +2615,26 @@ export async function renderMttr(main, _params, ctx) {
       groupSinks.push((m, err) => {
         if (!host.isConnected) return;
         clear(host).removeAttribute("aria-label");
-        if (hint) hint.textContent = err ? "" : splitDomainsHint((m && m.domains) || []);
+        const pinned = (m && m.pinnedDomain) || null;
+        if (hint) hint.textContent = err ? "" : splitDomainsHint((m && m.domains) || [], pinned);
         if (err) {
           host.append(errorState("Couldn't load which domains this " + dim.noun + " spans.",
             { detail: String((err && err.message) || err) }));
           return;
         }
         const domains = (m && m.domains) || [];
-        const lead = splitDomainsLead(dimension, group, domains);
+        const lead = splitDomainsLead(dimension, group, domains, pinned);
         if (lead) host.append(el("p", { class: "small muted", style: "margin:0 0 8px" }, lead));
         host.append(dataTable({
           columns: [
             {
               key: "domain",
               label: "Domain",
-              help: ["The domain these findings resolve to. \u201cThis view\u201d marks the "
-                + "domain picked in the header — the only one the table behind this sheet counts."],
-              cell: (d) => (d.current
-                ? el("span", {}, d.domain, el("span", { class: "small muted" }, " · this view"))
+              help: ["The domain these assets sit in TODAY — the Wiz/Domain tag of each asset's "
+                + "newest sighting, else a manual rule. \u201cCounted here\u201d marks the one "
+                + "domain every finding of this row is measured under."],
+              cell: (d) => (d.counted
+                ? el("span", {}, d.domain, el("span", { class: "small muted" }, " · counted here"))
                 : d.domain),
             },
             {
@@ -2646,7 +2648,7 @@ export async function renderMttr(main, _params, ctx) {
               key: "findings",
               label: "Findings",
               className: "num",
-              help: ["Findings in this " + dim.noun + " resolving to this domain by this route, "
+              help: ["Findings in this " + dim.noun + " whose asset sits in this domain today, by this route, "
                 + "open and resolved, over the page's severity scope."],
               cell: (d) => fmtCount(num(d.findings, 0)),
             },
@@ -2665,7 +2667,7 @@ export async function renderMttr(main, _params, ctx) {
               cell: (d) => el("span", { class: "small" }, splitDomainAssetsText(d)),
             },
           ],
-          rows: splitDomainsRows(domains, scope.domain),
+          rows: splitDomainsRows(domains, pinned),
           emptyText: "No findings in this " + dim.noun + " in the page's severity scope.",
         }));
       });

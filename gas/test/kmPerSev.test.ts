@@ -67,6 +67,7 @@ vi.mock("../src/server/serverCache", () => ({
 }));
 vi.mock("../src/server/ledgerStore", () => ({
   loadBaseRows: () => H.rows,
+  readBaseRows: () => H.rows,
   loadScanRows: () => [],
   loadTrend: () => [],
 }));
