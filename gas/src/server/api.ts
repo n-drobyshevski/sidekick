@@ -76,6 +76,7 @@ import * as settingsStore from "./settingsStore";
 import { cellUsage, SCHEMA_VERSION, TAB_HEADERS, TABS } from "./sheetsDb";
 import {
   NOT_ATTRIBUTABLE,
+  resolveDomain,
   resolveDomainName,
   resolvedDomainNames,
 } from "../domain/resolveDomain";
@@ -1564,6 +1565,68 @@ function assetBucket(r: Rec): string {
 interface MttrGroupRow { by: "domain" | "supportGroup" | "asset"; value: string }
 const MTTR_GROUP_DIMENSIONS: readonly MttrGroupRow["by"][] = ["domain", "supportGroup", "asset"];
 
+/** One (domain, how-it-got-there) slice of a split row's findings — see `splitRowDomains`. */
+interface SplitRowDomain {
+  domain: string;
+  source: string;
+  findings: number;
+  open: number;
+  assetCount: number;
+  assets: string[];
+}
+
+/**
+ * WHICH DOMAINS A SUPPORT GROUP'S (OR AN ASSET'S) FINDINGS RESOLVE TO, and why — the row
+ * sheet's answer to "why is this group listed under that domain?".
+ *
+ * A support group has no domain of its own. The group comes off the finding's SUBSCRIPTION;
+ * the domain is resolved per finding off its ASSET (`resolveDomain`: the Wiz/Domain tag first,
+ * then a manual rule, else Unassigned / Not attributable). So one group's findings routinely
+ * land in several domains, and the by-support-group split under domain D lists every group
+ * with at least one finding resolving to D. That is the rule working, and it reads like a bug
+ * until the sheet shows the spread — which is what this is for.
+ *
+ * THE HEADER DOMAIN SCOPE IS IGNORED ON PURPOSE: a group opened under CROSS answers for
+ * everything it carries, so a reader can see the CROSS findings are, say, two assets tagged
+ * CROSS in an otherwise-RETAIL group. The support-group scope an asset row was drawn inside
+ * is kept — that is the population the asset belongs to. Severity and the global toggles
+ * apply as everywhere else on the page.
+ *
+ * Keyed by (domain, source), not domain alone: findings reaching one domain by a tag and by a
+ * rule are two different fixes.
+ */
+function splitRowDomains(supportGroup: string, severities: string[] | null, row: MttrGroupRow): SplitRowDomain[] {
+  let rows = visibleBase(filterSeverities(scopedBaseRows("", supportGroup), severities));
+  rows = narrowToMttrGroup(rows, row);
+  bizDomains.attachBizDomains(rows);
+  const compiled = compileDomains(settingsStore.getDomains().items);
+  const acc = new Map<string, { domain: string; source: string; findings: number; open: number;
+    assets: Map<string, number> }>();
+  for (const r of rows) {
+    const { name, source } = resolveDomain(r, compiled);
+    const key = name + "\u0000" + source;
+    let a = acc.get(key);
+    if (!a) acc.set(key, (a = { domain: name, source, findings: 0, open: 0, assets: new Map() }));
+    a.findings += 1;
+    if (!String(r["resolved_at"] ?? "").trim()) a.open += 1;
+    const asset = assetBucket(r);
+    a.assets.set(asset, (a.assets.get(asset) ?? 0) + 1);
+  }
+  return [...acc.values()]
+    .map((a) => ({
+      domain: a.domain,
+      source: a.source,
+      findings: a.findings,
+      open: a.open,
+      assetCount: a.assets.size,
+      assets: [...a.assets.entries()]
+        .sort((x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0))
+        .slice(0, 5)
+        .map(([n]) => n),
+    }))
+    .sort((x, y) => y.findings - x.findings || (x.domain < y.domain ? -1 : 1));
+}
+
 /** The scoped base rows that fall in `row`'s bucket. The joins it reads are attached here
  *  rather than assumed, because `scopedBaseRows` attaches them only when a scope is active —
  *  and a by-domain row is opened from the unscoped view. */
@@ -2151,9 +2214,14 @@ export function getMttrGroup(p?: unknown): ApiResult {
     return cached(
       // New, not a bump of "mttr12": a different key shape over a narrower population. Bump
       // whenever "mttr12" bumps (same builder), or when the split's bucket keys change.
-      "mttrGroup1",
+      // "mttrGroup1" → "mttrGroup2": the payload gained `domains` (`splitRowDomains`), which
+      // the sheet's Domains section reads; a stale entry would draw that section empty.
+      "mttrGroup2",
       { ...q, groupBy: by, groupValue: value, showNoFix: settingsStore.getShowNoFix() },
-      () => mttrData(q, { by, value }),
+      () => ({
+        ...mttrData(q, { by, value }),
+        domains: splitRowDomains(q.supportGroup, severities, { by, value }),
+      }),
       3600,
     );
   });

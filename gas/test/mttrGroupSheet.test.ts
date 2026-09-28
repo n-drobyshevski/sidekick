@@ -263,7 +263,7 @@ describe("getMttrGroup", () => {
     const before = ok(getMttr({ domain: "Payments" }));
     H.keys = [];
     ok(getMttrGroup({ domain: "Payments", groupBy: "supportGroup", groupValue: "Platform SRE" }));
-    expect(H.keys.map((k) => k.ns)).toEqual(["mttrGroup1"]);
+    expect(H.keys.map((k) => k.ns)).toEqual(["mttrGroup2"]);
     expect(H.keys[0]!.params).toMatchObject({
       domain: "Payments", supportGroup: "", groupBy: "supportGroup", groupValue: "Platform SRE",
     });
@@ -271,5 +271,55 @@ describe("getMttrGroup", () => {
     expect(ok(getMttr({ domain: "Payments", groupBy: "supportGroup", groupValue: "Platform SRE" })))
       .toEqual(before);
     expect(H.keys.map((k) => k.params)).toEqual([expect.not.objectContaining({ groupBy: expect.anything() })]);
+  });
+});
+
+// WHY A GROUP IS LISTED UNDER A DOMAIN. A support group has no domain of its own — each finding
+// takes its asset's — so the sheet shows the spread across EVERY domain, with the route (tag or
+// rule) and the assets, not just the slice the header domain selected.
+describe("getMttrGroup — the domains a row's findings resolve to", () => {
+  const domainsOf = (p: Rec) => (ok<Rec>(getMttrGroup(p))["domains"] ?? []) as Rec[];
+
+  it("lists every domain a support group spans, ignoring the header domain", () => {
+    H.base = [
+      ...times(3, () => row({ subscription_ext_id: "sub-a", asset_name: "pay-01" })),
+      ...times(2, () => resolved({ subscription_ext_id: "sub-a", asset_name: "pay-01" })),
+      ...times(4, () => row({ subscription_ext_id: "sub-a", biz: "Retail", asset_name: "shop-01" })),
+      ...times(1, () => row({ subscription_ext_id: "sub-a", biz: "Retail", asset_name: "shop-02" })),
+      // Untagged, no rule configured: Unassigned, by no route at all.
+      ...times(1, () => row({ subscription_ext_id: "sub-a", biz: "", asset_name: "misc-01" })),
+      // Another group's findings in Payments: not this row's.
+      ...times(6, () => row({ subscription_ext_id: "sub-b" })),
+    ];
+    const domains = domainsOf({
+      domain: "Payments", groupBy: "supportGroup", groupValue: "Platform SRE",
+    });
+    // Most findings first; a tie (five each here) falls back to the domain's name.
+    expect(domains).toEqual([
+      { domain: "Payments", source: "tag", findings: 5, open: 3, assetCount: 1, assets: ["pay-01"] },
+      { domain: "Retail", source: "tag", findings: 5, open: 5, assetCount: 2, assets: ["shop-01", "shop-02"] },
+      { domain: "Unassigned", source: "none", findings: 1, open: 1, assetCount: 1, assets: ["misc-01"] },
+    ]);
+    // The row itself still counts only its Payments slice.
+    const payRow = splitRows({ domain: "Payments" }).rows.find((r) => r["group"] === "Platform SRE")!;
+    expect(payRow["open"]).toBe(3);
+  });
+
+  it("an asset row: its findings' domains, inside the support group it was drawn under", () => {
+    H.base = [
+      ...times(2, () => row({ asset_name: "host-01" })),
+      ...times(1, () => row({ asset_name: "host-01", biz: "Retail" })),
+      // Same name under another support group: not this asset row.
+      ...times(4, () => row({ asset_name: "host-01", subscription_ext_id: "sub-b", biz: "Other" })),
+    ];
+    const domains = domainsOf({
+      supportGroup: "Platform SRE", groupBy: "asset", groupValue: "host-01",
+    });
+    expect(domains.map((d) => [d["domain"], d["findings"]])).toEqual([["Payments", 2], ["Retail", 1]]);
+  });
+
+  it("carries nothing for a domain row — it IS a domain", () => {
+    H.base = [row()];
+    expect(ok<Rec>(getMttrGroup({ groupBy: "domain", groupValue: "Payments" }))["domains"]).toBeUndefined();
   });
 });

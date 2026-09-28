@@ -7,7 +7,8 @@ import { describe, expect, it } from "vitest";
 import {
   NONE_GROUP, NOT_ATTRIBUTABLE, SPLIT_NONE, UNASSIGNED, splitBucketNote, splitCountNote,
   splitGroupOf, splitRowLabel, splitSheetColumnKeys, splitSheetDefaults, splitSheetRequests,
-  splitSheetSortFor, splitSheetSubtitle,
+  splitSheetSortFor, splitSheetSubtitle, domainSourceLabel, splitDomainAssetsText,
+  splitDomainsHint, splitDomainsLead, splitDomainsRows,
 } from "../src/client/js/pages/_splitSheet.js";
 import { NONE_GROUP as SHARED_NONE_GROUP } from "../../gas_shared/domain/rowGroups.ts";
 import { UNASSIGNED as RULES_UNASSIGNED } from "../src/domain/domainRules.ts";
@@ -143,5 +144,44 @@ describe("the words", () => {
     expect(splitCountNote({ open: 3 }, 3, "open")).toBeNull();
     expect(splitCountNote({ open: 3 }, 2, "resolved")).toBeNull();
     expect(splitCountNote({ open: 3 }, 2, "open")).toMatch(/counts 3 open.*lists 2/);
+  });
+});
+
+describe("the Domains section", () => {
+  it("names each route by where its fix lives", () => {
+    expect(domainSourceLabel("tag")).toBe("Wiz/Domain tag");
+    expect(domainSourceLabel("rule")).toBe("manual rule");
+    expect(domainSourceLabel("none")).toBe("no tag or rule matched");
+    expect(domainSourceLabel("missing")).toBe("no attribution input");
+  });
+
+  it("explains a spread, and states a single domain plainly", () => {
+    const two = [{ domain: "CROSS" }, { domain: "RETAIL" }, { domain: "CROSS" }];
+    expect(splitDomainsLead("supportGroup", "CS-SANDBOX", two))
+      .toMatch(/^CS-SANDBOX's findings resolve to 2 domains\. A support group has no domain of its own/);
+    expect(splitDomainsLead("asset", "web-01", two)).toMatch(/An asset has no domain/);
+    expect(splitDomainsLead("supportGroup", "CS-SANDBOX", [{ domain: "CROSS" }]))
+      .toBe("All of CS-SANDBOX's findings resolve to CROSS.");
+    expect(splitDomainsLead("supportGroup", "X", [])).toBeNull();
+  });
+
+  it("marks the header's domain, and only when one is picked", () => {
+    const rows = splitDomainsRows([{ domain: "CROSS", source: "tag" }, { domain: "RETAIL", source: "rule" }], "CROSS");
+    expect(rows.map((r) => [r.domain, r.current, r.sourceLabel]))
+      .toEqual([["CROSS", true, "Wiz/Domain tag"], ["RETAIL", false, "manual rule"]]);
+    expect(splitDomainsRows([{ domain: "CROSS" }], "").every((r) => !r.current)).toBe(true);
+  });
+
+  it("lists the shipped assets and counts the rest", () => {
+    expect(splitDomainAssetsText({ assets: ["a", "b"], assetCount: 2 })).toBe("a, b");
+    expect(splitDomainAssetsText({ assets: ["a", "b"], assetCount: 7 })).toBe("a, b +5 more");
+  });
+});
+
+describe("the folded Domains summary", () => {
+  it("states the count, and names a lone domain", () => {
+    expect(splitDomainsHint([{ domain: "CROSS" }, { domain: "SAP" }, { domain: "CROSS" }])).toBe("2 domains");
+    expect(splitDomainsHint([{ domain: "CROSS" }])).toBe("1 domain: CROSS");
+    expect(splitDomainsHint([])).toBe("");
   });
 });

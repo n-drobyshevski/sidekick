@@ -149,6 +149,14 @@ a `mttrGroup` entry), and `getRegisterRows` lists the findings through its group
 the split's "(none)" bucket is the register's `NONE_GROUP`. `test/mttrGroupSheet.test.ts` holds
 both to the row's open and resolved counts for every dimension and edge bucket.
 
+**A support group has no domain of its own**, and the sheet says so. The group comes off a
+finding's subscription; the domain is resolved per finding off its asset (Wiz/Domain tag first,
+then a manual rule). So one group's findings can land in several domains, and the split under a
+domain lists every group with at least one finding there. A support-group or asset sheet opens on
+a **Domains** section, collapsed by default with the domain count in its summary: every domain the row's findings resolve to, across all domains rather than
+the header's, with the route (tag or rule) and the assets carrying them. That is where the fix
+for a group that looks misplaced lives (`getMttrGroup`'s `domains`, `splitRowDomains`).
+
 It is also the only one of the three that is **capped**, at 20 assets. Domains and support groups
 are configured by an operator, so the register knows how many there are and lists them all;
 assets come from the estate, and a team can own thousands. The cap is not about compute — the

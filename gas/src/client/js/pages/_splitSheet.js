@@ -165,3 +165,56 @@ export function splitCountNote(row, total, status) {
   return `The row above counts ${open.toLocaleString()} open; the register lists `
     + `${total.toLocaleString()} for the same group.`;
 }
+
+/**
+ * How a finding's domain was decided — `resolveDomain`'s `source`, in words. The two that
+ * name a mechanism say where the fix lives: a tag on the asset in Wiz, or a rule in Settings.
+ */
+export function domainSourceLabel(source) {
+  switch (source) {
+    case "tag": return "Wiz/Domain tag";
+    case "rule": return "manual rule";
+    case "none": return "no tag or rule matched";
+    case "missing": return "no attribution input";
+    default: return String(source || "");
+  }
+}
+
+/**
+ * The Domains section's lead: how many domains this row's findings resolve to and, when it is
+ * more than one, WHY a support group can be listed under a domain it is not "in" — a group
+ * has no domain of its own, each finding takes its asset's. Null with nothing to describe.
+ */
+export function splitDomainsLead(dimension, group, domains) {
+  const names = [...new Set((domains || []).map((d) => d.domain))];
+  if (!names.length) return null;
+  const who = group || "This " + ((NOUN[dimension] || NOUN.domain).toLowerCase());
+  if (names.length === 1) return `All of ${who}'s findings resolve to ${names[0]}.`;
+  const owner = dimension === "asset" ? "An asset" : "A support group";
+  return `${who}'s findings resolve to ${names.length} domains. ${owner} has no domain of `
+    + "its own — each finding takes its asset's domain: the Wiz/Domain tag first, else a "
+    + "manual rule.";
+}
+
+/** The Domains table's rows, the header scope's own domain marked `current`. */
+export function splitDomainsRows(domains, scopeDomain) {
+  return (domains || []).map((d) => ({
+    ...d,
+    sourceLabel: domainSourceLabel(d.source),
+    current: Boolean(scopeDomain) && d.domain === scopeDomain,
+  }));
+}
+
+/** The asset cell's text: the names shipped, then how many more the row carries. */
+export function splitDomainAssetsText(d) {
+  const names = Array.isArray(d && d.assets) ? d.assets : [];
+  const more = Math.max(0, (Number(d && d.assetCount) || 0) - names.length);
+  return names.join(", ") + (more ? ` +${more} more` : "");
+}
+
+/** The folded Domains section's summary: how many domains, and which one when it is one. */
+export function splitDomainsHint(domains) {
+  const names = [...new Set((domains || []).map((d) => d.domain))];
+  if (!names.length) return "";
+  return names.length === 1 ? `1 domain: ${names[0]}` : `${names.length} domains`;
+}

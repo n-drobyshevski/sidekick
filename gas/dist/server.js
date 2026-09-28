@@ -6490,7 +6490,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "10dbde3957d9" : "dev";
+  var BUILD_ID = true ? "66e40b485d0d" : "dev";
   var CACHE_EPOCH = "1";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
@@ -11498,6 +11498,32 @@ var Server = (() => {
     return String((_a = r["asset_name"]) != null ? _a : "").trim() || NONE_BUCKET;
   }
   var MTTR_GROUP_DIMENSIONS = ["domain", "supportGroup", "asset"];
+  function splitRowDomains(supportGroup, severities, row) {
+    var _a, _b;
+    let rows = visibleBase(filterSeverities(scopedBaseRows("", supportGroup), severities));
+    rows = narrowToMttrGroup(rows, row);
+    attachBizDomains(rows);
+    const compiled = compileDomains(getDomains2().items);
+    const acc = /* @__PURE__ */ new Map();
+    for (const r of rows) {
+      const { name, source } = resolveDomain(r, compiled);
+      const key = name + "\0" + source;
+      let a = acc.get(key);
+      if (!a) acc.set(key, a = { domain: name, source, findings: 0, open: 0, assets: /* @__PURE__ */ new Map() });
+      a.findings += 1;
+      if (!String((_a = r["resolved_at"]) != null ? _a : "").trim()) a.open += 1;
+      const asset = assetBucket(r);
+      a.assets.set(asset, ((_b = a.assets.get(asset)) != null ? _b : 0) + 1);
+    }
+    return [...acc.values()].map((a) => ({
+      domain: a.domain,
+      source: a.source,
+      findings: a.findings,
+      open: a.open,
+      assetCount: a.assets.size,
+      assets: [...a.assets.entries()].sort((x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0)).slice(0, 5).map(([n]) => n)
+    })).sort((x, y) => y.findings - x.findings || (x.domain < y.domain ? -1 : 1));
+  }
   function narrowToMttrGroup(rows, row) {
     if (row.by === "supportGroup") {
       attachSupportGroups(rows);
@@ -11950,9 +11976,14 @@ var Server = (() => {
       return cached(
         // New, not a bump of "mttr12": a different key shape over a narrower population. Bump
         // whenever "mttr12" bumps (same builder), or when the split's bucket keys change.
-        "mttrGroup1",
+        // "mttrGroup1" → "mttrGroup2": the payload gained `domains` (`splitRowDomains`), which
+        // the sheet's Domains section reads; a stale entry would draw that section empty.
+        "mttrGroup2",
         { ...q, groupBy: by, groupValue: value, showNoFix: getShowNoFix2() },
-        () => mttrData(q, { by, value }),
+        () => ({
+          ...mttrData(q, { by, value }),
+          domains: splitRowDomains(q.supportGroup, severities, { by, value })
+        }),
         3600
       );
     });
