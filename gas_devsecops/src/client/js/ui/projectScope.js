@@ -287,20 +287,9 @@ export function scopeKinds(data) {
   const opts = (data && data.filterOptions) || {};
   const list = opts.projectList || [];
   const domains = opts.domainList || [];
+  // DOMAINS FIRST, as in gas/ (src/client/js/scopeKinds.js): the list is the kinds in order,
+  // so the business domains lead the picker and the project tree follows.
   return [{
-    key: "project",
-    prefix: "",
-    // One folder for a chosen project; the reset row's two-folder mark is the chrome's.
-    icon: "folder",
-    options: () => scopeOptions(list).map((o) => ({ ...o, id: o.value })),
-    label: (opt, d, ctx) => (ctx.stale
-      ? "a project this register does not hold"
-      : (opt ? opt.label : ctx.id)),
-    caption: (opt, d, ctx) => projectCaption(d, ctx.stale, opt),
-    // THE EXACT ARGUMENT `api_setProjectView` HAS ALWAYS TAKEN. Pinned against the deleted
-    // implementation by the registerScopeContract block in test/shared.test.js.
-    payload: (id) => ({ projectView: id, domainView: "" }),
-  }, {
     key: "domain",
     // PREFIXED, because the project kind is this register's bare one and a domain named
     // `VALUE-CHAIN` could otherwise collide with a project slug on the wire. `d:` rather than
@@ -314,6 +303,19 @@ export function scopeKinds(data) {
       : (opt ? opt.label : ctx.id)),
     caption: (opt, d, ctx) => domainCaption(d, ctx.stale, opt),
     payload: (id) => ({ domainView: id, projectView: "" }),
+  }, {
+    key: "project",
+    prefix: "",
+    // One folder for a chosen project; the reset row's two-folder mark is the chrome's.
+    icon: "folder",
+    options: () => scopeOptions(list).map((o) => ({ ...o, id: o.value })),
+    label: (opt, d, ctx) => (ctx.stale
+      ? "a project this register does not hold"
+      : (opt ? opt.label : ctx.id)),
+    caption: (opt, d, ctx) => projectCaption(d, ctx.stale, opt),
+    // THE EXACT ARGUMENT `api_setProjectView` HAS ALWAYS TAKEN. Pinned against the deleted
+    // implementation by the registerScopeContract block in test/shared.test.js.
+    payload: (id) => ({ projectView: id, domainView: "" }),
   }];
 }
 

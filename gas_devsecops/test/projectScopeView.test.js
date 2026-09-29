@@ -17,7 +17,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   PRODUCT_SEGMENT, SUPPORT_GROUP_PREFIXES, isProduct, isSupportGroup, projectKind,
-  projectScopeView, scopeOptions,
+  projectScopeView, scopeKinds, scopeOptions,
 } from "../src/client/js/ui/projectScope.js";
 import { UI_ICON_NAMES } from "../../gas_shared/ui/uiIcons.js";
 
@@ -633,5 +633,20 @@ describe("ui.js barrel: the new module is exported the same way every other ui/*
     // from dom.js, and ui.js must re-export the barrel.
     expect(UI_SRC).toMatch(/export \* from "[./]*gas_shared\/ui\/index\.js";/);
     expect(SHARED_UI_SRC).toMatch(/registerWideNote[^;]*from "\.\/dom\.js";/);
+  });
+});
+
+// DOMAINS LEAD THE PICKER, as in gas/: the shared model lists the kinds in order, so the order
+// of `scopeKinds` IS the order of the list.
+describe("the picker's order", () => {
+  it("lists the domains before every project", () => {
+    const kinds = scopeKinds({ filterOptions: {
+      projectList: [{ slug: "platform", name: "PLATFORM", isFolder: true, findings: 3 }],
+      domainList: [{ name: "SAP", findings: 2 }, { name: "CROSS", findings: 1 }],
+    } });
+    expect(kinds.map((k) => k.key)).toEqual(["domain", "project"]);
+    const groups = kinds.flatMap((k) => k.options().map((o) => o.group));
+    expect(groups.slice(0, 2)).toEqual(["Domains", "Domains"]);
+    expect(groups.slice(2)).not.toContain("Domains");
   });
 });
