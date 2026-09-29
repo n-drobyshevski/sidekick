@@ -52,12 +52,23 @@
 // against its own sample size. No new estimator maths: every number these three read was
 // already shipped by Package A/B.
 
+import { call } from "../../../../../gas_shared/api.js";
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import { chartUnavailable, loadCharts } from "../../../../../gas_shared/ui/chartsLoader.js";
 // The severity palette is READ OFF THE STYLESHEET, never retyped — CLAUDE.md's "byte-identical
 // across all four surfaces" rule. `sevPalette` is defined once in `sca.js`; `sast.js` already
 // imports it from there, and this is the same import rather than a second copy.
-import { agingTableModel, sevPalette } from "./sca.js";
+import { agingTableModel, sevPalette, textCell, yesNo } from "./sca.js";
+import { PROVENANCE_LABEL, provenance } from "./registerModel.js";
+import { findingRowLabel, openFindingSheet } from "./findingSheet.js";
+import {
+  REGISTER_LABELS, SPLIT_NONE, splitBucketNote, splitCountNote, splitDim, splitGroupOf,
+  splitRowLabel, splitSheetColumnKeys, splitSheetDefaults, splitSheetFirstRegister,
+  splitSheetRegisters, splitSheetRequests, splitSheetSortFor, splitSheetSubtitle,
+} from "./_splitSheet.js";
+import {
+  SG_REASONS, assignableDomains, groupWithBadge, sgOverrideBadge, sgOverrideOf,
+} from "./_sgDomains.js";
 // `fmtPct`, `denominatorNode`, `rateCell` and `scopeParam` used to be DEFINED here. They now
 // live in `./_rates.js` — the same four helpers program.js declared byte-for-byte
 // (fmtPct/denominatorNode/scopeParam) or near-identically (rateCell, which there also renders
@@ -71,6 +82,8 @@ import {
   emptyState, errorState, firstRunNotice, fmtCount, fmtDate, fmtDays, kpiCard, meter,
   num, onPageTeardown, pageHeader, pluralize, sectionLabel, sevBadge, sevEntries, sevSegmentBar,
   skeleton, sparkPath, sparkline, statRow, survivalTableModel, tipLabel,
+  closeActiveSheet, confirmDialog, days1, openSheet, segmented, sheetSection, skeletonStack,
+  tableFooter, toast,
 } from "../ui.js";
 
 // ---------------------------------------------------------------------------- formatting
@@ -1204,7 +1217,7 @@ export function vendorWaitReading(segments) {
 //
 // `scopeParam`, `denominatorNode` and `rateCell` moved to `./_rates.js` (imported above).
 
-export async function renderMttr(host, params, _ctx) {
+export async function renderMttr(host, params, ctx) {
   const boot = await bootstrap();
   const scope = scopeParam(params);
 
@@ -1233,6 +1246,9 @@ export async function renderMttr(host, params, _ctx) {
   const bucketHost = el("div", {});
   const clockHost = el("div", {});
   const trendHost = el("div", {});
+  // The breakdown by domain / support group / repository, and its row sheet — LAST, under
+  // everything that measures the register as a whole (the OS register's placement).
+  const groupHost = el("div", {});
   // THE TITLE BLOCK IS STATIC, AND THE h1 DOES NOT WAIT ON AN RPC. The metric header below is
   // built inside `renderHero`, which runs only once the fetch resolves — so the loading
   // skeleton, the fetch-failure errorState and (on Coverage & efficiency) the no-figures empty
@@ -1243,7 +1259,7 @@ export async function renderMttr(host, params, _ctx) {
   host.append(
     pageHeader({ route: "mttr" }),
     noticeHost, heroHost, curveHost, accountingHost, sevHost, slaHost, agingHost,
-    slaConsumedHost, bucketHost, clockHost, trendHost,
+    slaConsumedHost, bucketHost, clockHost, trendHost, groupHost,
   );
 
   let live = true;
@@ -1286,7 +1302,7 @@ export async function renderMttr(host, params, _ctx) {
     // renderX, so clearing the host removes label and box together).
     if (first) {
       [curveHost, accountingHost, sevHost, slaHost, agingHost, slaConsumedHost, bucketHost,
-        clockHost, trendHost].forEach(clear);
+        clockHost, trendHost, groupHost].forEach(clear);
       return;
     }
     guard("the survival curve", curveHost, () => renderCurve(mttr));
@@ -1298,6 +1314,7 @@ export async function renderMttr(host, params, _ctx) {
     guard("the time-to-close distribution", bucketHost, () => renderBuckets(mttr));
     guard("the two clocks", clockHost, () => renderClocks(mttr));
     guard("the half-life trend", trendHost, () => renderTrend(trendPoints));
+    guard("the breakdown", groupHost, () => renderGroups(payload && payload.byGroup));
   };
 
   try {
@@ -1660,6 +1677,372 @@ export async function renderMttr(host, params, _ctx) {
     }
   }
 
+  // ------------------------------------------------------------------- the breakdown
+  //
+  // WHO IS DRAGGING THE FIGURE ABOVE. The OS register's "by domain / support group / asset"
+  // table (gas/ mttr.js `renderByDomain`), in repository words and without its charts: one row
+  // per domain unscoped, per support group inside a domain or a project, per repository inside
+  // a one-group project (the server picks — `readModels.buildMttrSplit`). The rows are the
+  // hero's own population, so they add up to it. Every row opens its sheet.
+
+  /** The column definitions, one copy — the table's headings and the sheet's strip share them. */
+  function splitHelp(dim) {
+    return {
+      group: [`The ${dim.noun} this row summarizes remediation for.`],
+      half: [`Kaplan–Meier half-life for this ${dim.noun}: the day by which half its findings `
+        + "had closed. Open findings are censored, not dropped. “Not reached” where the curve "
+        + "never fell to half within its reliable window."],
+      q25: ["The day by which a quarter of this row's findings had closed, off the same curve."],
+      p90: ["Kaplan–Meier 90th percentile — nine in ten findings close faster. “—” when too "
+        + "much is still open to observe it."],
+      slaPct: ["Of what closed, the share inside its severity's target."],
+      openPastSla: ["Open findings already older than their severity's target."],
+      open: [`Findings in this ${dim.noun} not yet resolved.`],
+      resolved: [`Findings in this ${dim.noun} already resolved.`],
+    };
+  }
+
+  function splitRate(row) {
+    const resolved = num(row.resolved, 0);
+    return rateView(row.slaPct, resolved, fmtCount(resolved) + " resolved",
+      "nothing has closed here yet");
+  }
+
+  function pastSlaText(o) {
+    if (!o || !num(o.open, 0)) return absentText;
+    return fmtCount(num(o.breached, 0)) + " (" + fmtPct(o.pct) + ")";
+  }
+
+  function renderGroups(byGroup) {
+    clear(groupHost);
+    // ONE ROW IS NOT A SPLIT: it would restate the hero.
+    if (!byGroup || !Array.isArray(byGroup.rows) || byGroup.rows.length < 2) return;
+    const dimension = byGroup.dimension;
+    const dim = splitDim(dimension);
+    const help = splitHelp(dim);
+    groupHost.append(sectionLabel(`By ${dim.noun}`, {
+      lines: [
+        `The clock above, split by ${dim.noun}. The rows are the same findings the half-life `
+        + "measures, so they add up to it.",
+        "Each support group counts under ONE domain — the one most of its current repositories "
+        + "are tagged in, or the one an admin set.",
+        "Open a row for its clock by severity and the findings behind it.",
+      ],
+    }));
+    groupHost.append(dataTable({
+      columns: [
+        {
+          key: "group", label: dim.Noun, help: help.group,
+          // A support group an admin placed by hand carries its marker, so a listing under a
+          // surprising domain says why.
+          cell: (r) => (dimension === "supportGroup"
+            ? groupWithBadge(splitGroupOf(r), sgOverrideOf(boot, splitGroupOf(r)))
+            : splitGroupOf(r)),
+        },
+        {
+          key: "half", label: "Half-life", className: "num num--key", help: help.half,
+          cell: (r) => kmHalfLifeView(r.km).value,
+        },
+        {
+          key: "q25", label: "25% fixed", className: "num", help: help.q25,
+          cell: (r) => fmtDays(r.km && r.km.q25),
+        },
+        { key: "p90", label: "P90", className: "num", help: help.p90, cell: (r) => fmtDays(r.p90) },
+        {
+          key: "slaPct", label: "In SLA", className: "num", help: help.slaPct,
+          cell: (r) => { const v = splitRate(r); return v.baseEmpty ? absentText : v.text; },
+        },
+        {
+          key: "openPastSla", label: "Open past SLA", className: "num", help: help.openPastSla,
+          cell: (r) => pastSlaText(r.openPastSla),
+        },
+        { key: "open", label: "Open", className: "num", help: help.open, cell: (r) => fmtCount(num(r.open, 0)) },
+        {
+          key: "resolved", label: "Resolved", className: "num", help: help.resolved,
+          cell: (r) => fmtCount(num(r.resolved, 0)),
+        },
+      ],
+      rows: byGroup.rows,
+      onRowOpen: (r) => openSplitSheet(r, byGroup),
+      rowLabel: (r) => splitRowLabel(dimension, r),
+    }));
+    // WHAT THE CAP DROPPED, on the surface: only the repository split is capped.
+    const cut = byGroup.cut;
+    if (cut && num(cut.groups, 0) > 0) {
+      groupHost.append(el("p", { class: "small muted", style: "margin:8px 0 0" },
+        `${fmtCount(cut.groups)} more ${num(cut.groups, 0) === 1 ? "repository" : "repositories"} `
+        + `not listed — ${fmtCount(num(cut.open, 0))} open, ${fmtCount(num(cut.resolved, 0))} `
+        + "resolved between them."));
+    }
+  }
+
+  /**
+   * One row of the breakdown, opened: its figures, its clock BY SEVERITY, and the findings
+   * behind it — per register, since each register lists its own columns.
+   *
+   * THE ROW IS NARROWED INSIDE THE HEADER SCOPE, NEVER PAST IT: the header's domain / project
+   * is server state, applied to both requests before the row's `split` narrows them further.
+   *
+   * `state` is the findings list's register / status / sort / page, held in one object the
+   * controls mutate, so a finding opened from here comes BACK to the list as it was left (the
+   * shared sheet swaps rather than stacks).
+   */
+  function openSplitSheet(row, byGroup, state) {
+    const dimension = byGroup.dimension;
+    const within = byGroup.within || null;
+    const dim = splitDim(dimension);
+    const group = splitGroupOf(row);
+    const help = splitHelp(dim);
+    const req = splitSheetRequests(dimension, row, scope);
+    const registers = splitSheetRegisters(row, scope);
+    const st = state || (() => {
+      const register = splitSheetFirstRegister(row, registers);
+      return { register, ...splitSheetDefaults(row, register), page: 0, pageSize: 25 };
+    })();
+    // ONE `api_getMttrGroup` REQUEST, TWO READERS: the per-severity table and the subtitle's
+    // domain. `(payload, error)`.
+    const groupSinks = [];
+
+    const sheetCtx = openSheet((body) => {
+      const note = splitBucketNote(dimension, group);
+      if (note) body.append(el("p", { class: "small muted", style: "margin:0 0 12px" }, note));
+      body.append(remediationSection(), findingsSection());
+    }, {
+      title: group,
+      subtitle: splitSheetSubtitle(dimension, within, scope),
+      width: "min(960px, 96vw)",
+      resizable: true,
+      closeOnRouteChange: true,
+    });
+    const deliver = (m) => groupSinks.forEach((f) => f(m, null));
+    swrCall("api_getMttrGroup", req.mttr, deliver).then(deliver)
+      .catch((e) => groupSinks.forEach((f) => f(null, e)));
+
+    // THE ONE DOMAIN THIS ROW COUNTS UNDER, named once the payload says it.
+    groupSinks.push((m) => {
+      const counted = m && m.countedDomain;
+      if (counted && sheetCtx.sheet.isConnected) {
+        sheetCtx.setHeading({ subtitle: splitSheetSubtitle(dimension, within, scope, counted) });
+      }
+    });
+
+    // WHO DECIDED THIS GROUP'S DOMAIN: an admin override is marked in the heading, for the
+    // group itself and for a repository row drawn inside one group.
+    const sgName = dimension === "supportGroup" ? group
+      : dimension === "repo" ? ((within && within.supportGroup) || "") : "";
+    const sgOverride = sgName && sgName !== SPLIT_NONE ? sgOverrideOf(boot, sgName) : null;
+    const overrideBadge = sgOverrideBadge(sgOverride);
+    if (overrideBadge) sheetCtx.setHeading({ chips: [overrideBadge] });
+    let countedNow = sgOverride ? sgOverride.domain
+      : (within && within.kind === "domain" ? within.value : "");
+    groupSinks.push((m) => { if (m && m.countedDomain) countedNow = m.countedDomain; });
+
+    // CHANGING IT: admins only (the server re-checks), and only on a real group.
+    if (dimension === "supportGroup" && group !== SPLIT_NONE && boot.canEditAccess === true) {
+      sheetCtx.body.prepend(el("div", { class: "small", style: "display:flex;gap:16px;margin:0 0 12px" },
+        el("button", { type: "button", class: "linklike", onclick: changeDomain }, "Change domain…"),
+        sgOverride
+          ? el("button", { type: "button", class: "linklike", onclick: resetDomain }, "Reset to automatic")
+          : null));
+    }
+
+    async function changeDomain() {
+      const domains = assignableDomains(boot);
+      if (!domains.length) {
+        toast("No domain is known yet — refresh Repository tags in Settings first.", "error");
+        return;
+      }
+      const select = el("select", { "aria-label": "Domain" },
+        ...domains.map((d) => el("option", { value: d }, d)));
+      select.value = domains.includes(countedNow) ? countedNow : domains[0];
+      let reason = (sgOverride && sgOverride.reason) || "wrong_tag";
+      const radios = Object.entries(SG_REASONS).map(([value, r]) => {
+        const input = el("input", { type: "radio", name: "sg-domain-reason", value });
+        input.checked = value === reason;
+        input.addEventListener("change", () => {
+          reason = value;
+          // The CROSS team's groups live in CROSS — preselect it, still changeable.
+          if (value === "cross_team" && domains.includes("CROSS")) select.value = "CROSS";
+        });
+        return el("label", { style: "display:block;margin:4px 0" }, input, " ", r.label);
+      });
+      const note = el("input", { type: "text", "aria-label": "Note (optional)", maxlength: "500",
+        style: "width:100%" });
+      note.value = (sgOverride && sgOverride.note) || "";
+      const body = el("div", {},
+        el("p", { class: "muted" }, `Every finding of ${group} will count under the domain you `
+          + "pick, on every page, whatever its repositories are tagged."),
+        el("label", { style: "display:block;margin:8px 0" }, "Domain ", select),
+        el("fieldset", { style: "border:0;padding:0;margin:8px 0" },
+          el("legend", { class: "small muted" }, "Why"), ...radios),
+        el("label", { class: "small muted", style: "display:block;margin-top:8px" },
+          "Note (optional)", note));
+      const ok = await confirmDialog({ title: `Domain of ${group}`, body, confirmLabel: "Save" });
+      if (ok) saveDomain({ group, domain: select.value, reason, note: note.value });
+    }
+
+    async function resetDomain() {
+      const ok = await confirmDialog({
+        title: `Reset ${group}'s domain`,
+        body: `${group} goes back to the domain most of its current repositories are tagged in.`,
+        confirmLabel: "Reset",
+      });
+      if (ok) saveDomain({ group, domain: null });
+    }
+
+    async function saveDomain(p) {
+      try {
+        const res = await call("api_saveSupportGroupDomain", p);
+        if (!res || !res.saved) {
+          toast(((res && res.errors) || ["Couldn't save the domain."]).join(" "), "error");
+          return;
+        }
+        toast(p.domain ? `${group} now counts under ${p.domain}.`
+          : `${group} is back on its automatic domain.`);
+        // Every figure on every page moves with it, the header's counts included: re-boot.
+        closeActiveSheet();
+        if (ctx && ctx.refresh) ctx.refresh();
+      } catch (e) {
+        toast(String((e && e.message) || e), "error");
+      }
+    }
+
+    function remediationSection() {
+      const half = kmHalfLifeView(row.km);
+      const sla = splitRate(row);
+      const clocks = el("div", { class: "stat-list" },
+        statRow("Half-life", half.value, half.secondary || "open findings censored", null, help.half),
+        statRow("25% fixed", fmtDays(row.km && row.km.q25), "off the same curve", null, help.q25),
+        statRow("P90", fmtDays(row.p90), "the slow tail", null, help.p90),
+        statRow("In SLA", sla.baseEmpty ? "Not measured" : sla.text,
+          sla.baseEmpty ? sla.emptyLabel : "of " + sla.denominatorLabel, meterPctFor(sla), help.slaPct));
+      const awaiting = num(row.awaiting, 0);
+      const counts = el("div", { class: "stat-list" },
+        statRow("Open past SLA", pastSlaText(row.openPastSla), "breached (share of open)", null,
+          help.openPastSla),
+        statRow("Open", fmtCount(num(row.open, 0)), "not yet resolved", null, help.open),
+        statRow("Resolved", fmtCount(num(row.resolved, 0)), "already resolved", null, help.resolved),
+        awaiting > 0
+          ? statRow("Awaiting a fix", fmtCount(awaiting), "open, no vendor fix yet", null,
+            ["Open dependency findings with no vendor fix available yet."])
+          : null);
+
+      const sevBox = el("div", { role: "status", "aria-label": "Loading the clock by severity",
+        style: "margin-top:12px" }, skeletonStack(3, { widths: ["100%", "100%", "80%"] }));
+      groupSinks.push((m, err) => {
+        // A revalidation landing after the sheet closed has nowhere to paint.
+        if (!sevBox.isConnected) return;
+        clear(sevBox).removeAttribute("aria-label");
+        if (err) {
+          sevBox.append(errorState(`Couldn't load this ${dim.noun}'s clock by severity.`,
+            { detail: String((err && err.message) || err) }));
+          return;
+        }
+        const rows = m ? mttrSeverityRows(m, SEVERITY_ORDER) : [];
+        sevBox.append(rows.length ? severityTable(rows) : el("p", { class: "small muted" },
+          `No severity has a clock yet in this ${dim.noun}.`));
+      });
+      return sheetSection("Remediation", clocks, counts,
+        el("h4", { class: "label", style: "margin:16px 0 4px" }, "By severity"), sevBox);
+    }
+
+    function findingsSection() {
+      const tableHost = el("div", { class: "table-host" });
+      let first = true;
+      const registerToggle = registers.length > 1 ? segmented({
+        options: registers.map((s) => ({ value: s, label: REGISTER_LABELS[s] })),
+        value: st.register,
+        ariaLabel: "Which register to list",
+        onChange: (v) => {
+          if (st.register === v) return;
+          st.register = v;
+          Object.assign(st, splitSheetSortFor(v, st.status), { page: 0 });
+          registerToggle.set(v);
+          load();
+        },
+      }) : null;
+      const statusToggle = segmented({
+        options: [
+          { value: "open", label: "Open" },
+          { value: "resolved", label: "Resolved" },
+          { value: "all", label: "All" },
+        ],
+        value: st.status,
+        ariaLabel: "Which findings to list",
+        onChange: (v) => {
+          if (st.status === v) return;
+          st.status = v;
+          Object.assign(st, splitSheetSortFor(st.register, v), { page: 0 });
+          statusToggle.set(v);
+          load();
+        },
+      });
+
+      function load() {
+        tableHost.replaceChildren(skeletonStack(5, { widths: ["100%", "100%", "100%", "90%", "70%"] }));
+        const p = { ...req.register, scope: st.register, sort: st.sort, dir: st.dir,
+          page: st.page, pageSize: st.pageSize };
+        if (st.status !== "all") p.status = st.status;
+        // `swrCall` as the list opens (a Back from a finding repaints from the session cache),
+        // a plain `call` for every page and sort after it.
+        const send = first ? swrCall("api_getRegisterRows", p) : call("api_getRegisterRows", p);
+        first = false;
+        send.then((data) => paint(data || {})).catch((e) => {
+          tableHost.replaceChildren(errorState("Couldn't load these findings.", {
+            detail: e && e.message ? e.message : String(e),
+            onRetry: load,
+          }));
+        });
+      }
+
+      function paint(data) {
+        const rows = Array.isArray(data.rows) ? data.rows : [];
+        // The server's echo is the truth — a clamped page or a refused sort answers back here.
+        st.page = num(data.page, st.page);
+        st.pageSize = num(data.pageSize, st.pageSize);
+        st.sort = data.sort || st.sort;
+        st.dir = data.dir === "asc" ? "asc" : "desc";
+        const register = st.register;
+        const table = dataTable({
+          columns: splitSheetColumnKeys(register, dimension, st.status).map((k) => FINDING_COLUMNS[k]),
+          rows,
+          sort: { key: st.sort, descending: st.dir === "desc" },
+          onSort: (key) => {
+            st.dir = st.sort === key && st.dir === "desc" ? "asc" : "desc";
+            st.sort = key;
+            st.page = 0;
+            load();
+          },
+          onRowOpen: (r) => openFindingSheet(register, r, {
+            rows,
+            backTo: { label: group, onBack: () => openSplitSheet(row, byGroup, st) },
+          }),
+          rowLabel: (r) => findingRowLabel(register, r),
+          emptyText: st.status === "open" ? `Nothing open here in this ${dim.noun}.`
+            : st.status === "resolved" ? `Nothing resolved here in this ${dim.noun} yet.`
+              : `No findings here in this ${dim.noun}.`,
+        });
+        const footer = tableFooter({
+          page: st.page,
+          pageCount: num(data.pageCount, 1),
+          total: num(data.total, rows.length),
+          pageSize: st.pageSize,
+          onPage: (pg) => { st.page = pg; load(); },
+          onPageSize: (size, nextPage) => { st.pageSize = size; st.page = nextPage; load(); },
+        });
+        const mismatch = splitCountNote(row, register, num(data.total, null), st.status);
+        tableHost.replaceChildren(table, footer);
+        if (mismatch) tableHost.append(el("p", { class: "small muted", style: "margin:8px 0 0" }, mismatch));
+      }
+
+      load();
+      return sheetSection("Findings",
+        el("div", { style: "display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px" },
+          registerToggle, statusToggle),
+        tableHost);
+    }
+  }
+
   // ------------------------------------------------------------ the clock, per severity
 
   function renderSeverity(mttr) {
@@ -1748,7 +2131,16 @@ export async function renderMttr(host, params, _ctx) {
       });
     }
 
-    sevHost.append(dataTable({
+    sevHost.append(severityTable(rows));
+  }
+
+  /**
+   * The per-severity table over `mttrSeverityRows` — its own function because TWO payloads draw
+   * it: the page's own summary above, and one split row's inside that row's sheet
+   * (`openSplitSheet`, fed by `api_getMttrGroup`). One table, so a severity reads the same in both.
+   */
+  function severityTable(rows) {
+    return dataTable({
       columns: [
         { key: "sev", label: "Severity", cell: (r) => sevBadge(r.sev) },
         {
@@ -1789,7 +2181,7 @@ export async function renderMttr(host, params, _ctx) {
         { key: "open", label: "Open", className: "num", cell: (r) => fmtCount(r.open) },
       ],
       rows,
-    }));
+    });
   }
 
   // ------------------------------------------------------------------------------- SLA
@@ -2387,3 +2779,37 @@ export async function renderMttr(host, params, _ctx) {
  * `test/shared.test.js` pins it there.
  */
 const SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"];
+
+/**
+ * The row sheet's findings columns, by `REGISTER_ROW_COLUMNS` key — the register pages' own
+ * definitions (sca.js / sast.js / secrets.js), for the keys `splitSheetColumnKeys` picks.
+ */
+export const FINDING_COLUMNS = {
+  identifier: { key: "identifier", label: "Finding", sortable: true, cell: (r) => textCell(r.identifier) },
+  component: { key: "component", label: "Package", sortable: true, cell: (r) => textCell(r.component) },
+  cwe: { key: "cwe", label: "CWE", sortable: true, cell: (r) => textCell(r.cwe) },
+  file_path: { key: "file_path", label: "File", sortable: true, cell: (r) => textCell(r.file_path) },
+  secret_kind: { key: "secret_kind", label: "Kind", sortable: true, cell: (r) => textCell(r.secret_kind) },
+  validation_state: {
+    key: "validation_state", label: "Validation state", sortable: true,
+    cell: (r) => textCell(r.validation_state), help: { term: "validation-state" },
+  },
+  severity: { key: "severity", label: "Severity", sortable: true, cell: (r) => sevBadge(r.severity) },
+  repo_name: { key: "repo_name", label: "Repository", sortable: true, cell: (r) => textCell(r.repo_name) },
+  awaiting_vendor_fix: {
+    key: "awaiting_vendor_fix", label: "Awaiting vendor", sortable: true,
+    cell: (r) => yesNo(r.awaiting_vendor_fix), help: { term: "awaiting-fix" },
+  },
+  first_seen: { key: "first_seen", label: "First seen", sortable: true, cell: (r) => fmtDate(r.first_seen) },
+  last_seen: { key: "last_seen", label: "Last seen", sortable: true, cell: (r) => fmtDate(r.last_seen) },
+  removed_at: {
+    key: "removed_at", label: "Removed", sortable: true,
+    cell: (r) => fmtDate(r.removed_at), help: { term: "removed" },
+  },
+  age_days: { key: "age_days", label: "Age", className: "num", sortable: true, cell: (r) => days1(r.age_days) },
+  mttr_days: { key: "mttr_days", label: "MTTR", className: "num", sortable: true, cell: (r) => days1(r.mttr_days) },
+  status: {
+    key: "status", label: "Status", sortable: true,
+    cell: (r) => textCell(PROVENANCE_LABEL[provenance(r)]), help: { term: "returned" },
+  },
+};

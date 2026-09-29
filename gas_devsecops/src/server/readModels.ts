@@ -271,7 +271,23 @@ export interface ModelParams {
    * figures are theirs, never narrowed further by a view some full user picked.
    */
   viewerScope?: ViewerScope | null;
+  /**
+   * ONE ROW OF THE MTTR PAGE'S REMEDIATION SPLIT (`mttrSplitModel`) — narrow every figure to
+   * that bucket, INSIDE whatever scope the header set: a support group opened under a domain is
+   * that group's findings in that domain. Set by `api.getMttrGroup` and by `getRegisterRows`
+   * for the row sheet's findings list; `scopedRows` applies it, so every model that reads
+   * through it inherits the narrowing without knowing it exists.
+   */
+  split?: SplitParam | null;
 }
+
+/** One bucket of the remediation split: its dimension and its label ("(none)" included). */
+export interface SplitParam {
+  by: SplitBy;
+  value: string;
+}
+export type SplitBy = "domain" | "supportGroup" | "repo";
+const SPLIT_BYS: readonly SplitBy[] = ["domain", "supportGroup", "repo"];
 
 /** Domains and project slugs; a row is in scope when it is in ANY of them. */
 export interface ViewerScope {
@@ -306,6 +322,8 @@ interface NormParams {
   domain: string | null;
   /** The scoped viewer's union, or null — see `ModelParams.viewerScope`. */
   viewer: ViewerScope | null;
+  /** One split bucket, or null — see `ModelParams.split`. */
+  split: SplitParam | null;
   /**
    * The SLA windows actually in force — `settingsLogic.effectiveSlaTargets`, read off
    * `settingsStore.loadSettings()` exactly once here, same as `project` above. NEVER a
@@ -414,6 +432,7 @@ function norm(p?: ModelParams): NormParams {
     project: viewer ? null : project,
     domain: viewer ? null : domain,
     viewer,
+    split: normSplit(p?.split),
     slaTargets: effectiveSlaTargets(settings),
     coldAfterDays: cold.coldAfterDays,
     coldZoneMode: cold.mode,
@@ -425,6 +444,13 @@ function norm(p?: ModelParams): NormParams {
     // them and governs a different family on five other pages.
     mttrExcludeEndOfLife: effectiveExcludeEndOfLifeFromMttr(settings),
   };
+}
+
+/** A known dimension and a string label — or null. An unknown dimension is no narrowing at all
+ *  here; the endpoints that take one from a caller refuse it before it gets this far. */
+function normSplit(v: SplitParam | null | undefined): SplitParam | null {
+  if (!v || typeof v !== "object" || !SPLIT_BYS.includes(v.by)) return null;
+  return { by: v.by, value: String(v.value ?? "") };
 }
 
 /** Sorted, deduped, non-empty — or null, which is "no viewer scope". */
@@ -445,6 +471,8 @@ function keyOf(n: NormParams): Rec {
     // ONLY WHEN PRESENT, so every unscoped key hashes exactly as it did before scoped viewers
     // existed and no live cache entry or durable file is orphaned by them.
     ...(n.viewer ? { viewer: n.viewer } : {}),
+    // The same trick for a split bucket: absent from every key but the row sheet's own.
+    ...(n.split ? { split: n.split } : {}),
   };
 }
 
@@ -688,6 +716,10 @@ function scopedRows(rows: BaseRow[], n: NormParams): BaseRow[] {
   if (n.viewer) out = out.filter((r) => inViewer(r, n.viewer!));
   if (n.project) out = out.filter((r) => inProject(parseProjects(r.projects_json), n.project!));
   if (n.domain) out = out.filter((r) => inDomain(r, n.domain!));
+  if (n.split) {
+    const { by, value } = n.split;
+    out = out.filter((r) => splitBucketOf(by, r) === value);
+  }
   if (n.severities) {
     const keep = new Set(n.severities);
     out = out.filter((r) => keep.has(normalizeSeverity(r.severity)));
@@ -1214,6 +1246,162 @@ export function mttrModel(p?: ModelParams): Rec {
     "dsMttr4",
     { ...keyOf(n), slaTargets: n.slaTargets, mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
     () => buildMttr(n),
+    CLOCK_TTL_SEC,
+  );
+}
+
+// --------------------------------------------------------------------------------------- //
+//  1b. mttrSplitModel / mttrGroupModel — the remediation split and one row of it, cached, 1 h
+// --------------------------------------------------------------------------------------- //
+//
+// THE OS REGISTER'S BREAKDOWN, IN REPOSITORY WORDS (gas/src/server/api.ts
+// `cachedMttrGroupSplit`; the page is `mttr.js` `renderGroups` / `openSplitSheet`). The MTTR
+// hero asks "how fast does this register close?"; the split answers "who is dragging it", by
+// the one dimension the header scope leaves informative:
+//
+//   * no scope          → by DOMAIN (the current-domain assignment — a support group's findings
+//                         all sit in its one pinned domain, server/currentDomains.ts);
+//   * a domain          → by SUPPORT GROUP inside it (the split by domain would be one row);
+//   * a project         → by SUPPORT GROUP when its rows span two or more groups (a folder,
+//                         a product), else by REPOSITORY — the thing a team actually patches —
+//                         capped at `REPO_TOP_N`, with what fell off shipped as `cut`.
+//
+// THE SAME POPULATION AS THE HERO (`buildMttr`'s `liveRepoRows(visibleRows(...))`), so the rows
+// add up to the figure above them. "No domain" / "no group" / "no name" is one `"(none)"`
+// bucket inside the split — a breakdown has to add up — sorted last.
+
+/** The split's label for a missing value. The client keeps a copy (`_splitSheet.js`). */
+export const SPLIT_NONE = "(none)";
+/** How many repositories the repository split lists; the rest ship as `cut`. */
+export const REPO_TOP_N = 20;
+
+/** The bucket a row falls in for one dimension — the table's label AND the sheet's filter. */
+export function splitBucketOf(by: SplitBy, r: BaseRow): string {
+  const v = by === "domain" ? r._domain
+    : by === "supportGroup" ? r._supportGroup
+      : r.repo_name;
+  return String(v ?? "").trim() || SPLIT_NONE;
+}
+
+/** Which dimension the split takes for this scope (see the section header). */
+function splitDimensionFor(n: NormParams, rows: BaseRow[]): SplitBy {
+  if (n.domain) return "supportGroup";
+  if (n.project) {
+    const groups = new Set(rows.map((r) => splitBucketOf("supportGroup", r)));
+    return groups.size >= 2 ? "supportGroup" : "repo";
+  }
+  return "domain";
+}
+
+/** One row of the split: the half-life block `kmHalfLifeView` reads, the tail, the SLA reads
+ *  and the counts — over exactly the rows the bucket holds. */
+function remediationSplitRow(group: string, rs: BaseRow[], n: NormParams, now: number): Rec {
+  const k = kaplanMeier(rs, KM_OPTS);
+  const shipped = shipKM(k);
+  const { perSev, overall } = mttrFromLedger(rs as unknown as Rec[], { now, slaTargets: n.slaTargets });
+  const openByScope: Record<string, number> = {};
+  const totalByScope: Record<string, number> = {};
+  for (const r of rs) {
+    totalByScope[r.scope] = (totalByScope[r.scope] ?? 0) + 1;
+    if (!RESOLVED_STATUSES.has(String(r.status ?? "").toUpperCase())) {
+      openByScope[r.scope] = (openByScope[r.scope] ?? 0) + 1;
+    }
+  }
+  return {
+    group,
+    km: {
+      median: shipped.median, q25: shipped.q25, medianLowerBound: shipped.medianLowerBound,
+      reliableUntil: shipped.reliableUntil, events: shipped.events,
+    },
+    p90: kmQuantileFromCurve(k.curve, 0.9),
+    slaPct: overallSlaOldest(perSev).slaPct,
+    openPastSla: openPastSla(rs, { slaTargets: n.slaTargets }).overall,
+    awaiting: awaitingVendorFix(rs).overall,
+    open: overall.open,
+    resolved: overall.resolved,
+    openByScope,
+    totalByScope,
+  };
+}
+
+function buildMttrSplit(n: NormParams): Rec {
+  const snap = baseSnapshot();
+  const rows = liveRepoRows(visibleRows(snap.rows, n), n.mttrExcludeEndOfLife).rows;
+  const dimension = splitDimensionFor(n, rows);
+  const buckets = new Map<string, BaseRow[]>();
+  for (const r of rows) {
+    const g = splitBucketOf(dimension, r);
+    let list = buckets.get(g);
+    if (!list) buckets.set(g, (list = []));
+    list.push(r);
+  }
+  const isOpen = (r: BaseRow) => !RESOLVED_STATUSES.has(String(r.status ?? "").toUpperCase());
+  const openOf = (rs: BaseRow[]) => rs.filter(isOpen).length;
+  const byName = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+  const names = [...buckets.keys()].sort((a, b) => {
+    if (a === SPLIT_NONE) return 1;
+    if (b === SPLIT_NONE) return -1;
+    const ra = buckets.get(a)!, rb = buckets.get(b)!;
+    if (dimension === "repo") {
+      return (openOf(rb) - openOf(ra)) || ((rb.length - openOf(rb)) - (ra.length - openOf(ra))) || byName(a, b);
+    }
+    return (rb.length - ra.length) || byName(a, b);
+  });
+  const kept = dimension === "repo" ? names.slice(0, REPO_TOP_N) : names;
+  const dropped = dimension === "repo" ? names.slice(REPO_TOP_N) : [];
+  const cut = dropped.length ? {
+    groups: dropped.length,
+    open: dropped.reduce((a, g) => a + openOf(buckets.get(g)!), 0),
+    resolved: dropped.reduce((a, g) => a + buckets.get(g)!.length - openOf(buckets.get(g)!), 0),
+  } : null;
+  // The support group the rows share, when they share one — a repository row under it carries
+  // that group's override marker in the sheet.
+  const groups = new Set(rows.map((r) => splitBucketOf("supportGroup", r)));
+  const oneGroup = groups.size === 1 ? [...groups][0]! : null;
+  return {
+    dimension,
+    within: {
+      kind: n.domain ? "domain" : n.project ? "project" : null,
+      value: n.domain ?? n.project ?? null,
+      supportGroup: oneGroup && oneGroup !== SPLIT_NONE ? oneGroup : null,
+    },
+    rows: kept.map((g) => remediationSplitRow(g, buckets.get(g)!, n, snap.now)),
+    cut,
+  };
+}
+
+/** The split, cached. A new namespace: nothing ever served this shape. Keyed like `dsMttr4`
+ *  on the two settings the compute reads. */
+export function mttrSplitModel(p?: ModelParams): Rec {
+  const n = norm({ ...p, split: null });
+  return cached(
+    "dsMttrSplit1",
+    { ...keyOf(n), slaTargets: n.slaTargets, mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
+    () => buildMttrSplit(n),
+    CLOCK_TTL_SEC,
+  );
+}
+
+/**
+ * ONE ROW OF THE SPLIT, as the row sheet reads it: the MTTR page's own model narrowed to the
+ * bucket (`scopedRows` applies `split`), plus the ONE domain the row counts under — null when
+ * its findings do not share one (a "(none)" bucket of mixed repositories). Refuses a call
+ * without a split: a sheet titled with one group that silently showed the whole scope would be
+ * the worst answer on offer.
+ */
+export function mttrGroupModel(p: ModelParams): Rec {
+  const n = norm(p);
+  if (!n.split) throw new Error("mttrGroupModel: a split { by, value } is required.");
+  return cached(
+    "dsMttrGroup1",
+    { ...keyOf(n), slaTargets: n.slaTargets, mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
+    () => {
+      const snap = baseSnapshot();
+      const rows = liveRepoRows(visibleRows(snap.rows, n), n.mttrExcludeEndOfLife).rows;
+      const domains = new Set(rows.map((r) => String(r._domain ?? "")));
+      const counted = domains.size === 1 ? [...domains][0]! : "";
+      return { ...buildMttr(n), countedDomain: counted || null };
+    },
     CLOCK_TTL_SEC,
   );
 }
@@ -2736,6 +2924,7 @@ function warmTargets(): { label: string; run: () => unknown }[] {
     { label: "storage", run: () => storageModel() },
     { label: "executive", run: () => executiveModel(all) },
     { label: "mttr", run: () => mttrModel(all) },
+    { label: "mttrSplit", run: () => mttrSplitModel(all) },
     { label: "secrets", run: () => secretsModel(all) },
   ];
   for (const scope of SCOPES) {

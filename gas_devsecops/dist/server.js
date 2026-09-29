@@ -47,6 +47,7 @@ var Server = (() => {
     getExecutivePage: () => getExecutivePage,
     getExportCsv: () => getExportCsv,
     getJobStatus: () => getJobStatus,
+    getMttrGroup: () => getMttrGroup,
     getMttrPage: () => getMttrPage,
     getProgramPage: () => getProgramPage,
     getRecentErrors: () => getRecentErrors,
@@ -5445,9 +5446,37 @@ var Server = (() => {
     }
     return (r) => orNull(r[column]);
   }
+  function mttrSplitSlice(split) {
+    var _a, _b, _c;
+    if (!split || typeof split !== "object") return null;
+    const s2 = split;
+    return {
+      dimension: (_a = s2["dimension"]) != null ? _a : null,
+      within: (_b = s2["within"]) != null ? _b : null,
+      rows: Array.isArray(s2["rows"]) ? s2["rows"] : [],
+      cut: (_c = s2["cut"]) != null ? _c : null
+    };
+  }
+  function mttrGroupSlice(m) {
+    var _a, _b, _c, _d, _e, _f, _g;
+    const g = m != null ? m : {};
+    const rem = (_a = g["remediation"]) != null ? _a : {};
+    const kmPerSev = {};
+    for (const [sev2, km] of Object.entries((_b = rem["kmPerSev"]) != null ? _b : {})) {
+      const { curve: _curve, ...rest } = km != null ? km : {};
+      kmPerSev[sev2] = rest;
+    }
+    return {
+      rowCount: (_c = g["rowCount"]) != null ? _c : 0,
+      perSev: (_d = g["perSev"]) != null ? _d : {},
+      remediation: { kmPerSev, kmP90PerSev: (_e = rem["kmP90PerSev"]) != null ? _e : {} },
+      endOfLife: (_f = g["endOfLife"]) != null ? _f : null,
+      countedDomain: (_g = g["countedDomain"]) != null ? _g : null
+    };
+  }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "4682cbec20dd" : "dev";
+  var BUILD_ID = true ? "2367b08f1487" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
@@ -7400,11 +7429,15 @@ var Server = (() => {
   // src/server/readModels.ts
   var readModels_exports = {};
   __export(readModels_exports, {
+    REPO_TOP_N: () => REPO_TOP_N,
+    SPLIT_NONE: () => SPLIT_NONE2,
     WARM_BUDGET_MS: () => WARM_BUDGET_MS,
     __resetModelMemosForTest: () => __resetModelMemosForTest,
     executiveModel: () => executiveModel,
     historyModel: () => historyModel,
+    mttrGroupModel: () => mttrGroupModel,
     mttrModel: () => mttrModel,
+    mttrSplitModel: () => mttrSplitModel,
     programModel: () => programModel,
     registerModel: () => registerModel,
     registerRowsModel: () => registerRowsModel,
@@ -7412,6 +7445,7 @@ var Server = (() => {
     scopeSummaryModel: () => scopeSummaryModel,
     secretsModel: () => secretsModel,
     signalCoverage: () => signalCoverage,
+    splitBucketOf: () => splitBucketOf,
     storageModel: () => storageModel,
     warmReadModels: () => warmReadModels
   });
@@ -8847,6 +8881,7 @@ var Server = (() => {
   var CLOCK_TTL_SEC = 3600;
   var OLDEST_TOP_N = 100;
   var WARM_BUDGET_MS = 27e4;
+  var SPLIT_BYS = ["domain", "supportGroup", "repo"];
   function norm(p) {
     var _a, _b;
     const scopeRaw = (_a = p == null ? void 0 : p.scope) != null ? _a : null;
@@ -8867,6 +8902,7 @@ var Server = (() => {
       project: viewer ? null : project2,
       domain: viewer ? null : domain,
       viewer,
+      split: normSplit(p == null ? void 0 : p.split),
       slaTargets: effectiveSlaTargets(settings),
       coldAfterDays: cold.coldAfterDays,
       coldZoneMode: cold.mode,
@@ -8878,6 +8914,11 @@ var Server = (() => {
       // them and governs a different family on five other pages.
       mttrExcludeEndOfLife: effectiveExcludeEndOfLifeFromMttr(settings)
     };
+  }
+  function normSplit(v) {
+    var _a;
+    if (!v || typeof v !== "object" || !SPLIT_BYS.includes(v.by)) return null;
+    return { by: v.by, value: String((_a = v.value) != null ? _a : "") };
   }
   function normViewer(v) {
     if (!v || typeof v !== "object") return null;
@@ -8894,7 +8935,9 @@ var Server = (() => {
       domain: n2.domain,
       // ONLY WHEN PRESENT, so every unscoped key hashes exactly as it did before scoped viewers
       // existed and no live cache entry or durable file is orphaned by them.
-      ...n2.viewer ? { viewer: n2.viewer } : {}
+      ...n2.viewer ? { viewer: n2.viewer } : {},
+      // The same trick for a split bucket: absent from every key but the row sheet's own.
+      ...n2.split ? { split: n2.split } : {}
     };
   }
   function inViewer(r, v) {
@@ -8995,6 +9038,10 @@ var Server = (() => {
     if (n2.viewer) out = out.filter((r) => inViewer(r, n2.viewer));
     if (n2.project) out = out.filter((r) => inProject(parseProjects(r.projects_json), n2.project));
     if (n2.domain) out = out.filter((r) => inDomain(r, n2.domain));
+    if (n2.split) {
+      const { by, value } = n2.split;
+      out = out.filter((r) => splitBucketOf(by, r) === value);
+    }
     if (n2.severities) {
       const keep = new Set(n2.severities);
       out = out.filter((r) => keep.has(normalizeSeverity(r.severity)));
@@ -9251,6 +9298,127 @@ var Server = (() => {
       "dsMttr4",
       { ...keyOf(n2), slaTargets: n2.slaTargets, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => buildMttr(n2),
+      CLOCK_TTL_SEC
+    );
+  }
+  var SPLIT_NONE2 = "(none)";
+  var REPO_TOP_N = 20;
+  function splitBucketOf(by, r) {
+    const v = by === "domain" ? r._domain : by === "supportGroup" ? r._supportGroup : r.repo_name;
+    return String(v != null ? v : "").trim() || SPLIT_NONE2;
+  }
+  function splitDimensionFor(n2, rows) {
+    if (n2.domain) return "supportGroup";
+    if (n2.project) {
+      const groups = new Set(rows.map((r) => splitBucketOf("supportGroup", r)));
+      return groups.size >= 2 ? "supportGroup" : "repo";
+    }
+    return "domain";
+  }
+  function remediationSplitRow(group, rs, n2, now) {
+    var _a, _b, _c;
+    const k = kaplanMeier(rs, KM_OPTS);
+    const shipped = shipKM(k);
+    const { perSev, overall } = mttrFromLedger(rs, { now, slaTargets: n2.slaTargets });
+    const openByScope = {};
+    const totalByScope = {};
+    for (const r of rs) {
+      totalByScope[r.scope] = ((_a = totalByScope[r.scope]) != null ? _a : 0) + 1;
+      if (!RESOLVED_STATUSES.has(String((_b = r.status) != null ? _b : "").toUpperCase())) {
+        openByScope[r.scope] = ((_c = openByScope[r.scope]) != null ? _c : 0) + 1;
+      }
+    }
+    return {
+      group,
+      km: {
+        median: shipped.median,
+        q25: shipped.q25,
+        medianLowerBound: shipped.medianLowerBound,
+        reliableUntil: shipped.reliableUntil,
+        events: shipped.events
+      },
+      p90: kmQuantileFromCurve(k.curve, 0.9),
+      slaPct: overallSlaOldest(perSev).slaPct,
+      openPastSla: openPastSla(rs, { slaTargets: n2.slaTargets }).overall,
+      awaiting: awaitingVendorFix(rs).overall,
+      open: overall.open,
+      resolved: overall.resolved,
+      openByScope,
+      totalByScope
+    };
+  }
+  function buildMttrSplit(n2) {
+    var _a, _b;
+    const snap = baseSnapshot();
+    const rows = liveRepoRows(visibleRows(snap.rows, n2), n2.mttrExcludeEndOfLife).rows;
+    const dimension = splitDimensionFor(n2, rows);
+    const buckets = /* @__PURE__ */ new Map();
+    for (const r of rows) {
+      const g = splitBucketOf(dimension, r);
+      let list = buckets.get(g);
+      if (!list) buckets.set(g, list = []);
+      list.push(r);
+    }
+    const isOpen9 = (r) => {
+      var _a2;
+      return !RESOLVED_STATUSES.has(String((_a2 = r.status) != null ? _a2 : "").toUpperCase());
+    };
+    const openOf = (rs) => rs.filter(isOpen9).length;
+    const byName = (a, b) => a < b ? -1 : a > b ? 1 : 0;
+    const names = [...buckets.keys()].sort((a, b) => {
+      if (a === SPLIT_NONE2) return 1;
+      if (b === SPLIT_NONE2) return -1;
+      const ra = buckets.get(a), rb = buckets.get(b);
+      if (dimension === "repo") {
+        return openOf(rb) - openOf(ra) || rb.length - openOf(rb) - (ra.length - openOf(ra)) || byName(a, b);
+      }
+      return rb.length - ra.length || byName(a, b);
+    });
+    const kept = dimension === "repo" ? names.slice(0, REPO_TOP_N) : names;
+    const dropped = dimension === "repo" ? names.slice(REPO_TOP_N) : [];
+    const cut = dropped.length ? {
+      groups: dropped.length,
+      open: dropped.reduce((a, g) => a + openOf(buckets.get(g)), 0),
+      resolved: dropped.reduce((a, g) => a + buckets.get(g).length - openOf(buckets.get(g)), 0)
+    } : null;
+    const groups = new Set(rows.map((r) => splitBucketOf("supportGroup", r)));
+    const oneGroup = groups.size === 1 ? [...groups][0] : null;
+    return {
+      dimension,
+      within: {
+        kind: n2.domain ? "domain" : n2.project ? "project" : null,
+        value: (_b = (_a = n2.domain) != null ? _a : n2.project) != null ? _b : null,
+        supportGroup: oneGroup && oneGroup !== SPLIT_NONE2 ? oneGroup : null
+      },
+      rows: kept.map((g) => remediationSplitRow(g, buckets.get(g), n2, snap.now)),
+      cut
+    };
+  }
+  function mttrSplitModel(p) {
+    const n2 = norm({ ...p, split: null });
+    return cached(
+      "dsMttrSplit1",
+      { ...keyOf(n2), slaTargets: n2.slaTargets, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
+      () => buildMttrSplit(n2),
+      CLOCK_TTL_SEC
+    );
+  }
+  function mttrGroupModel(p) {
+    const n2 = norm(p);
+    if (!n2.split) throw new Error("mttrGroupModel: a split { by, value } is required.");
+    return cached(
+      "dsMttrGroup1",
+      { ...keyOf(n2), slaTargets: n2.slaTargets, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
+      () => {
+        const snap = baseSnapshot();
+        const rows = liveRepoRows(visibleRows(snap.rows, n2), n2.mttrExcludeEndOfLife).rows;
+        const domains = new Set(rows.map((r) => {
+          var _a;
+          return String((_a = r._domain) != null ? _a : "");
+        }));
+        const counted = domains.size === 1 ? [...domains][0] : "";
+        return { ...buildMttr(n2), countedDomain: counted || null };
+      },
       CLOCK_TTL_SEC
     );
   }
@@ -10180,6 +10348,7 @@ var Server = (() => {
       { label: "storage", run: () => storageModel() },
       { label: "executive", run: () => executiveModel(all) },
       { label: "mttr", run: () => mttrModel(all) },
+      { label: "mttrSplit", run: () => mttrSplitModel(all) },
       { label: "secrets", run: () => secretsModel(all) }
     ];
     for (const scope of SCOPES) {
@@ -11198,9 +11367,26 @@ var Server = (() => {
       return {
         mttr: mttrModel(params),
         trends: mttrPageTrendSlice(historyModel(params)),
-        byScope: mttrGroupTableSlice(executiveModel(params)["byScope"])
+        byScope: mttrGroupTableSlice(executiveModel(params)["byScope"]),
+        // The remediation split — by domain / support group / repository, whichever the header
+        // scope leaves informative (readModels.mttrSplitModel). Each row opens the row sheet.
+        byGroup: mttrSplitSlice(mttrSplitModel(params))
       };
     });
+  }
+  function getMttrGroup(p) {
+    return run(() => {
+      const split = splitFromRequest({ by: p == null ? void 0 : p["groupBy"], value: p == null ? void 0 : p["groupValue"] });
+      if (!split) throw new Error("getMttrGroup: groupBy must be one of domain, supportGroup, repo.");
+      return mttrGroupSlice(mttrGroupModel({ ...modelParams(p), split }));
+    });
+  }
+  function splitFromRequest(v) {
+    var _a, _b;
+    if (!v || typeof v !== "object") return null;
+    const by = String((_a = v["by"]) != null ? _a : "");
+    if (by !== "domain" && by !== "supportGroup" && by !== "repo") return null;
+    return { by, value: String((_b = v["value"]) != null ? _b : "") };
   }
   function getProgramPage(p) {
     return run(() => {
@@ -11257,7 +11443,10 @@ var Server = (() => {
         validation: r["validation"],
         confidence: r["confidence"],
         groupBy: r["groupBy"],
-        groupValue: r["groupValue"]
+        groupValue: r["groupValue"],
+        // The MTTR row sheet's findings: ONE split bucket, applied inside the viewer's forced
+        // scope above — it can only narrow, never widen.
+        split: splitFromRequest(r["split"])
       };
       const model = registerRowsModel(scope, params);
       if (Array.isArray(model["groups"])) return model;

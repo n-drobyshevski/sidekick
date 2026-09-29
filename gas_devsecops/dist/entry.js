@@ -67,6 +67,7 @@ function api_domainMapHealth(p) { return timedApi_("domainMapHealth", p); }
 function api_getChartsBundle(p) { return timedApi_("getChartsBundle", p); }
 function api_getExecutivePage(p) { return timedApi_("getExecutivePage", p); }
 function api_getMttrPage(p) { return timedApi_("getMttrPage", p); }
+function api_getMttrGroup(p) { return timedApi_("getMttrGroup", p); }
 function api_getProgramPage(p) { return timedApi_("getProgramPage", p); }
 function api_getRegisterPage(p) { return timedApi_("getRegisterPage", p); }
 function api_getSecretsPage(p) { return timedApi_("getSecretsPage", p); }

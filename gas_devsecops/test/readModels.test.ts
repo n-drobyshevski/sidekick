@@ -1651,13 +1651,13 @@ describe("warmReadModels", () => {
   it("asks for a fixed handful and sweeps once", () => {
     const report = warmReadModels();
     expect(report.blockedBy).toBeNull();
-    expect(report.warmed).toBe(11);
+    expect(report.warmed).toBe(12);
     expect(report.skipped).toBe(0);
     expect(H.swept).toBe(1);
     expect(new Set(H.cacheCalls.map((c) => c.name))).toEqual(new Set([
       "dsBootCore1",
       "dsHistory4", "dsProgram2", "dsRepos2", "dsStorage1",
-      "dsExecutive2", "dsMttr4", "dsSecrets2", "dsRegister2",
+      "dsExecutive2", "dsMttr4", "dsMttrSplit1", "dsSecrets2", "dsRegister2",
     ]));
     // FIRST, because doGet only inlines a bootstrap core that is already stored: a budget
     // cut-out must never be what leaves every page load paying the second round trip.
@@ -1669,7 +1669,7 @@ describe("warmReadModels", () => {
   // and leave the durable layer permanently cold, with no error anywhere.
   it("computes inside duringWarm, which is the only window that may write to Drive", () => {
     warmReadModels();
-    expect(H.computeDepths.length).toBe(11);
+    expect(H.computeDepths.length).toBe(12);
     expect(H.computeDepths.every((d) => d === 1)).toBe(true);
     // ...and an ordinary page read is NOT in that window.
     H.store.clear();
@@ -1694,7 +1694,7 @@ describe("warmReadModels", () => {
   it("respects the budget and skips the sweep when it ran out", () => {
     const report = warmReadModels(-1); // every target is already over budget
     expect(report.warmed).toBe(0);
-    expect(report.skipped).toBe(11);
+    expect(report.skipped).toBe(12);
     expect(H.swept).toBe(0); // a short keep-list would trash live entries
   });
 
@@ -1703,7 +1703,7 @@ describe("warmReadModels", () => {
   it("keeps going when one model throws", () => {
     H.cellCountThrows = true;
     const report = warmReadModels();
-    expect(report.warmed).toBe(10); // storage failed; the other ten landed
+    expect(report.warmed).toBe(11); // storage failed; the other eleven landed
     expect(report.skipped).toBe(0);
     expect(H.swept).toBe(1);
   });

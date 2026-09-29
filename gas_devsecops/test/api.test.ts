@@ -1196,9 +1196,9 @@ describe("the post-sync warm, and the ordering nothing else pins", () => {
 
   it("warms every target the warm list declares", async () => {
     await syncedRegister();
-    // 8 fixed (the bootstrap core + 7 read-models) + one per scope. Spelled as the arithmetic
+    // 9 fixed (the bootstrap core + 8 read-models) + one per scope. Spelled as the arithmetic
     // rather than as a literal so adding a scope moves it on its own.
-    expect(warmReports[0]!.warmed).toBe(8 + SCOPES.length);
+    expect(warmReports[0]!.warmed).toBe(9 + SCOPES.length);
   });
 
   it("leaves the bootstrap core warm, so the next doGet inlines it", async () => {
@@ -1438,7 +1438,7 @@ describe("timing lines", () => {
 // The first production log measured doGet spending 6.4 s (warm) to 7.1 s (cold) computing the
 // bootstrap inline on every page load. The core is cached now, and doGet only ever PEEKS at it.
 describe("bootstrapIfWarm", () => {
-  const coreKeys = () => [...cacheState.store.keys()].filter((k) => k.startsWith("dsBootCore1|"));
+  const coreKeys = () => [...cacheState.store.keys()].filter((k) => k.startsWith("dsBootCore2|"));
 
   it("answers {ok:false} on a cold core and computes nothing", async () => {
     const { api } = await syncedRegister();

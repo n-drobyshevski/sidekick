@@ -65,7 +65,7 @@ import {
   historyTrendSlice,
   jobSummarySlice,
   latestScanSlice,
-  mttrGroupTableSlice,
+  mttrGroupSlice, mttrGroupTableSlice, mttrSplitSlice,
   mttrPageTrendSlice,
   programTrendSlice,
   registerRowsSlice,
@@ -943,8 +943,32 @@ export function getMttrPage(p?: unknown): ApiResult {
       mttr: readModels.mttrModel(params),
       trends: mttrPageTrendSlice(readModels.historyModel(params)),
       byScope: mttrGroupTableSlice(readModels.executiveModel(params)["byScope"]),
+      // The remediation split — by domain / support group / repository, whichever the header
+      // scope leaves informative (readModels.mttrSplitModel). Each row opens the row sheet.
+      byGroup: mttrSplitSlice(readModels.mttrSplitModel(params)),
     };
   });
+}
+
+/**
+ * ONE ROW of the MTTR page's split, for its sheet: the page's own MTTR narrowed to the bucket
+ * (inside the header scope — never past it) plus the one domain the row counts under. Refuses
+ * an unknown dimension rather than widening to the whole scope.
+ */
+export function getMttrGroup(p?: unknown): ApiResult {
+  return run(() => {
+    const split = splitFromRequest({ by: (p as Rec)?.["groupBy"], value: (p as Rec)?.["groupValue"] });
+    if (!split) throw new Error("getMttrGroup: groupBy must be one of domain, supportGroup, repo.");
+    return mttrGroupSlice(readModels.mttrGroupModel({ ...modelParams(p), split }));
+  });
+}
+
+/** A split bucket off the wire — a known dimension and a string label — or null. */
+function splitFromRequest(v: unknown): readModels.SplitParam | null {
+  if (!v || typeof v !== "object") return null;
+  const by = String((v as Rec)["by"] ?? "");
+  if (by !== "domain" && by !== "supportGroup" && by !== "repo") return null;
+  return { by, value: String((v as Rec)["value"] ?? "") };
 }
 
 /**
@@ -1064,6 +1088,9 @@ export function getRegisterRows(p?: unknown): ApiResult {
       confidence: r["confidence"],
       groupBy: r["groupBy"],
       groupValue: r["groupValue"],
+      // The MTTR row sheet's findings: ONE split bucket, applied inside the viewer's forced
+      // scope above — it can only narrow, never widen.
+      split: splitFromRequest(r["split"]),
     };
     const model = readModels.registerRowsModel(scope, params);
     // A groups answer carries no rows — and the groups' `raw` is one categorical cell value.

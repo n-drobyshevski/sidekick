@@ -170,6 +170,35 @@ measuring: its KM quantile compares survival to the threshold exactly, and a run
 that mathematically lands on it can land one ULP above, so the p90 came back 10 where the
 arithmetic says 9.
 
+### One domain per support group
+
+The tag map says which domain each **repository** is in; what the pages count is which domain
+each **finding** is in, and those used to be the same answer read row by row. Since this
+release they are not — the OS register's rules (`gas/`), taken from the same vote in
+`gas_shared/domain/groupDomainVote.ts` and applied in `src/domain/currentDomain.ts`:
+
+1. **A repository has one current domain** — the one its newest row resolves to. Rows are
+   already joined against the current map, so this mostly means one join per repository.
+2. **Every support group is pinned to one domain** — the one most of its *current*
+   repositories (those with an open finding) are tagged in; named domains only, ties broken
+   by findings, then by name. When none of its current repositories is tagged the vote widens
+   to all of them; when none of those is either, the group stays unpinned. A repository filed
+   under two support groups votes for its **primary** one (`_supportGroup`, the lowest-sorting
+   CS-/CE-/LU- name). So a team whose repositories are tagged into several domains is listed
+   under one, not under each.
+3. **An admin override wins.** Owners and admins set a group's domain by hand — from the
+   group's row sheet on the MTTR page, or **Settings → System → Support group domains** — with
+   a reason: *Wrong tag — correct the domain* (marker "Domain set manually") or *Managed by
+   CROSS team* (marker "Managed by CROSS team", for a group that sits in CROSS on purpose). The
+   overrides are the `supportGroupDomains` settings field; `api.putSettings` refuses to write
+   it, so only `api.saveSupportGroupDomain` (admin-checked) can.
+
+`src/server/currentDomains.ts` builds the assignment once per data version and writes `_domain`
+on every read path — the base snapshot every read model reads, the header's catalogue and
+counts, the CSV export. The **map health** audit on the Settings card stays on the raw per-row
+join: it measures the map itself. A finding with no domain is still an unset `_domain`, not a
+bucket.
+
 ## Pages
 
 Three lanes and a chrome tail. The IA lives in exactly one place — `PAGES` in
@@ -189,7 +218,7 @@ here and `test/vocabulary.test.js` holds the copy to it.
 | Route | Title | Lane | The one question |
 |---|---|---|---|
 | `executive` | Executive | Program | How fast is code risk closing, how much is open, where is it going? |
-| `mttr` | MTTR & SLA | Program | How long does a finding live once you stop discarding what is still open? |
+| `mttr` | MTTR & SLA | Program | How long does a finding live once you stop discarding what is still open — and who is dragging it (the breakdown by domain / support group / repository at the foot, each row opening a sheet with its clock by severity and its findings)? |
 | `program` | Coverage & efficiency | Program | Did the effort land on what mattered, and can it keep up? |
 | `sca` | Dependencies | Registers | Which third-party CVEs are open, and is there anything to upgrade to? |
 | `sast` | Code | Registers | Which weaknesses are in our own code, and where? |
@@ -343,8 +372,8 @@ Someone who should see **only their own domains or projects** is listed in the
 {"lead@example.com": {"d": ["Payments"], "p": ["team-a"]}}
 ```
 
-`d` holds business domains (the repository tag behind `_domain`), and `p` holds project
-slugs. A viewer sees the union of every value.
+`d` holds business domains (the *current* domain behind `_domain` — a support group's one
+pinned domain, see "One domain per support group"), and `p` holds project slugs. A viewer sees the union of every value.
 
 The owner and admins manage the list in **Settings → Access**, which is now an editor for
 three lists: people, admins and scoped viewers. Anyone who cannot edit access still gets the
