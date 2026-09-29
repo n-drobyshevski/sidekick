@@ -34,6 +34,7 @@
 import { NOT_ATTRIBUTABLE, type ResolvedDomain } from "./resolveDomain";
 import { UNASSIGNED } from "./domainRules";
 import { type Rec } from "./util";
+import { assignGroupDomains } from "../../../gas_shared/domain/groupDomainVote";
 
 /** Where an assigned domain came from: the group's pin, the asset's current resolution, or the
  *  row's own (an asset the ledger cannot identify). */
@@ -94,78 +95,23 @@ export function buildDomainAssignment(
   resolve: (r: Rec) => ResolvedDomain,
   overrides: ReadonlyMap<string, string> = new Map(),
 ): DomainAssignment {
-  const newest = new Map<string, Rec>();
-  const openAssets = new Set<string>();
-  // group → asset key → that asset's findings IN THIS GROUP (the tie-break weight).
-  const groupAssets = new Map<string, Map<string, number>>();
-  // group → rows with no asset identity, for a group that has nothing else to vote with.
-  const groupKeyless = new Map<string, Rec[]>();
-  for (const r of rows) {
-    const key = assetKeyOf(r);
-    const sg = groupOf(r);
-    if (key) {
-      const prev = newest.get(key);
-      if (!prev || lastSeenMs(r) > lastSeenMs(prev)) newest.set(key, r);
-      if (!String(r["resolved_at"] ?? "").trim()) openAssets.add(key);
-    }
-    if (!sg) continue;
-    if (key) {
-      let m = groupAssets.get(sg);
-      if (!m) groupAssets.set(sg, (m = new Map()));
-      m.set(key, (m.get(key) ?? 0) + 1);
-    } else {
-      let list = groupKeyless.get(sg);
-      if (!list) groupKeyless.set(sg, (list = []));
-      list.push(r);
-    }
-  }
-  const heads = [...newest.values()].map((r) => ({ ...r }));
-  annotate(heads);
-  const assetDomain = new Map<string, ResolvedDomain>();
-  [...newest.keys()].forEach((key, i) => assetDomain.set(key, resolve(heads[i]!)));
-
-  const groupDomain = new Map<string, string>();
-  const pick = (votes: Map<string, number>, findings: Map<string, number>) => [...votes.entries()]
-    .sort((x, y) =>
-      Number(isTail(x[0])) - Number(isTail(y[0]))
-      || y[1] - x[1]
-      || (findings.get(y[0]) ?? 0) - (findings.get(x[0]) ?? 0)
-      || (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0))[0]?.[0];
-  for (const sg of new Set([...groupAssets.keys(), ...groupKeyless.keys()])) {
-    const assets = groupAssets.get(sg) ?? new Map<string, number>();
-    const votes = new Map<string, number>();
-    const findings = new Map<string, number>();
-    if (assets.size) {
-      const all = [...assets.keys()];
-      const current = all.filter((a) => openAssets.has(a));
-      for (const a of current.length ? current : all) {
-        const d = assetDomain.get(a)!.name;
-        votes.set(d, (votes.get(d) ?? 0) + 1);
-      }
-      for (const [a, n] of assets) {
-        const d = assetDomain.get(a)!.name;
-        findings.set(d, (findings.get(d) ?? 0) + n);
-      }
-    } else {
-      for (const r of groupKeyless.get(sg) ?? []) {
-        const d = resolve(r).name;
-        votes.set(d, (votes.get(d) ?? 0) + 1);
-      }
-    }
-    const winner = pick(votes, findings);
-    if (winner !== undefined) groupDomain.set(sg, winner);
-  }
-  // RULE 3 — AN ADMIN OVERRIDE WINS (settings `supportGroupDomains`). It replaces the vote even
-  // when it names the same domain — that is how "this group is in CROSS on purpose, its hosts
-  // are run by the CROSS team" is recorded — and it holds for a group with no findings yet, so
-  // a correction survives the scan that brings the group back.
-  const groupSource = new Map<string, "override" | "auto">();
-  for (const sg of groupDomain.keys()) groupSource.set(sg, "auto");
-  for (const [sg, domain] of overrides) {
-    groupDomain.set(sg, domain);
-    groupSource.set(sg, "override");
-  }
-  return { groupDomain, groupSource, assetDomain };
+  // THE VOTE IS SHARED with the code register (gas_shared/domain/groupDomainVote.ts); this is
+  // the OS register's reading of it — assets are hosts, Unassigned / Not attributable are real
+  // buckets a group of untagged hosts may be pinned to, and the vote never widens past the
+  // current hosts (both switches set to exactly what this function did before it moved).
+  return assignGroupDomains<Rec, ResolvedDomain>(rows, {
+    keyOf: assetKeyOf,
+    groupOf,
+    lastSeenMs,
+    isOpen: (r) => !String(r["resolved_at"] ?? "").trim(),
+    annotateHeads: annotate,
+    resolveHead: resolve,
+    resolveKeyless: resolve,
+    nameOf: (d) => d.name,
+    isNamed: (name) => !isTail(name),
+    pinUnnamed: true,
+    widenWhenNoNamedCurrent: false,
+  }, overrides);
 }
 
 /**
