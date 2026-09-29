@@ -344,6 +344,66 @@ export function withDomains(settings: Rec, items: unknown): Rec {
   };
 }
 
+// ------------------------------------------------ support group → domain overrides
+
+/** Why an admin set a support group's domain by hand. */
+export const SG_DOMAIN_REASONS = ["wrong_tag", "cross_team"] as const;
+export type SgDomainReason = (typeof SG_DOMAIN_REASONS)[number];
+
+export interface SgDomainOverride {
+  group: string;
+  domain: string;
+  reason: SgDomainReason;
+  note: string;
+  by: string;
+  at: string;
+}
+
+/**
+ * The admin overrides of a support group's domain (server/currentDomains.ts: an override
+ * REPLACES the automatic pin). Cleaned on every read so a hand-edited blob can't inject junk:
+ * group and domain trimmed and non-empty, the reason one of `SG_DOMAIN_REASONS`, ONE item per
+ * group (the last one wins — the order a save appends in), sorted by group for a stable list.
+ */
+export function cleanSgDomainItems(items: unknown): SgDomainOverride[] {
+  if (!Array.isArray(items)) return [];
+  const byGroup = new Map<string, SgDomainOverride>();
+  for (const raw of items) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const r = raw as Rec;
+    const group = String(r["group"] ?? "").trim();
+    const domain = String(r["domain"] ?? "").trim();
+    const reason = String(r["reason"] ?? "") as SgDomainReason;
+    if (!group || !domain || !SG_DOMAIN_REASONS.includes(reason)) continue;
+    byGroup.set(group, {
+      group, domain, reason,
+      note: String(r["note"] ?? "").trim().slice(0, 500),
+      by: String(r["by"] ?? "").trim(),
+      at: String(r["at"] ?? "").trim(),
+    });
+  }
+  return [...byGroup.values()].sort((a, b) => (a.group < b.group ? -1 : a.group > b.group ? 1 : 0));
+}
+
+export function getSupportGroupDomains(settings: Rec): { version: number; items: SgDomainOverride[] } {
+  const raw = settings["supportGroupDomains"];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { version: 0, items: [] };
+  const r = raw as Rec;
+  const v = Number(r["version"] ?? 0);
+  return {
+    version: Number.isFinite(v) ? Math.max(Math.trunc(v), 0) : 0,
+    items: cleanSgDomainItems(r["items"]),
+  };
+}
+
+export function withSupportGroupDomains(settings: Rec, items: unknown): Rec {
+  const current = getSupportGroupDomains(settings);
+  return {
+    ...settings,
+    supportGroupDomains: { version: current.version + 1, items: cleanSgDomainItems(items) },
+  };
+}
+
 /** Keep only string→non-empty-string entries (a hand-edited blob can't inject junk). */
 export function cleanStringMap(map: unknown): Record<string, string> {
   const out: Record<string, string> = {};

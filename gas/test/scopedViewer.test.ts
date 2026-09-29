@@ -88,6 +88,7 @@ vi.mock("../src/server/settingsStore", () => ({
   getRetentionDays: () => null,
   getAutoCompact: () => false,
   getDomains: () => ({ items: [] }),
+  getSupportGroupDomains: () => ({ version: 0, items: [] }),
   getRiskRule: () => ({ version: 1, rule: { ...DEFAULT_RISK_RULE } }),
 }));
 // Support group straight off a fixture field; the business domain off another, so the

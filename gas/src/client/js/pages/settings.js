@@ -34,6 +34,7 @@ import {
 import { renderAccessPanel } from "./accessEditor.js";
 import { hubUrlPanel } from "../../../../../gas_shared/ui/hubPanel.js";
 import { renderDomainsEditor } from "./domainsEditor.js";
+import { sgDomainsPanel } from "./sgDomainsEditor.js";
 
 // Mirrors src/domain/config.ts's RETENTION_MIN_DAYS — the client never imports the TS domain
 // modules (every page's own header states the rule; see e.g. overview.js's SLA_TARGETS copy),
@@ -1039,7 +1040,12 @@ export async function renderSettings(main, params, ctx) {
   }
   const registerTab = tabPanel("register", scopePanel, filterGrid);
   const riskTab = tabPanel("risk", riskPanel);
-  const attributionTab = tabPanel("attribution", domainsPanel, attributionCrossRef);
+  // Support group → domain overrides: beside the manual groups, the other hand-set half of
+  // "which domain is this in". Saving moves every page's figures, so re-read the bootstrap.
+  const sgDomainsSettings = sgDomainsPanel(boot, {
+    onSaved: () => { invalidateBootstrap(); invalidateRpcCache(); },
+  });
+  const attributionTab = tabPanel("attribution", domainsPanel, sgDomainsSettings, attributionCrossRef);
   const lifecycleTab = tabPanel("lifecycle", retentionPanel, coldZonePanel, jobsPanel);
   // THE ONE SECTION THAT MAY LEGITIMATELY VANISH — renderAccessPanel() (accessEditor.js)
   // answers null both for a reader who may not edit the roster and for a failed fetch, and its

@@ -88,6 +88,7 @@ vi.mock("../src/server/settingsStore", () => ({
   getShowNoFix: () => true,
   getIncludeEol: () => true,
   getDomains: () => ({ items: [] }),
+  getSupportGroupDomains: () => ({ version: 0, items: [] }),
   getDisplaySeverities: () => ["CRITICAL", "HIGH"],
   getRiskRule: () => ({ version: H.ruleVersion, rule: { ...DEFAULT_RISK_RULE } }),
   getColdZone: () => ({ ...H.cold }),

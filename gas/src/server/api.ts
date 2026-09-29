@@ -83,6 +83,7 @@ import * as bizDomains from "./bizDomains";
 import * as supportGroups from "./supportGroups";
 // Which domain a finding counts under — today's repartition, one answer for every path.
 import * as currentDomains from "./currentDomains";
+import { SG_DOMAIN_REASONS } from "../domain/settingsLogic";
 
 export interface ApiResult<T = unknown> {
   ok: boolean;
@@ -126,7 +127,7 @@ function mutate<T>(fn: () => T, label = "api"): ApiResult<T> {
 
 // The core's cache name and params, shared by `bootstrap` and `bootstrapIfWarm` so the inline
 // path can only ever peek at the entry the RPC path reads and the warm writes.
-const BOOT_CORE = "bootstrapCore8";
+const BOOT_CORE = "bootstrapCore9";
 function bootCoreParams(): Rec {
   return { showNoFix: settingsStore.getShowNoFix() };
 }
@@ -167,6 +168,8 @@ export function bootstrap(_p?: unknown): ApiResult {
     // "bootstrapCore6" → "bootstrapCore7": the payload gained `openCounts`. A cached
     // old-shape entry has none, and the Executive severity tiles read it directly, so they
     // would render "0" across the board until the next data version.
+    // "bootstrapCore8" → "bootstrapCore9": `settings` gained `supportGroupDomains` (the admin
+    // overrides of a support group's domain); a stale entry would draw no override badge.
     // "bootstrapCore7" → "bootstrapCore8": `scopeCounts` gained `unassignedBase`. A stale
     // entry has none, and the switcher would keep printing the frame-only zero that made the
     // MTTR Unassigned bar look like a bug in the first place.
@@ -364,6 +367,9 @@ function bootstrapCore(): Rec {
       showNoFix,
       includeEol: settingsStore.getIncludeEol(),
       domains: settingsStore.getDomains(),
+      // The admin overrides of a support group's domain, with their reasons — the MTTR page
+      // marks an overridden group ("Managed by CROSS team" / "Domain set manually") from these.
+      supportGroupDomains: settingsStore.getSupportGroupDomains(),
       riskRule: settingsStore.getRiskRule(),
     },
     latestScan: latest
@@ -4240,6 +4246,48 @@ export function saveDomains(p?: unknown): ApiResult {
     // Domain rules changed → the frame's memoized _domain attachment is stale.
     findings.invalidateFrameMemo();
     return { saved: true, errors: [], domains: settingsStore.getDomains() };
+  });
+}
+
+/**
+ * Set — or with `domain: null`, remove — an admin's override of ONE support group's domain
+ * (settings `supportGroupDomains`; the rule is `currentDomain.ts`'s third). Admins only: the
+ * domain a team is counted under moves every figure the team is judged by.
+ *
+ * The domain must be one a finding can land in — a tag value an asset carries today or a manual
+ * domain group — and never Unassigned / Not attributable, which are the absence of an owner,
+ * not one. The reason is recorded with the override because the two cases read differently
+ * afterwards: "wrong_tag" corrects the data, "cross_team" says the group sits in CROSS on
+ * purpose because the CROSS team runs its hosts, and the pages mark that explicitly.
+ */
+export function saveSupportGroupDomain(p?: unknown): ApiResult {
+  const group = String((p as Rec)?.["group"] ?? "").trim();
+  const rawDomain = (p as Rec)?.["domain"];
+  const domain = rawDomain === null || rawDomain === undefined ? null : String(rawDomain).trim();
+  const reason = String((p as Rec)?.["reason"] ?? "");
+  const note = String((p as Rec)?.["note"] ?? "").trim();
+  return mutate(() => {
+    if (!access.canEditUsers()) {
+      throw new Error("Only the owner or an admin can change a support group's domain.");
+    }
+    const errors: string[] = [];
+    if (!group) errors.push("Pick a support group.");
+    if (domain !== null) {
+      const known = new Set([...currentDomains.domainsInUse(), ...domainNames(settingsStore.getDomains().items)]);
+      if (!domain || domain === UNASSIGNED || domain === NOT_ATTRIBUTABLE || !known.has(domain)) {
+        errors.push(`"${domain}" is not a domain a finding can be counted in.`);
+      }
+      if (!(SG_DOMAIN_REASONS as readonly string[]).includes(reason)) errors.push("Pick a reason.");
+    }
+    if (errors.length) return { saved: false, errors, items: settingsStore.getSupportGroupDomains().items };
+    const rest = settingsStore.getSupportGroupDomains().items.filter((o) => o.group !== group);
+    const items = domain === null ? rest : [...rest, {
+      group, domain, reason, note, by: access.check().email, at: new Date().toISOString(),
+    }];
+    settingsStore.setSupportGroupDomains(items);
+    // The frame's memoized `_domain` came from the previous assignment.
+    findings.invalidateFrameMemo();
+    return { saved: true, errors: [], items: settingsStore.getSupportGroupDomains().items };
   });
 }
 

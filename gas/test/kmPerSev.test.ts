@@ -75,6 +75,7 @@ vi.mock("../src/server/settingsStore", () => ({
   getShowNoFix: () => true,
   getIncludeEol: () => true,
   getDomains: () => ({ items: [] }),
+  getSupportGroupDomains: () => ({ version: 0, items: [] }),
   getDisplaySeverities: () => [],
   getFetchSeverities: () => [],
 }));

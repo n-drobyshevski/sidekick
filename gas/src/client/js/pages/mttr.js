@@ -11,9 +11,12 @@ import { groupCutNote } from "./_groupSplit.js";
 import { pickFindingColumns } from "./_findingColumns.js";
 import {
   splitBucketNote, splitCountNote, splitGroupOf, splitRowLabel, splitSheetColumnKeys,
-  splitSheetDefaults, splitSheetRequests, splitSheetSortFor, splitSheetSubtitle,
+  splitSheetDefaults, splitSheetRequests, splitSheetSortFor, splitSheetSubtitle, SPLIT_NONE,
 } from "./_splitSheet.js";
 import { findingRowLabel, openFindingSheet } from "./findingSheet.js";
+import {
+  SG_REASONS, assignableDomains, groupWithBadge, sgOverrideBadge, sgOverrideOf,
+} from "./_sgDomains.js";
 import { call } from "../../../../../gas_shared/api.js";
 // THE PRESENT/UNOBSERVED SPLIT IS IMPORTED, NOT REPEATED — shared with `pages/executive.js`
 // and `pages/overview.js` so the hero and the two "open findings by age" charts across all
@@ -22,10 +25,10 @@ import { backlogSplitView } from "./_backlog.js";
 import {
   briefClocks, briefExtras, briefFigure, briefFigures, collapsibleSection, ringMark, shareTrack, sparkPath,
   DEFAULT_PAGE_SIZE, PAGE_SIZES,
-  absent, absentText, boundedDays, changeChip, chartTable, clear, dataTable, denomNote,
+  absent, absentText, boundedDays, changeChip, chartTable, clear, closeActiveSheet, confirmDialog, dataTable, denomNote,
   el, emptyState, errorState, firstRunNotice, fmtCount, fmtDays, fmtSpan, meter, num, openSheet, pageHeader, pluralize, scopeBar, sectionLabel,
   segmented, sevBadge, sheetSection, skeleton, skeletonStack, sparkline, statRow, survivalTableModel,
-  tableFooter, tip, tipLabel,
+  tableFooter, tip, tipLabel, toast,
 } from "../ui.js";
 
 // Keep in sync with RESOLUTION_BUCKET_LABELS in src/domain/remediation.ts (the client
@@ -883,6 +886,17 @@ export async function renderMttr(main, _params, ctx) {
 
   // Null when every selectable severity is chosen (no filter → shares the default cache
   // entry); otherwise the chosen subset, which the server keeps alongside UNKNOWN.
+  // Whether the viewer may change a support group's domain (owner or admin) — asked once per
+  // page, only when a sheet that could offer the control opens.
+  let canEditPromise = null;
+  function canEditDomains() {
+    if (!canEditPromise) {
+      canEditPromise = call("api_getAccess").then((a) => Boolean(a && a.canEditUsers))
+        .catch(() => false);
+    }
+    return canEditPromise;
+  }
+
   function scopeParam() {
     return sevScope.length === boot.palette.selectable.length ? null : [...sevScope];
   }
@@ -1461,7 +1475,11 @@ export async function renderMttr(main, _params, ctx) {
           key: "group",
           label: dim.Noun,
           help: help.group,
-          cell: groupOf,
+          // A support group an admin placed by hand carries its marker — "Managed by CROSS
+          // team" or "Domain set manually" — so a listing under a surprising domain says why.
+          cell: (r) => (byDomain.dimension === "supportGroup"
+            ? groupWithBadge(groupOf(r), sgOverrideOf(boot, groupOf(r)))
+            : groupOf(r)),
         },
         {
           key: "kmMedian",
@@ -2593,6 +2611,91 @@ export async function renderMttr(main, _params, ctx) {
         sheetCtx.setHeading({ subtitle: splitSheetSubtitle(dimension, scope, severities, counted) });
       }
     });
+
+    // WHO DECIDED THIS GROUP'S DOMAIN. An admin override (settings `supportGroupDomains`) is
+    // marked in the heading — "Managed by CROSS team" or "Domain set manually" — for the group
+    // itself and for an asset row drawn inside it, so a placement a reader might take for a
+    // mis-tag says it was made on purpose.
+    const sgName = dimension === "supportGroup" ? group : dimension === "asset" ? supportGroup : "";
+    const sgOverride = sgName && sgName !== SPLIT_NONE ? sgOverrideOf(boot, sgName) : null;
+    const overrideBadge = sgOverrideBadge(sgOverride);
+    if (overrideBadge) sheetCtx.setHeading({ chips: [overrideBadge] });
+    // The domain the group counts under right now — the dialog opens on it.
+    let countedNow = sgOverride ? sgOverride.domain : (dimension === "supportGroup" ? domain : "");
+    groupSinks.push((m) => { if (m && m.countedDomain) countedNow = m.countedDomain; });
+
+    // CHANGING IT: admins only, and only on a real group ("(none)" is the absence of one). The
+    // server re-checks; asking first is only so a non-admin is not shown a control that fails.
+    if (dimension === "supportGroup" && group !== SPLIT_NONE) {
+      canEditDomains().then((can) => {
+        if (can && sheetCtx.sheet.isConnected) sheetCtx.body.prepend(domainControls());
+      });
+    }
+
+    function domainControls() {
+      return el("div", { class: "small", style: "display:flex;gap:16px;margin:0 0 12px" },
+        el("button", { type: "button", class: "linklike", onclick: changeDomain }, "Change domain…"),
+        sgOverride
+          ? el("button", { type: "button", class: "linklike", onclick: resetDomain }, "Reset to automatic")
+          : null);
+    }
+
+    async function changeDomain() {
+      const domains = assignableDomains(boot);
+      const select = el("select", { "aria-label": "Domain" },
+        ...domains.map((d) => el("option", { value: d }, d)));
+      select.value = domains.includes(countedNow) ? countedNow : (domains[0] || "");
+      let reason = (sgOverride && sgOverride.reason) || "wrong_tag";
+      const radios = Object.entries(SG_REASONS).map(([value, r]) => {
+        const input = el("input", { type: "radio", name: "sg-domain-reason", value });
+        input.checked = value === reason;
+        input.addEventListener("change", () => {
+          reason = value;
+          // The CROSS team's groups live in CROSS — preselect it, still changeable.
+          if (value === "cross_team" && domains.includes("CROSS")) select.value = "CROSS";
+        });
+        return el("label", { style: "display:block;margin:4px 0" }, input, " ", r.label);
+      });
+      const note = el("input", { type: "text", "aria-label": "Note (optional)", maxlength: "500",
+        style: "width:100%" });
+      note.value = (sgOverride && sgOverride.note) || "";
+      const body = el("div", {},
+        el("p", { class: "muted" }, `Every finding of ${group} will count under the domain you `
+          + "pick, on every page, whatever its hosts are tagged."),
+        el("label", { style: "display:block;margin:8px 0" }, "Domain ", select),
+        el("fieldset", { style: "border:0;padding:0;margin:8px 0" },
+          el("legend", { class: "small muted" }, "Why"), ...radios),
+        el("label", { class: "small muted", style: "display:block;margin-top:8px" },
+          "Note (optional)", note));
+      const ok = await confirmDialog({ title: `Domain of ${group}`, body, confirmLabel: "Save" });
+      if (ok) saveDomain({ group, domain: select.value, reason, note: note.value });
+    }
+
+    async function resetDomain() {
+      const ok = await confirmDialog({
+        title: `Reset ${group}'s domain`,
+        body: `${group} goes back to the domain most of its current hosts are tagged in.`,
+        confirmLabel: "Reset",
+      });
+      if (ok) saveDomain({ group, domain: null });
+    }
+
+    async function saveDomain(p) {
+      try {
+        const res = await call("api_saveSupportGroupDomain", p);
+        if (!res || !res.saved) {
+          toast(((res && res.errors) || ["Couldn't save the domain."]).join(" "), "error");
+          return;
+        }
+        toast(p.domain ? `${group} now counts under ${p.domain}.`
+          : `${group} is back on its automatic domain.`);
+        // Every figure on every page moves with it, the header's counts included: re-boot.
+        closeActiveSheet();
+        if (ctx.refresh) ctx.refresh();
+      } catch (e) {
+        toast(String((e && e.message) || e), "error");
+      }
+    }
 
     function remediationSection() {
       const slaRate = rateView(row.slaPct, num(row.resolved, 0),

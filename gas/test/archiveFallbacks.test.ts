@@ -46,6 +46,7 @@ vi.mock("../src/server/sheetsDb", () => {
 // Neither is under test here, and both reach settings/props of their own.
 vi.mock("../src/server/settingsStore", () => ({
   getDomains: () => ({ items: [] }),
+  getSupportGroupDomains: () => ({ version: 0, items: [] }),
   getShowNoFix: () => true,
 }));
 vi.mock("../src/server/supportGroups", () => ({

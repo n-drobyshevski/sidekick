@@ -94,6 +94,7 @@ var Server = (() => {
     saveHubUrl: () => saveHubUrl,
     saveScoped: () => saveScoped,
     saveSettings: () => saveSettings2,
+    saveSupportGroupDomain: () => saveSupportGroupDomain,
     setAutoCompact: () => setAutoCompact2,
     setIncludeEol: () => setIncludeEol2,
     setRetention: () => setRetention,
@@ -6492,7 +6493,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "fc17a49d9104" : "dev";
+  var BUILD_ID = true ? "4aff78fe75c2" : "dev";
   var CACHE_EPOCH = "3";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
@@ -8027,6 +8028,47 @@ var Server = (() => {
       domains: { version: current2.version + 1, items: cleanDomainItems(items) }
     };
   }
+  var SG_DOMAIN_REASONS = ["wrong_tag", "cross_team"];
+  function cleanSgDomainItems(items) {
+    var _a, _b, _c, _d, _e, _f;
+    if (!Array.isArray(items)) return [];
+    const byGroup = /* @__PURE__ */ new Map();
+    for (const raw of items) {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+      const r = raw;
+      const group = String((_a = r["group"]) != null ? _a : "").trim();
+      const domain = String((_b = r["domain"]) != null ? _b : "").trim();
+      const reason = String((_c = r["reason"]) != null ? _c : "");
+      if (!group || !domain || !SG_DOMAIN_REASONS.includes(reason)) continue;
+      byGroup.set(group, {
+        group,
+        domain,
+        reason,
+        note: String((_d = r["note"]) != null ? _d : "").trim().slice(0, 500),
+        by: String((_e = r["by"]) != null ? _e : "").trim(),
+        at: String((_f = r["at"]) != null ? _f : "").trim()
+      });
+    }
+    return [...byGroup.values()].sort((a, b) => a.group < b.group ? -1 : a.group > b.group ? 1 : 0);
+  }
+  function getSupportGroupDomains(settings) {
+    var _a;
+    const raw = settings["supportGroupDomains"];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { version: 0, items: [] };
+    const r = raw;
+    const v = Number((_a = r["version"]) != null ? _a : 0);
+    return {
+      version: Number.isFinite(v) ? Math.max(Math.trunc(v), 0) : 0,
+      items: cleanSgDomainItems(r["items"])
+    };
+  }
+  function withSupportGroupDomains(settings, items) {
+    const current2 = getSupportGroupDomains(settings);
+    return {
+      ...settings,
+      supportGroupDomains: { version: current2.version + 1, items: cleanSgDomainItems(items) }
+    };
+  }
   function cleanStringMap(map) {
     const out = {};
     if (!map || typeof map !== "object" || Array.isArray(map)) return out;
@@ -8231,6 +8273,12 @@ var Server = (() => {
   }
   function setDomains(items) {
     saveSettings(withDomains(loadSettings(), items));
+  }
+  function getSupportGroupDomains2() {
+    return getSupportGroupDomains(loadSettings());
+  }
+  function setSupportGroupDomains(items) {
+    saveSettings(withSupportGroupDomains(loadSettings(), items));
   }
   function setSupportGroupMap(map) {
     const rows = supportGroupMapToRows(map);
@@ -8703,7 +8751,7 @@ var Server = (() => {
     return Number.isFinite(t) ? t : -Infinity;
   }
   var isTail = (name) => name === UNASSIGNED || name === NOT_ATTRIBUTABLE;
-  function buildDomainAssignment(rows, groupOf, annotate, resolve) {
+  function buildDomainAssignment(rows, groupOf, annotate, resolve, overrides = /* @__PURE__ */ new Map()) {
     var _a, _b, _c, _d, _e, _f, _g;
     const newest = /* @__PURE__ */ new Map();
     const openAssets = /* @__PURE__ */ new Set();
@@ -8764,7 +8812,13 @@ var Server = (() => {
       const winner = pick(votes, findings);
       if (winner !== void 0) groupDomain.set(sg, winner);
     }
-    return { groupDomain, assetDomain };
+    const groupSource = /* @__PURE__ */ new Map();
+    for (const sg of groupDomain.keys()) groupSource.set(sg, "auto");
+    for (const [sg, domain] of overrides) {
+      groupDomain.set(sg, domain);
+      groupSource.set(sg, "override");
+    }
+    return { groupDomain, groupSource, assetDomain };
   }
   function assignedDomain(r, a, resolveRow) {
     var _a;
@@ -8794,7 +8848,8 @@ var Server = (() => {
           attachSupportGroups(heads);
           attachBizDomains(heads);
         },
-        resolveRow
+        resolveRow,
+        new Map(getSupportGroupDomains2().items.map((o) => [o.group, o.domain]))
       );
       memo = { stamp: stamp2, assignment, resolveRow };
       console.log(JSON.stringify({
@@ -8809,6 +8864,9 @@ var Server = (() => {
   function domainOf2(r) {
     const m = current();
     return assignedDomain(r, m.assignment, m.resolveRow).name;
+  }
+  function domainsInUse() {
+    return new Set([...current().assignment.assetDomain.values()].map((d) => d.name));
   }
 
   // src/server/findings.ts
@@ -10615,7 +10673,7 @@ var Server = (() => {
       label
     );
   }
-  var BOOT_CORE = "bootstrapCore8";
+  var BOOT_CORE = "bootstrapCore9";
   function bootCoreParams() {
     return { showNoFix: getShowNoFix2() };
   }
@@ -10652,6 +10710,8 @@ var Server = (() => {
       // "bootstrapCore6" → "bootstrapCore7": the payload gained `openCounts`. A cached
       // old-shape entry has none, and the Executive severity tiles read it directly, so they
       // would render "0" across the board until the next data version.
+      // "bootstrapCore8" → "bootstrapCore9": `settings` gained `supportGroupDomains` (the admin
+      // overrides of a support group's domain); a stale entry would draw no override badge.
       // "bootstrapCore7" → "bootstrapCore8": `scopeCounts` gained `unassignedBase`. A stale
       // entry has none, and the switcher would keep printing the frame-only zero that made the
       // MTTR Unassigned bar look like a bug in the first place.
@@ -10765,6 +10825,9 @@ var Server = (() => {
         showNoFix,
         includeEol: getIncludeEol2(),
         domains: getDomains2(),
+        // The admin overrides of a support group's domain, with their reasons — the MTTR page
+        // marks an overridden group ("Managed by CROSS team" / "Domain set manually") from these.
+        supportGroupDomains: getSupportGroupDomains2(),
         riskRule: getRiskRule2()
       },
       latestScan: latest ? {
@@ -13553,6 +13616,41 @@ var Server = (() => {
       setDomains(items);
       invalidateFrameMemo();
       return { saved: true, errors: [], domains: getDomains2() };
+    });
+  }
+  function saveSupportGroupDomain(p) {
+    var _a, _b, _c;
+    const group = String((_a = p == null ? void 0 : p["group"]) != null ? _a : "").trim();
+    const rawDomain = p == null ? void 0 : p["domain"];
+    const domain = rawDomain === null || rawDomain === void 0 ? null : String(rawDomain).trim();
+    const reason = String((_b = p == null ? void 0 : p["reason"]) != null ? _b : "");
+    const note = String((_c = p == null ? void 0 : p["note"]) != null ? _c : "").trim();
+    return mutate(() => {
+      if (!canEditUsers()) {
+        throw new Error("Only the owner or an admin can change a support group's domain.");
+      }
+      const errors = [];
+      if (!group) errors.push("Pick a support group.");
+      if (domain !== null) {
+        const known = /* @__PURE__ */ new Set([...domainsInUse(), ...domainNames(getDomains2().items)]);
+        if (!domain || domain === UNASSIGNED || domain === NOT_ATTRIBUTABLE || !known.has(domain)) {
+          errors.push(`"${domain}" is not a domain a finding can be counted in.`);
+        }
+        if (!SG_DOMAIN_REASONS.includes(reason)) errors.push("Pick a reason.");
+      }
+      if (errors.length) return { saved: false, errors, items: getSupportGroupDomains2().items };
+      const rest = getSupportGroupDomains2().items.filter((o) => o.group !== group);
+      const items = domain === null ? rest : [...rest, {
+        group,
+        domain,
+        reason,
+        note,
+        by: check().email,
+        at: (/* @__PURE__ */ new Date()).toISOString()
+      }];
+      setSupportGroupDomains(items);
+      invalidateFrameMemo();
+      return { saved: true, errors: [], items: getSupportGroupDomains2().items };
     });
   }
   function previewDomains(p) {

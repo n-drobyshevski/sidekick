@@ -243,6 +243,7 @@ vi.mock("../src/server/settingsStore", () => ({
   getShowNoFix: () => true,
   getIncludeEol: () => true,
   getDomains: () => ({ items: [] }),
+  getSupportGroupDomains: () => ({ version: 0, items: [] }),
   getRiskRule: () => ({ version: H.version, rule: { ...DEFAULT_RISK_RULE } }),
 }));
 // The attribution join, faked so the two renamed columns carry something a spec can read.

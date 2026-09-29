@@ -39,6 +39,7 @@ function current() {
       supportGroupResolver(),
       (heads) => { attachSupportGroups(heads); attachBizDomains(heads); },
       resolveRow,
+      new Map(settingsStore.getSupportGroupDomains().items.map((o) => [o.group, o.domain])),
     );
     memo = { stamp, assignment, resolveRow };
     console.log(JSON.stringify({
@@ -53,4 +54,15 @@ function current() {
 export function domainOf(r: Rec): string {
   const m = current();
   return assignedDomain(r, m.assignment, m.resolveRow).name;
+}
+
+/** How a support group's domain was decided — `"override"` when an admin set it, `"auto"` from
+ *  the host vote, null for a group the ledger has never seen and no one has set. */
+export function groupDomainSource(group: string): "override" | "auto" | null {
+  return current().assignment.groupSource.get(group) ?? null;
+}
+
+/** Every domain an asset currently resolves to — the tag values and rule groups in use. */
+export function domainsInUse(): Set<string> {
+  return new Set([...current().assignment.assetDomain.values()].map((d) => d.name));
 }

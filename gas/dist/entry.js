@@ -125,6 +125,7 @@ function api_saveScoped(p) { return timedApi_("saveScoped", p); }
 function api_saveHubUrl(p) { return timedApi_("saveHubUrl", p); }
 function api_getDomains(p) { return timedApi_("getDomains", p); }
 function api_saveDomains(p) { return timedApi_("saveDomains", p); }
+function api_saveSupportGroupDomain(p) { return timedApi_("saveSupportGroupDomain", p); }
 function api_previewDomains(p) { return timedApi_("previewDomains", p); }
 function api_refreshSupportGroups(p) { return timedApi_("refreshSupportGroups", p); }
 function api_backfillEpisodeTags(p) { return timedApi_("backfillEpisodeTags", p); }

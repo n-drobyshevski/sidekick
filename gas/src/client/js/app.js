@@ -532,7 +532,9 @@ const shell = createAppShell({
   navContext: () => ({}),
   // The two client-side scopes and the two callbacks every page's header chip needs. The
   // siblings pass nothing here: their scope is server state, so their pages never see it.
-  pageContext: () => ({ clearScope, startScan, ...activeScope() }),
+  // `refresh` re-boots after a page changes what the bootstrap carries (a support group's
+  // domain override moves the header's counts and every page's figures at once).
+  pageContext: () => ({ clearScope, startScan, refresh: () => shell.refresh(), ...activeScope() }),
   afterFirstRoute: prefetchCharts,
 });
 
