@@ -176,6 +176,9 @@ export function scopeView(spec) {
         hint: row.hint || "",
         // Straight through: see the module header for why nothing is synthesised.
         group: row.group || "",
+        // The kind is the list's DIMENSION: the combobox shares its row cap by it, so a kind
+        // that files its rows under many headings cannot crowd a small kind off the list.
+        section: kind.key,
         icon: row.icon || "",
       });
     }
