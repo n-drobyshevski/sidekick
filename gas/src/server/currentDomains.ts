@@ -14,7 +14,7 @@
 // Keyed on `currentStamp()`: its data version moves on every ledger write, settings save
 // (domain rules) and support-group map change, and its tag segment follows the tag key.
 
-import { assignedDomain, buildDomainAssignment, type AssignedDomain, type DomainAssignment } from "../domain/currentDomain";
+import { assignedDomain, buildDomainAssignment, type DomainAssignment } from "../domain/currentDomain";
 import { compileDomains } from "../domain/domainRules";
 import { resolveDomain } from "../domain/resolveDomain";
 import { type Rec } from "../domain/util";
@@ -53,15 +53,4 @@ function current() {
 export function domainOf(r: Rec): string {
   const m = current();
   return assignedDomain(r, m.assignment, m.resolveRow).name;
-}
-
-/** `domainOf` with the rule that decided it — the row sheet's Domains section reads this. */
-export function assignedDomainOf(r: Rec): AssignedDomain {
-  const m = current();
-  return assignedDomain(r, m.assignment, m.resolveRow);
-}
-
-/** The whole assignment, for the one view that shows it rather than applying it. */
-export function domainAssignment(): DomainAssignment {
-  return current().assignment;
 }

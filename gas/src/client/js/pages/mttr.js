@@ -12,7 +12,6 @@ import { pickFindingColumns } from "./_findingColumns.js";
 import {
   splitBucketNote, splitCountNote, splitGroupOf, splitRowLabel, splitSheetColumnKeys,
   splitSheetDefaults, splitSheetRequests, splitSheetSortFor, splitSheetSubtitle,
-  splitDomainAssetsText, splitDomainsHint, splitDomainsLead, splitDomainsRows,
 } from "./_splitSheet.js";
 import { findingRowLabel, openFindingSheet } from "./findingSheet.js";
 import { call } from "../../../../../gas_shared/api.js";
@@ -2561,16 +2560,14 @@ export async function renderMttr(main, _params, ctx) {
     // No backlog caption here: it is register-wide background the page's column tip carries,
     // not a fact about this one row.
     const help = splitColumnHelp(dim, { show: false });
-    // ONE `api_getMttrGroup` REQUEST, TWO READERS: the per-severity table and (for a support
-    // group or an asset) the Domains section both come off the same payload, so each section
-    // registers a sink and the request fires once the sheet's body exists. `(payload, error)`.
+    // ONE `api_getMttrGroup` REQUEST, TWO READERS: the per-severity table and the subtitle's
+    // domain both come off the same payload, so each registers a sink and the request fires
+    // once the sheet's body exists. `(payload, error)`.
     const groupSinks = [];
-    const hasDomains = dimension === "supportGroup" || dimension === "asset";
 
-    openSheet((body) => {
+    const sheetCtx = openSheet((body) => {
       const note = splitBucketNote(dimension, group);
       if (note) body.append(el("p", { class: "small muted", style: "margin:0 0 12px" }, note));
-      if (hasDomains) body.append(domainsSection());
       body.append(remediationSection(), findingsSection());
     }, {
       title: group,
@@ -2586,93 +2583,16 @@ export async function renderMttr(main, _params, ctx) {
     swrCall("api_getMttrGroup", req.mttr, deliver).then(deliver)
       .catch((e) => groupSinks.forEach((f) => f(null, e)));
 
-    /**
-     * WHERE THIS ROW IS COUNTED, AND WHERE ITS HOSTS SIT TODAY. A support group counts under
-     * ONE domain — the one most of its current assets are in (server/currentDomains.ts) — and
-     * every finding it carries is measured there. The table is the vote behind that pin: each
-     * current domain its assets sit in, by which route (tag or rule), and which assets. The
-     * fix for a group pinned to the wrong domain is a tag in Wiz or a rule in Settings, and
-     * this says which.
-     */
-    //
-    // COLLAPSED BY DEFAULT: it is the diagnosis for a surprising listing, not what most visits
-    // to the sheet are for, so it folds away under its own summary — which states where the row
-    // counts ("counted under CROSS · assets in 4 domains") once the payload lands, so it needs no
-    // click. Not remembered: every sheet opens on its remediation, the thing it is about.
-    //
-    // The sheet's own disclosure (`.disclosure`, gas_shared/styles/sheet.css — "collapsible
-    // group inside a sheet"), not the page's `collapsibleSection`: that one is an h2-sized
-    // page heading with page-section spacing, and inside the sheet it outranked every other
-    // section label under it. Here the summary IS a section label, so the four read as one set.
-    function domainsSection() {
-      const hint = el("span", { class: "small muted" }, "loading…");
-      const host = el("div", { role: "status", "aria-label": "Loading domains",
-        style: "padding-top:8px" }, skeletonStack(2, { widths: ["100%", "70%"] }));
-      const details = el("details", { class: "disclosure" },
-        el("summary", { class: "disclosure-toggle" },
-          el("span", { class: "label", style: "margin:0" }, "Domains"), hint),
-        host);
-      groupSinks.push((m, err) => {
-        if (!host.isConnected) return;
-        clear(host).removeAttribute("aria-label");
-        const pinned = (m && m.pinnedDomain) || null;
-        if (hint) hint.textContent = err ? "" : splitDomainsHint((m && m.domains) || [], pinned);
-        if (err) {
-          host.append(errorState("Couldn't load which domains this " + dim.noun + " spans.",
-            { detail: String((err && err.message) || err) }));
-          return;
-        }
-        const domains = (m && m.domains) || [];
-        const lead = splitDomainsLead(dimension, group, domains, pinned);
-        if (lead) host.append(el("p", { class: "small muted", style: "margin:0 0 8px" }, lead));
-        host.append(dataTable({
-          columns: [
-            {
-              key: "domain",
-              label: "Domain",
-              help: ["The domain these assets sit in TODAY — the Wiz/Domain tag of each asset's "
-                + "newest sighting, else a manual rule. \u201cCounted here\u201d marks the one "
-                + "domain every finding of this row is measured under."],
-              cell: (d) => (d.counted
-                ? el("span", {}, d.domain, el("span", { class: "small muted" }, " · counted here"))
-                : d.domain),
-            },
-            {
-              key: "sourceLabel",
-              label: "Assigned by",
-              help: ["How each finding got its domain: the asset's Wiz/Domain tag (fix it on the "
-                + "asset in Wiz), a manual rule (Settings → Domains), or neither."],
-              cell: (d) => d.sourceLabel,
-            },
-            {
-              key: "findings",
-              label: "Findings",
-              className: "num",
-              help: ["Findings in this " + dim.noun + " whose asset sits in this domain today, by this route, "
-                + "open and resolved, over the page's severity scope."],
-              cell: (d) => fmtCount(num(d.findings, 0)),
-            },
-            {
-              key: "open",
-              label: "Open",
-              className: "num",
-              help: ["Of those, the ones not yet resolved."],
-              cell: (d) => fmtCount(num(d.open, 0)),
-            },
-            {
-              key: "assets",
-              label: "Assets",
-              help: ["The assets carrying these findings, most findings first — where the tag "
-                + "or the rule's match lives."],
-              cell: (d) => el("span", { class: "small" }, splitDomainAssetsText(d)),
-            },
-          ],
-          rows: splitDomainsRows(domains, pinned),
-          emptyText: "No findings in this " + dim.noun + " in the page's severity scope.",
-        }));
-      });
-      return el("section", { class: "sheet-section" }, details);
-    }
+    // THE ONE DOMAIN THIS ROW COUNTS UNDER, named in the subtitle once the payload says it
+    // (`countedDomain`): every finding of a support group is measured in a single domain
+    // (server/currentDomains.ts), and the sheet states that one rather than listing where the
+    // group's hosts happen to be tagged. Absent when the row's findings do not share one.
+    groupSinks.push((m) => {
+      const counted = m && m.countedDomain;
+      if (counted && sheetCtx.sheet.isConnected) {
+        sheetCtx.setHeading({ subtitle: splitSheetSubtitle(dimension, scope, severities, counted) });
+      }
+    });
 
     function remediationSection() {
       const slaRate = rateView(row.slaPct, num(row.resolved, 0),

@@ -113,17 +113,17 @@ export function splitRowLabel(dimension, row) {
 }
 
 /**
- * The sheet's subtitle: what kind of bucket this is, and the scope it was drawn INSIDE. The
- * scope is on the surface rather than implied because it changes the numbers — the same
- * support group reads differently in two domains.
+ * The sheet's subtitle: what kind of bucket this is, the scope it was drawn inside, and — once
+ * the payload says it (`countedDomain`) — the ONE domain the row counts under. A support group
+ * is measured in a single domain (server/currentDomains.ts), and the subtitle names that one.
  */
-export function splitSheetSubtitle(dimension, scope, severities) {
+export function splitSheetSubtitle(dimension, scope, severities, countedDomain) {
   const parts = [NOUN[dimension] || NOUN.domain];
-  if (dimension === "supportGroup" && scope && scope.domain) {
-    parts.push(`its findings in domain ${scope.domain}`);
-  } else if (dimension === "asset" && scope && scope.supportGroup) {
+  if (dimension === "asset" && scope && scope.supportGroup) {
     parts.push(`in support group ${scope.supportGroup}`);
   }
+  const counted = countedDomain || (dimension === "supportGroup" && scope && scope.domain) || "";
+  if (dimension !== "domain" && counted) parts.push(`domain ${counted}`);
   if (Array.isArray(severities) && severities.length) {
     parts.push(`${severities.join(", ")} only`);
   }
@@ -164,72 +164,4 @@ export function splitCountNote(row, total, status) {
   if (!Number.isFinite(open) || open === total) return null;
   return `The row above counts ${open.toLocaleString()} open; the register lists `
     + `${total.toLocaleString()} for the same group.`;
-}
-
-/**
- * How a finding's domain was decided — `resolveDomain`'s `source`, in words. The two that
- * name a mechanism say where the fix lives: a tag on the asset in Wiz, or a rule in Settings.
- */
-export function domainSourceLabel(source) {
-  switch (source) {
-    case "tag": return "Wiz/Domain tag";
-    case "rule": return "manual rule";
-    case "none": return "no tag or rule matched";
-    case "missing": return "no attribution input";
-    default: return String(source || "");
-  }
-}
-
-/**
- * The Domains section's lead — where this row's findings are COUNTED, and why the table under
- * it can list more than one domain. A support group is pinned to the one domain most of its
- * current hosts sit in (server/currentDomains.ts), and every finding it carries counts there;
- * the table is where those hosts actually sit today, which is the vote the pin came from.
- * `pinned` is null for a row no support group decides ("(none)", a domain row). Null when
- * there is nothing to describe.
- */
-export function splitDomainsLead(dimension, group, domains, pinned) {
-  const names = [...new Set((domains || []).map((d) => d.domain))];
-  if (!names.length) return null;
-  const who = group || "This " + ((NOUN[dimension] || NOUN.domain).toLowerCase());
-  if (pinned) {
-    const why = dimension === "asset"
-      ? `the domain its support group is pinned to`
-      : `the domain most of its current assets are in`;
-    if (names.length === 1 && names[0] === pinned) {
-      return `${who} counts under ${pinned}, where all of its assets are today.`;
-    }
-    return `${who} counts under ${pinned} — ${why}. Every finding it carries is measured there, `
-      + `although its assets sit in ${names.length === 1 ? names[0] : names.length + " domains"} today.`;
-  }
-  if (names.length === 1) return `All of ${who}'s findings count under ${names[0]}, their assets' current domain.`;
-  return `${who}'s findings count under ${names.length} domains — each under its asset's current `
-    + "domain: the Wiz/Domain tag of its newest sighting first, else a manual rule.";
-}
-
-/** The Domains table's rows, the domain the row is counted under marked `counted`. */
-export function splitDomainsRows(domains, pinned) {
-  return (domains || []).map((d) => ({
-    ...d,
-    sourceLabel: domainSourceLabel(d.source),
-    counted: Boolean(pinned) && d.domain === pinned,
-  }));
-}
-
-/** The asset cell's text: the names shipped, then how many more the row carries. */
-export function splitDomainAssetsText(d) {
-  const names = Array.isArray(d && d.assets) ? d.assets : [];
-  const more = Math.max(0, (Number(d && d.assetCount) || 0) - names.length);
-  return names.join(", ") + (more ? ` +${more} more` : "");
-}
-
-/** The folded Domains section's summary: where the row counts, and how spread its hosts are. */
-export function splitDomainsHint(domains, pinned) {
-  const names = [...new Set((domains || []).map((d) => d.domain))];
-  if (pinned) {
-    return names.length > 1 ? `counted under ${pinned} · assets in ${names.length} domains`
-      : `counted under ${pinned}`;
-  }
-  if (!names.length) return "";
-  return names.length === 1 ? `1 domain: ${names[0]}` : `${names.length} domains`;
 }

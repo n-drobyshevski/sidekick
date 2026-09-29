@@ -6492,7 +6492,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "20f8709686f8" : "dev";
+  var BUILD_ID = true ? "fc17a49d9104" : "dev";
   var CACHE_EPOCH = "3";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
@@ -8809,9 +8809,6 @@ var Server = (() => {
   function domainOf2(r) {
     const m = current();
     return assignedDomain(r, m.assignment, m.resolveRow).name;
-  }
-  function domainAssignment() {
-    return current().assignment;
   }
 
   // src/server/findings.ts
@@ -11650,33 +11647,15 @@ var Server = (() => {
     return String((_a = r["asset_name"]) != null ? _a : "").trim() || NONE_BUCKET;
   }
   var MTTR_GROUP_DIMENSIONS = ["domain", "supportGroup", "asset"];
-  function splitRowDomains(supportGroup, severities, row) {
+  function countedDomainOf(q, severities, row) {
     var _a, _b;
-    let rows = visibleBase(filterSeverities(scopedBaseRows("", supportGroup), severities));
+    const domain = String((_a = q["domain"]) != null ? _a : "");
+    const supportGroup = String((_b = q["supportGroup"]) != null ? _b : "");
+    let rows = visibleBase(filterSeverities(scopedBaseRows(domain, supportGroup), severities));
     rows = narrowToMttrGroup(rows, row);
     attachBizDomains(rows);
-    const compiled = compileDomains(getDomains2().items);
-    const assetDomain = domainAssignment().assetDomain;
-    const acc = /* @__PURE__ */ new Map();
-    for (const r of rows) {
-      const key0 = assetKeyOf(r);
-      const { name, source } = key0 && assetDomain.get(key0) || resolveDomain(r, compiled);
-      const key = name + "\0" + source;
-      let a = acc.get(key);
-      if (!a) acc.set(key, a = { domain: name, source, findings: 0, open: 0, assets: /* @__PURE__ */ new Map() });
-      a.findings += 1;
-      if (!String((_a = r["resolved_at"]) != null ? _a : "").trim()) a.open += 1;
-      const asset = assetBucket(r);
-      a.assets.set(asset, ((_b = a.assets.get(asset)) != null ? _b : 0) + 1);
-    }
-    return [...acc.values()].map((a) => ({
-      domain: a.domain,
-      source: a.source,
-      findings: a.findings,
-      open: a.open,
-      assetCount: a.assets.size,
-      assets: [...a.assets.entries()].sort((x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0)).slice(0, 5).map(([n]) => n)
-    })).sort((x, y) => y.findings - x.findings || (x.domain < y.domain ? -1 : 1));
+    const names = new Set(rows.map((r) => domainOf2(r)));
+    return names.size === 1 ? [...names][0] : null;
   }
   function narrowToMttrGroup(rows, row) {
     if (row.by === "supportGroup") {
@@ -12133,20 +12112,15 @@ var Server = (() => {
         // the sheet's Domains section reads; a stale entry would draw that section empty.
         // "mttrGroup2" → "mttrGroup3": `domains` now places each finding under its asset's
         // CURRENT domain, and the payload gained `pinnedDomain` (currentDomains).
-        "mttrGroup3",
+        // "mttrGroup3" → "mttrGroup4": `domains` and `pinnedDomain` are GONE, replaced by one
+        // `countedDomain` — the sheet names the single domain the row counts under and no longer
+        // lists where the group's assets are tagged.
+        "mttrGroup4",
         { ...q, groupBy: by, groupValue: value, showNoFix: getShowNoFix2() },
-        () => {
-          var _a2;
-          return {
-            ...mttrData(q, { by, value }),
-            domains: splitRowDomains(q.supportGroup, severities, { by, value }),
-            // The one domain every finding of this row counts under, when a support group decides
-            // it: the row's own group, or for an asset row the group it was drawn inside.
-            pinnedDomain: (_a2 = domainAssignment().groupDomain.get(
-              by === "supportGroup" ? value : q.supportGroup
-            )) != null ? _a2 : null
-          };
-        },
+        () => ({
+          ...mttrData(q, { by, value }),
+          countedDomain: countedDomainOf(q, severities, { by, value })
+        }),
         3600
       );
     });
