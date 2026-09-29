@@ -67,6 +67,7 @@ var Server = (() => {
     saveAdmins: () => saveAdmins,
     saveHubUrl: () => saveHubUrl,
     saveScoped: () => saveScoped,
+    saveSupportGroupDomain: () => saveSupportGroupDomain,
     setDomainView: () => setDomainView,
     setProjectView: () => setProjectView,
     testWizConnection: () => testWizConnection
@@ -3185,6 +3186,49 @@ var Server = (() => {
     };
   }
 
+  // ../gas_shared/domain/sgDomainOverrides.ts
+  var SG_DOMAIN_REASONS = ["wrong_tag", "cross_team"];
+  function cleanSgDomainItems(items) {
+    var _a, _b, _c, _d, _e, _f;
+    if (!Array.isArray(items)) return [];
+    const byGroup = /* @__PURE__ */ new Map();
+    for (const raw of items) {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+      const r = raw;
+      const group = String((_a = r["group"]) != null ? _a : "").trim();
+      const domain = String((_b = r["domain"]) != null ? _b : "").trim();
+      const reason = String((_c = r["reason"]) != null ? _c : "");
+      if (!group || !domain || !SG_DOMAIN_REASONS.includes(reason)) continue;
+      byGroup.set(group, {
+        group,
+        domain,
+        reason,
+        note: String((_d = r["note"]) != null ? _d : "").trim().slice(0, 500),
+        by: String((_e = r["by"]) != null ? _e : "").trim(),
+        at: String((_f = r["at"]) != null ? _f : "").trim()
+      });
+    }
+    return [...byGroup.values()].sort((a, b) => a.group < b.group ? -1 : a.group > b.group ? 1 : 0);
+  }
+  function getSupportGroupDomains(settings) {
+    var _a;
+    const raw = settings["supportGroupDomains"];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { version: 0, items: [] };
+    const r = raw;
+    const v = Number((_a = r["version"]) != null ? _a : 0);
+    return {
+      version: Number.isFinite(v) ? Math.max(Math.trunc(v), 0) : 0,
+      items: cleanSgDomainItems(r["items"])
+    };
+  }
+  function withSupportGroupDomains(settings, items) {
+    const current = getSupportGroupDomains(settings);
+    return {
+      ...settings,
+      supportGroupDomains: { version: current.version + 1, items: cleanSgDomainItems(items) }
+    };
+  }
+
   // src/domain/settingsLogic.ts
   var DEFAULT_SYNC_HOUR = 5;
   var DEFAULT_SETTINGS = {
@@ -3206,7 +3250,8 @@ var Server = (() => {
     autoCompact: false,
     retentionDays: DEFAULT_RETENTION_DAYS,
     projectView: "",
-    domainView: ""
+    domainView: "",
+    supportGroupDomains: { version: 0, items: [] }
   };
   function asList(v, allowed) {
     if (!Array.isArray(v)) return null;
@@ -3311,7 +3356,8 @@ var Server = (() => {
       // The same coercion, and deliberately the same function: both hold an opaque operator-
       // chosen string whose only invalid form is "not a string". Two copies of that rule is how
       // one of them later grows a difference nobody intended.
-      domainView: cleanViewScope(r.domainView)
+      domainView: cleanViewScope(r.domainView),
+      supportGroupDomains: getSupportGroupDomains(r)
     };
   }
   function withSettings(current, patch) {
@@ -5401,7 +5447,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "4d855d642833" : "dev";
+  var BUILD_ID = true ? "4682cbec20dd" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
@@ -5490,6 +5536,12 @@ var Server = (() => {
     bumpDataVersion();
     writeSettingsCache(JSON.parse(JSON.stringify(cleaned)));
     return cleaned;
+  }
+  function getSupportGroupDomains2() {
+    return loadSettings().supportGroupDomains;
+  }
+  function setSupportGroupDomains(items) {
+    saveSettings(withSupportGroupDomains(loadSettings(), items));
   }
 
   // ../gas_shared/domain/snapshotCodec.ts
@@ -6595,42 +6647,6 @@ var Server = (() => {
     };
   }
 
-  // ../gas_shared/domain/sgDomainOverrides.ts
-  var SG_DOMAIN_REASONS = ["wrong_tag", "cross_team"];
-  function cleanSgDomainItems(items) {
-    var _a, _b, _c, _d, _e, _f;
-    if (!Array.isArray(items)) return [];
-    const byGroup = /* @__PURE__ */ new Map();
-    for (const raw of items) {
-      if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
-      const r = raw;
-      const group = String((_a = r["group"]) != null ? _a : "").trim();
-      const domain = String((_b = r["domain"]) != null ? _b : "").trim();
-      const reason = String((_c = r["reason"]) != null ? _c : "");
-      if (!group || !domain || !SG_DOMAIN_REASONS.includes(reason)) continue;
-      byGroup.set(group, {
-        group,
-        domain,
-        reason,
-        note: String((_d = r["note"]) != null ? _d : "").trim().slice(0, 500),
-        by: String((_e = r["by"]) != null ? _e : "").trim(),
-        at: String((_f = r["at"]) != null ? _f : "").trim()
-      });
-    }
-    return [...byGroup.values()].sort((a, b) => a.group < b.group ? -1 : a.group > b.group ? 1 : 0);
-  }
-  function getSupportGroupDomains(settings) {
-    var _a;
-    const raw = settings["supportGroupDomains"];
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { version: 0, items: [] };
-    const r = raw;
-    const v = Number((_a = r["version"]) != null ? _a : 0);
-    return {
-      version: Number.isFinite(v) ? Math.max(Math.trunc(v), 0) : 0,
-      items: cleanSgDomainItems(r["items"])
-    };
-  }
-
   // ../gas_shared/domain/groupDomainVote.ts
   function assignGroupDomains(rows, spec, overrides = /* @__PURE__ */ new Map()) {
     var _a, _b, _c, _d;
@@ -6797,9 +6813,19 @@ var Server = (() => {
       return all;
     }));
   }
+  function assignableDomains() {
+    const a = assignmentFor(() => {
+      const all = loadBaseRows();
+      attachProjectGrain(all);
+      return all;
+    });
+    const names = /* @__PURE__ */ new Set([...a.assetDomain.values(), ...a.groupDomain.values()]);
+    names.delete("");
+    return [...names].sort();
+  }
 
   // src/server/bootCore.ts
-  var BOOT_CORE = "dsBootCore1";
+  var BOOT_CORE = "dsBootCore2";
   var BOOT_CORE_PARAMS = {};
   function bootCoreModel() {
     return durablyCached(BOOT_CORE, BOOT_CORE_PARAMS, buildBootCore);
@@ -6897,7 +6923,14 @@ var Server = (() => {
       },
       filterOptions: {
         projectList: projectCatalogue(allRows),
-        domainList: domainCatalogue(allRows)
+        domainList: domainCatalogue(allRows),
+        // For the support-group domain overrides (Settings → System, the MTTR row sheet): every
+        // primary support group the register holds, and every domain one may be set to.
+        supportGroups: [...new Set(allRows.map((r) => {
+          var _a2;
+          return String((_a2 = r["_supportGroup"]) != null ? _a2 : "");
+        }).filter(Boolean))].sort(),
+        assignableDomains: assignableDomains()
       }
     };
     laps.lap("catalogues");
@@ -11029,9 +11062,44 @@ var Server = (() => {
     return run(() => loadSettings());
   }
   function putSettings(p) {
+    var _a;
+    const patch = { ...(_a = p.settings) != null ? _a : {} };
+    delete patch["supportGroupDomains"];
+    return mutate(() => saveSettings(withSettings(loadSettings(), patch)));
+  }
+  function saveSupportGroupDomain(p) {
+    var _a, _b, _c;
+    const group = String((_a = p.group) != null ? _a : "").trim();
+    const domain = p.domain === null || p.domain === void 0 ? null : String(p.domain).trim();
+    const reason = String((_b = p.reason) != null ? _b : "");
+    const note = String((_c = p.note) != null ? _c : "").trim();
     return mutate(() => {
-      var _a;
-      return saveSettings(withSettings(loadSettings(), (_a = p.settings) != null ? _a : {}));
+      if (!canEditUsers()) {
+        throw new Error("Only the owner or an admin can change a support group's domain.");
+      }
+      const errors = [];
+      if (!group) errors.push("Pick a support group.");
+      if (domain !== null) {
+        const known = assignableDomains();
+        if (!known.length) {
+          errors.push("No domain is known yet \u2014 refresh Repository tags (Settings \u2192 System) first.");
+        } else if (!domain || !known.includes(domain)) {
+          errors.push(`"${domain}" is not a domain a repository is tagged in.`);
+        }
+        if (!SG_DOMAIN_REASONS.includes(reason)) errors.push("Pick a reason.");
+      }
+      if (errors.length) return { saved: false, errors, items: getSupportGroupDomains2().items };
+      const rest = getSupportGroupDomains2().items.filter((o) => o.group !== group);
+      const items = domain === null ? rest : [...rest, {
+        group,
+        domain,
+        reason,
+        note,
+        by: check().email,
+        at: (/* @__PURE__ */ new Date()).toISOString()
+      }];
+      setSupportGroupDomains(items);
+      return { saved: true, errors: [], items: getSupportGroupDomains2().items };
     });
   }
   function setProjectView(p) {

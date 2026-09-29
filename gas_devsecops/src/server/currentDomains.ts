@@ -29,6 +29,8 @@ function build(wholeLedger: readonly Rec[]): RepoDomainAssignment {
   const tagged = Object.keys(map).length > 0;
   // The tag keys only when there is a map to read them against — `attachRepoTags`'s own order.
   const keys = tagged ? repoTags.configuredTagKeys() : null;
+  // Through the shared cleaner rather than `.supportGroupDomains.items`: it answers an empty list
+  // for a settings dict that predates the field, and cleans a hand-edited one.
   const overrides = getSupportGroupDomains(loadSettings() as unknown as Rec).items;
   const assignment = buildRepoDomainAssignment(
     wholeLedger,

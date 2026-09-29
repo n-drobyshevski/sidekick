@@ -59,6 +59,7 @@ function timedApi_(name, params) {
 function api_bootstrap(p) { return timedApi_("bootstrap", p); }
 function api_getSettings(p) { return timedApi_("getSettings", p); }
 function api_putSettings(p) { return timedApi_("putSettings", p); }
+function api_saveSupportGroupDomain(p) { return timedApi_("saveSupportGroupDomain", p); }
 function api_setProjectView(p) { return timedApi_("setProjectView", p); }
 function api_setDomainView(p) { return timedApi_("setDomainView", p); }
 function api_refreshDomains(p) { return timedApi_("refreshDomains", p); }

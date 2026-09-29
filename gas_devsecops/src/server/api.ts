@@ -49,6 +49,7 @@ import {
 import { normalizeSeverity } from "../domain/severity";
 import {
   withDomainView, withProjectView, withSettings,
+  SG_DOMAIN_REASONS, type SgDomainOverride,
 } from "../domain/settingsLogic";
 import {
   inProject, parseProjects, type projectCatalogue,
@@ -74,7 +75,7 @@ import { BUILD_ID } from "../../../gas_shared/server/buildInfo";
 import { getProp, hasWizCredentials, PROP_KEYS, setProp } from "./props";
 import { readHubUrl, writeHubUrl } from "./hubUrl";
 import { cached } from "./serverCache";
-import { loadSettings, saveSettings } from "./settingsStore";
+import { getSupportGroupDomains, loadSettings, saveSettings, setSupportGroupDomains } from "./settingsStore";
 import { TAB_HEADERS, TABS } from "./sheetsDb";
 import * as bootCore from "./bootCore";
 import { stageLaps } from "./stageLog";
@@ -288,6 +289,10 @@ export interface Bootstrap {
      * see `domainScope.domainCatalogue`.
      */
     domainList: ReturnType<typeof domainCatalogue>;
+    /** Every primary support group the register holds — the override editor's picker. */
+    supportGroups: string[];
+    /** Every domain a support group may be set to (server/currentDomains.assignableDomains). */
+    assignableDomains: string[];
   };
 }
 
@@ -654,7 +659,54 @@ export function getSettings(_p?: unknown): ApiResult<ReturnType<typeof loadSetti
  * exactly this merge-then-reclean shape; this endpoint is its first caller.
  */
 export function putSettings(p: { settings?: unknown }): ApiResult<ReturnType<typeof loadSettings>> {
-  return mutate(() => saveSettings(withSettings(loadSettings(), (p.settings ?? {}) as never)));
+  // `supportGroupDomains` IS NOT THIS ENDPOINT'S TO WRITE. It is admin-only
+  // (`saveSupportGroupDomain`), and this save has no admin check — a patch carrying it would be a
+  // way round the gate. Stripped, not refused: the Settings page sends the whole draft back.
+  const patch = { ...((p.settings ?? {}) as Record<string, unknown>) };
+  delete patch["supportGroupDomains"];
+  return mutate(() => saveSettings(withSettings(loadSettings(), patch as never)));
+}
+
+/**
+ * Set — or with `domain: null`, remove — an admin's override of ONE support group's domain
+ * (settings `supportGroupDomains`; the rule is `domain/currentDomain.ts`'s third). Owner/admin
+ * only: the domain a team is counted under moves every figure the team is judged by.
+ *
+ * The domain must be one a repository resolves to today (or one an override already names) —
+ * `currentDomains.assignableDomains()`. The reason is recorded with the override because the
+ * two cases read differently afterwards: "wrong_tag" corrects the tags, "cross_team" says the
+ * group sits in CROSS on purpose because the CROSS team runs its repositories.
+ */
+export function saveSupportGroupDomain(p: {
+  group?: unknown; domain?: unknown; reason?: unknown; note?: unknown;
+}): ApiResult<{ saved: boolean; errors: string[]; items: SgDomainOverride[] }> {
+  const group = String(p.group ?? "").trim();
+  const domain = p.domain === null || p.domain === undefined ? null : String(p.domain).trim();
+  const reason = String(p.reason ?? "");
+  const note = String(p.note ?? "").trim();
+  return mutate(() => {
+    if (!access.canEditUsers()) {
+      throw new Error("Only the owner or an admin can change a support group's domain.");
+    }
+    const errors: string[] = [];
+    if (!group) errors.push("Pick a support group.");
+    if (domain !== null) {
+      const known = currentDomains.assignableDomains();
+      if (!known.length) {
+        errors.push("No domain is known yet — refresh Repository tags (Settings → System) first.");
+      } else if (!domain || !known.includes(domain)) {
+        errors.push(`"${domain}" is not a domain a repository is tagged in.`);
+      }
+      if (!(SG_DOMAIN_REASONS as readonly string[]).includes(reason)) errors.push("Pick a reason.");
+    }
+    if (errors.length) return { saved: false, errors, items: getSupportGroupDomains().items };
+    const rest = getSupportGroupDomains().items.filter((o) => o.group !== group);
+    const items = domain === null ? rest : [...rest, {
+      group, domain, reason, note, by: access.check().email, at: new Date().toISOString(),
+    }];
+    setSupportGroupDomains(items);
+    return { saved: true, errors: [], items: getSupportGroupDomains().items };
+  });
 }
 
 /**

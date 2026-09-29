@@ -38,7 +38,9 @@ export type BootCore = Omit<Bootstrap, LiveKey>;
 // Shared by `bootCoreModel` and `peekBootCore`, so doGet's inline path can only ever peek at
 // the entry the RPC reads and the warm writes. Params are empty because every input is covered
 // by the version stamp (see the header); a param added to the compute must join them.
-const BOOT_CORE = "dsBootCore1";
+// "dsBootCore1" → "dsBootCore2": `settings` gained `supportGroupDomains` and `filterOptions`
+// gained `supportGroups` / `assignableDomains` (the support-group domain overrides).
+const BOOT_CORE = "dsBootCore2";
 const BOOT_CORE_PARAMS = {};
 
 /** The core, cached — L1 CacheService, then the durable Drive copy, then computed. */
@@ -163,6 +165,11 @@ export function buildBootCore(): BootCore {
     filterOptions: {
       projectList: projectCatalogue(allRows),
       domainList: domainCatalogue(allRows),
+      // For the support-group domain overrides (Settings → System, the MTTR row sheet): every
+      // primary support group the register holds, and every domain one may be set to.
+      supportGroups: [...new Set((allRows as unknown as Rec[])
+        .map((r) => String(r["_supportGroup"] ?? "")).filter(Boolean))].sort(),
+      assignableDomains: currentDomains.assignableDomains(),
     },
   };
   laps.lap("catalogues");

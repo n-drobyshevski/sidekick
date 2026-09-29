@@ -120,8 +120,10 @@ describe("draftFromSettings never drops one of the page-editable Settings fields
   // The two VIEW SCOPES this page does not own. Both are app-header chrome written through
   // their own endpoints (`api_setProjectView` / `api_setDomainView`), one field at a time —
   // see the module header just above SETTINGS_KEYS in pages/settings.js. So the exact-set
-  // check below is "every Settings key EXCEPT the two this page does not own".
-  const VIEW_SCOPES = ["projectView", "domainView"];
+  // check below is "every Settings key EXCEPT the ones this page does not own" — the two view
+  // scopes, and `supportGroupDomains`, which only the admin-gated `api_saveSupportGroupDomain`
+  // writes (and `putSettings` strips from any patch).
+  const VIEW_SCOPES = ["projectView", "domainView", "supportGroupDomains"];
 
   it("SETTINGS_KEYS names exactly the PAGE-EDITABLE fields Settings declares", () => {
     const pageEditable = Object.keys(DEFAULT_SETTINGS)

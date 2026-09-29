@@ -871,3 +871,20 @@ describe("excludeEndOfLifeFromMttr", () => {
     expect(next.excludeEndOfLifeFromColdZone).toBe(false);
   });
 });
+
+describe("supportGroupDomains — the admin overrides, cleaned on every read", () => {
+  it("defaults to an empty, version-0 entry", () => {
+    expect(cleanSettings({}).supportGroupDomains).toEqual({ version: 0, items: [] });
+  });
+
+  it("keeps clean items only, one per group", () => {
+    const s = cleanSettings({ supportGroupDomains: { version: 3, items: [
+      { group: " CS-A ", domain: "CROSS", reason: "cross_team" },
+      { group: "CS-B", domain: "SAP", reason: "because" },
+      { group: "CS-A", domain: "SAP", reason: "wrong_tag" },
+    ] } });
+    expect(s.supportGroupDomains.version).toBe(3);
+    expect(s.supportGroupDomains.items.map((o) => [o.group, o.domain, o.reason]))
+      .toEqual([["CS-A", "SAP", "wrong_tag"]]);
+  });
+});

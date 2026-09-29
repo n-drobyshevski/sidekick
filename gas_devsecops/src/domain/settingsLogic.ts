@@ -14,6 +14,10 @@ import {
 } from "./config";
 import { RETENTION_MIN_DAYS } from "./maintenance";
 import type { Rec } from "./util";
+import {
+  getSupportGroupDomains, type SgDomainOverride,
+} from "../../../gas_shared/domain/sgDomainOverrides";
+export { SG_DOMAIN_REASONS, type SgDomainOverride } from "../../../gas_shared/domain/sgDomainOverrides";
 
 /**
  * Default hour-of-day (0-23, script-local — Europe/Paris per the manifest) the daily sync
@@ -237,6 +241,16 @@ export interface Settings {
    * clearable rather than becoming a trap some validation step refuses to save.
    */
   domainView: string;
+  /**
+   * An admin's hand-set domain for a support group, with the reason (shared with the OS
+   * register: gas_shared/domain/sgDomainOverrides.ts). An override REPLACES the vote that pins
+   * every support group to one domain (server/currentDomains.ts, rule 3).
+   *
+   * NOT PAGE-EDITABLE, like `projectView`: it is written only by `api.saveSupportGroupDomain`,
+   * which is owner/admin-gated, and `api.putSettings` strips it from any patch — the settings
+   * save has no admin check, and leaving the field in its reach would be a way round the gate.
+   */
+  supportGroupDomains: { version: number; items: SgDomainOverride[] };
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -259,6 +273,7 @@ export const DEFAULT_SETTINGS: Settings = {
   retentionDays: DEFAULT_RETENTION_DAYS,
   projectView: "",
   domainView: "",
+  supportGroupDomains: { version: 0, items: [] },
 };
 
 function asList(v: unknown, allowed: readonly string[]): string[] | null {
@@ -487,6 +502,7 @@ export function cleanSettings(raw: Rec | null | undefined): Settings {
     // chosen string whose only invalid form is "not a string". Two copies of that rule is how
     // one of them later grows a difference nobody intended.
     domainView: cleanViewScope(r.domainView),
+    supportGroupDomains: getSupportGroupDomains(r),
   };
 }
 
