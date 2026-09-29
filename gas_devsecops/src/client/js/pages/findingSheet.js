@@ -463,12 +463,15 @@ function kvRow(r) {
 export function openFindingSheet(scope, r, opts) {
   const model = findingSheetModel(scope, r);
   const rows = opts && Array.isArray(opts.rows) ? opts.rows : [];
+  // `backTo` ({ label, onBack }) — the sheet this finding was opened FROM (the MTTR split's row
+  // sheet), carried through prev/next so every finding in the run keeps its way back.
+  const backTo = (opts && opts.backTo) || null;
   const index = rows.indexOf(r);
   const records = index === -1 ? null : {
     ids: rows.map((x) => (x && x.finding_key !== undefined ? x.finding_key : null)),
     index,
     label: "finding",
-    open: (_id, i) => openFindingSheet(scope, rows[i], { rows }),
+    open: (_id, i) => openFindingSheet(scope, rows[i], { rows, backTo }),
   };
 
   const ctx = openSheet((body) => {
@@ -500,6 +503,7 @@ export function openFindingSheet(scope, r, opts) {
     sev: model.sev,
     closeOnRouteChange: true,
     records,
+    backTo,
   });
 
   ctx.setHeading({

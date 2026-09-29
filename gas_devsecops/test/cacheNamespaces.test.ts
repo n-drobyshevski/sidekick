@@ -35,7 +35,10 @@ describe("cache namespaces", () => {
   it("finds the read-models this spec expects", () => {
     const names = namespaces();
     expect(names.length).toBeGreaterThan(8);
-    for (const n of ["dsBootCore1", "dsMttr4", "dsExecutive2", "dsStorage1", "settingsImpact1"]) {
+    for (const n of [
+      "dsBootCore2", "dsMttr4", "dsMttrSplit1", "dsMttrGroup1", "dsExecutive2", "dsStorage1",
+      "settingsImpact1",
+    ]) {
       expect(names).toContain(n);
     }
   });

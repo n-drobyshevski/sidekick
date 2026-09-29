@@ -59,6 +59,7 @@ function timedApi_(name, params) {
 function api_bootstrap(p) { return timedApi_("bootstrap", p); }
 function api_getSettings(p) { return timedApi_("getSettings", p); }
 function api_putSettings(p) { return timedApi_("putSettings", p); }
+function api_saveSupportGroupDomain(p) { return timedApi_("saveSupportGroupDomain", p); }
 function api_setProjectView(p) { return timedApi_("setProjectView", p); }
 function api_setDomainView(p) { return timedApi_("setDomainView", p); }
 function api_refreshDomains(p) { return timedApi_("refreshDomains", p); }
@@ -66,6 +67,7 @@ function api_domainMapHealth(p) { return timedApi_("domainMapHealth", p); }
 function api_getChartsBundle(p) { return timedApi_("getChartsBundle", p); }
 function api_getExecutivePage(p) { return timedApi_("getExecutivePage", p); }
 function api_getMttrPage(p) { return timedApi_("getMttrPage", p); }
+function api_getMttrGroup(p) { return timedApi_("getMttrGroup", p); }
 function api_getProgramPage(p) { return timedApi_("getProgramPage", p); }
 function api_getRegisterPage(p) { return timedApi_("getRegisterPage", p); }
 function api_getSecretsPage(p) { return timedApi_("getSecretsPage", p); }

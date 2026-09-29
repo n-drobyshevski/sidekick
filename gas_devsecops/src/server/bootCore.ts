@@ -18,7 +18,7 @@
 
 import { SCOPE_LABELS, SCOPES, SEVERITY_ORDER, SLA_TARGETS } from "../domain/config";
 import { effectiveSlaTargets } from "../domain/settingsLogic";
-import { inProject, parseProjects, projectCatalogue, unattributedCount } from "../domain/projectScope";
+import { attachProjectGrain, inProject, parseProjects, projectCatalogue, unattributedCount } from "../domain/projectScope";
 import { domainCatalogue, inDomain, noDomainCount } from "../domain/domainScope";
 import type { Rec } from "../domain/util";
 import type { Bootstrap } from "./api";
@@ -29,6 +29,7 @@ import * as repoTags from "./repoTags";
 import { loadSettings } from "./settingsStore";
 import { readAll, TABS } from "./sheetsDb";
 import { stageLaps } from "./stageLog";
+import * as currentDomains from "./currentDomains";
 
 /** The keys `api.withLiveBootFields` reads live on every call and this core never holds. */
 type LiveKey = "buildId" | "hasCredentials" | "wizVerifiedAt" | "activeJob" | "canEditAccess" | "hubUrl";
@@ -37,7 +38,9 @@ export type BootCore = Omit<Bootstrap, LiveKey>;
 // Shared by `bootCoreModel` and `peekBootCore`, so doGet's inline path can only ever peek at
 // the entry the RPC reads and the warm writes. Params are empty because every input is covered
 // by the version stamp (see the header); a param added to the compute must join them.
-const BOOT_CORE = "dsBootCore1";
+// "dsBootCore1" → "dsBootCore2": `settings` gained `supportGroupDomains` and `filterOptions`
+// gained `supportGroups` / `assignableDomains` (the support-group domain overrides).
+const BOOT_CORE = "dsBootCore2";
 const BOOT_CORE_PARAMS = {};
 
 /** The core, cached — L1 CacheService, then the durable Drive copy, then computed. */
@@ -121,7 +124,12 @@ export function buildBootCore(): BootCore {
   // be taken from rows that have already been through the join. Doing it once here is also
   // what keeps the register-wide side of the header self-consistent: `filterOptions.domainList`
   // and `scope.noDomain` read the same array.
-  repoTags.attachRepoTags(allRows as unknown as Rec[]);
+  // Grain first (the domain assignment reads `_supportGroup`), the tag join for `_lifecycle`,
+  // then `_domain` from the current-domain assignment — the same three steps, in the same
+  // order, as `readModels.baseSnapshot`, so the header counts what every page counts.
+  attachProjectGrain(allRows);
+  repoTags.attachRepoTags(allRows as unknown as Rec[], { domain: false });
+  currentDomains.attachCurrentDomains(allRows as unknown as Rec[]);
   laps.lap("repoTags");
   const projectView = settings.projectView || null;
   const domainView = settings.domainView || null;
@@ -157,6 +165,11 @@ export function buildBootCore(): BootCore {
     filterOptions: {
       projectList: projectCatalogue(allRows),
       domainList: domainCatalogue(allRows),
+      // For the support-group domain overrides (Settings → System, the MTTR row sheet): every
+      // primary support group the register holds, and every domain one may be set to.
+      supportGroups: [...new Set((allRows as unknown as Rec[])
+        .map((r) => String(r["_supportGroup"] ?? "")).filter(Boolean))].sort(),
+      assignableDomains: currentDomains.assignableDomains(),
     },
   };
   laps.lap("catalogues");

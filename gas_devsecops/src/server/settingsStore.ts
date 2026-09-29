@@ -2,6 +2,7 @@
 // domain/settingsLogic.ts; this layer only loads and saves the dict.
 
 import { cleanSettings, type Settings } from "../domain/settingsLogic";
+import { withSupportGroupDomains } from "../../../gas_shared/domain/sgDomainOverrides";
 import type { Rec } from "../domain/util";
 import { bumpDataVersion, dataVersion } from "./serverCache";
 import { readAll, overwrite, TABS } from "./sheetsDb";
@@ -104,4 +105,15 @@ export function saveSettings(next: Settings): Settings {
   // JSON round trip is what the tab itself does to every value on its way back.
   writeSettingsCache(JSON.parse(JSON.stringify(cleaned)) as Rec);
   return cleaned;
+}
+
+/** The admin overrides of a support group's domain (settings `supportGroupDomains`). */
+export function getSupportGroupDomains(): Settings["supportGroupDomains"] {
+  return loadSettings().supportGroupDomains;
+}
+
+/** Replace them — bumps the entry's version, and `saveSettings` bumps the data version, so the
+ *  domain assignment and every cached read model rebuild. */
+export function setSupportGroupDomains(items: unknown): void {
+  saveSettings(withSupportGroupDomains(loadSettings(), items));
 }

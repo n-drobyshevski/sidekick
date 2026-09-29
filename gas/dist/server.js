@@ -6493,7 +6493,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "4aff78fe75c2" : "dev";
+  var BUILD_ID = true ? "0f0376d799f4" : "dev";
   var CACHE_EPOCH = "3";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
@@ -7848,6 +7848,49 @@ var Server = (() => {
     return plan.result;
   }
 
+  // ../gas_shared/domain/sgDomainOverrides.ts
+  var SG_DOMAIN_REASONS = ["wrong_tag", "cross_team"];
+  function cleanSgDomainItems(items) {
+    var _a, _b, _c, _d, _e, _f;
+    if (!Array.isArray(items)) return [];
+    const byGroup = /* @__PURE__ */ new Map();
+    for (const raw of items) {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+      const r = raw;
+      const group = String((_a = r["group"]) != null ? _a : "").trim();
+      const domain = String((_b = r["domain"]) != null ? _b : "").trim();
+      const reason = String((_c = r["reason"]) != null ? _c : "");
+      if (!group || !domain || !SG_DOMAIN_REASONS.includes(reason)) continue;
+      byGroup.set(group, {
+        group,
+        domain,
+        reason,
+        note: String((_d = r["note"]) != null ? _d : "").trim().slice(0, 500),
+        by: String((_e = r["by"]) != null ? _e : "").trim(),
+        at: String((_f = r["at"]) != null ? _f : "").trim()
+      });
+    }
+    return [...byGroup.values()].sort((a, b) => a.group < b.group ? -1 : a.group > b.group ? 1 : 0);
+  }
+  function getSupportGroupDomains(settings) {
+    var _a;
+    const raw = settings["supportGroupDomains"];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { version: 0, items: [] };
+    const r = raw;
+    const v = Number((_a = r["version"]) != null ? _a : 0);
+    return {
+      version: Number.isFinite(v) ? Math.max(Math.trunc(v), 0) : 0,
+      items: cleanSgDomainItems(r["items"])
+    };
+  }
+  function withSupportGroupDomains(settings, items) {
+    const current2 = getSupportGroupDomains(settings);
+    return {
+      ...settings,
+      supportGroupDomains: { version: current2.version + 1, items: cleanSgDomainItems(items) }
+    };
+  }
+
   // src/domain/settingsLogic.ts
   function canonicalSeverities(values, defaults) {
     if (!Array.isArray(values)) return [...defaults];
@@ -8026,47 +8069,6 @@ var Server = (() => {
     return {
       ...settings,
       domains: { version: current2.version + 1, items: cleanDomainItems(items) }
-    };
-  }
-  var SG_DOMAIN_REASONS = ["wrong_tag", "cross_team"];
-  function cleanSgDomainItems(items) {
-    var _a, _b, _c, _d, _e, _f;
-    if (!Array.isArray(items)) return [];
-    const byGroup = /* @__PURE__ */ new Map();
-    for (const raw of items) {
-      if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
-      const r = raw;
-      const group = String((_a = r["group"]) != null ? _a : "").trim();
-      const domain = String((_b = r["domain"]) != null ? _b : "").trim();
-      const reason = String((_c = r["reason"]) != null ? _c : "");
-      if (!group || !domain || !SG_DOMAIN_REASONS.includes(reason)) continue;
-      byGroup.set(group, {
-        group,
-        domain,
-        reason,
-        note: String((_d = r["note"]) != null ? _d : "").trim().slice(0, 500),
-        by: String((_e = r["by"]) != null ? _e : "").trim(),
-        at: String((_f = r["at"]) != null ? _f : "").trim()
-      });
-    }
-    return [...byGroup.values()].sort((a, b) => a.group < b.group ? -1 : a.group > b.group ? 1 : 0);
-  }
-  function getSupportGroupDomains(settings) {
-    var _a;
-    const raw = settings["supportGroupDomains"];
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { version: 0, items: [] };
-    const r = raw;
-    const v = Number((_a = r["version"]) != null ? _a : 0);
-    return {
-      version: Number.isFinite(v) ? Math.max(Math.trunc(v), 0) : 0,
-      items: cleanSgDomainItems(r["items"])
-    };
-  }
-  function withSupportGroupDomains(settings, items) {
-    const current2 = getSupportGroupDomains(settings);
-    return {
-      ...settings,
-      supportGroupDomains: { version: current2.version + 1, items: cleanSgDomainItems(items) }
     };
   }
   function cleanStringMap(map) {
@@ -8737,6 +8739,84 @@ var Server = (() => {
     return stats;
   }
 
+  // ../gas_shared/domain/groupDomainVote.ts
+  function assignGroupDomains(rows, spec, overrides = /* @__PURE__ */ new Map()) {
+    var _a, _b, _c, _d;
+    const newest = /* @__PURE__ */ new Map();
+    const openAssets = /* @__PURE__ */ new Set();
+    const groupAssets = /* @__PURE__ */ new Map();
+    const groupKeyless = /* @__PURE__ */ new Map();
+    for (const r of rows) {
+      const key = spec.keyOf(r);
+      const sg = spec.groupOf(r);
+      if (key) {
+        const prev = newest.get(key);
+        if (!prev || spec.lastSeenMs(r) > spec.lastSeenMs(prev)) newest.set(key, r);
+        if (spec.isOpen(r)) openAssets.add(key);
+      }
+      if (!sg) continue;
+      if (key) {
+        let m = groupAssets.get(sg);
+        if (!m) groupAssets.set(sg, m = /* @__PURE__ */ new Map());
+        m.set(key, ((_a = m.get(key)) != null ? _a : 0) + 1);
+      } else {
+        let list = groupKeyless.get(sg);
+        if (!list) groupKeyless.set(sg, list = []);
+        list.push(r);
+      }
+    }
+    const heads = [...newest.values()].map((r) => ({ ...r }));
+    spec.annotateHeads(heads);
+    const assetDomain = /* @__PURE__ */ new Map();
+    [...newest.keys()].forEach((key, i) => assetDomain.set(key, spec.resolveHead(heads[i])));
+    const nameOfAsset = (a) => spec.nameOf(assetDomain.get(a));
+    const count = (names) => {
+      var _a2;
+      const votes = /* @__PURE__ */ new Map();
+      for (const d of names) {
+        if (!spec.pinUnnamed && !spec.isNamed(d)) continue;
+        votes.set(d, ((_a2 = votes.get(d)) != null ? _a2 : 0) + 1);
+      }
+      return votes;
+    };
+    const pick = (votes, findings) => {
+      var _a2;
+      return (_a2 = [...votes.entries()].sort((x, y) => {
+        var _a3, _b2;
+        return Number(!spec.isNamed(x[0])) - Number(!spec.isNamed(y[0])) || y[1] - x[1] || ((_a3 = findings.get(y[0])) != null ? _a3 : 0) - ((_b2 = findings.get(x[0])) != null ? _b2 : 0) || (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0);
+      })[0]) == null ? void 0 : _a2[0];
+    };
+    const groupDomain = /* @__PURE__ */ new Map();
+    for (const sg of /* @__PURE__ */ new Set([...groupAssets.keys(), ...groupKeyless.keys()])) {
+      const assets = (_b = groupAssets.get(sg)) != null ? _b : /* @__PURE__ */ new Map();
+      const findings = /* @__PURE__ */ new Map();
+      let votes;
+      if (assets.size) {
+        const all = [...assets.keys()];
+        const current2 = all.filter((a) => openAssets.has(a));
+        votes = count((current2.length ? current2 : all).map(nameOfAsset));
+        if (spec.widenWhenNoNamedCurrent && current2.length && current2.length < all.length && ![...votes.keys()].some(spec.isNamed)) {
+          votes = count(all.map(nameOfAsset));
+        }
+        for (const [a, n] of assets) {
+          const d = nameOfAsset(a);
+          findings.set(d, ((_c = findings.get(d)) != null ? _c : 0) + n);
+        }
+      } else {
+        votes = count(((_d = groupKeyless.get(sg)) != null ? _d : []).map((r) => spec.nameOf(spec.resolveKeyless(r))));
+      }
+      const winner = pick(votes, findings);
+      if (winner !== void 0) groupDomain.set(sg, winner);
+    }
+    const groupSource = /* @__PURE__ */ new Map();
+    for (const sg of groupDomain.keys()) groupSource.set(sg, "auto");
+    for (const [sg, domain] of overrides) {
+      groupDomain.set(sg, domain);
+      groupSource.set(sg, "override");
+    }
+    return { groupDomain, groupSource, assetDomain };
+  }
+
   // src/domain/currentDomain.ts
   function assetKeyOf(r) {
     var _a, _b, _c;
@@ -8752,73 +8832,22 @@ var Server = (() => {
   }
   var isTail = (name) => name === UNASSIGNED || name === NOT_ATTRIBUTABLE;
   function buildDomainAssignment(rows, groupOf, annotate, resolve, overrides = /* @__PURE__ */ new Map()) {
-    var _a, _b, _c, _d, _e, _f, _g;
-    const newest = /* @__PURE__ */ new Map();
-    const openAssets = /* @__PURE__ */ new Set();
-    const groupAssets = /* @__PURE__ */ new Map();
-    const groupKeyless = /* @__PURE__ */ new Map();
-    for (const r of rows) {
-      const key = assetKeyOf(r);
-      const sg = groupOf(r);
-      if (key) {
-        const prev = newest.get(key);
-        if (!prev || lastSeenMs(r) > lastSeenMs(prev)) newest.set(key, r);
-        if (!String((_a = r["resolved_at"]) != null ? _a : "").trim()) openAssets.add(key);
-      }
-      if (!sg) continue;
-      if (key) {
-        let m = groupAssets.get(sg);
-        if (!m) groupAssets.set(sg, m = /* @__PURE__ */ new Map());
-        m.set(key, ((_b = m.get(key)) != null ? _b : 0) + 1);
-      } else {
-        let list = groupKeyless.get(sg);
-        if (!list) groupKeyless.set(sg, list = []);
-        list.push(r);
-      }
-    }
-    const heads = [...newest.values()].map((r) => ({ ...r }));
-    annotate(heads);
-    const assetDomain = /* @__PURE__ */ new Map();
-    [...newest.keys()].forEach((key, i) => assetDomain.set(key, resolve(heads[i])));
-    const groupDomain = /* @__PURE__ */ new Map();
-    const pick = (votes, findings) => {
-      var _a2;
-      return (_a2 = [...votes.entries()].sort((x, y) => {
-        var _a3, _b2;
-        return Number(isTail(x[0])) - Number(isTail(y[0])) || y[1] - x[1] || ((_a3 = findings.get(y[0])) != null ? _a3 : 0) - ((_b2 = findings.get(x[0])) != null ? _b2 : 0) || (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0);
-      })[0]) == null ? void 0 : _a2[0];
-    };
-    for (const sg of /* @__PURE__ */ new Set([...groupAssets.keys(), ...groupKeyless.keys()])) {
-      const assets = (_c = groupAssets.get(sg)) != null ? _c : /* @__PURE__ */ new Map();
-      const votes = /* @__PURE__ */ new Map();
-      const findings = /* @__PURE__ */ new Map();
-      if (assets.size) {
-        const all = [...assets.keys()];
-        const current2 = all.filter((a) => openAssets.has(a));
-        for (const a of current2.length ? current2 : all) {
-          const d = assetDomain.get(a).name;
-          votes.set(d, ((_d = votes.get(d)) != null ? _d : 0) + 1);
-        }
-        for (const [a, n] of assets) {
-          const d = assetDomain.get(a).name;
-          findings.set(d, ((_e = findings.get(d)) != null ? _e : 0) + n);
-        }
-      } else {
-        for (const r of (_f = groupKeyless.get(sg)) != null ? _f : []) {
-          const d = resolve(r).name;
-          votes.set(d, ((_g = votes.get(d)) != null ? _g : 0) + 1);
-        }
-      }
-      const winner = pick(votes, findings);
-      if (winner !== void 0) groupDomain.set(sg, winner);
-    }
-    const groupSource = /* @__PURE__ */ new Map();
-    for (const sg of groupDomain.keys()) groupSource.set(sg, "auto");
-    for (const [sg, domain] of overrides) {
-      groupDomain.set(sg, domain);
-      groupSource.set(sg, "override");
-    }
-    return { groupDomain, groupSource, assetDomain };
+    return assignGroupDomains(rows, {
+      keyOf: assetKeyOf,
+      groupOf,
+      lastSeenMs,
+      isOpen: (r) => {
+        var _a;
+        return !String((_a = r["resolved_at"]) != null ? _a : "").trim();
+      },
+      annotateHeads: annotate,
+      resolveHead: resolve,
+      resolveKeyless: resolve,
+      nameOf: (d) => d.name,
+      isNamed: (name) => !isTail(name),
+      pinUnnamed: true,
+      widenWhenNoNamedCurrent: false
+    }, overrides);
   }
   function assignedDomain(r, a, resolveRow) {
     var _a;

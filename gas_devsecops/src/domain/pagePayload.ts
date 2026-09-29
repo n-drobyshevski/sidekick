@@ -667,3 +667,44 @@ export function registerSortValue(column: string): (row: Rec) => unknown {
   }
   return (r) => orNull(r[column]);
 }
+
+// ------------------------------------------------ the MTTR remediation split and its row sheet
+
+/**
+ * The remediation split as the MTTR page draws it (`readModels.mttrSplitModel`): its dimension,
+ * the scope it was drawn inside, the rows, and what the repository cap dropped. An allowlist,
+ * so a field added to the model does not reach the wire by accident.
+ */
+export function mttrSplitSlice(split: unknown): Rec | null {
+  if (!split || typeof split !== "object") return null;
+  const s = split as Rec;
+  return {
+    dimension: s["dimension"] ?? null,
+    within: s["within"] ?? null,
+    rows: Array.isArray(s["rows"]) ? s["rows"] : [],
+    cut: s["cut"] ?? null,
+  };
+}
+
+/**
+ * One split row's MTTR as the row sheet reads it (`readModels.mttrGroupModel`): exactly what
+ * the client's `mttrSeverityRows` reads — `perSev`, and off `remediation` the per-severity
+ * curves' statistics and P90s — plus the ONE domain the row counts under. The curves' point
+ * arrays stay home: the sheet draws a table, not the fan.
+ */
+export function mttrGroupSlice(m: unknown): Rec {
+  const g = (m ?? {}) as Rec;
+  const rem = (g["remediation"] ?? {}) as Rec;
+  const kmPerSev: Rec = {};
+  for (const [sev, km] of Object.entries((rem["kmPerSev"] ?? {}) as Rec)) {
+    const { curve: _curve, ...rest } = (km ?? {}) as Rec;
+    kmPerSev[sev] = rest;
+  }
+  return {
+    rowCount: g["rowCount"] ?? 0,
+    perSev: g["perSev"] ?? {},
+    remediation: { kmPerSev, kmP90PerSev: rem["kmP90PerSev"] ?? {} },
+    endOfLife: g["endOfLife"] ?? null,
+    countedDomain: g["countedDomain"] ?? null,
+  };
+}

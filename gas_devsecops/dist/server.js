@@ -47,6 +47,7 @@ var Server = (() => {
     getExecutivePage: () => getExecutivePage,
     getExportCsv: () => getExportCsv,
     getJobStatus: () => getJobStatus,
+    getMttrGroup: () => getMttrGroup,
     getMttrPage: () => getMttrPage,
     getProgramPage: () => getProgramPage,
     getRecentErrors: () => getRecentErrors,
@@ -67,6 +68,7 @@ var Server = (() => {
     saveAdmins: () => saveAdmins,
     saveHubUrl: () => saveHubUrl,
     saveScoped: () => saveScoped,
+    saveSupportGroupDomain: () => saveSupportGroupDomain,
     setDomainView: () => setDomainView,
     setProjectView: () => setProjectView,
     testWizConnection: () => testWizConnection
@@ -3185,6 +3187,49 @@ var Server = (() => {
     };
   }
 
+  // ../gas_shared/domain/sgDomainOverrides.ts
+  var SG_DOMAIN_REASONS = ["wrong_tag", "cross_team"];
+  function cleanSgDomainItems(items) {
+    var _a, _b, _c, _d, _e, _f;
+    if (!Array.isArray(items)) return [];
+    const byGroup = /* @__PURE__ */ new Map();
+    for (const raw of items) {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+      const r = raw;
+      const group = String((_a = r["group"]) != null ? _a : "").trim();
+      const domain = String((_b = r["domain"]) != null ? _b : "").trim();
+      const reason = String((_c = r["reason"]) != null ? _c : "");
+      if (!group || !domain || !SG_DOMAIN_REASONS.includes(reason)) continue;
+      byGroup.set(group, {
+        group,
+        domain,
+        reason,
+        note: String((_d = r["note"]) != null ? _d : "").trim().slice(0, 500),
+        by: String((_e = r["by"]) != null ? _e : "").trim(),
+        at: String((_f = r["at"]) != null ? _f : "").trim()
+      });
+    }
+    return [...byGroup.values()].sort((a, b) => a.group < b.group ? -1 : a.group > b.group ? 1 : 0);
+  }
+  function getSupportGroupDomains(settings) {
+    var _a;
+    const raw = settings["supportGroupDomains"];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { version: 0, items: [] };
+    const r = raw;
+    const v = Number((_a = r["version"]) != null ? _a : 0);
+    return {
+      version: Number.isFinite(v) ? Math.max(Math.trunc(v), 0) : 0,
+      items: cleanSgDomainItems(r["items"])
+    };
+  }
+  function withSupportGroupDomains(settings, items) {
+    const current = getSupportGroupDomains(settings);
+    return {
+      ...settings,
+      supportGroupDomains: { version: current.version + 1, items: cleanSgDomainItems(items) }
+    };
+  }
+
   // src/domain/settingsLogic.ts
   var DEFAULT_SYNC_HOUR = 5;
   var DEFAULT_SETTINGS = {
@@ -3206,7 +3251,8 @@ var Server = (() => {
     autoCompact: false,
     retentionDays: DEFAULT_RETENTION_DAYS,
     projectView: "",
-    domainView: ""
+    domainView: "",
+    supportGroupDomains: { version: 0, items: [] }
   };
   function asList(v, allowed) {
     if (!Array.isArray(v)) return null;
@@ -3311,7 +3357,8 @@ var Server = (() => {
       // The same coercion, and deliberately the same function: both hold an opaque operator-
       // chosen string whose only invalid form is "not a string". Two copies of that rule is how
       // one of them later grows a difference nobody intended.
-      domainView: cleanViewScope(r.domainView)
+      domainView: cleanViewScope(r.domainView),
+      supportGroupDomains: getSupportGroupDomains(r)
     };
   }
   function withSettings(current, patch) {
@@ -3667,7 +3714,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var WIZ_VERSION_PROP = "WIZ_DATA_VERSION";
-  var CACHE_EPOCH = "1";
+  var CACHE_EPOCH = "2";
   var KEY_PREFIX = `wsk.e${CACHE_EPOCH}`;
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
@@ -4798,13 +4845,14 @@ var Server = (() => {
     }
     return { domain, lifecycle };
   }
-  function attachRepoTags(records) {
+  function attachRepoTags(records, opts = {}) {
     const map = getRepoTagMap();
     if (!Object.keys(map).length) return;
     const keys = configuredTagKeys();
+    const withDomain = opts.domain !== false;
     for (const r of records) {
       const { domain, lifecycle } = resolveRepoTags(r, map, keys);
-      if (domain) r[DOMAIN_FIELD] = domain;
+      if (withDomain && domain) r[DOMAIN_FIELD] = domain;
       if (lifecycle) r[LIFECYCLE_FIELD] = lifecycle;
     }
   }
@@ -5398,9 +5446,37 @@ var Server = (() => {
     }
     return (r) => orNull(r[column]);
   }
+  function mttrSplitSlice(split) {
+    var _a, _b, _c;
+    if (!split || typeof split !== "object") return null;
+    const s2 = split;
+    return {
+      dimension: (_a = s2["dimension"]) != null ? _a : null,
+      within: (_b = s2["within"]) != null ? _b : null,
+      rows: Array.isArray(s2["rows"]) ? s2["rows"] : [],
+      cut: (_c = s2["cut"]) != null ? _c : null
+    };
+  }
+  function mttrGroupSlice(m) {
+    var _a, _b, _c, _d, _e, _f, _g;
+    const g = m != null ? m : {};
+    const rem = (_a = g["remediation"]) != null ? _a : {};
+    const kmPerSev = {};
+    for (const [sev2, km] of Object.entries((_b = rem["kmPerSev"]) != null ? _b : {})) {
+      const { curve: _curve, ...rest } = km != null ? km : {};
+      kmPerSev[sev2] = rest;
+    }
+    return {
+      rowCount: (_c = g["rowCount"]) != null ? _c : 0,
+      perSev: (_d = g["perSev"]) != null ? _d : {},
+      remediation: { kmPerSev, kmP90PerSev: (_e = rem["kmP90PerSev"]) != null ? _e : {} },
+      endOfLife: (_f = g["endOfLife"]) != null ? _f : null,
+      countedDomain: (_g = g["countedDomain"]) != null ? _g : null
+    };
+  }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "a4e8bebb4b8f" : "dev";
+  var BUILD_ID = true ? "2367b08f1487" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
@@ -5489,6 +5565,12 @@ var Server = (() => {
     bumpDataVersion();
     writeSettingsCache(JSON.parse(JSON.stringify(cleaned)));
     return cleaned;
+  }
+  function getSupportGroupDomains2() {
+    return loadSettings().supportGroupDomains;
+  }
+  function setSupportGroupDomains(items) {
+    saveSettings(withSupportGroupDomains(loadSettings(), items));
   }
 
   // ../gas_shared/domain/snapshotCodec.ts
@@ -6594,8 +6676,185 @@ var Server = (() => {
     };
   }
 
+  // ../gas_shared/domain/groupDomainVote.ts
+  function assignGroupDomains(rows, spec, overrides = /* @__PURE__ */ new Map()) {
+    var _a, _b, _c, _d;
+    const newest = /* @__PURE__ */ new Map();
+    const openAssets = /* @__PURE__ */ new Set();
+    const groupAssets = /* @__PURE__ */ new Map();
+    const groupKeyless = /* @__PURE__ */ new Map();
+    for (const r of rows) {
+      const key = spec.keyOf(r);
+      const sg = spec.groupOf(r);
+      if (key) {
+        const prev = newest.get(key);
+        if (!prev || spec.lastSeenMs(r) > spec.lastSeenMs(prev)) newest.set(key, r);
+        if (spec.isOpen(r)) openAssets.add(key);
+      }
+      if (!sg) continue;
+      if (key) {
+        let m = groupAssets.get(sg);
+        if (!m) groupAssets.set(sg, m = /* @__PURE__ */ new Map());
+        m.set(key, ((_a = m.get(key)) != null ? _a : 0) + 1);
+      } else {
+        let list = groupKeyless.get(sg);
+        if (!list) groupKeyless.set(sg, list = []);
+        list.push(r);
+      }
+    }
+    const heads = [...newest.values()].map((r) => ({ ...r }));
+    spec.annotateHeads(heads);
+    const assetDomain = /* @__PURE__ */ new Map();
+    [...newest.keys()].forEach((key, i) => assetDomain.set(key, spec.resolveHead(heads[i])));
+    const nameOfAsset = (a) => spec.nameOf(assetDomain.get(a));
+    const count = (names) => {
+      var _a2;
+      const votes = /* @__PURE__ */ new Map();
+      for (const d of names) {
+        if (!spec.pinUnnamed && !spec.isNamed(d)) continue;
+        votes.set(d, ((_a2 = votes.get(d)) != null ? _a2 : 0) + 1);
+      }
+      return votes;
+    };
+    const pick = (votes, findings) => {
+      var _a2;
+      return (_a2 = [...votes.entries()].sort((x, y) => {
+        var _a3, _b2;
+        return Number(!spec.isNamed(x[0])) - Number(!spec.isNamed(y[0])) || y[1] - x[1] || ((_a3 = findings.get(y[0])) != null ? _a3 : 0) - ((_b2 = findings.get(x[0])) != null ? _b2 : 0) || (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0);
+      })[0]) == null ? void 0 : _a2[0];
+    };
+    const groupDomain = /* @__PURE__ */ new Map();
+    for (const sg of /* @__PURE__ */ new Set([...groupAssets.keys(), ...groupKeyless.keys()])) {
+      const assets = (_b = groupAssets.get(sg)) != null ? _b : /* @__PURE__ */ new Map();
+      const findings = /* @__PURE__ */ new Map();
+      let votes;
+      if (assets.size) {
+        const all = [...assets.keys()];
+        const current = all.filter((a) => openAssets.has(a));
+        votes = count((current.length ? current : all).map(nameOfAsset));
+        if (spec.widenWhenNoNamedCurrent && current.length && current.length < all.length && ![...votes.keys()].some(spec.isNamed)) {
+          votes = count(all.map(nameOfAsset));
+        }
+        for (const [a, n2] of assets) {
+          const d = nameOfAsset(a);
+          findings.set(d, ((_c = findings.get(d)) != null ? _c : 0) + n2);
+        }
+      } else {
+        votes = count(((_d = groupKeyless.get(sg)) != null ? _d : []).map((r) => spec.nameOf(spec.resolveKeyless(r))));
+      }
+      const winner = pick(votes, findings);
+      if (winner !== void 0) groupDomain.set(sg, winner);
+    }
+    const groupSource = /* @__PURE__ */ new Map();
+    for (const sg of groupDomain.keys()) groupSource.set(sg, "auto");
+    for (const [sg, domain] of overrides) {
+      groupDomain.set(sg, domain);
+      groupSource.set(sg, "override");
+    }
+    return { groupDomain, groupSource, assetDomain };
+  }
+
+  // src/domain/currentDomain.ts
+  function repoKeyOf(r) {
+    var _a, _b;
+    const id = String((_a = r["repo_id"]) != null ? _a : "").trim();
+    if (id) return "id:" + id;
+    const name = String((_b = r["repo_name"]) != null ? _b : "").trim();
+    return name && name !== COMPACTED_ASSET ? "name:" + name : "";
+  }
+  function buildRepoDomainAssignment(rows, resolveRepo, overrides = /* @__PURE__ */ new Map()) {
+    return assignGroupDomains(rows, {
+      keyOf: repoKeyOf,
+      groupOf: (r) => {
+        var _a;
+        return String((_a = r["_supportGroup"]) != null ? _a : "");
+      },
+      lastSeenMs: (r) => {
+        var _a;
+        return (_a = parseTs(r["last_seen"])) != null ? _a : -Infinity;
+      },
+      isOpen: (r) => {
+        var _a;
+        return !RESOLVED_STATUSES.has(String((_a = r["status"]) != null ? _a : "").toUpperCase());
+      },
+      annotateHeads: () => {
+      },
+      resolveHead: (head) => resolveRepo(head) || "",
+      resolveKeyless: (r) => resolveRepo(r) || "",
+      nameOf: (d) => d,
+      isNamed: (name) => name !== "",
+      pinUnnamed: false,
+      widenWhenNoNamedCurrent: true
+    }, overrides);
+  }
+  function assignedDomainOf(r, a) {
+    var _a;
+    const sg = String((_a = r["_supportGroup"]) != null ? _a : "");
+    const pinned = sg ? a.groupDomain.get(sg) : void 0;
+    if (pinned !== void 0) return pinned;
+    const key = repoKeyOf(r);
+    return key && a.assetDomain.get(key) || "";
+  }
+
+  // src/server/currentDomains.ts
+  var memo;
+  function build(wholeLedger) {
+    const t0 = Date.now();
+    const map = getRepoTagMap();
+    const tagged = Object.keys(map).length > 0;
+    const keys = tagged ? configuredTagKeys() : null;
+    const overrides = getSupportGroupDomains(loadSettings()).items;
+    const assignment = buildRepoDomainAssignment(
+      wholeLedger,
+      // An empty map resolves nothing — the same "we never learned" answer attachRepoTags gives.
+      (head) => keys ? resolveRepoTags(head, map, keys).domain || "" : "",
+      new Map(overrides.map((o) => [o.group, o.domain]))
+    );
+    console.log(JSON.stringify({
+      stage: "domainAssignment",
+      repos: assignment.assetDomain.size,
+      groups: assignment.groupDomain.size,
+      overrides: overrides.length,
+      ms: Date.now() - t0
+    }));
+    return assignment;
+  }
+  function assignmentFor(wholeLedger) {
+    const stamp = dataVersion();
+    if (!memo || memo.stamp !== stamp) memo = { stamp, assignment: build(wholeLedger()) };
+    return memo.assignment;
+  }
+  function write(rows, a) {
+    for (const r of rows) {
+      const d = assignedDomainOf(r, a);
+      if (d) r[DOMAIN_FIELD] = d;
+      else delete r[DOMAIN_FIELD];
+    }
+  }
+  function attachCurrentDomains(wholeLedger) {
+    write(wholeLedger, assignmentFor(() => wholeLedger));
+  }
+  function attachCurrentDomainsTo(subset) {
+    attachProjectGrain(subset);
+    write(subset, assignmentFor(() => {
+      const all = loadBaseRows();
+      attachProjectGrain(all);
+      return all;
+    }));
+  }
+  function assignableDomains() {
+    const a = assignmentFor(() => {
+      const all = loadBaseRows();
+      attachProjectGrain(all);
+      return all;
+    });
+    const names = /* @__PURE__ */ new Set([...a.assetDomain.values(), ...a.groupDomain.values()]);
+    names.delete("");
+    return [...names].sort();
+  }
+
   // src/server/bootCore.ts
-  var BOOT_CORE = "dsBootCore1";
+  var BOOT_CORE = "dsBootCore2";
   var BOOT_CORE_PARAMS = {};
   function bootCoreModel() {
     return durablyCached(BOOT_CORE, BOOT_CORE_PARAMS, buildBootCore);
@@ -6663,7 +6922,9 @@ var Server = (() => {
     laps.lap("settings");
     const allRows = loadBaseRows();
     laps.lap("baseRows");
-    attachRepoTags(allRows);
+    attachProjectGrain(allRows);
+    attachRepoTags(allRows, { domain: false });
+    attachCurrentDomains(allRows);
     laps.lap("repoTags");
     const projectView = settings.projectView || null;
     const domainView = settings.domainView || null;
@@ -6691,7 +6952,14 @@ var Server = (() => {
       },
       filterOptions: {
         projectList: projectCatalogue(allRows),
-        domainList: domainCatalogue(allRows)
+        domainList: domainCatalogue(allRows),
+        // For the support-group domain overrides (Settings → System, the MTTR row sheet): every
+        // primary support group the register holds, and every domain one may be set to.
+        supportGroups: [...new Set(allRows.map((r) => {
+          var _a2;
+          return String((_a2 = r["_supportGroup"]) != null ? _a2 : "");
+        }).filter(Boolean))].sort(),
+        assignableDomains: assignableDomains()
       }
     };
     laps.lap("catalogues");
@@ -6968,10 +7236,10 @@ var Server = (() => {
     if (scope) return { allowed: true, email, reason: "scoped", scope };
     return parseAllowlist(raw).indexOf(key) >= 0 ? { allowed: true, email, reason: "listed" } : { allowed: false, email, reason: "not-listed" };
   }
-  var memo;
+  var memo2;
   function check() {
-    if (memo === void 0) {
-      memo = decide(
+    if (memo2 === void 0) {
+      memo2 = decide(
         Session.getActiveUser().getEmail(),
         Session.getEffectiveUser().getEmail(),
         getProp(PROP_KEYS.allowedUsers),
@@ -6979,7 +7247,7 @@ var Server = (() => {
         getProp(PROP_KEYS.scopedUsers)
       );
     }
-    return memo;
+    return memo2;
   }
   var SCOPED_RPCS = [
     // Not an RPC but the gate `include()` asks through: the page's own scriptlets need it.
@@ -7009,7 +7277,7 @@ var Server = (() => {
     return parseScoped(getProp(PROP_KEYS.scopedUsers), SCOPE_DIMS);
   }
   function __resetMemosForTest2() {
-    memo = void 0;
+    memo2 = void 0;
   }
   function logDenial(op, d) {
     console.log(JSON.stringify({ access: "denied", op, reason: d.reason, email: d.email }));
@@ -7161,11 +7429,15 @@ var Server = (() => {
   // src/server/readModels.ts
   var readModels_exports = {};
   __export(readModels_exports, {
+    REPO_TOP_N: () => REPO_TOP_N,
+    SPLIT_NONE: () => SPLIT_NONE2,
     WARM_BUDGET_MS: () => WARM_BUDGET_MS,
     __resetModelMemosForTest: () => __resetModelMemosForTest,
     executiveModel: () => executiveModel,
     historyModel: () => historyModel,
+    mttrGroupModel: () => mttrGroupModel,
     mttrModel: () => mttrModel,
+    mttrSplitModel: () => mttrSplitModel,
     programModel: () => programModel,
     registerModel: () => registerModel,
     registerRowsModel: () => registerRowsModel,
@@ -7173,6 +7445,7 @@ var Server = (() => {
     scopeSummaryModel: () => scopeSummaryModel,
     secretsModel: () => secretsModel,
     signalCoverage: () => signalCoverage,
+    splitBucketOf: () => splitBucketOf,
     storageModel: () => storageModel,
     warmReadModels: () => warmReadModels
   });
@@ -8608,6 +8881,7 @@ var Server = (() => {
   var CLOCK_TTL_SEC = 3600;
   var OLDEST_TOP_N = 100;
   var WARM_BUDGET_MS = 27e4;
+  var SPLIT_BYS = ["domain", "supportGroup", "repo"];
   function norm(p) {
     var _a, _b;
     const scopeRaw = (_a = p == null ? void 0 : p.scope) != null ? _a : null;
@@ -8628,6 +8902,7 @@ var Server = (() => {
       project: viewer ? null : project2,
       domain: viewer ? null : domain,
       viewer,
+      split: normSplit(p == null ? void 0 : p.split),
       slaTargets: effectiveSlaTargets(settings),
       coldAfterDays: cold.coldAfterDays,
       coldZoneMode: cold.mode,
@@ -8639,6 +8914,11 @@ var Server = (() => {
       // them and governs a different family on five other pages.
       mttrExcludeEndOfLife: effectiveExcludeEndOfLifeFromMttr(settings)
     };
+  }
+  function normSplit(v) {
+    var _a;
+    if (!v || typeof v !== "object" || !SPLIT_BYS.includes(v.by)) return null;
+    return { by: v.by, value: String((_a = v.value) != null ? _a : "") };
   }
   function normViewer(v) {
     if (!v || typeof v !== "object") return null;
@@ -8655,7 +8935,9 @@ var Server = (() => {
       domain: n2.domain,
       // ONLY WHEN PRESENT, so every unscoped key hashes exactly as it did before scoped viewers
       // existed and no live cache entry or durable file is orphaned by them.
-      ...n2.viewer ? { viewer: n2.viewer } : {}
+      ...n2.viewer ? { viewer: n2.viewer } : {},
+      // The same trick for a split bucket: absent from every key but the row sheet's own.
+      ...n2.split ? { split: n2.split } : {}
     };
   }
   function inViewer(r, v) {
@@ -8672,8 +8954,9 @@ var Server = (() => {
     if (!baseMemo || baseMemo.version !== version) {
       const now = Date.now();
       const rows = loadBaseRows({ now, trackingStartByScope: trackingStartByScopeMap() });
-      attachRepoTags(rows);
       attachProjectGrain(rows);
+      attachRepoTags(rows, { domain: false });
+      attachCurrentDomains(rows);
       baseMemo = { version, now, rows };
     }
     return baseMemo;
@@ -8755,6 +9038,10 @@ var Server = (() => {
     if (n2.viewer) out = out.filter((r) => inViewer(r, n2.viewer));
     if (n2.project) out = out.filter((r) => inProject(parseProjects(r.projects_json), n2.project));
     if (n2.domain) out = out.filter((r) => inDomain(r, n2.domain));
+    if (n2.split) {
+      const { by, value } = n2.split;
+      out = out.filter((r) => splitBucketOf(by, r) === value);
+    }
     if (n2.severities) {
       const keep = new Set(n2.severities);
       out = out.filter((r) => keep.has(normalizeSeverity(r.severity)));
@@ -9011,6 +9298,127 @@ var Server = (() => {
       "dsMttr4",
       { ...keyOf(n2), slaTargets: n2.slaTargets, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => buildMttr(n2),
+      CLOCK_TTL_SEC
+    );
+  }
+  var SPLIT_NONE2 = "(none)";
+  var REPO_TOP_N = 20;
+  function splitBucketOf(by, r) {
+    const v = by === "domain" ? r._domain : by === "supportGroup" ? r._supportGroup : r.repo_name;
+    return String(v != null ? v : "").trim() || SPLIT_NONE2;
+  }
+  function splitDimensionFor(n2, rows) {
+    if (n2.domain) return "supportGroup";
+    if (n2.project) {
+      const groups = new Set(rows.map((r) => splitBucketOf("supportGroup", r)));
+      return groups.size >= 2 ? "supportGroup" : "repo";
+    }
+    return "domain";
+  }
+  function remediationSplitRow(group, rs, n2, now) {
+    var _a, _b, _c;
+    const k = kaplanMeier(rs, KM_OPTS);
+    const shipped = shipKM(k);
+    const { perSev, overall } = mttrFromLedger(rs, { now, slaTargets: n2.slaTargets });
+    const openByScope = {};
+    const totalByScope = {};
+    for (const r of rs) {
+      totalByScope[r.scope] = ((_a = totalByScope[r.scope]) != null ? _a : 0) + 1;
+      if (!RESOLVED_STATUSES.has(String((_b = r.status) != null ? _b : "").toUpperCase())) {
+        openByScope[r.scope] = ((_c = openByScope[r.scope]) != null ? _c : 0) + 1;
+      }
+    }
+    return {
+      group,
+      km: {
+        median: shipped.median,
+        q25: shipped.q25,
+        medianLowerBound: shipped.medianLowerBound,
+        reliableUntil: shipped.reliableUntil,
+        events: shipped.events
+      },
+      p90: kmQuantileFromCurve(k.curve, 0.9),
+      slaPct: overallSlaOldest(perSev).slaPct,
+      openPastSla: openPastSla(rs, { slaTargets: n2.slaTargets }).overall,
+      awaiting: awaitingVendorFix(rs).overall,
+      open: overall.open,
+      resolved: overall.resolved,
+      openByScope,
+      totalByScope
+    };
+  }
+  function buildMttrSplit(n2) {
+    var _a, _b;
+    const snap = baseSnapshot();
+    const rows = liveRepoRows(visibleRows(snap.rows, n2), n2.mttrExcludeEndOfLife).rows;
+    const dimension = splitDimensionFor(n2, rows);
+    const buckets = /* @__PURE__ */ new Map();
+    for (const r of rows) {
+      const g = splitBucketOf(dimension, r);
+      let list = buckets.get(g);
+      if (!list) buckets.set(g, list = []);
+      list.push(r);
+    }
+    const isOpen9 = (r) => {
+      var _a2;
+      return !RESOLVED_STATUSES.has(String((_a2 = r.status) != null ? _a2 : "").toUpperCase());
+    };
+    const openOf = (rs) => rs.filter(isOpen9).length;
+    const byName = (a, b) => a < b ? -1 : a > b ? 1 : 0;
+    const names = [...buckets.keys()].sort((a, b) => {
+      if (a === SPLIT_NONE2) return 1;
+      if (b === SPLIT_NONE2) return -1;
+      const ra = buckets.get(a), rb = buckets.get(b);
+      if (dimension === "repo") {
+        return openOf(rb) - openOf(ra) || rb.length - openOf(rb) - (ra.length - openOf(ra)) || byName(a, b);
+      }
+      return rb.length - ra.length || byName(a, b);
+    });
+    const kept = dimension === "repo" ? names.slice(0, REPO_TOP_N) : names;
+    const dropped = dimension === "repo" ? names.slice(REPO_TOP_N) : [];
+    const cut = dropped.length ? {
+      groups: dropped.length,
+      open: dropped.reduce((a, g) => a + openOf(buckets.get(g)), 0),
+      resolved: dropped.reduce((a, g) => a + buckets.get(g).length - openOf(buckets.get(g)), 0)
+    } : null;
+    const groups = new Set(rows.map((r) => splitBucketOf("supportGroup", r)));
+    const oneGroup = groups.size === 1 ? [...groups][0] : null;
+    return {
+      dimension,
+      within: {
+        kind: n2.domain ? "domain" : n2.project ? "project" : null,
+        value: (_b = (_a = n2.domain) != null ? _a : n2.project) != null ? _b : null,
+        supportGroup: oneGroup && oneGroup !== SPLIT_NONE2 ? oneGroup : null
+      },
+      rows: kept.map((g) => remediationSplitRow(g, buckets.get(g), n2, snap.now)),
+      cut
+    };
+  }
+  function mttrSplitModel(p) {
+    const n2 = norm({ ...p, split: null });
+    return cached(
+      "dsMttrSplit1",
+      { ...keyOf(n2), slaTargets: n2.slaTargets, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
+      () => buildMttrSplit(n2),
+      CLOCK_TTL_SEC
+    );
+  }
+  function mttrGroupModel(p) {
+    const n2 = norm(p);
+    if (!n2.split) throw new Error("mttrGroupModel: a split { by, value } is required.");
+    return cached(
+      "dsMttrGroup1",
+      { ...keyOf(n2), slaTargets: n2.slaTargets, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
+      () => {
+        const snap = baseSnapshot();
+        const rows = liveRepoRows(visibleRows(snap.rows, n2), n2.mttrExcludeEndOfLife).rows;
+        const domains = new Set(rows.map((r) => {
+          var _a;
+          return String((_a = r._domain) != null ? _a : "");
+        }));
+        const counted = domains.size === 1 ? [...domains][0] : "";
+        return { ...buildMttr(n2), countedDomain: counted || null };
+      },
       CLOCK_TTL_SEC
     );
   }
@@ -9940,6 +10348,7 @@ var Server = (() => {
       { label: "storage", run: () => storageModel() },
       { label: "executive", run: () => executiveModel(all) },
       { label: "mttr", run: () => mttrModel(all) },
+      { label: "mttrSplit", run: () => mttrSplitModel(all) },
       { label: "secrets", run: () => secretsModel(all) }
     ];
     for (const scope of SCOPES) {
@@ -10822,9 +11231,44 @@ var Server = (() => {
     return run(() => loadSettings());
   }
   function putSettings(p) {
+    var _a;
+    const patch = { ...(_a = p.settings) != null ? _a : {} };
+    delete patch["supportGroupDomains"];
+    return mutate(() => saveSettings(withSettings(loadSettings(), patch)));
+  }
+  function saveSupportGroupDomain(p) {
+    var _a, _b, _c;
+    const group = String((_a = p.group) != null ? _a : "").trim();
+    const domain = p.domain === null || p.domain === void 0 ? null : String(p.domain).trim();
+    const reason = String((_b = p.reason) != null ? _b : "");
+    const note = String((_c = p.note) != null ? _c : "").trim();
     return mutate(() => {
-      var _a;
-      return saveSettings(withSettings(loadSettings(), (_a = p.settings) != null ? _a : {}));
+      if (!canEditUsers()) {
+        throw new Error("Only the owner or an admin can change a support group's domain.");
+      }
+      const errors = [];
+      if (!group) errors.push("Pick a support group.");
+      if (domain !== null) {
+        const known = assignableDomains();
+        if (!known.length) {
+          errors.push("No domain is known yet \u2014 refresh Repository tags (Settings \u2192 System) first.");
+        } else if (!domain || !known.includes(domain)) {
+          errors.push(`"${domain}" is not a domain a repository is tagged in.`);
+        }
+        if (!SG_DOMAIN_REASONS.includes(reason)) errors.push("Pick a reason.");
+      }
+      if (errors.length) return { saved: false, errors, items: getSupportGroupDomains2().items };
+      const rest = getSupportGroupDomains2().items.filter((o) => o.group !== group);
+      const items = domain === null ? rest : [...rest, {
+        group,
+        domain,
+        reason,
+        note,
+        by: check().email,
+        at: (/* @__PURE__ */ new Date()).toISOString()
+      }];
+      setSupportGroupDomains(items);
+      return { saved: true, errors: [], items: getSupportGroupDomains2().items };
     });
   }
   function setProjectView(p) {
@@ -10923,9 +11367,26 @@ var Server = (() => {
       return {
         mttr: mttrModel(params),
         trends: mttrPageTrendSlice(historyModel(params)),
-        byScope: mttrGroupTableSlice(executiveModel(params)["byScope"])
+        byScope: mttrGroupTableSlice(executiveModel(params)["byScope"]),
+        // The remediation split — by domain / support group / repository, whichever the header
+        // scope leaves informative (readModels.mttrSplitModel). Each row opens the row sheet.
+        byGroup: mttrSplitSlice(mttrSplitModel(params))
       };
     });
+  }
+  function getMttrGroup(p) {
+    return run(() => {
+      const split = splitFromRequest({ by: p == null ? void 0 : p["groupBy"], value: p == null ? void 0 : p["groupValue"] });
+      if (!split) throw new Error("getMttrGroup: groupBy must be one of domain, supportGroup, repo.");
+      return mttrGroupSlice(mttrGroupModel({ ...modelParams(p), split }));
+    });
+  }
+  function splitFromRequest(v) {
+    var _a, _b;
+    if (!v || typeof v !== "object") return null;
+    const by = String((_a = v["by"]) != null ? _a : "");
+    if (by !== "domain" && by !== "supportGroup" && by !== "repo") return null;
+    return { by, value: String((_b = v["value"]) != null ? _b : "") };
   }
   function getProgramPage(p) {
     return run(() => {
@@ -10982,7 +11443,10 @@ var Server = (() => {
         validation: r["validation"],
         confidence: r["confidence"],
         groupBy: r["groupBy"],
-        groupValue: r["groupValue"]
+        groupValue: r["groupValue"],
+        // The MTTR row sheet's findings: ONE split bucket, applied inside the viewer's forced
+        // scope above — it can only narrow, never widen.
+        split: splitFromRequest(r["split"])
       };
       const model = registerRowsModel(scope, params);
       if (Array.isArray(model["groups"])) return model;
@@ -11146,7 +11610,7 @@ var Server = (() => {
       const projectView = viewer ? null : settings.projectView || null;
       const domainView = viewer ? null : settings.domainView || null;
       const base = loadBaseRows(scope ? { scope } : {});
-      if (viewer || domainView) attachRepoTags(base);
+      if (viewer || domainView) attachCurrentDomainsTo(base);
       const rows = base.filter((r) => !severities || severities.has(normalizeSeverity(r["severity"]))).filter((r) => {
         var _a2;
         return !statuses || statuses.has(String((_a2 = r["status"]) != null ? _a2 : "").toUpperCase());

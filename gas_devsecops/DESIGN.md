@@ -136,6 +136,18 @@ account is `gas/DESIGN.md` §6a). What is this register's own:
   chip), High risk still open, and Classified — the share of scope the rule could score, which
   every rate here is taken over. Prevalence and the observation window sit below as secondary
   figures; the secrets-excluded pill and the end-of-life note stay on the surface.
+- **MTTR by domain / support group / repository** (2026-09-29) closes the MTTR page: the OS
+  register's split table and row sheet (`gas/DESIGN.md`, "A split row is a record"), without
+  its charts and without its naive-median column — this register ships no closed-only
+  estimate, so the table reads Half-life (`kmHalfLifeView`), 25% fixed, P90, In SLA, Open past
+  SLA, Open, Resolved. The repository split lists the top twenty and says what it dropped
+  under the table. A row opens a sheet: two stat strips, the per-severity table the page itself
+  draws, and the findings with a **register switch** (only the registers the row has findings
+  in) beside Open / Resolved / All — each register keeps its own columns and sorts. "(none)"
+  sorts last and is explained on the sheet's surface. A support group an admin placed by hand
+  wears its marker ("Managed by CROSS team" `ok`, "Domain set manually" `neutral`) in the table
+  and the sheet heading; admins get "Change domain…" at the top of the sheet, and the same
+  overrides are listed on Settings → System.
 
 ## Measuring a page, and what the unit-chart round moved
 

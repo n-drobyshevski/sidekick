@@ -69,6 +69,7 @@ import {
   createSlaCutlineReadout, renderRetentionReadout, severityScopeReadout, slaDivergenceNote,
   strandedOpenCount, strandedRowsReadout,
 } from "../settingsReadouts.js";
+import { sgDomainsPanel } from "./sgDomainsEditor.js";
 
 // ============================================================================ vocabulary
 
@@ -1677,6 +1678,10 @@ export async function renderSettings(host, params, ctx) {
       }),
       prefsPanel,
       diagnostics.node,
+      // Beside the Repository tags card above it: that card fills the tag map the vote reads,
+      // this one overrides the vote where the tags are wrong or the CROSS team runs the group.
+      // Saving moves every figure on every page, so the whole app re-boots (`ctx.refresh`).
+      sgDomainsPanel(boot, { onSaved: () => { ctx && ctx.refresh && ctx.refresh(); } }),
     );
   }
 

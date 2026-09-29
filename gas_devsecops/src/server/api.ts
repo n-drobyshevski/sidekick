@@ -49,6 +49,7 @@ import {
 import { normalizeSeverity } from "../domain/severity";
 import {
   withDomainView, withProjectView, withSettings,
+  SG_DOMAIN_REASONS, type SgDomainOverride,
 } from "../domain/settingsLogic";
 import {
   inProject, parseProjects, type projectCatalogue,
@@ -64,7 +65,7 @@ import {
   historyTrendSlice,
   jobSummarySlice,
   latestScanSlice,
-  mttrGroupTableSlice,
+  mttrGroupSlice, mttrGroupTableSlice, mttrSplitSlice,
   mttrPageTrendSlice,
   programTrendSlice,
   registerRowsSlice,
@@ -74,7 +75,7 @@ import { BUILD_ID } from "../../../gas_shared/server/buildInfo";
 import { getProp, hasWizCredentials, PROP_KEYS, setProp } from "./props";
 import { readHubUrl, writeHubUrl } from "./hubUrl";
 import { cached } from "./serverCache";
-import { loadSettings, saveSettings } from "./settingsStore";
+import { getSupportGroupDomains, loadSettings, saveSettings, setSupportGroupDomains } from "./settingsStore";
 import { TAB_HEADERS, TABS } from "./sheetsDb";
 import * as bootCore from "./bootCore";
 import { stageLaps } from "./stageLog";
@@ -87,6 +88,7 @@ import * as ledgerStore from "./ledgerStore";
 import * as readModels from "./readModels";
 import * as scanJobs from "./scanJobs";
 import { testConnection, WizNotAuthorizedError } from "./wizClient";
+import * as currentDomains from "./currentDomains";
 
 /**
  * THE ENVELOPE, and it lives here rather than in dist/entry.js.
@@ -287,6 +289,10 @@ export interface Bootstrap {
      * see `domainScope.domainCatalogue`.
      */
     domainList: ReturnType<typeof domainCatalogue>;
+    /** Every primary support group the register holds — the override editor's picker. */
+    supportGroups: string[];
+    /** Every domain a support group may be set to (server/currentDomains.assignableDomains). */
+    assignableDomains: string[];
   };
 }
 
@@ -653,7 +659,54 @@ export function getSettings(_p?: unknown): ApiResult<ReturnType<typeof loadSetti
  * exactly this merge-then-reclean shape; this endpoint is its first caller.
  */
 export function putSettings(p: { settings?: unknown }): ApiResult<ReturnType<typeof loadSettings>> {
-  return mutate(() => saveSettings(withSettings(loadSettings(), (p.settings ?? {}) as never)));
+  // `supportGroupDomains` IS NOT THIS ENDPOINT'S TO WRITE. It is admin-only
+  // (`saveSupportGroupDomain`), and this save has no admin check — a patch carrying it would be a
+  // way round the gate. Stripped, not refused: the Settings page sends the whole draft back.
+  const patch = { ...((p.settings ?? {}) as Record<string, unknown>) };
+  delete patch["supportGroupDomains"];
+  return mutate(() => saveSettings(withSettings(loadSettings(), patch as never)));
+}
+
+/**
+ * Set — or with `domain: null`, remove — an admin's override of ONE support group's domain
+ * (settings `supportGroupDomains`; the rule is `domain/currentDomain.ts`'s third). Owner/admin
+ * only: the domain a team is counted under moves every figure the team is judged by.
+ *
+ * The domain must be one a repository resolves to today (or one an override already names) —
+ * `currentDomains.assignableDomains()`. The reason is recorded with the override because the
+ * two cases read differently afterwards: "wrong_tag" corrects the tags, "cross_team" says the
+ * group sits in CROSS on purpose because the CROSS team runs its repositories.
+ */
+export function saveSupportGroupDomain(p: {
+  group?: unknown; domain?: unknown; reason?: unknown; note?: unknown;
+}): ApiResult<{ saved: boolean; errors: string[]; items: SgDomainOverride[] }> {
+  const group = String(p.group ?? "").trim();
+  const domain = p.domain === null || p.domain === undefined ? null : String(p.domain).trim();
+  const reason = String(p.reason ?? "");
+  const note = String(p.note ?? "").trim();
+  return mutate(() => {
+    if (!access.canEditUsers()) {
+      throw new Error("Only the owner or an admin can change a support group's domain.");
+    }
+    const errors: string[] = [];
+    if (!group) errors.push("Pick a support group.");
+    if (domain !== null) {
+      const known = currentDomains.assignableDomains();
+      if (!known.length) {
+        errors.push("No domain is known yet — refresh Repository tags (Settings → System) first.");
+      } else if (!domain || !known.includes(domain)) {
+        errors.push(`"${domain}" is not a domain a repository is tagged in.`);
+      }
+      if (!(SG_DOMAIN_REASONS as readonly string[]).includes(reason)) errors.push("Pick a reason.");
+    }
+    if (errors.length) return { saved: false, errors, items: getSupportGroupDomains().items };
+    const rest = getSupportGroupDomains().items.filter((o) => o.group !== group);
+    const items = domain === null ? rest : [...rest, {
+      group, domain, reason, note, by: access.check().email, at: new Date().toISOString(),
+    }];
+    setSupportGroupDomains(items);
+    return { saved: true, errors: [], items: getSupportGroupDomains().items };
+  });
 }
 
 /**
@@ -890,8 +943,32 @@ export function getMttrPage(p?: unknown): ApiResult {
       mttr: readModels.mttrModel(params),
       trends: mttrPageTrendSlice(readModels.historyModel(params)),
       byScope: mttrGroupTableSlice(readModels.executiveModel(params)["byScope"]),
+      // The remediation split — by domain / support group / repository, whichever the header
+      // scope leaves informative (readModels.mttrSplitModel). Each row opens the row sheet.
+      byGroup: mttrSplitSlice(readModels.mttrSplitModel(params)),
     };
   });
+}
+
+/**
+ * ONE ROW of the MTTR page's split, for its sheet: the page's own MTTR narrowed to the bucket
+ * (inside the header scope — never past it) plus the one domain the row counts under. Refuses
+ * an unknown dimension rather than widening to the whole scope.
+ */
+export function getMttrGroup(p?: unknown): ApiResult {
+  return run(() => {
+    const split = splitFromRequest({ by: (p as Rec)?.["groupBy"], value: (p as Rec)?.["groupValue"] });
+    if (!split) throw new Error("getMttrGroup: groupBy must be one of domain, supportGroup, repo.");
+    return mttrGroupSlice(readModels.mttrGroupModel({ ...modelParams(p), split }));
+  });
+}
+
+/** A split bucket off the wire — a known dimension and a string label — or null. */
+function splitFromRequest(v: unknown): readModels.SplitParam | null {
+  if (!v || typeof v !== "object") return null;
+  const by = String((v as Rec)["by"] ?? "");
+  if (by !== "domain" && by !== "supportGroup" && by !== "repo") return null;
+  return { by, value: String((v as Rec)["value"] ?? "") };
 }
 
 /**
@@ -1011,6 +1088,9 @@ export function getRegisterRows(p?: unknown): ApiResult {
       confidence: r["confidence"],
       groupBy: r["groupBy"],
       groupValue: r["groupValue"],
+      // The MTTR row sheet's findings: ONE split bucket, applied inside the viewer's forced
+      // scope above — it can only narrow, never widen.
+      split: splitFromRequest(r["split"]),
     };
     const model = readModels.registerRowsModel(scope, params);
     // A groups answer carries no rows — and the groups' `raw` is one categorical cell value.
@@ -1342,8 +1422,10 @@ export function getExportCsv(p?: unknown): ApiResult {
     const domainView = viewer ? null : settings.domainView || null;
 
     const base = ledgerStore.loadBaseRows(scope ? { scope } : {}) as unknown as Rec[];
-    // `_domain` is resolved on read and never stored, so the domain filters need the join.
-    if (viewer || domainView) repoTags.attachRepoTags(base);
+    // `_domain` is resolved on read and never stored, so the domain filters need it — from the
+    // current-domain assignment every other read path uses (server/currentDomains.ts), built off
+    // the whole ledger even though this reads one register.
+    if (viewer || domainView) currentDomains.attachCurrentDomainsTo(base);
     const rows = base
       .filter((r) => !severities || severities.has(normalizeSeverity(r["severity"])))
       .filter((r) => !statuses || statuses.has(String(r["status"] ?? "").toUpperCase()))

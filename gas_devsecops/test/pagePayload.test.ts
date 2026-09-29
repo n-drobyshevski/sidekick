@@ -5,7 +5,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  execGroupSlice, execMttrSlice, historyTrendSlice, jobSummarySlice, mttrGroupTableSlice,
+  execGroupSlice, execMttrSlice, historyTrendSlice, jobSummarySlice, mttrGroupSlice,
+  mttrGroupTableSlice, mttrSplitSlice,
   mttrGroupTrendSlice, mttrPageTrendSlice, oldestOpenSlice, overviewInsightsSlice,
   programTrendSlice, scanRowsSlice,
 } from "../src/domain/pagePayload";
@@ -579,5 +580,28 @@ describe("jobSummarySlice — what a 3-second poll is allowed to carry", () => {
 
   it("returns null for no job", () => {
     expect(jobSummarySlice(null, false)).toBeNull();
+  });
+});
+
+describe("mttrGroupSlice / mttrSplitSlice — the MTTR row sheet's two payloads", () => {
+  it("keeps what the per-severity table reads and leaves the curves home", () => {
+    const s = mttrGroupSlice({
+      rowCount: 4, perSev: { HIGH: { open: 1 } }, trackingSince: "2026-01-01",
+      remediation: {
+        km: { median: 9 }, kmPerSev: { HIGH: { median: 9, curve: [[0, 1]] } }, kmP90PerSev: { HIGH: 20 },
+      },
+      endOfLife: null, countedDomain: "CROSS",
+    });
+    expect(s).toEqual({
+      rowCount: 4, perSev: { HIGH: { open: 1 } },
+      remediation: { kmPerSev: { HIGH: { median: 9 } }, kmP90PerSev: { HIGH: 20 } },
+      endOfLife: null, countedDomain: "CROSS",
+    });
+  });
+
+  it("ships the split's four fields, and null for none", () => {
+    expect(mttrSplitSlice(null)).toBeNull();
+    expect(mttrSplitSlice({ dimension: "domain", within: null, rows: [{ group: "A" }], cut: null, extra: 1 }))
+      .toEqual({ dimension: "domain", within: null, rows: [{ group: "A" }], cut: null });
   });
 });
