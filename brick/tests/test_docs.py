@@ -154,3 +154,25 @@ def test_every_doc_is_reachable_from_readme():
     assert not orphans, "doc(s) under brick/docs/ not linked from README.md: " + ", ".join(
         sorted(_display(p) for p in orphans)
     )
+
+
+def test_the_column_reference_names_every_declared_column():
+    """``docs/columns.md`` is the page a data team queries from, so a column added to a schema
+    and not to it is a column nobody downstream knows the meaning of. Only the columns declared
+    statically are checked -- bronze, the ledger, the commit record and the family names. The
+    gold columns arrive through ``mergeSchema`` and are declared nowhere but in the frames that
+    project them, so there is no list here to hold the page against.
+    """
+    import run_pipeline
+    from config import LEDGER_COLUMNS, SCANS_COLUMNS
+
+    documented = set()
+    for _, line in _visible_lines(DOCS_DIR / "columns.md"):
+        if line.startswith("| `"):
+            documented.add(line.split("`", 2)[1])
+
+    bronze = [part.split()[0] for part in run_pipeline.BRONZE_TABLE_SCHEMA.split(",")]
+    # The family names count as documented through the `family` legend table's own rows.
+    declared = {*bronze, *LEDGER_COLUMNS, *SCANS_COLUMNS, "family", *run_pipeline.METRICS_FAMILIES}
+    missing = sorted(declared - documented)
+    assert not missing, "docs/columns.md has no table row for: " + ", ".join(missing)

@@ -21,7 +21,7 @@ Coverage and efficiency come from the Cisco Kenna / Cyentia *Prioritization to P
 series, which is the source of the **formulas**, not a benchmark these numbers can be read
 against. They are in direct tension, so the pipeline always emits both, never one alone; assets
 at risk is P2P volume 5's asset-centric family, written only for a scope whose findings resolve
-to an asset the request can be narrowed to.
+to an asset (`sca` and `sast`, not `os`).
 [`docs/reading-the-numbers.md`](docs/reading-the-numbers.md) is the page to read before quoting
 either figure to anyone.
 
@@ -75,6 +75,7 @@ On a cluster this is six `.py` files in one flat folder and nothing else —
 | File | Who reads it | What is in it |
 | --- | --- | --- |
 | [`docs/register.md`](docs/register.md) | writing a query, or deciding what a scope measures | the three tables and their families, the scan record, table layout, the three scopes, the SAST rule, the two silver projections, assets at risk |
+| [`docs/columns.md`](docs/columns.md) | the data team, querying the tables | every column of every table and `metrics` family: type, meaning, units, when it is NULL; example queries |
 | [`docs/deploy.md`](docs/deploy.md) | the operator | credentials, getting the six modules onto the workspace, running from a notebook or as a bundle, parameters, retries, maintenance, reading the results |
 | [`docs/migrating.md`](docs/migrating.md) | the operator, once | adopting an existing register, backfilling from bronze, importing the Apps Script app's data |
 | [`docs/storage.md`](docs/storage.md) | no catalog, or a laptop | running locally, running against a local lake, path-based fallback storage, the legacy CSV register |
