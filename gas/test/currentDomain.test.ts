@@ -159,3 +159,37 @@ describe("every group that owns a finding is pinned", () => {
     expect(buildDomainAssignment(rows, groupOf, annotate, resolve).groupDomain.get("G")).toBe("SAP");
   });
 });
+
+// RULE 3 — an admin override (settings `supportGroupDomains`) wins over the host vote.
+describe("an admin override of a group's domain", () => {
+  const rows = () => [
+    f("a1", { sg: "SRE", tag: "CROSS" }),
+    f("a2", { sg: "SRE", tag: "CROSS" }),
+    f("a3", { sg: "OPS", tag: "RETAIL" }),
+  ];
+
+  it("replaces the vote, for every finding of the group", () => {
+    const a = buildDomainAssignment(rows(), groupOf, annotate, resolve, new Map([["SRE", "RETAIL"]]));
+    expect(a.groupDomain.get("SRE")).toBe("RETAIL");
+    expect(a.groupSource.get("SRE")).toBe("override");
+    expect(assignedDomain({ asset_id: "a1", _supportGroup: "SRE" }, a, resolve))
+      .toEqual({ name: "RETAIL", source: "group" });
+  });
+
+  it("marks a group confirmed in the domain the vote already chose as overridden too", () => {
+    const a = buildDomainAssignment(rows(), groupOf, annotate, resolve, new Map([["SRE", "CROSS"]]));
+    expect(a.groupDomain.get("SRE")).toBe("CROSS");
+    expect(a.groupSource.get("SRE")).toBe("override");
+  });
+
+  it("holds for a group with no findings yet", () => {
+    const a = buildDomainAssignment(rows(), groupOf, annotate, resolve, new Map([["NEW", "SAP"]]));
+    expect(a.groupDomain.get("NEW")).toBe("SAP");
+  });
+
+  it("leaves every other group on its vote", () => {
+    const a = buildDomainAssignment(rows(), groupOf, annotate, resolve, new Map([["SRE", "RETAIL"]]));
+    expect(a.groupDomain.get("OPS")).toBe("RETAIL");
+    expect(a.groupSource.get("OPS")).toBe("auto");
+  });
+});

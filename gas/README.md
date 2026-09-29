@@ -166,6 +166,14 @@ on every page:
    attributable, and ties go to more findings, then to the name. So a support group is listed
    under exactly one domain.
 
+3. **An admin can set a support group's domain by hand**, and that wins over rule 2 (settings
+   `supportGroupDomains`, saved by `saveSupportGroupDomain`, owner/admin only). Each override
+   records why: **"Wrong tag"** corrects a group its hosts' tags put in the wrong domain and is
+   marked "Domain set manually"; **"Managed by CROSS team"** says a group sits in CROSS on
+   purpose because the CROSS team runs its hosts, and is marked "Managed by CROSS team" wherever
+   the group is listed. Set one from the MTTR row sheet ("Change domain…") or in Settings →
+   Attribution → "Support group domains", where all of them are listed with who set them.
+
 Findings with no support group keep rule 1 alone; compacted history with no asset identity keeps
 its own resolution. The Attribution page's audit (tag vs rule coverage, rule health) still reads
 each finding's **own** resolution (`_domainRaw`), because it measures the tags and rules

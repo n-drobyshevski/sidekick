@@ -23,7 +23,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const PAGE_FILES = ["mttr.js", "overview.js", "_findingColumns.js", "program.js", "history.js", "attribution.js", "data.js"];
+const PAGE_FILES = ["mttr.js", "overview.js", "_findingColumns.js", "program.js", "history.js", "attribution.js", "data.js", "sgDomainsEditor.js"];
 
 /**
  * Every `{ key: "...", ... }` object in `src` that is a real dataTable column (carries
@@ -58,6 +58,11 @@ function findColumns(file, src) {
 // names its own action ("Attribute…", "Edit"). A `?` beside an empty heading would define a
 // heading that says nothing, which is not what a column definition is for.
 const ALLOWLIST = [
+  {
+    file: "sgDomainsEditor.js", key: "remove",
+    reason: "empty heading (label: \"\") — the \"Remove\" button names its own action; there "
+      + "is no heading text for a `?` to sit beside.",
+  },
   {
     file: "attribution.js", key: "attribute",
     reason: "empty heading (label: \"\") — the \"Attribute…\" button names its own action; "

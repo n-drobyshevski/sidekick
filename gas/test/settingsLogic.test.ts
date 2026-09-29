@@ -25,6 +25,7 @@ import {
   withIncludeEol,
   withShowNoFix,
   withSupportGroupMap,
+  cleanSgDomainItems, getSupportGroupDomains, withSupportGroupDomains,
 } from "../src/domain/settingsLogic";
 
 describe("settings logic", () => {
@@ -387,5 +388,37 @@ describe("cold-zone settings", () => {
       expect(out["cold_floor_days"]).toBe(21);
       expect("cold_target_share_pct" in out).toBe(false);
     });
+  });
+});
+
+// ------------------------------------------------ support group → domain overrides
+
+describe("support group → domain overrides", () => {
+  it("keeps clean items only: trimmed, a known reason, group and domain present", () => {
+    expect(cleanSgDomainItems([
+      { group: " SRE ", domain: " CROSS ", reason: "cross_team", note: " run by CROSS ", by: "a@x", at: "t" },
+      { group: "OPS", domain: "RETAIL", reason: "because" },
+      { group: "", domain: "RETAIL", reason: "wrong_tag" },
+      { group: "X", domain: "", reason: "wrong_tag" },
+      null, "junk", [1],
+    ])).toEqual([
+      { group: "SRE", domain: "CROSS", reason: "cross_team", note: "run by CROSS", by: "a@x", at: "t" },
+    ]);
+  });
+
+  it("keeps one item per group, the last one written, sorted by group", () => {
+    expect(cleanSgDomainItems([
+      { group: "B", domain: "RETAIL", reason: "wrong_tag" },
+      { group: "A", domain: "SAP", reason: "wrong_tag" },
+      { group: "B", domain: "CROSS", reason: "cross_team" },
+    ]).map((o) => [o.group, o.domain])).toEqual([["A", "SAP"], ["B", "CROSS"]]);
+  });
+
+  it("round-trips through the settings dict and bumps the version", () => {
+    const s1 = withSupportGroupDomains({}, [{ group: "A", domain: "SAP", reason: "wrong_tag" }]);
+    const s2 = withSupportGroupDomains(s1, []);
+    expect(getSupportGroupDomains(s1)).toMatchObject({ version: 1, items: [{ group: "A", domain: "SAP" }] });
+    expect(getSupportGroupDomains(s2)).toEqual({ version: 2, items: [] });
+    expect(getSupportGroupDomains({})).toEqual({ version: 0, items: [] });
   });
 });

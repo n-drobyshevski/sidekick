@@ -248,6 +248,13 @@ export function setMany(patch: Rec): void {
 export function setDomains(items: unknown): void {
   saveSettings(logic.withDomains(loadSettings(), items));
 }
+/** The admin overrides of a support group's domain (logic.getSupportGroupDomains). */
+export function getSupportGroupDomains(): { version: number; items: logic.SgDomainOverride[] } {
+  return logic.getSupportGroupDomains(loadSettings());
+}
+export function setSupportGroupDomains(items: unknown): void {
+  saveSettings(logic.withSupportGroupDomains(loadSettings(), items));
+}
 export function setSupportGroupMap(map: unknown): void {
   const rows = supportGroupMapToRows(map);
   ensureTab(TABS.supportGroupMap);

@@ -263,6 +263,9 @@ The MTTR page opens with the same briefing shape as Executive, then keeps every 
   attributable and "(none)" sit on the sheet's surface, not in a tip. The subtitle names the one domain the row counts under ("Support group · domain CROSS");
   the sheet does not list where the group's hosts are tagged. (Why a group has one domain:
   README, "Domains are counted as they stand today".)
+  A group an admin placed by hand wears its marker (`statusPill`) in the split table and the
+  sheet heading: "Managed by CROSS team" (`ok`, a placement made on purpose) or "Domain set
+  manually" (`neutral`, a correction); admins get "Change domain…" at the top of the sheet.
 
 ### 6c. The Coverage & efficiency briefing (2026-09-24)
 

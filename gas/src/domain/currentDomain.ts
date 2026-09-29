@@ -8,7 +8,7 @@
 // history stays in RETAIL while its backlog moves to CROSS: one host's MTTR split across two
 // domains, and a support group listed under a domain none of its hosts are in any more.
 //
-// TWO RULES, both read off the ledger as it stands now:
+// THREE RULES, the first two read off the ledger as it stands now:
 //
 //   1. AN ASSET HAS ONE CURRENT DOMAIN — the one its MOST RECENT sighting resolves to (tag
 //      first, then a manual rule; `resolveDomain`). Every finding on that asset, open or
@@ -22,6 +22,8 @@
 //      says. A named domain beats Unassigned / Not attributable however few assets hold it —
 //      "these two hosts are tagged CROSS, the rest untagged" pins to CROSS, not to the gap.
 //      Ties go to the domain holding more of the group's findings, then to the name.
+//   3. AN ADMIN OVERRIDE OF A GROUP'S DOMAIN WINS over rule 2 (settings `supportGroupDomains`,
+//      set from the MTTR row sheet or Settings → Domains), with the reason it was set.
 //
 // Findings with no support group keep rule 1 alone; a row whose asset never appears with an
 // identity (compacted history) keeps its own resolution.
@@ -45,6 +47,8 @@ export interface AssignedDomain {
 export interface DomainAssignment {
   /** Support group → the one domain it counts under. */
   groupDomain: Map<string, string>;
+  /** Support group → how its domain was decided: an admin override, or the host vote. */
+  groupSource: Map<string, "override" | "auto">;
   /** Asset key → its current resolved domain (name + tag/rule/none/missing). */
   assetDomain: Map<string, ResolvedDomain>;
 }
@@ -88,6 +92,7 @@ export function buildDomainAssignment(
   groupOf: (r: Rec) => string,
   annotate: (newest: Rec[]) => void,
   resolve: (r: Rec) => ResolvedDomain,
+  overrides: ReadonlyMap<string, string> = new Map(),
 ): DomainAssignment {
   const newest = new Map<string, Rec>();
   const openAssets = new Set<string>();
@@ -150,7 +155,17 @@ export function buildDomainAssignment(
     const winner = pick(votes, findings);
     if (winner !== undefined) groupDomain.set(sg, winner);
   }
-  return { groupDomain, assetDomain };
+  // RULE 3 — AN ADMIN OVERRIDE WINS (settings `supportGroupDomains`). It replaces the vote even
+  // when it names the same domain — that is how "this group is in CROSS on purpose, its hosts
+  // are run by the CROSS team" is recorded — and it holds for a group with no findings yet, so
+  // a correction survives the scan that brings the group back.
+  const groupSource = new Map<string, "override" | "auto">();
+  for (const sg of groupDomain.keys()) groupSource.set(sg, "auto");
+  for (const [sg, domain] of overrides) {
+    groupDomain.set(sg, domain);
+    groupSource.set(sg, "override");
+  }
+  return { groupDomain, groupSource, assetDomain };
 }
 
 /**
