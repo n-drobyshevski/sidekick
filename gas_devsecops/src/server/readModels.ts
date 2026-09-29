@@ -158,6 +158,7 @@ import { attachProjectGrain, inProject, parseProjects } from "../domain/projectS
 import { inDomain } from "../domain/domainScope";
 import { isEndOfLife } from "../domain/lifecycleTag";
 import { attachRepoTags } from "./repoTags";
+import { attachCurrentDomains } from "./currentDomains";
 import { clampInt, parseTs, type Rec } from "../domain/util";
 import {
   REGISTER_ROWS_DEFAULT_PAGE_SIZE,
@@ -508,8 +509,13 @@ function baseSnapshot(): BaseSnapshot {
     // off each scope's OWN tracking start — never Date.now() (see `ledgerClock`'s own header on
     // why a stored fact and the wall clock must not be mixed).
     const rows = loadBaseRows({ now, trackingStartByScope: trackingStartByScopeMap() });
-    attachRepoTags(rows as unknown as Rec[]);
+    // ORDER IS LOAD-BEARING. The project grain first — the domain assignment reads each row's
+    // `_supportGroup` to pin every support group to ONE domain — then the tag join for
+    // `_lifecycle` only, then `_domain` from the current-domain assignment
+    // (server/currentDomains.ts), which is the one place a finding's domain is decided.
     attachProjectGrain(rows);
+    attachRepoTags(rows as unknown as Rec[], { domain: false });
+    attachCurrentDomains(rows as unknown as Rec[]);
     baseMemo = { version, now, rows };
   }
   return baseMemo;

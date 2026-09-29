@@ -191,13 +191,17 @@ export function resolveLifecycle(record: Rec, map: RepoTagMap, tagKey: string): 
  * the whole ledger; walking them twice to set two fields resolved from one lookup would double
  * the cost of the one function every read model depends on.
  */
-export function attachRepoTags(records: Rec[]): void {
+export function attachRepoTags(records: Rec[], opts: { domain?: boolean } = {}): void {
   const map = getRepoTagMap();
   if (!Object.keys(map).length) return;
   const keys = configuredTagKeys();
+  // `domain: false` — the read paths that go through `currentDomains` write `_domain` from the
+  // current-domain assignment (a support group's one pinned domain), so this join only sets
+  // `_lifecycle` there and the domain is not resolved twice.
+  const withDomain = opts.domain !== false;
   for (const r of records) {
     const { domain, lifecycle } = resolveRepoTags(r, map, keys);
-    if (domain) r[DOMAIN_FIELD] = domain;
+    if (withDomain && domain) r[DOMAIN_FIELD] = domain;
     if (lifecycle) r[LIFECYCLE_FIELD] = lifecycle;
   }
 }

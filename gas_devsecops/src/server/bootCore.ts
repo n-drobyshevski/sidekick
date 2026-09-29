@@ -18,7 +18,7 @@
 
 import { SCOPE_LABELS, SCOPES, SEVERITY_ORDER, SLA_TARGETS } from "../domain/config";
 import { effectiveSlaTargets } from "../domain/settingsLogic";
-import { inProject, parseProjects, projectCatalogue, unattributedCount } from "../domain/projectScope";
+import { attachProjectGrain, inProject, parseProjects, projectCatalogue, unattributedCount } from "../domain/projectScope";
 import { domainCatalogue, inDomain, noDomainCount } from "../domain/domainScope";
 import type { Rec } from "../domain/util";
 import type { Bootstrap } from "./api";
@@ -29,6 +29,7 @@ import * as repoTags from "./repoTags";
 import { loadSettings } from "./settingsStore";
 import { readAll, TABS } from "./sheetsDb";
 import { stageLaps } from "./stageLog";
+import * as currentDomains from "./currentDomains";
 
 /** The keys `api.withLiveBootFields` reads live on every call and this core never holds. */
 type LiveKey = "buildId" | "hasCredentials" | "wizVerifiedAt" | "activeJob" | "canEditAccess" | "hubUrl";
@@ -121,7 +122,12 @@ export function buildBootCore(): BootCore {
   // be taken from rows that have already been through the join. Doing it once here is also
   // what keeps the register-wide side of the header self-consistent: `filterOptions.domainList`
   // and `scope.noDomain` read the same array.
-  repoTags.attachRepoTags(allRows as unknown as Rec[]);
+  // Grain first (the domain assignment reads `_supportGroup`), the tag join for `_lifecycle`,
+  // then `_domain` from the current-domain assignment — the same three steps, in the same
+  // order, as `readModels.baseSnapshot`, so the header counts what every page counts.
+  attachProjectGrain(allRows);
+  repoTags.attachRepoTags(allRows as unknown as Rec[], { domain: false });
+  currentDomains.attachCurrentDomains(allRows as unknown as Rec[]);
   laps.lap("repoTags");
   const projectView = settings.projectView || null;
   const domainView = settings.domainView || null;

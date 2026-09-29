@@ -154,6 +154,11 @@ export async function resetServerMemos(): Promise<void> {
 
   const repoTags = await import("../src/server/repoTags");
   repoTags.resetRepoTagMapMemo();
+
+  // The current-domain assignment — built from the ledger, the tag map and the overrides, so a
+  // test that changes any of them between cases must not read the previous case's pins.
+  const currentDomains = await import("../src/server/currentDomains");
+  currentDomains.resetCurrentDomainsMemo();
 }
 
 // ------------------------------------------------------------- the fake platform's own API

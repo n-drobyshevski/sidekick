@@ -3667,7 +3667,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var WIZ_VERSION_PROP = "WIZ_DATA_VERSION";
-  var CACHE_EPOCH = "1";
+  var CACHE_EPOCH = "2";
   var KEY_PREFIX = `wsk.e${CACHE_EPOCH}`;
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
@@ -4798,13 +4798,14 @@ var Server = (() => {
     }
     return { domain, lifecycle };
   }
-  function attachRepoTags(records) {
+  function attachRepoTags(records, opts = {}) {
     const map = getRepoTagMap();
     if (!Object.keys(map).length) return;
     const keys = configuredTagKeys();
+    const withDomain = opts.domain !== false;
     for (const r of records) {
       const { domain, lifecycle } = resolveRepoTags(r, map, keys);
-      if (domain) r[DOMAIN_FIELD] = domain;
+      if (withDomain && domain) r[DOMAIN_FIELD] = domain;
       if (lifecycle) r[LIFECYCLE_FIELD] = lifecycle;
     }
   }
@@ -5400,7 +5401,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "a4e8bebb4b8f" : "dev";
+  var BUILD_ID = true ? "4d855d642833" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
@@ -6594,6 +6595,209 @@ var Server = (() => {
     };
   }
 
+  // ../gas_shared/domain/sgDomainOverrides.ts
+  var SG_DOMAIN_REASONS = ["wrong_tag", "cross_team"];
+  function cleanSgDomainItems(items) {
+    var _a, _b, _c, _d, _e, _f;
+    if (!Array.isArray(items)) return [];
+    const byGroup = /* @__PURE__ */ new Map();
+    for (const raw of items) {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+      const r = raw;
+      const group = String((_a = r["group"]) != null ? _a : "").trim();
+      const domain = String((_b = r["domain"]) != null ? _b : "").trim();
+      const reason = String((_c = r["reason"]) != null ? _c : "");
+      if (!group || !domain || !SG_DOMAIN_REASONS.includes(reason)) continue;
+      byGroup.set(group, {
+        group,
+        domain,
+        reason,
+        note: String((_d = r["note"]) != null ? _d : "").trim().slice(0, 500),
+        by: String((_e = r["by"]) != null ? _e : "").trim(),
+        at: String((_f = r["at"]) != null ? _f : "").trim()
+      });
+    }
+    return [...byGroup.values()].sort((a, b) => a.group < b.group ? -1 : a.group > b.group ? 1 : 0);
+  }
+  function getSupportGroupDomains(settings) {
+    var _a;
+    const raw = settings["supportGroupDomains"];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { version: 0, items: [] };
+    const r = raw;
+    const v = Number((_a = r["version"]) != null ? _a : 0);
+    return {
+      version: Number.isFinite(v) ? Math.max(Math.trunc(v), 0) : 0,
+      items: cleanSgDomainItems(r["items"])
+    };
+  }
+
+  // ../gas_shared/domain/groupDomainVote.ts
+  function assignGroupDomains(rows, spec, overrides = /* @__PURE__ */ new Map()) {
+    var _a, _b, _c, _d;
+    const newest = /* @__PURE__ */ new Map();
+    const openAssets = /* @__PURE__ */ new Set();
+    const groupAssets = /* @__PURE__ */ new Map();
+    const groupKeyless = /* @__PURE__ */ new Map();
+    for (const r of rows) {
+      const key = spec.keyOf(r);
+      const sg = spec.groupOf(r);
+      if (key) {
+        const prev = newest.get(key);
+        if (!prev || spec.lastSeenMs(r) > spec.lastSeenMs(prev)) newest.set(key, r);
+        if (spec.isOpen(r)) openAssets.add(key);
+      }
+      if (!sg) continue;
+      if (key) {
+        let m = groupAssets.get(sg);
+        if (!m) groupAssets.set(sg, m = /* @__PURE__ */ new Map());
+        m.set(key, ((_a = m.get(key)) != null ? _a : 0) + 1);
+      } else {
+        let list = groupKeyless.get(sg);
+        if (!list) groupKeyless.set(sg, list = []);
+        list.push(r);
+      }
+    }
+    const heads = [...newest.values()].map((r) => ({ ...r }));
+    spec.annotateHeads(heads);
+    const assetDomain = /* @__PURE__ */ new Map();
+    [...newest.keys()].forEach((key, i) => assetDomain.set(key, spec.resolveHead(heads[i])));
+    const nameOfAsset = (a) => spec.nameOf(assetDomain.get(a));
+    const count = (names) => {
+      var _a2;
+      const votes = /* @__PURE__ */ new Map();
+      for (const d of names) {
+        if (!spec.pinUnnamed && !spec.isNamed(d)) continue;
+        votes.set(d, ((_a2 = votes.get(d)) != null ? _a2 : 0) + 1);
+      }
+      return votes;
+    };
+    const pick = (votes, findings) => {
+      var _a2;
+      return (_a2 = [...votes.entries()].sort((x, y) => {
+        var _a3, _b2;
+        return Number(!spec.isNamed(x[0])) - Number(!spec.isNamed(y[0])) || y[1] - x[1] || ((_a3 = findings.get(y[0])) != null ? _a3 : 0) - ((_b2 = findings.get(x[0])) != null ? _b2 : 0) || (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0);
+      })[0]) == null ? void 0 : _a2[0];
+    };
+    const groupDomain = /* @__PURE__ */ new Map();
+    for (const sg of /* @__PURE__ */ new Set([...groupAssets.keys(), ...groupKeyless.keys()])) {
+      const assets = (_b = groupAssets.get(sg)) != null ? _b : /* @__PURE__ */ new Map();
+      const findings = /* @__PURE__ */ new Map();
+      let votes;
+      if (assets.size) {
+        const all = [...assets.keys()];
+        const current = all.filter((a) => openAssets.has(a));
+        votes = count((current.length ? current : all).map(nameOfAsset));
+        if (spec.widenWhenNoNamedCurrent && current.length && current.length < all.length && ![...votes.keys()].some(spec.isNamed)) {
+          votes = count(all.map(nameOfAsset));
+        }
+        for (const [a, n2] of assets) {
+          const d = nameOfAsset(a);
+          findings.set(d, ((_c = findings.get(d)) != null ? _c : 0) + n2);
+        }
+      } else {
+        votes = count(((_d = groupKeyless.get(sg)) != null ? _d : []).map((r) => spec.nameOf(spec.resolveKeyless(r))));
+      }
+      const winner = pick(votes, findings);
+      if (winner !== void 0) groupDomain.set(sg, winner);
+    }
+    const groupSource = /* @__PURE__ */ new Map();
+    for (const sg of groupDomain.keys()) groupSource.set(sg, "auto");
+    for (const [sg, domain] of overrides) {
+      groupDomain.set(sg, domain);
+      groupSource.set(sg, "override");
+    }
+    return { groupDomain, groupSource, assetDomain };
+  }
+
+  // src/domain/currentDomain.ts
+  function repoKeyOf(r) {
+    var _a, _b;
+    const id = String((_a = r["repo_id"]) != null ? _a : "").trim();
+    if (id) return "id:" + id;
+    const name = String((_b = r["repo_name"]) != null ? _b : "").trim();
+    return name && name !== COMPACTED_ASSET ? "name:" + name : "";
+  }
+  function buildRepoDomainAssignment(rows, resolveRepo, overrides = /* @__PURE__ */ new Map()) {
+    return assignGroupDomains(rows, {
+      keyOf: repoKeyOf,
+      groupOf: (r) => {
+        var _a;
+        return String((_a = r["_supportGroup"]) != null ? _a : "");
+      },
+      lastSeenMs: (r) => {
+        var _a;
+        return (_a = parseTs(r["last_seen"])) != null ? _a : -Infinity;
+      },
+      isOpen: (r) => {
+        var _a;
+        return !RESOLVED_STATUSES.has(String((_a = r["status"]) != null ? _a : "").toUpperCase());
+      },
+      annotateHeads: () => {
+      },
+      resolveHead: (head) => resolveRepo(head) || "",
+      resolveKeyless: (r) => resolveRepo(r) || "",
+      nameOf: (d) => d,
+      isNamed: (name) => name !== "",
+      pinUnnamed: false,
+      widenWhenNoNamedCurrent: true
+    }, overrides);
+  }
+  function assignedDomainOf(r, a) {
+    var _a;
+    const sg = String((_a = r["_supportGroup"]) != null ? _a : "");
+    const pinned = sg ? a.groupDomain.get(sg) : void 0;
+    if (pinned !== void 0) return pinned;
+    const key = repoKeyOf(r);
+    return key && a.assetDomain.get(key) || "";
+  }
+
+  // src/server/currentDomains.ts
+  var memo;
+  function build(wholeLedger) {
+    const t0 = Date.now();
+    const map = getRepoTagMap();
+    const tagged = Object.keys(map).length > 0;
+    const keys = tagged ? configuredTagKeys() : null;
+    const overrides = getSupportGroupDomains(loadSettings()).items;
+    const assignment = buildRepoDomainAssignment(
+      wholeLedger,
+      // An empty map resolves nothing — the same "we never learned" answer attachRepoTags gives.
+      (head) => keys ? resolveRepoTags(head, map, keys).domain || "" : "",
+      new Map(overrides.map((o) => [o.group, o.domain]))
+    );
+    console.log(JSON.stringify({
+      stage: "domainAssignment",
+      repos: assignment.assetDomain.size,
+      groups: assignment.groupDomain.size,
+      overrides: overrides.length,
+      ms: Date.now() - t0
+    }));
+    return assignment;
+  }
+  function assignmentFor(wholeLedger) {
+    const stamp = dataVersion();
+    if (!memo || memo.stamp !== stamp) memo = { stamp, assignment: build(wholeLedger()) };
+    return memo.assignment;
+  }
+  function write(rows, a) {
+    for (const r of rows) {
+      const d = assignedDomainOf(r, a);
+      if (d) r[DOMAIN_FIELD] = d;
+      else delete r[DOMAIN_FIELD];
+    }
+  }
+  function attachCurrentDomains(wholeLedger) {
+    write(wholeLedger, assignmentFor(() => wholeLedger));
+  }
+  function attachCurrentDomainsTo(subset) {
+    attachProjectGrain(subset);
+    write(subset, assignmentFor(() => {
+      const all = loadBaseRows();
+      attachProjectGrain(all);
+      return all;
+    }));
+  }
+
   // src/server/bootCore.ts
   var BOOT_CORE = "dsBootCore1";
   var BOOT_CORE_PARAMS = {};
@@ -6663,7 +6867,9 @@ var Server = (() => {
     laps.lap("settings");
     const allRows = loadBaseRows();
     laps.lap("baseRows");
-    attachRepoTags(allRows);
+    attachProjectGrain(allRows);
+    attachRepoTags(allRows, { domain: false });
+    attachCurrentDomains(allRows);
     laps.lap("repoTags");
     const projectView = settings.projectView || null;
     const domainView = settings.domainView || null;
@@ -6968,10 +7174,10 @@ var Server = (() => {
     if (scope) return { allowed: true, email, reason: "scoped", scope };
     return parseAllowlist(raw).indexOf(key) >= 0 ? { allowed: true, email, reason: "listed" } : { allowed: false, email, reason: "not-listed" };
   }
-  var memo;
+  var memo2;
   function check() {
-    if (memo === void 0) {
-      memo = decide(
+    if (memo2 === void 0) {
+      memo2 = decide(
         Session.getActiveUser().getEmail(),
         Session.getEffectiveUser().getEmail(),
         getProp(PROP_KEYS.allowedUsers),
@@ -6979,7 +7185,7 @@ var Server = (() => {
         getProp(PROP_KEYS.scopedUsers)
       );
     }
-    return memo;
+    return memo2;
   }
   var SCOPED_RPCS = [
     // Not an RPC but the gate `include()` asks through: the page's own scriptlets need it.
@@ -7009,7 +7215,7 @@ var Server = (() => {
     return parseScoped(getProp(PROP_KEYS.scopedUsers), SCOPE_DIMS);
   }
   function __resetMemosForTest2() {
-    memo = void 0;
+    memo2 = void 0;
   }
   function logDenial(op, d) {
     console.log(JSON.stringify({ access: "denied", op, reason: d.reason, email: d.email }));
@@ -8672,8 +8878,9 @@ var Server = (() => {
     if (!baseMemo || baseMemo.version !== version) {
       const now = Date.now();
       const rows = loadBaseRows({ now, trackingStartByScope: trackingStartByScopeMap() });
-      attachRepoTags(rows);
       attachProjectGrain(rows);
+      attachRepoTags(rows, { domain: false });
+      attachCurrentDomains(rows);
       baseMemo = { version, now, rows };
     }
     return baseMemo;
@@ -11146,7 +11353,7 @@ var Server = (() => {
       const projectView = viewer ? null : settings.projectView || null;
       const domainView = viewer ? null : settings.domainView || null;
       const base = loadBaseRows(scope ? { scope } : {});
-      if (viewer || domainView) attachRepoTags(base);
+      if (viewer || domainView) attachCurrentDomainsTo(base);
       const rows = base.filter((r) => !severities || severities.has(normalizeSeverity(r["severity"]))).filter((r) => {
         var _a2;
         return !statuses || statuses.has(String((_a2 = r["status"]) != null ? _a2 : "").toUpperCase());

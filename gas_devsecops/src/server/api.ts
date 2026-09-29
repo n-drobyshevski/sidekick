@@ -87,6 +87,7 @@ import * as ledgerStore from "./ledgerStore";
 import * as readModels from "./readModels";
 import * as scanJobs from "./scanJobs";
 import { testConnection, WizNotAuthorizedError } from "./wizClient";
+import * as currentDomains from "./currentDomains";
 
 /**
  * THE ENVELOPE, and it lives here rather than in dist/entry.js.
@@ -1342,8 +1343,10 @@ export function getExportCsv(p?: unknown): ApiResult {
     const domainView = viewer ? null : settings.domainView || null;
 
     const base = ledgerStore.loadBaseRows(scope ? { scope } : {}) as unknown as Rec[];
-    // `_domain` is resolved on read and never stored, so the domain filters need the join.
-    if (viewer || domainView) repoTags.attachRepoTags(base);
+    // `_domain` is resolved on read and never stored, so the domain filters need it — from the
+    // current-domain assignment every other read path uses (server/currentDomains.ts), built off
+    // the whole ledger even though this reads one register.
+    if (viewer || domainView) currentDomains.attachCurrentDomainsTo(base);
     const rows = base
       .filter((r) => !severities || severities.has(normalizeSeverity(r["severity"])))
       .filter((r) => !statuses || statuses.has(String(r["status"] ?? "").toUpperCase()))

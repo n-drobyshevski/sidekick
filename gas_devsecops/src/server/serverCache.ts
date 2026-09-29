@@ -38,7 +38,11 @@ const WIZ_VERSION_PROP = "WIZ_DATA_VERSION";
  * settings save, no L1 entry outlives CacheService's six hours, and no L2 file is served past
  * readModelStore's `MAX_AGE_MS`.
  */
-export const CACHE_EPOCH = "1";
+// "1" → "2": the CURRENT-DOMAIN ASSIGNMENT (server/currentDomains.ts). Every read model that puts
+// a finding in a domain now counts it under its support group's ONE pinned domain (or an admin
+// override) instead of its repository's own tag — the meaning of every domain-scoped payload
+// changes at once, which is what this constant exists for.
+export const CACHE_EPOCH = "2";
 const KEY_PREFIX = `wsk.e${CACHE_EPOCH}`;
 const CHUNK_CHARS = 90_000; // base64 chars per entry, safely under the 100 KB cap
 const DEFAULT_TTL_SEC = 21_600; // the CacheService maximum (6 h)
