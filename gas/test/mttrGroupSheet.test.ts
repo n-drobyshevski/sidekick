@@ -322,7 +322,7 @@ describe("getMttrGroup", () => {
     const before = ok(getMttr({ domain: "Payments" }));
     H.keys = [];
     ok(getMttrGroup({ domain: "Payments", groupBy: "supportGroup", groupValue: "Platform SRE" }));
-    expect(H.keys.map((k) => k.ns)).toEqual(["mttrGroup3"]);
+    expect(H.keys.map((k) => k.ns)).toEqual(["mttrGroup4"]);
     expect(H.keys[0]!.params).toMatchObject({
       domain: "Payments", supportGroup: "", groupBy: "supportGroup", groupValue: "Platform SRE",
     });
@@ -336,45 +336,51 @@ describe("getMttrGroup", () => {
 // WHY A GROUP IS LISTED UNDER A DOMAIN. A support group has no domain of its own — each finding
 // takes its asset's — so the sheet shows the spread across EVERY domain, with the route (tag or
 // rule) and the assets, not just the slice the header domain selected.
-describe("getMttrGroup — the domains a row's findings resolve to", () => {
+// THE SHEET NAMES ONE DOMAIN: the one every finding of the row counts under — never a list of
+// where the group's hosts happen to be tagged.
+describe("getMttrGroup — the one domain a row counts under", () => {
   const groupOf = (p: Rec) => ok<Rec>(getMttrGroup(p));
-  const domainsOf = (p: Rec) => (groupOf(p)["domains"] ?? []) as Rec[];
 
-  it("lists where the group's hosts sit today, and the one domain it is pinned to", () => {
+  it("a support group spread over several tags counts under one domain, and says which", () => {
     H.base = [
       ...times(3, () => row({ subscription_ext_id: "sub-a", asset_name: "pay-01" })),
       ...times(2, () => resolved({ subscription_ext_id: "sub-a", asset_name: "pay-01" })),
       ...times(4, () => row({ subscription_ext_id: "sub-a", biz: "Retail", asset_name: "shop-01" })),
       ...times(1, () => row({ subscription_ext_id: "sub-a", biz: "Retail", asset_name: "shop-02" })),
-      // Untagged, no rule configured: Unassigned, by no route at all.
+      // Untagged, no rule configured: Unassigned — never wins a pin.
       ...times(1, () => row({ subscription_ext_id: "sub-a", biz: "", asset_name: "misc-01" })),
-      // Another group's findings: not this row's.
       ...times(6, () => row({ subscription_ext_id: "sub-b", asset_name: "ops-01" })),
     ];
-    const p = { domain: "Retail", groupBy: "supportGroup", groupValue: "Platform SRE" };
-    // Most findings first; a tie (five each here) falls back to the domain's name.
-    expect(domainsOf(p)).toEqual([
-      { domain: "Payments", source: "tag", findings: 5, open: 3, assetCount: 1, assets: ["pay-01"] },
-      { domain: "Retail", source: "tag", findings: 5, open: 5, assetCount: 2, assets: ["shop-01", "shop-02"] },
-      { domain: "Unassigned", source: "none", findings: 1, open: 1, assetCount: 1, assets: ["misc-01"] },
-    ]);
-    // Two hosts in Retail beat one in Payments; the untagged host never wins a pin.
-    expect(groupOf(p)["pinnedDomain"]).toBe("Retail");
+    const g = groupOf({ domain: "Retail", groupBy: "supportGroup", groupValue: "Platform SRE" });
+    // Two hosts in Retail beat one in Payments.
+    expect(g["countedDomain"]).toBe("Retail");
+    expect(g["domains"]).toBeUndefined();
+    expect(g["pinnedDomain"]).toBeUndefined();
   });
 
-  it("an asset row: its domain from its NEWEST sighting, and its group's pin", () => {
+  it("an asset row: its group's one domain", () => {
     H.base = [
       ...times(2, () => row({ asset_name: "host-01", last_seen: iso(NOW - 10 * DAY) })),
       ...times(1, () => row({ asset_name: "host-01", biz: "Retail" })),
       ...times(4, () => row({ asset_name: "host-01", asset_id: "other-host-01", subscription_ext_id: "sub-b", biz: "Other" })),
     ];
-    const p = { supportGroup: "Platform SRE", groupBy: "asset", groupValue: "host-01" };
-    expect(domainsOf(p).map((d) => [d["domain"], d["findings"]])).toEqual([["Retail", 3]]);
-    expect(groupOf(p)["pinnedDomain"]).toBe("Retail");
+    expect(groupOf({ supportGroup: "Platform SRE", groupBy: "asset", groupValue: "host-01" })["countedDomain"])
+      .toBe("Retail");
+  });
+
+  it("is null when the row's findings do not share one domain", () => {
+    // "(none)": unmapped subscriptions, so no group pin; hosts in two domains.
+    H.base = [
+      ...times(1, () => row({ subscription_ext_id: "sub-c", asset_name: "x-01" })),
+      ...times(1, () => row({ subscription_ext_id: "sub-c", asset_name: "x-02", biz: "Retail" })),
+      ...times(1, () => row({ subscription_ext_id: "sub-a", asset_name: "y-01" })),
+    ];
+    const g = groupOf({ domain: "", groupBy: "supportGroup", groupValue: "(none)" });
+    expect(g["countedDomain"]).toBeNull();
   });
 
   it("carries nothing for a domain row — it IS a domain", () => {
     H.base = [row()];
-    expect(ok<Rec>(getMttrGroup({ groupBy: "domain", groupValue: "Payments" }))["domains"]).toBeUndefined();
+    expect(ok<Rec>(getMttrGroup({ groupBy: "domain", groupValue: "Payments" }))["countedDomain"]).toBeUndefined();
   });
 });

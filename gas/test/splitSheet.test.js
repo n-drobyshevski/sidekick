@@ -7,8 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   NONE_GROUP, NOT_ATTRIBUTABLE, SPLIT_NONE, UNASSIGNED, splitBucketNote, splitCountNote,
   splitGroupOf, splitRowLabel, splitSheetColumnKeys, splitSheetDefaults, splitSheetRequests,
-  splitSheetSortFor, splitSheetSubtitle, domainSourceLabel, splitDomainAssetsText,
-  splitDomainsHint, splitDomainsLead, splitDomainsRows,
+  splitSheetSortFor, splitSheetSubtitle,
 } from "../src/client/js/pages/_splitSheet.js";
 import { NONE_GROUP as SHARED_NONE_GROUP } from "../../gas_shared/domain/rowGroups.ts";
 import { UNASSIGNED as RULES_UNASSIGNED } from "../src/domain/domainRules.ts";
@@ -124,12 +123,16 @@ describe("the words", () => {
       .toBe("Platform SRE, support group, open remediation and findings");
   });
 
-  it("puts the enclosing scope in the subtitle", () => {
+  it("puts the enclosing scope, and the ONE domain the row counts under, in the subtitle", () => {
     expect(splitSheetSubtitle("supportGroup", { domain: "Payments" }, null))
-      .toBe("Support group · its findings in domain Payments");
+      .toBe("Support group · domain Payments");
+    expect(splitSheetSubtitle("supportGroup", { domain: "Payments" }, null, "Payments"))
+      .toBe("Support group · domain Payments");
     expect(splitSheetSubtitle("asset", { supportGroup: "Platform SRE" }, ["CRITICAL"]))
       .toBe("Asset · in support group Platform SRE · CRITICAL only");
-    expect(splitSheetSubtitle("domain", {}, null)).toBe("Domain");
+    expect(splitSheetSubtitle("asset", { supportGroup: "Platform SRE" }, ["CRITICAL"], "CROSS"))
+      .toBe("Asset · in support group Platform SRE · domain CROSS · CRITICAL only");
+    expect(splitSheetSubtitle("domain", {}, null, "CROSS")).toBe("Domain");
   });
 
   it("explains the buckets that are not an owner, and only those", () => {
@@ -144,59 +147,5 @@ describe("the words", () => {
     expect(splitCountNote({ open: 3 }, 3, "open")).toBeNull();
     expect(splitCountNote({ open: 3 }, 2, "resolved")).toBeNull();
     expect(splitCountNote({ open: 3 }, 2, "open")).toMatch(/counts 3 open.*lists 2/);
-  });
-});
-
-describe("the Domains section", () => {
-  it("names each route by where its fix lives", () => {
-    expect(domainSourceLabel("tag")).toBe("Wiz/Domain tag");
-    expect(domainSourceLabel("rule")).toBe("manual rule");
-    expect(domainSourceLabel("none")).toBe("no tag or rule matched");
-    expect(domainSourceLabel("missing")).toBe("no attribution input");
-  });
-
-  it("leads with the one domain a pinned group counts under", () => {
-    const two = [{ domain: "CROSS" }, { domain: "RETAIL" }, { domain: "CROSS" }];
-    expect(splitDomainsLead("supportGroup", "CS-SANDBOX", two, "CROSS"))
-      .toBe("CS-SANDBOX counts under CROSS — the domain most of its current assets are in. "
-        + "Every finding it carries is measured there, although its assets sit in 2 domains today.");
-    expect(splitDomainsLead("asset", "web-01", [{ domain: "RETAIL" }], "CROSS"))
-      .toMatch(/^web-01 counts under CROSS — the domain its support group is pinned to\..*sit in RETAIL today\.$/);
-    expect(splitDomainsLead("supportGroup", "CS-SANDBOX", [{ domain: "CROSS" }], "CROSS"))
-      .toBe("CS-SANDBOX counts under CROSS, where all of its assets are today.");
-  });
-
-  it("without a pin, says each finding counts under its asset's current domain", () => {
-    const two = [{ domain: "CROSS" }, { domain: "RETAIL" }];
-    expect(splitDomainsLead("supportGroup", "(none)", two, null)).toMatch(/^\(none\)'s findings count under 2 domains/);
-    expect(splitDomainsLead("supportGroup", "(none)", [{ domain: "CROSS" }], null))
-      .toBe("All of (none)'s findings count under CROSS, their assets' current domain.");
-    expect(splitDomainsLead("supportGroup", "X", [], "CROSS")).toBeNull();
-  });
-
-  it("marks the domain the row is counted under, and only with a pin", () => {
-    const rows = splitDomainsRows([{ domain: "CROSS", source: "tag" }, { domain: "RETAIL", source: "rule" }], "CROSS");
-    expect(rows.map((r) => [r.domain, r.counted, r.sourceLabel]))
-      .toEqual([["CROSS", true, "Wiz/Domain tag"], ["RETAIL", false, "manual rule"]]);
-    expect(splitDomainsRows([{ domain: "CROSS" }], null).every((r) => !r.counted)).toBe(true);
-  });
-
-  it("lists the shipped assets and counts the rest", () => {
-    expect(splitDomainAssetsText({ assets: ["a", "b"], assetCount: 2 })).toBe("a, b");
-    expect(splitDomainAssetsText({ assets: ["a", "b"], assetCount: 7 })).toBe("a, b +5 more");
-  });
-});
-
-describe("the folded Domains summary", () => {
-  it("says where the row counts, and how spread its hosts are", () => {
-    const spread = [{ domain: "CROSS" }, { domain: "SAP" }, { domain: "CROSS" }];
-    expect(splitDomainsHint(spread, "CROSS")).toBe("counted under CROSS · assets in 2 domains");
-    expect(splitDomainsHint([{ domain: "CROSS" }], "CROSS")).toBe("counted under CROSS");
-  });
-
-  it("without a pin, states the count, and names a lone domain", () => {
-    expect(splitDomainsHint([{ domain: "CROSS" }, { domain: "SAP" }], null)).toBe("2 domains");
-    expect(splitDomainsHint([{ domain: "CROSS" }], null)).toBe("1 domain: CROSS");
-    expect(splitDomainsHint([], null)).toBe("");
   });
 });

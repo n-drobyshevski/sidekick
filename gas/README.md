@@ -172,11 +172,9 @@ each finding's **own** resolution (`_domainRaw`), because it measures the tags a
 themselves. The assignment is built once per cache stamp from one read-only pass over the ledger
 (`ledgerStore.readBaseRows`), and `CACHE_EPOCH` moved to "2" with it.
 
-A support-group or asset sheet opens on a **Domains** section, collapsed by default, whose summary
-says where the row counts ("counted under CROSS · assets in 4 domains"). The table lists where the
-row's assets sit today, by route (tag or rule), with the assets carrying them: the vote behind the
-pin, and where to fix a group pinned to the wrong domain (`getMttrGroup`'s `domains` and
-`pinnedDomain`).
+A support-group or asset sheet names, in its subtitle, the **one domain** the row counts under
+("Support group · domain CROSS"), from `getMttrGroup`'s `countedDomain`. It no longer lists
+where the group's hosts are tagged: every figure on the sheet is counted in that one domain.
 
 It is also the only one of the three that is **capped**, at 20 assets. Domains and support groups
 are configured by an operator, so the register knows how many there are and lists them all;

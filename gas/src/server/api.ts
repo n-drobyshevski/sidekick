@@ -76,7 +76,6 @@ import * as settingsStore from "./settingsStore";
 import { cellUsage, SCHEMA_VERSION, TAB_HEADERS, TABS } from "./sheetsDb";
 import {
   NOT_ATTRIBUTABLE,
-  resolveDomain,
   resolveDomainName,
   resolvedDomainNames,
 } from "../domain/resolveDomain";
@@ -84,7 +83,6 @@ import * as bizDomains from "./bizDomains";
 import * as supportGroups from "./supportGroups";
 // Which domain a finding counts under — today's repartition, one answer for every path.
 import * as currentDomains from "./currentDomains";
-import { assetKeyOf } from "../domain/currentDomain";
 
 export interface ApiResult<T = unknown> {
   ok: boolean;
@@ -1565,71 +1563,20 @@ function assetBucket(r: Rec): string {
 interface MttrGroupRow { by: "domain" | "supportGroup" | "asset"; value: string }
 const MTTR_GROUP_DIMENSIONS: readonly MttrGroupRow["by"][] = ["domain", "supportGroup", "asset"];
 
-/** One (domain, how-it-got-there) slice of a split row's findings — see `splitRowDomains`. */
-interface SplitRowDomain {
-  domain: string;
-  source: string;
-  findings: number;
-  open: number;
-  assetCount: number;
-  assets: string[];
-}
-
 /**
- * WHICH DOMAINS A SUPPORT GROUP'S (OR AN ASSET'S) FINDINGS RESOLVE TO, and why — the row
- * sheet's answer to "why is this group listed under that domain?".
- *
- * A support group has no domain of its own. The group comes off the finding's SUBSCRIPTION;
- * the domain is resolved per finding off its ASSET (`resolveDomain`: the Wiz/Domain tag first,
- * then a manual rule, else Unassigned / Not attributable). So one group's findings routinely
- * land in several domains, and the by-support-group split under domain D lists every group
- * with at least one finding resolving to D. That is the rule working, and it reads like a bug
- * until the sheet shows the spread — which is what this is for.
- *
- * THE HEADER DOMAIN SCOPE IS IGNORED ON PURPOSE: a group opened under CROSS answers for
- * everything it carries, so a reader can see the CROSS findings are, say, two assets tagged
- * CROSS in an otherwise-RETAIL group. The support-group scope an asset row was drawn inside
- * is kept — that is the population the asset belongs to. Severity and the global toggles
- * apply as everywhere else on the page.
- *
- * Keyed by (domain, source), not domain alone: findings reaching one domain by a tag and by a
- * rule are two different fixes.
+ * The ONE domain a split row counts under — or null when its findings do not share one (a
+ * "(none)" support group whose unmapped hosts sit in several domains). Read off the same
+ * `currentDomains.domainOf` every page uses, over the row's own findings inside the header
+ * scope, so the sheet names exactly the domain its figures were counted in.
  */
-function splitRowDomains(supportGroup: string, severities: string[] | null, row: MttrGroupRow): SplitRowDomain[] {
-  let rows = visibleBase(filterSeverities(scopedBaseRows("", supportGroup), severities));
+function countedDomainOf(q: Rec, severities: string[] | null, row: MttrGroupRow): string | null {
+  const domain = String(q["domain"] ?? "");
+  const supportGroup = String(q["supportGroup"] ?? "");
+  let rows = visibleBase(filterSeverities(scopedBaseRows(domain, supportGroup), severities));
   rows = narrowToMttrGroup(rows, row);
   bizDomains.attachBizDomains(rows);
-  const compiled = compileDomains(settingsStore.getDomains().items);
-  // Each finding under its ASSET'S CURRENT domain (the asset's newest sighting), not its own
-  // possibly-stale tag bag — this table is "where do this group's hosts sit TODAY", the vote
-  // the group's pin was taken from. A row the ledger cannot tie to an asset keeps its own.
-  const assetDomain = currentDomains.domainAssignment().assetDomain;
-  const acc = new Map<string, { domain: string; source: string; findings: number; open: number;
-    assets: Map<string, number> }>();
-  for (const r of rows) {
-    const key0 = assetKeyOf(r);
-    const { name, source } = (key0 && assetDomain.get(key0)) || resolveDomain(r, compiled);
-    const key = name + "\u0000" + source;
-    let a = acc.get(key);
-    if (!a) acc.set(key, (a = { domain: name, source, findings: 0, open: 0, assets: new Map() }));
-    a.findings += 1;
-    if (!String(r["resolved_at"] ?? "").trim()) a.open += 1;
-    const asset = assetBucket(r);
-    a.assets.set(asset, (a.assets.get(asset) ?? 0) + 1);
-  }
-  return [...acc.values()]
-    .map((a) => ({
-      domain: a.domain,
-      source: a.source,
-      findings: a.findings,
-      open: a.open,
-      assetCount: a.assets.size,
-      assets: [...a.assets.entries()]
-        .sort((x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0))
-        .slice(0, 5)
-        .map(([n]) => n),
-    }))
-    .sort((x, y) => y.findings - x.findings || (x.domain < y.domain ? -1 : 1));
+  const names = new Set(rows.map((r) => currentDomains.domainOf(r)));
+  return names.size === 1 ? [...names][0]! : null;
 }
 
 /** The scoped base rows that fall in `row`'s bucket. The joins it reads are attached here
@@ -2228,15 +2175,14 @@ export function getMttrGroup(p?: unknown): ApiResult {
       // the sheet's Domains section reads; a stale entry would draw that section empty.
       // "mttrGroup2" → "mttrGroup3": `domains` now places each finding under its asset's
       // CURRENT domain, and the payload gained `pinnedDomain` (currentDomains).
-      "mttrGroup3",
+      // "mttrGroup3" → "mttrGroup4": `domains` and `pinnedDomain` are GONE, replaced by one
+      // `countedDomain` — the sheet names the single domain the row counts under and no longer
+      // lists where the group's assets are tagged.
+      "mttrGroup4",
       { ...q, groupBy: by, groupValue: value, showNoFix: settingsStore.getShowNoFix() },
       () => ({
         ...mttrData(q, { by, value }),
-        domains: splitRowDomains(q.supportGroup, severities, { by, value }),
-        // The one domain every finding of this row counts under, when a support group decides
-        // it: the row's own group, or for an asset row the group it was drawn inside.
-        pinnedDomain: currentDomains.domainAssignment().groupDomain.get(
-          by === "supportGroup" ? value : q.supportGroup) ?? null,
+        countedDomain: countedDomainOf(q, severities, { by, value }),
       }),
       3600,
     );
