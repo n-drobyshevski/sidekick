@@ -22,7 +22,7 @@ import { attachBizDomains, configuredDomainTagKey } from "./bizDomains";
 import * as ledgerStore from "./ledgerStore";
 import { currentStamp } from "./serverCache";
 import * as settingsStore from "./settingsStore";
-import { attachSupportGroups } from "./supportGroups";
+import { attachSupportGroups, supportGroupResolver } from "./supportGroups";
 
 let memo: { stamp: string; assignment: DomainAssignment; resolveRow: (r: Rec) => ReturnType<typeof resolveDomain> } | undefined;
 
@@ -36,6 +36,7 @@ function current() {
     const assignment = buildDomainAssignment(
       // The memo itself, not copies: this pass only reads, and copies only the heads it annotates.
       ledgerStore.readBaseRows() as unknown as Rec[],
+      supportGroupResolver(),
       (heads) => { attachSupportGroups(heads); attachBizDomains(heads); },
       resolveRow,
     );

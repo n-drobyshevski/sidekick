@@ -48,7 +48,11 @@ export const BUILD_ID = typeof __BUILD_ID__ === "string" ? __BUILD_ID__ : "dev";
 // — now counts it under its asset's current domain and its support group's one pinned domain,
 // rather than the tags of its last sighting. That changes the MEANING of every domain-scoped
 // payload at once, which is the case this constant exists for rather than twenty namespace bumps.
-export const CACHE_EPOCH = "2";
+// "2" → "3": the same assignment, corrected — every support group that owns a finding is pinned
+// (group membership read off each row's own subscription, not the asset's newest row). Entries
+// cached under "2" put an unpinned group's findings in several domains, and the durable ones
+// would keep saying so until the next scan.
+export const CACHE_EPOCH = "3";
 const CHUNK_CHARS = 90_000; // base64 chars per entry, safely under the 100 KB cap
 const DEFAULT_TTL_SEC = 21_600; // the CacheService maximum (6 h)
 
