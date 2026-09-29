@@ -52,6 +52,13 @@ export function registerScopeContract(ctx) {
   const chrome = ctx.scopeChrome(ctx.data);
   const emptyKinds = ctx.emptyKinds || [];
 
+  describe(`${app} scope rows carry their kind as the section`, () => {
+    it("tags every option with the kind it came from", () => {
+      const view = scopeView({ kinds, chrome, data: ctx.data, active: null });
+      for (const o of view.options) expect(o.section, o.value).toBe(o.kind);
+    });
+  });
+
   // =======================================================================================
   //  Every kind the register declares has to be REACHABLE, not merely produced
   // =======================================================================================
@@ -117,6 +124,27 @@ export function registerScopeContract(ctx) {
       expect(shown.length).toBe(100);
       expect(shown.filter((o) => o.group === "B")).toHaveLength(2);
       expect(shown.filter((o) => o.group === "A")).toHaveLength(98);
+    });
+
+    // FOUND ON A LIVE TENANT, the second time. devsecops files every product under its support
+    // group's heading, so the project dimension alone brought forty-odd headings; shared by
+    // heading, the cap gave the six domains two rows each. Shared by SECTION (the dimension),
+    // every domain shows and the projects are cut at their tail.
+    it("shares by section, so one dimension's many headings cannot crowd out another", () => {
+      const domains = ["FLTC", "IN-STORE", "INDUSTRY", "PRISM", "SUPPLY", "VC ENG CROSS"]
+        .map((d) => ({ value: d, group: "Domains", section: "domain" }));
+      const projects = [];
+      for (let g = 0; g < 45; g++) {
+        for (let i = 0; i < 4; i++) {
+          projects.push({ value: `sg${g}-p${i}`, group: `SG-${g}`, section: "project" });
+        }
+      }
+      const shown = shareCapAcrossGroups([...domains, ...projects], 100);
+      expect(shown.length).toBe(100);
+      expect(shown.filter((o) => o.section === "domain").map((o) => o.value))
+        .toEqual(domains.map((o) => o.value));
+      // The projects keep list order and lose their tail, not a slice of every heading.
+      expect(shown.filter((o) => o.section === "project")).toEqual(projects.slice(0, 94));
     });
   });
 

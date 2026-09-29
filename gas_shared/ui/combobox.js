@@ -36,6 +36,15 @@ const COMBOBOX_MATCH_CAP = 100;
  * Order is PRESERVED, not re-sorted: the caller decided what comes first (see
  * `scopeModel.js` — the kinds are rendered in the order the app declares them), and the
  * heading logic below emits a heading whenever the group changes while walking that order.
+ *
+ * THE UNIT SHARED IS THE SECTION, WHEN ROWS CARRY ONE. A section is a DIMENSION of the list
+ * (`scopeModel.js` sets it to the scope kind); a group is only a heading. Sharing by heading
+ * broke the moment one dimension split itself under many headings: devsecops files every
+ * product under its support group's name, so a register with forty support groups divided
+ * the cap forty-odd ways and its six domains got two rows each — "FLTC, IN-STORE" and the
+ * other four gone, with the Domains heading on screen claiming the list was whole. Shared by
+ * section, the domains take their six and the projects the rest, cut at their tail. Rows
+ * with no section fall back to their group, so every other caller is unchanged.
  */
 export function shareCapAcrossGroups(matches, cap = COMBOBOX_MATCH_CAP) {
   if (matches.length <= cap) return matches;
@@ -45,7 +54,7 @@ export function shareCapAcrossGroups(matches, cap = COMBOBOX_MATCH_CAP) {
   const order = [];
   const byGroup = new Map();
   for (const o of matches) {
-    const key = o.group || "";
+    const key = o.section || o.group || "";
     let bucket = byGroup.get(key);
     if (!bucket) {
       byGroup.set(key, (bucket = []));
@@ -118,6 +127,9 @@ function comboNormalize(list) {
     : {
       value: o.value, label: o.label == null ? o.value : o.label,
       hint: o.hint || "", group: o.group || "",
+      // The dimension the row belongs to, for the cap's share (`shareCapAcrossGroups`); "" for
+      // none, when the heading is the unit instead.
+      section: o.section || "",
       // A uiIcon name, drawn before the label. Decoration by contract: a row must still say
       // in words whatever the glyph is meant to suggest, because a reader who cannot tell
       // two 14px marks apart is reading the label either way.
