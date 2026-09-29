@@ -157,9 +157,12 @@ on every page:
 
 1. **An asset has one current domain**: the one its newest sighting resolves to (Wiz/Domain tag
    first, then a manual rule). All of its findings, resolved ones included, count there.
-2. **A support group is pinned to one domain**: the one most of its current assets are in (an
-   asset is current while it carries an open finding; a group with none falls back to all its
-   assets). Every finding the group carries counts there. A named domain beats Unassigned / Not
+2. **Every support group is pinned to one domain**: the one most of its current assets are in
+   (an asset is current while it carries an open finding; a group with none falls back to all
+   its assets). A group's assets are every asset any of its findings sits on, read off each
+   finding's own subscription — not off the asset's newest row, which the first cut did and
+   which left a group unpinned (and spread over several domains) when its hosts had moved
+   subscription or one asset id surfaced under two. Every finding the group carries counts there. A named domain beats Unassigned / Not
    attributable, and ties go to more findings, then to the name. So a support group is listed
    under exactly one domain.
 

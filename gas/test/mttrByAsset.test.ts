@@ -81,7 +81,8 @@ vi.mock("../src/server/settingsStore", () => ({
 // reason compacted episodes never reach the asset split. A mock that read a made-up `owner_sg`
 // column off the row would hand every compacted row a support group and quietly make the
 // "compacted rows can't arrive here" spec below test nothing at all.
-vi.mock("../src/server/supportGroups", () => ({
+vi.mock("../src/server/supportGroups", () => {
+  const m = {
   attachSupportGroups: (rows: Rec[]) => {
     const MAP: Record<string, string> = { "sub-a": "Platform SRE", "sub-b": "Payments" };
     for (const r of rows) {
@@ -90,7 +91,16 @@ vi.mock("../src/server/supportGroups", () => ({
       if (sg) r["_supportGroup"] = sg;
     }
   },
-}));
+};
+  // The read-only per-row lookup currentDomains uses: the same fake join, answered
+  // on a copy rather than written onto the row.
+  return { ...m, supportGroupResolver: () => (r: Rec) => {
+    const probe: Rec = { ...r };
+    delete probe["_supportGroup"];
+    m.attachSupportGroups([probe]);
+    return String(probe["_supportGroup"] ?? "");
+  } };
+});
 vi.mock("../src/server/bizDomains", () => ({
   configuredDomainTagKey: () => "Wiz/Domain",
   attachBizDomains: (rows: Rec[]) => { for (const r of rows) r["_bizDomain"] = ""; },

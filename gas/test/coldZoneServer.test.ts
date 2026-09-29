@@ -94,11 +94,21 @@ vi.mock("../src/server/settingsStore", () => ({
 }));
 // The live join: `_supportGroup` is not a ledger column, so a row carries whatever the map
 // says. `owner_sg` here stands in for the map so a spec can put two assets in one group.
-vi.mock("../src/server/supportGroups", () => ({
+vi.mock("../src/server/supportGroups", () => {
+  const m = {
   attachSupportGroups: (rows: Rec[]) => {
     for (const r of rows) r["_supportGroup"] = String(r["owner_sg"] ?? "");
   },
-}));
+};
+  // The read-only per-row lookup currentDomains uses: the same fake join, answered
+  // on a copy rather than written onto the row.
+  return { ...m, supportGroupResolver: () => (r: Rec) => {
+    const probe: Rec = { ...r };
+    delete probe["_supportGroup"];
+    m.attachSupportGroups([probe]);
+    return String(probe["_supportGroup"] ?? "");
+  } };
+});
 vi.mock("../src/server/bizDomains", () => ({
   configuredDomainTagKey: () => "Wiz/Domain",
   attachBizDomains: (rows: Rec[]) => { for (const r of rows) r["_bizDomain"] = ""; },

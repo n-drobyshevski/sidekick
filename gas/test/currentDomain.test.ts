@@ -10,6 +10,8 @@ import type { Rec } from "../src/domain/util";
 // A resolver that reads a fixture-only `tag` field: tag → that domain, none → Unassigned.
 const resolve = (r: Rec): ResolvedDomain =>
   r["tag"] ? { name: String(r["tag"]), source: "tag" } : { name: "Unassigned", source: "none" };
+// Each row's own group, off a fixture-only `sg` field — the server's supportGroupResolver.
+const groupOf = (r: Rec) => String(r["sg"] ?? "");
 // The support-group join, reading a fixture-only `sg` field onto the heads.
 const annotate = (heads: Rec[]) => { for (const h of heads) if (h["sg"]) h["_supportGroup"] = h["sg"]; };
 
@@ -36,14 +38,14 @@ describe("rule 1 — an asset has one current domain, from its newest sighting",
       f("a1", { tag: "RETAIL", last_seen: "2026-05-01T00:00:00Z", ...closed }),
       f("a1", { tag: "CROSS" }),
     ];
-    const a = buildDomainAssignment(rows, annotate, resolve);
+    const a = buildDomainAssignment(rows, groupOf, annotate, resolve);
     expect(rows.map((r) => assignedDomain(r, a, resolve))).toEqual([
       { name: "CROSS", source: "asset" }, { name: "CROSS", source: "asset" },
     ]);
   });
 
   it("leaves a row with no asset identity to its own resolution", () => {
-    const a = buildDomainAssignment([], annotate, resolve);
+    const a = buildDomainAssignment([], groupOf, annotate, resolve);
     expect(assignedDomain({ asset_name: "(compacted)", tag: "OLD" }, a, resolve))
       .toEqual({ name: "OLD", source: "row" });
   });
@@ -56,7 +58,7 @@ describe("rule 2 — a support group is pinned to one domain", () => {
       f("a2", { sg: "SRE", tag: "CROSS", _supportGroup: "SRE" }),
       f("a3", { sg: "SRE", tag: "RETAIL", _supportGroup: "SRE" }),
     ];
-    const a = buildDomainAssignment(rows, annotate, resolve);
+    const a = buildDomainAssignment(rows, groupOf, annotate, resolve);
     expect(a.groupDomain.get("SRE")).toBe("CROSS");
     expect(assignedDomain(rows[2]!, a, resolve)).toEqual({ name: "CROSS", source: "group" });
   });
@@ -68,7 +70,7 @@ describe("rule 2 — a support group is pinned to one domain", () => {
       f("old2", { sg: "SRE", tag: "RETAIL", ...closed }),
       f("live", { sg: "SRE", tag: "CROSS" }),
     ];
-    expect(buildDomainAssignment(rows, annotate, resolve).groupDomain.get("SRE")).toBe("CROSS");
+    expect(buildDomainAssignment(rows, groupOf, annotate, resolve).groupDomain.get("SRE")).toBe("CROSS");
   });
 
   it("falls back to all its assets when nothing is open", () => {
@@ -77,7 +79,7 @@ describe("rule 2 — a support group is pinned to one domain", () => {
       f("a2", { sg: "SRE", tag: "RETAIL", ...closed }),
       f("a3", { sg: "SRE", tag: "CROSS", ...closed }),
     ];
-    expect(buildDomainAssignment(rows, annotate, resolve).groupDomain.get("SRE")).toBe("RETAIL");
+    expect(buildDomainAssignment(rows, groupOf, annotate, resolve).groupDomain.get("SRE")).toBe("RETAIL");
   });
 
   it("prefers a named domain to Unassigned however few hosts carry it", () => {
@@ -85,12 +87,12 @@ describe("rule 2 — a support group is pinned to one domain", () => {
       f("a1", { sg: "SRE", tag: "CROSS" }),
       f("a2", { sg: "SRE" }), f("a3", { sg: "SRE" }), f("a4", { sg: "SRE" }),
     ];
-    expect(buildDomainAssignment(rows, annotate, resolve).groupDomain.get("SRE")).toBe("CROSS");
+    expect(buildDomainAssignment(rows, groupOf, annotate, resolve).groupDomain.get("SRE")).toBe("CROSS");
   });
 
   it("is Unassigned only when no host carries a domain", () => {
     const rows = [f("a1", { sg: "SRE" }), f("a2", { sg: "SRE" })];
-    expect(buildDomainAssignment(rows, annotate, resolve).groupDomain.get("SRE")).toBe("Unassigned");
+    expect(buildDomainAssignment(rows, groupOf, annotate, resolve).groupDomain.get("SRE")).toBe("Unassigned");
   });
 
   it("breaks an equal host vote by findings, then by name", () => {
@@ -98,14 +100,14 @@ describe("rule 2 — a support group is pinned to one domain", () => {
       f("a1", { sg: "SRE", tag: "RETAIL" }),
       f("a2", { sg: "SRE", tag: "CROSS" }), f("a2", { sg: "SRE", tag: "CROSS" }),
     ];
-    expect(buildDomainAssignment(byFindings, annotate, resolve).groupDomain.get("SRE")).toBe("CROSS");
+    expect(buildDomainAssignment(byFindings, groupOf, annotate, resolve).groupDomain.get("SRE")).toBe("CROSS");
     const byName = [f("b1", { sg: "SRE", tag: "RETAIL" }), f("b2", { sg: "SRE", tag: "CROSS" })];
-    expect(buildDomainAssignment(byName, annotate, resolve).groupDomain.get("SRE")).toBe("CROSS");
+    expect(buildDomainAssignment(byName, groupOf, annotate, resolve).groupDomain.get("SRE")).toBe("CROSS");
   });
 
   it("does not pin a finding with no support group", () => {
     const rows = [f("a1", { tag: "CROSS" })];
-    const a = buildDomainAssignment(rows, annotate, resolve);
+    const a = buildDomainAssignment(rows, groupOf, annotate, resolve);
     expect(a.groupDomain.size).toBe(0);
     expect(assignedDomain(rows[0]!, a, resolve)).toEqual({ name: "CROSS", source: "asset" });
   });
@@ -113,7 +115,47 @@ describe("rule 2 — a support group is pinned to one domain", () => {
   it("runs the joins on one row per asset, not on the ledger", () => {
     const rows = [f("a1", { sg: "SRE", tag: "X" }), f("a1", { sg: "SRE", tag: "X" }), f("a2", { tag: "Y" })];
     let seen = 0;
-    buildDomainAssignment(rows, (heads) => { seen += heads.length; annotate(heads); }, resolve);
+    buildDomainAssignment(rows, groupOf, (heads) => { seen += heads.length; annotate(heads); }, resolve);
     expect(seen).toBe(2);
+  });
+});
+
+// THE REGRESSION: group membership used to be read off each asset's NEWEST row only, so a
+// group that owned no asset's newest row was never pinned and its findings fell through to
+// their assets' domains — listed under several domains.
+describe("every group that owns a finding is pinned", () => {
+  it("pins a group whose only findings sit on assets that have since moved subscription", () => {
+    const old = { last_seen: "2026-05-01T00:00:00Z", ...closed };
+    const rows = [
+      // OLD's findings: on x (CROSS) and z (RETAIL), both since moved to NEW.
+      f("x", { sg: "OLD", tag: "CROSS", ...old }),
+      f("z", { sg: "OLD", tag: "RETAIL", ...old }),
+      f("z", { sg: "OLD", tag: "RETAIL", ...old }),
+      f("x", { sg: "NEW", tag: "CROSS" }),
+      f("z", { sg: "NEW", tag: "RETAIL" }),
+    ];
+    const a = buildDomainAssignment(rows, groupOf, annotate, resolve);
+    expect(a.groupDomain.has("OLD")).toBe(true);
+    const oldDomains = new Set(rows.filter((r) => r["sg"] === "OLD")
+      .map((r) => assignedDomain({ ...r, _supportGroup: "OLD" }, a, resolve).name));
+    expect(oldDomains.size).toBe(1);
+    // A tied host vote goes to the domain holding more of THIS group's findings.
+    expect(a.groupDomain.get("OLD")).toBe("RETAIL");
+  });
+
+  it("pins a group per subscription when one asset id shows up under two", () => {
+    const rows = [
+      f("img", { sg: "A", tag: "CROSS" }),
+      f("img", { sg: "B", tag: "CROSS" }),
+      f("b2", { sg: "B", tag: "RETAIL" }),
+    ];
+    const a = buildDomainAssignment(rows, groupOf, annotate, resolve);
+    expect(a.groupDomain.get("A")).toBe("CROSS");
+    expect(a.groupDomain.has("B")).toBe(true);
+  });
+
+  it("pins a group with no identified asset by its rows' own resolution", () => {
+    const rows = [{ asset_name: "(compacted)", sg: "G", tag: "SAP", resolved_at: "2026-01-01" }];
+    expect(buildDomainAssignment(rows, groupOf, annotate, resolve).groupDomain.get("G")).toBe("SAP");
   });
 });

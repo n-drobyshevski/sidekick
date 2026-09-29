@@ -248,11 +248,21 @@ vi.mock("../src/server/settingsStore", () => ({
 // The attribution join, faked so the two renamed columns carry something a spec can read.
 // `owner_sg` is NOT a ledger column and NOT in the allowlist, which makes it a second probe:
 // if the slice ever spread instead of picking, it would ride along.
-vi.mock("../src/server/supportGroups", () => ({
+vi.mock("../src/server/supportGroups", () => {
+  const m = {
   attachSupportGroups: (rows: Rec[]) => {
     for (const r of rows) r["_supportGroup"] = String(r["owner_sg"] ?? "");
   },
-}));
+};
+  // The read-only per-row lookup currentDomains uses: the same fake join, answered
+  // on a copy rather than written onto the row.
+  return { ...m, supportGroupResolver: () => (r: Rec) => {
+    const probe: Rec = { ...r };
+    delete probe["_supportGroup"];
+    m.attachSupportGroups([probe]);
+    return String(probe["_supportGroup"] ?? "");
+  } };
+});
 vi.mock("../src/server/bizDomains", () => ({
   configuredDomainTagKey: () => "Wiz/Domain",
   attachBizDomains: (rows: Rec[]) => {

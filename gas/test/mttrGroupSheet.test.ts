@@ -72,7 +72,8 @@ vi.mock("../src/server/settingsStore", () => ({
 }));
 // The subscription → support group join, as the real map resolves it: sub-c maps to nothing,
 // which is the "(none)" bucket.
-vi.mock("../src/server/supportGroups", () => ({
+vi.mock("../src/server/supportGroups", () => {
+  const m = {
   attachSupportGroups: (rows: Rec[]) => {
     const MAP: Record<string, string> = { "sub-a": "Platform SRE", "sub-b": "Payments Ops", "sub-d": "Retail Ops" };
     for (const r of rows) {
@@ -80,7 +81,16 @@ vi.mock("../src/server/supportGroups", () => ({
       if (sg) r["_supportGroup"] = sg;
     }
   },
-}));
+};
+  // The read-only per-row lookup currentDomains uses: the same fake join, answered
+  // on a copy rather than written onto the row.
+  return { ...m, supportGroupResolver: () => (r: Rec) => {
+    const probe: Rec = { ...r };
+    delete probe["_supportGroup"];
+    m.attachSupportGroups([probe]);
+    return String(probe["_supportGroup"] ?? "");
+  } };
+});
 // The Wiz/Domain tag, read off a fixture-only `biz` field. A row without one resolves by rule
 // (none configured → Unassigned) or, with no attribution input at all, to Not attributable.
 vi.mock("../src/server/bizDomains", () => ({
@@ -264,6 +274,27 @@ describe("a retagged asset's history follows it to its current domain", () => {
     ];
     const byDomain = Object.fromEntries(splitRows({}).rows.map((r) => [r["group"], [r["open"], r["resolved"]]]));
     expect(byDomain).toEqual({ Payments: [1, 4], Retail: [1, 0] });
+  });
+});
+
+// THE REGRESSION: a group whose findings sit only on assets whose NEWEST row is in another
+// subscription used to go unpinned, and its findings fell through to their assets' domains —
+// one support group listed under several domains, after the change meant to prevent that.
+describe("a support group that owns no asset's newest row is still in one domain", () => {
+  it("puts every finding of the group in one domain", () => {
+    const old = iso(NOW - 90 * DAY);
+    H.base = [
+      // Payments Ops' only findings: resolved, on hosts that have since moved to sub-a.
+      ...times(1, () => resolved({ asset_name: "x-01", biz: "Payments", subscription_ext_id: "sub-b", last_seen: old })),
+      ...times(2, () => resolved({ asset_name: "z-01", biz: "Retail", subscription_ext_id: "sub-b", last_seen: old })),
+      ...times(1, () => row({ asset_name: "x-01", biz: "Payments", subscription_ext_id: "sub-a" })),
+      ...times(1, () => row({ asset_name: "z-01", biz: "Retail", subscription_ext_id: "sub-a" })),
+    ];
+    const domainsOfGroup = (g: string) => new Set(
+      (ok<Rec>(getRegisterRows({ status: "all", groupBy: "support_group", groupValue: g }))["rows"] as Rec[])
+        .map((r) => r["domain"]));
+    expect(domainsOfGroup("Payments Ops").size).toBe(1);
+    expect(domainsOfGroup("Platform SRE").size).toBe(1);
   });
 });
 

@@ -48,7 +48,10 @@ vi.mock("../src/server/settingsStore", () => ({
   getDomains: () => ({ items: [] }),
   getShowNoFix: () => true,
 }));
-vi.mock("../src/server/supportGroups", () => ({ attachSupportGroups: () => {} }));
+vi.mock("../src/server/supportGroups", () => ({
+  attachSupportGroups: () => {},
+  supportGroupResolver: () => () => "",
+}));
 vi.mock("../src/server/bizDomains", () => ({
   configuredDomainTagKey: () => "Wiz/Domain", attachBizDomains: () => {} }));
 vi.mock("../src/server/errorLog", () => ({ recordError: () => {}, recentErrors: () => [] }));

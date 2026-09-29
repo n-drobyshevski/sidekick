@@ -15,9 +15,10 @@
 //      resolved, takes it. Safe because every input a domain rule reads is asset-level
 //      (names, subscription, support group, tags — `domainRules.hasDomainInputs`), so one
 //      resolution per asset is the same answer per finding, just current.
-//   2. A SUPPORT GROUP IS PINNED TO ONE DOMAIN — the one most of its CURRENT assets sit in
+//   2. EVERY SUPPORT GROUP IS PINNED TO ONE DOMAIN — the one most of its CURRENT assets sit in
 //      (an asset is current while it carries an open finding; a group with none falls back to
-//      all its assets). Every finding in the group counts there, whatever its own asset's tag
+//      all its assets). A group's assets are every asset any of its findings sits on — read
+//      off each row's own subscription, never assumed from the asset's newest row. Every finding in the group counts there, whatever its own asset's tag
 //      says. A named domain beats Unassigned / Not attributable however few assets hold it —
 //      "these two hosts are tagged CROSS, the rest untagged" pins to CROSS, not to the gap.
 //      Ties go to the domain holding more of the group's findings, then to the name.
@@ -66,63 +67,88 @@ const isTail = (name: string) => name === UNASSIGNED || name === NOT_ATTRIBUTABL
 /**
  * Build the assignment from the whole ledger's base rows.
  *
- * ONE PASS, AND THE JOINS RUN ON ONE ROW PER ASSET. The ledger is ~10⁵ rows and the estate
- * ~10³ assets; the support-group join and the tag parse are only ever needed on each asset's
- * NEWEST row (an asset lives in one subscription, so its group is on that row too), so
- * `annotate` gets exactly those — it attaches `_supportGroup` and `_bizDomain` in place — and
- * `resolve` (`resolveDomain` with the current rules and tag key bound) runs once per asset.
+ * GROUP MEMBERSHIP IS READ OFF EVERY ROW, NOT OFF AN ASSET'S NEWEST ONE. A finding's support
+ * group comes from ITS OWN subscription (`groupOf`), and an asset's rows do not all share one:
+ * a host moved between subscriptions keeps its old findings in the old group, and one asset id
+ * can surface under several subscriptions (a shared image). The first cut of this took each
+ * group's assets from the newest rows only — so a group that owned no asset's newest row was
+ * never pinned, its findings fell through to their assets' domains, and it was listed under
+ * several domains: exactly the defect this module exists to remove. Every group that owns any
+ * row is pinned now, and `groupOf` is the caller's job to make cheap (the server caches it per
+ * subscription).
+ *
+ * THE DOMAIN JOINS STILL RUN ON ONE ROW PER ASSET: the tag parse and the rules only need each
+ * asset's NEWEST row, so `annotate` gets exactly those (attaching `_supportGroup` and
+ * `_bizDomain` in place — a manual rule may read either) and `resolve` (`resolveDomain` with the
+ * current rules and tag key bound) runs once per asset. A row with no asset identity (compacted
+ * history) votes with its own resolution, and only for a group that has no identified asset.
  */
 export function buildDomainAssignment(
   rows: Rec[],
+  groupOf: (r: Rec) => string,
   annotate: (newest: Rec[]) => void,
   resolve: (r: Rec) => ResolvedDomain,
 ): DomainAssignment {
   const newest = new Map<string, Rec>();
   const openAssets = new Set<string>();
-  const findingsOf = new Map<string, number>();
+  // group → asset key → that asset's findings IN THIS GROUP (the tie-break weight).
+  const groupAssets = new Map<string, Map<string, number>>();
+  // group → rows with no asset identity, for a group that has nothing else to vote with.
+  const groupKeyless = new Map<string, Rec[]>();
   for (const r of rows) {
     const key = assetKeyOf(r);
-    if (!key) continue;
-    const prev = newest.get(key);
-    if (!prev || lastSeenMs(r) > lastSeenMs(prev)) newest.set(key, r);
-    if (!String(r["resolved_at"] ?? "").trim()) openAssets.add(key);
-    findingsOf.set(key, (findingsOf.get(key) ?? 0) + 1);
+    const sg = groupOf(r);
+    if (key) {
+      const prev = newest.get(key);
+      if (!prev || lastSeenMs(r) > lastSeenMs(prev)) newest.set(key, r);
+      if (!String(r["resolved_at"] ?? "").trim()) openAssets.add(key);
+    }
+    if (!sg) continue;
+    if (key) {
+      let m = groupAssets.get(sg);
+      if (!m) groupAssets.set(sg, (m = new Map()));
+      m.set(key, (m.get(key) ?? 0) + 1);
+    } else {
+      let list = groupKeyless.get(sg);
+      if (!list) groupKeyless.set(sg, (list = []));
+      list.push(r);
+    }
   }
   const heads = [...newest.values()].map((r) => ({ ...r }));
   annotate(heads);
-  const keys = [...newest.keys()];
   const assetDomain = new Map<string, ResolvedDomain>();
-  const groupAssets = new Map<string, string[]>();
-  keys.forEach((key, i) => {
-    const head = heads[i]!;
-    assetDomain.set(key, resolve(head));
-    const sg = String(head["_supportGroup"] ?? "");
-    if (!sg) return;
-    let list = groupAssets.get(sg);
-    if (!list) groupAssets.set(sg, (list = []));
-    list.push(key);
-  });
+  [...newest.keys()].forEach((key, i) => assetDomain.set(key, resolve(heads[i]!)));
 
   const groupDomain = new Map<string, string>();
-  for (const [sg, assets] of groupAssets) {
-    const current = assets.filter((a) => openAssets.has(a));
-    const counted = current.length ? current : assets;
-    const votes = new Map<string, number>();
-    const findings = new Map<string, number>();
-    for (const a of counted) {
-      const d = assetDomain.get(a)!.name;
-      votes.set(d, (votes.get(d) ?? 0) + 1);
-    }
-    for (const a of assets) {
-      const d = assetDomain.get(a)!.name;
-      findings.set(d, (findings.get(d) ?? 0) + (findingsOf.get(a) ?? 0));
-    }
-    const ranked = [...votes.entries()].sort((x, y) =>
+  const pick = (votes: Map<string, number>, findings: Map<string, number>) => [...votes.entries()]
+    .sort((x, y) =>
       Number(isTail(x[0])) - Number(isTail(y[0]))
       || y[1] - x[1]
       || (findings.get(y[0]) ?? 0) - (findings.get(x[0]) ?? 0)
-      || (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0));
-    if (ranked.length) groupDomain.set(sg, ranked[0]![0]);
+      || (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0))[0]?.[0];
+  for (const sg of new Set([...groupAssets.keys(), ...groupKeyless.keys()])) {
+    const assets = groupAssets.get(sg) ?? new Map<string, number>();
+    const votes = new Map<string, number>();
+    const findings = new Map<string, number>();
+    if (assets.size) {
+      const all = [...assets.keys()];
+      const current = all.filter((a) => openAssets.has(a));
+      for (const a of current.length ? current : all) {
+        const d = assetDomain.get(a)!.name;
+        votes.set(d, (votes.get(d) ?? 0) + 1);
+      }
+      for (const [a, n] of assets) {
+        const d = assetDomain.get(a)!.name;
+        findings.set(d, (findings.get(d) ?? 0) + n);
+      }
+    } else {
+      for (const r of groupKeyless.get(sg) ?? []) {
+        const d = resolve(r).name;
+        votes.set(d, (votes.get(d) ?? 0) + 1);
+      }
+    }
+    const winner = pick(votes, findings);
+    if (winner !== undefined) groupDomain.set(sg, winner);
   }
   return { groupDomain, assetDomain };
 }

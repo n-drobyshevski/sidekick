@@ -92,11 +92,21 @@ vi.mock("../src/server/settingsStore", () => ({
 }));
 // Support group straight off a fixture field; the business domain off another, so the
 // resolved `_domain` is the tag value (resolveDomain reads `_bizDomain` first).
-vi.mock("../src/server/supportGroups", () => ({
+vi.mock("../src/server/supportGroups", () => {
+  const m = {
   attachSupportGroups: (rows: Rec[]) => {
     for (const r of rows) r["_supportGroup"] = String(r["sg"] ?? "");
   },
-}));
+};
+  // The read-only per-row lookup currentDomains uses: the same fake join, answered
+  // on a copy rather than written onto the row.
+  return { ...m, supportGroupResolver: () => (r: Rec) => {
+    const probe: Rec = { ...r };
+    delete probe["_supportGroup"];
+    m.attachSupportGroups([probe]);
+    return String(probe["_supportGroup"] ?? "");
+  } };
+});
 vi.mock("../src/server/bizDomains", () => ({
   attachBizDomains: (rows: Rec[]) => {
     for (const r of rows) r["_bizDomain"] = String(r["dom"] ?? "");

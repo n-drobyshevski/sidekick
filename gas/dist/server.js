@@ -6492,7 +6492,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "3baf82ae0de1" : "dev";
+  var BUILD_ID = true ? "7ec014359044" : "dev";
   var CACHE_EPOCH = "2";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
@@ -8555,6 +8555,28 @@ var Server = (() => {
     }
     return null;
   }
+  function supportGroupResolver() {
+    const { map } = getSupportGroupMap2();
+    if (!Object.keys(map).length) return () => "";
+    const memo4 = /* @__PURE__ */ new Map();
+    return (record) => {
+      const tokens = recordIdentityTokens(record);
+      const key = tokens.join("\0");
+      let group = memo4.get(key);
+      if (group === void 0) {
+        group = "";
+        for (const token of tokens) {
+          const hit = map[foldToken(token)];
+          if (hit) {
+            group = hit;
+            break;
+          }
+        }
+        memo4.set(key, group);
+      }
+      return group;
+    };
+  }
   function attachSupportGroups(records) {
     const { map } = getSupportGroupMap2();
     if (!Object.keys(map).length) return;
@@ -8681,53 +8703,66 @@ var Server = (() => {
     return Number.isFinite(t) ? t : -Infinity;
   }
   var isTail = (name) => name === UNASSIGNED || name === NOT_ATTRIBUTABLE;
-  function buildDomainAssignment(rows, annotate, resolve) {
-    var _a, _b, _c, _d, _e;
+  function buildDomainAssignment(rows, groupOf, annotate, resolve) {
+    var _a, _b, _c, _d, _e, _f, _g;
     const newest = /* @__PURE__ */ new Map();
     const openAssets = /* @__PURE__ */ new Set();
-    const findingsOf = /* @__PURE__ */ new Map();
+    const groupAssets = /* @__PURE__ */ new Map();
+    const groupKeyless = /* @__PURE__ */ new Map();
     for (const r of rows) {
       const key = assetKeyOf(r);
-      if (!key) continue;
-      const prev = newest.get(key);
-      if (!prev || lastSeenMs(r) > lastSeenMs(prev)) newest.set(key, r);
-      if (!String((_a = r["resolved_at"]) != null ? _a : "").trim()) openAssets.add(key);
-      findingsOf.set(key, ((_b = findingsOf.get(key)) != null ? _b : 0) + 1);
+      const sg = groupOf(r);
+      if (key) {
+        const prev = newest.get(key);
+        if (!prev || lastSeenMs(r) > lastSeenMs(prev)) newest.set(key, r);
+        if (!String((_a = r["resolved_at"]) != null ? _a : "").trim()) openAssets.add(key);
+      }
+      if (!sg) continue;
+      if (key) {
+        let m = groupAssets.get(sg);
+        if (!m) groupAssets.set(sg, m = /* @__PURE__ */ new Map());
+        m.set(key, ((_b = m.get(key)) != null ? _b : 0) + 1);
+      } else {
+        let list = groupKeyless.get(sg);
+        if (!list) groupKeyless.set(sg, list = []);
+        list.push(r);
+      }
     }
     const heads = [...newest.values()].map((r) => ({ ...r }));
     annotate(heads);
-    const keys = [...newest.keys()];
     const assetDomain = /* @__PURE__ */ new Map();
-    const groupAssets = /* @__PURE__ */ new Map();
-    keys.forEach((key, i) => {
-      var _a2;
-      const head = heads[i];
-      assetDomain.set(key, resolve(head));
-      const sg = String((_a2 = head["_supportGroup"]) != null ? _a2 : "");
-      if (!sg) return;
-      let list = groupAssets.get(sg);
-      if (!list) groupAssets.set(sg, list = []);
-      list.push(key);
-    });
+    [...newest.keys()].forEach((key, i) => assetDomain.set(key, resolve(heads[i])));
     const groupDomain = /* @__PURE__ */ new Map();
-    for (const [sg, assets] of groupAssets) {
-      const current2 = assets.filter((a) => openAssets.has(a));
-      const counted = current2.length ? current2 : assets;
+    const pick = (votes, findings) => {
+      var _a2;
+      return (_a2 = [...votes.entries()].sort((x, y) => {
+        var _a3, _b2;
+        return Number(isTail(x[0])) - Number(isTail(y[0])) || y[1] - x[1] || ((_a3 = findings.get(y[0])) != null ? _a3 : 0) - ((_b2 = findings.get(x[0])) != null ? _b2 : 0) || (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0);
+      })[0]) == null ? void 0 : _a2[0];
+    };
+    for (const sg of /* @__PURE__ */ new Set([...groupAssets.keys(), ...groupKeyless.keys()])) {
+      const assets = (_c = groupAssets.get(sg)) != null ? _c : /* @__PURE__ */ new Map();
       const votes = /* @__PURE__ */ new Map();
       const findings = /* @__PURE__ */ new Map();
-      for (const a of counted) {
-        const d = assetDomain.get(a).name;
-        votes.set(d, ((_c = votes.get(d)) != null ? _c : 0) + 1);
+      if (assets.size) {
+        const all = [...assets.keys()];
+        const current2 = all.filter((a) => openAssets.has(a));
+        for (const a of current2.length ? current2 : all) {
+          const d = assetDomain.get(a).name;
+          votes.set(d, ((_d = votes.get(d)) != null ? _d : 0) + 1);
+        }
+        for (const [a, n] of assets) {
+          const d = assetDomain.get(a).name;
+          findings.set(d, ((_e = findings.get(d)) != null ? _e : 0) + n);
+        }
+      } else {
+        for (const r of (_f = groupKeyless.get(sg)) != null ? _f : []) {
+          const d = resolve(r).name;
+          votes.set(d, ((_g = votes.get(d)) != null ? _g : 0) + 1);
+        }
       }
-      for (const a of assets) {
-        const d = assetDomain.get(a).name;
-        findings.set(d, ((_d = findings.get(d)) != null ? _d : 0) + ((_e = findingsOf.get(a)) != null ? _e : 0));
-      }
-      const ranked = [...votes.entries()].sort((x, y) => {
-        var _a2, _b2;
-        return Number(isTail(x[0])) - Number(isTail(y[0])) || y[1] - x[1] || ((_a2 = findings.get(y[0])) != null ? _a2 : 0) - ((_b2 = findings.get(x[0])) != null ? _b2 : 0) || (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0);
-      });
-      if (ranked.length) groupDomain.set(sg, ranked[0][0]);
+      const winner = pick(votes, findings);
+      if (winner !== void 0) groupDomain.set(sg, winner);
     }
     return { groupDomain, assetDomain };
   }
@@ -8754,6 +8789,7 @@ var Server = (() => {
       const assignment = buildDomainAssignment(
         // The memo itself, not copies: this pass only reads, and copies only the heads it annotates.
         readBaseRows(),
+        supportGroupResolver(),
         (heads) => {
           attachSupportGroups(heads);
           attachBizDomains(heads);

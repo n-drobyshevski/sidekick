@@ -56,6 +56,32 @@ export function resolveSupportGroup(record: Rec, map: Record<string, string>): s
 }
 
 /**
+ * A support-group lookup for a READ-ONLY pass over many rows: `(record) => group | ""`, without
+ * writing `_supportGroup` onto the row. Cached per identity (the subscription tokens a row
+ * carries), so a pass over the whole ledger costs one map lookup per distinct subscription
+ * rather than one token walk per finding — `currentDomains` reads every row's group this way.
+ */
+export function supportGroupResolver(): (record: Rec) => string {
+  const { map } = settingsStore.getSupportGroupMap();
+  if (!Object.keys(map).length) return () => "";
+  const memo = new Map<string, string>();
+  return (record) => {
+    const tokens = recordIdentityTokens(record);
+    const key = tokens.join("\u0000");
+    let group = memo.get(key);
+    if (group === undefined) {
+      group = "";
+      for (const token of tokens) {
+        const hit = map[foldToken(token)];
+        if (hit) { group = hit; break; }
+      }
+      memo.set(key, group);
+    }
+    return group;
+  };
+}
+
+/**
  * Attach `_supportGroup` to each record from the current map (in place). No-op when the
  * map is empty (no refresh yet / no tagged subscriptions) so the field simply stays unset
  * and every support-group filter/condition is inert rather than wrong.
