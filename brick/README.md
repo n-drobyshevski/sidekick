@@ -21,7 +21,7 @@ Coverage and efficiency come from the Cisco Kenna / Cyentia *Prioritization to P
 series, which is the source of the **formulas**, not a benchmark these numbers can be read
 against. They are in direct tension, so the pipeline always emits both, never one alone; assets
 at risk is P2P volume 5's asset-centric family, written only for a scope whose findings resolve
-to an asset the request can be narrowed to.
+to an asset (`sca` and `sast`, not `os`).
 [`docs/reading-the-numbers.md`](docs/reading-the-numbers.md) is the page to read before quoting
 either figure to anyone.
 

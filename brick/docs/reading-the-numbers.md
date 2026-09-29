@@ -210,9 +210,9 @@ asserting a fix that is no longer guaranteed.
   that has no CVE and no vulnerability-finding representation, and would need its own
   `Source.kind` and its own silver shape rather than a new value squeezed into an existing one.
   Nothing here fetches it.
-- **The asset family stops at `sca`.** `os` has no narrow `vulnerableAsset` member list to
-  request, and `sast`'s resource is a plain object nothing here has been wired to turn into
-  density and capacity figures yet — see [Assets at risk](register.md#assets-at-risk-p2p-v5).
+- **No asset family for `os`.** `sca` and `sast` findings carry a repository branch, but `os`
+  has no narrow `vulnerableAsset` member list to request, so its findings carry no asset id and
+  it writes no `assets` rows — see [Assets at risk](register.md#assets-at-risk-p2p-v5).
 - **Two SAST-specific gaps live in [Scopes](register.md#scopes) rather than here**, because they are
   properties of the *rule*, not the pipeline: `config.CWE_ANCESTORS` is measured-incomplete, and
   `aiAnalysis.verdict`'s enum spelling is unverified against the live tenant.

@@ -67,7 +67,7 @@ publishes one session view per family (`v_scans`, `v_mttr`, `v_program`, `v_capa
 | `mttr` | scan × severity (+ `OVERALL`) | MTTR mean/median, open counts, open-age p50/p90, SLA target and compliance, the resolution-source split, the actionable clock, and the `snap_*` snapshot comparison |
 | `program` | scan × severity (+ `OVERALL`) | the confusion matrix, coverage and efficiency with bounds, prevalence, signal coverage |
 | `capacity` | scan × month × **`population`** | opened, closed, backlog at month start, MMCR, net flow, verdict, `reconstructed`, `closed_observed` |
-| `assets` | scan × repository branch × **`population`** | P2P v5: density percentiles, foothold rate, coverage, half-life, MMCR, capacity split — see [Assets at risk](#assets-at-risk-p2p-v5). Written for `sca`; `os` and `sast` have no narrow asset-member list to request and so write nothing under this family (see [SCOPE_ASSET_MEMBERS](#scopes)) |
+| `assets` | scan × repository branch × **`population`** | P2P v5: density percentiles, foothold rate, coverage, half-life, MMCR, capacity split — see [Assets at risk](#assets-at-risk-p2p-v5). Written for `sca` and `sast`, whose findings carry a repository branch; `os` has no narrow asset-member list to request, so it has no asset ids and writes nothing under this family (see [SCOPE_ASSET_MEMBERS](#scopes)) |
 
 There is no `sensitivity` family and nothing is published under that name any more: the seven-
 subset rule sweep is recomputed at read time by `panels.rule_sweep` from `v_lifecycles` rather
@@ -334,7 +334,8 @@ entire request — which is why `config.FETCH_ASSET_FIELDS` is off globally. `sc
 `config.SCOPE_ASSET_MEMBERS["sca"]` narrows the selection to the two members that resolve. `os`
 has no narrower list to ask for — a host finding can arrive on any of the thirteen members — so
 it is deliberately absent from that map and falls back to no asset columns at all. That
-narrowing is what makes the v5 asset family computable for `sca` at all; see
+narrowing is what makes the v5 asset family computable for `sca` at all (`sast` gets its asset
+from a plain `resource` object instead, so it needs no narrowing); see
 [Assets at risk](#assets-at-risk-p2p-v5).
 
 ### `sast` is a second source, and a rule of our own
@@ -411,7 +412,7 @@ two sources. Three of those columns mean something adjacent for `sast`:
 | --- | --- |
 | `cve` | the weakness *title* ("SQL Injection"), not an identifier. Reused rather than paralleled: it is the column every panel groups on to answer "what kind of thing is this". The identifier-shaped value is in `cwe` |
 | `component` | the file path — the located artefact |
-| `asset_*` | the repository branch, from `resource`. A plain object rather than a union, so none of `sca`'s `FETCH_ASSET_FIELDS` trouble applies — but `sast` still has no entry in `SCOPE_ASSET_MEMBERS` and no `assets` family, because nothing here derives density and capacity for it yet |
+| `asset_*` | the repository branch, from `resource`. A plain object rather than a union, so none of `sca`'s `FETCH_ASSET_FIELDS` trouble applies and `sast` needs no entry in `SCOPE_ASSET_MEMBERS`. It is what gives `sast` an `assets` family, grouped by `language` (`codeLibraryLanguage`) |
 
 `ai_verdict` is **latest-observation-wins, not monotone**, unlike the exploit signals beside it.
 Exploit knowledge does not decay, so letting `has_kev` fall back to false would be forgetting
@@ -440,12 +441,13 @@ after them.
 | `mmcr_p50` | the median share of an asset's backlog closed per month (Fig. 20) |
 | `falling_behind_pct` / `maintaining_pct` / `gaining_pct` | the capacity split (Fig. 21) |
 
-This family is only written for `sca` today, because it is the only scope with a narrow enough
-`vulnerableAsset` member list to resolve reliably — see
-[`os` and `sca` need no new maths](#os-and-sca-need-no-new-maths). `os` writes no `assets` rows
-(no narrow member list to request) and neither does `sast` (its asset is a plain repository
-branch object, not a union, but nothing here has been wired to build density/capacity figures
-from it yet).
+This family is computed for every scope, but only findings with an `asset_id` count toward it
+(`metrics._with_assets`), so it has rows for `sca` and `sast` and none for `os`. `sca` gets its
+asset ids from a narrow `vulnerableAsset` member list — see
+[`os` and `sca` need no new maths](#os-and-sca-need-no-new-maths) — and `sast` from its
+`resource`, a plain repository-branch object rather than a union. `os` has no narrow member list
+to request, so with `config.FETCH_ASSET_FIELDS` off it carries no asset ids and writes no
+`assets` rows.
 
 - **Filter on `population`.** Every asset group appears twice — `all` and `high_risk` — and an
   unfiltered read doubles every count.
