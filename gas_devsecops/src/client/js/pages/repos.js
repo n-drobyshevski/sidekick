@@ -1599,7 +1599,7 @@ export async function renderRepos(host, _params, _ctx) {
           cell: (r) => {
             if (r.isEstate) return "";
             const model = bandBarModel({
-              bands: r.bands, max: scale, unit: "repositories", name: r.label,
+              bands: r.bands, max: scale, unit: "repositories", unitOne: "repository", name: r.label,
             });
             const wrap = el("span", { class: "bandcell" });
             wrap.bandModel = model;

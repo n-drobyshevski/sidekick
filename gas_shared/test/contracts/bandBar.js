@@ -170,10 +170,28 @@ export function registerBandBarContract(ctx) {
           { key: "a", label: "0-30 d", count: 3, rank: 1, extra: "12 open" },
           { key: "b", label: "30-60 d", count: 1, rank: 2 },
         ],
-        max: 4, unit: "repositories", name: "Payments",
+        max: 4, unit: "repositories", unitOne: "repository", name: "Payments",
       });
       expect(m.segments[0].tip).toEqual(["0-30 d", "3 repositories · 75% of the 4 in Payments", "12 open"]);
-      expect(m.segments[1].tip).toEqual(["30-60 d", "1 repositories · 25% of the 4 in Payments"]);
+      expect(m.segments[1].tip).toEqual(["30-60 d", "1 repository · 25% of the 4 in Payments"]);
+    });
+
+    // A COUNT OF 1 TAKES THE SINGULAR, in the sentence and the tip alike — and only when the
+    // caller spelled it out, because an -s rule cannot (repository/repositories).
+    it("names a count of one with the singular noun it was given", () => {
+      const m = bandBarModel({
+        bands: [
+          { key: "a", label: "0-30 d", count: 1, rank: 1 },
+          { key: "b", label: "30-60 d", count: 2, rank: 2 },
+        ],
+        max: 3, unit: "repositories", unitOne: "repository", name: "Payments",
+      });
+      expect(m.aria).toBe("Payments: 1 repository at 0-30 d, 2 repositories at 30-60 d.");
+      expect(m.segments[0].tip[1]).toBe("1 repository · 33% of the 3 in Payments");
+      expect(m.segments[1].tip[1]).toBe("2 repositories · 67% of the 3 in Payments");
+      // No singular given: the plural stays, as before.
+      const bare = bandBarModel({ bands: bands([1]), unit: "assets" });
+      expect(bare.aria).toBe("1 assets at band 0.");
     });
 
     it("writes a sliver as <1%, never as a 0% that contradicts the drawn segment", () => {

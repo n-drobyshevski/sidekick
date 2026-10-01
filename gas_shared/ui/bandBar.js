@@ -53,7 +53,10 @@ import { tipAnchor } from "./tip.js";
  *   `extra` is an optional second figure per band, carried into the sentence only.
  * @param {number} spec.max  the largest row total in the TABLE. 0 or absent means every row
  *   fills its track, which is the single-row case and not a scale.
- * @param {string} spec.unit  what one count counts ("assets"), for the sentence.
+ * @param {string} spec.unit  what the counts count, plural ("assets"), for the sentence.
+ * @param {string} [spec.unitOne]  the same noun for a count of exactly 1 ("asset"). Spelled
+ *   out by the caller rather than derived: an -s rule writes "repositorys". Without it a 1
+ *   keeps the plural, which is the old reading rather than a wrong one.
  * @param {string} spec.name  the row's own label, opening the sentence.
  * @returns {{total: number, fillPct: number, segments: Array, aria: string, empty: boolean}}
  *   Each segment carries `tip`: the lines its hover card shows.
@@ -62,6 +65,8 @@ export function bandBarModel(spec) {
   const p = spec || {};
   const bands = Array.isArray(p.bands) ? p.bands : [];
   const unit = typeof p.unit === "string" && p.unit ? p.unit : "";
+  const unitOne = typeof p.unitOne === "string" && p.unitOne ? p.unitOne : unit;
+  const counted = (n) => String(n) + (unit ? " " + (n === 1 ? unitOne : unit) : "");
   const name = typeof p.name === "string" ? p.name : "";
 
   const kept = [];
@@ -98,12 +103,12 @@ export function bandBarModel(spec) {
       rank: b.rank,
       extra: b.extra,
       pct,
-      tip: segmentTip(b, pct, total, unit, name),
+      tip: segmentTip(b, pct, total, counted, name),
     };
   });
 
   const clauses = segments.map((s) => {
-    const head = String(s.count) + (unit ? " " + unit : "") + " at " + s.label;
+    const head = counted(s.count) + " at " + s.label;
     return s.extra ? head + " (" + s.extra + ")" : head;
   });
   const body = clauses.length ? clauses.join(", ") + "." : "nothing to show.";
@@ -118,13 +123,13 @@ export function bandBarModel(spec) {
  *
  * A share that rounds to 0 is written "<1%": the segment exists, so "0%" would contradict it.
  */
-function segmentTip(b, pct, total, unit, name) {
+function segmentTip(b, pct, total, counted, name) {
   const rounded = Math.round(pct);
   const share = rounded === 0 && pct > 0 ? "<1%" : String(rounded) + "%";
   const whole = "the " + String(total) + (name ? " in " + name : "");
   const lines = [
     b.label,
-    String(b.count) + (unit ? " " + unit : "") + " · " + share + " of " + whole,
+    counted(b.count) + " · " + share + " of " + whole,
   ];
   if (b.extra) lines.push(b.extra);
   return lines;
