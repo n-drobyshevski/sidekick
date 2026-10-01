@@ -632,9 +632,15 @@ export function filterEmptyNotice(asOf, filterOn, empty, sentence) {
 
 // ------------------------------------------------------------------------ shared DOM bits
 
-/** A paged, sortable table with its footer — the arrangement all three registers use. */
+/**
+ * A paged, sortable table with its footer — the arrangement all three registers use.
+ *
+ * `leadRows` are pinned above every page and sit outside the sort, the paging and the footer's
+ * count — the cold zone's "Everything" row above its products is one, and it is not a product.
+ */
 export function pagedTable(spec) {
   const { columns, rows, sortSpec, emptyText } = spec;
+  const leadRows = Array.isArray(spec.leadRows) ? spec.leadRows : [];
   let page = 0;
   let pageSize = DEFAULT_PAGE_SIZE;
 
@@ -646,7 +652,7 @@ export function pagedTable(spec) {
     page = cut.page;
     const table = dataTable({
       columns,
-      rows: cut.rows,
+      rows: leadRows.length ? leadRows.concat(cut.rows) : cut.rows,
       emptyText: emptyText || "Nothing to show.",
     });
     const footer = tableFooter({

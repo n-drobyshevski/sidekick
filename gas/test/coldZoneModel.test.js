@@ -32,7 +32,8 @@ import { describe, expect, it } from "vitest";
 import {
   COLD_VERDICT_LABEL, GROUP_VERDICT_LABEL, NO_GROUP, applyColdSelection, boundOnlySentence,
   coldAssetRows, coldBandDefs, coldBandKeyModel, coldBandRows, coldBandScale, coldCensusModel,
-  coldGroupRows, coldGroupScatterPoints, coldKpiCards, coldModeCaption, coldScatterPoints,
+  coldEstateRow, coldGroupRows, coldGroupScatterPoints, coldKpiCards, coldModeCaption,
+  coldScatterPoints,
   coldScatterSelectionNote, coldSelection, coldSelectionNote, coldZoneView, coldestShareNote,
   groupCountNote, markScatterPoints, scatterSelectionActive, severitiesNote, unmeasurableNote,
 } from "../src/client/js/pages/coldZoneModel.js";
@@ -672,6 +673,48 @@ describe("coldestShareNote", () => {
 // =========================================================================================
 //  6. coldGroupRows (and the bands it now carries)
 // =========================================================================================
+
+describe("coldEstateRow — the pinned \"Everything\" row", () => {
+  it("carries the estate totals under a null key, which is what \"no group\" means", () => {
+    const view = coldZoneView(payload({
+      assets: [asset()],
+      groups: [group()],
+      totals: totals({
+        assets: 7, assets_with_open: 4, cold_assets: 2, cold_asset_share_pct: 50,
+        open_in_cold: 11, high_risk_in_cold: 3,
+      }),
+    }));
+    const row = coldEstateRow(view);
+    expect(row.key).toBeNull();
+    expect(row.isEstate).toBe(true);
+    expect(row.label).toBe("Everything");
+    expect(row.assets).toBe(7);
+    expect(row.coldAssets).toBe(2);
+    expect(row.sharePct).toBe(50);
+    expect(row.openInCold).toBe(11);
+    expect(row.highRiskInCold).toBe(3);
+    // Per-group claims with no estate reading, and no bar that would break the shared scale.
+    expect(row.verdict).toBeNull();
+    expect(row.relativeRank).toBeNull();
+    expect(row.inColdestShare).toBe(false);
+    expect(row.bands).toBeNull();
+    expect(row.bandTotal).toBe(0);
+  });
+
+  it("keeps a null estate share null — no meter over an empty denominator", () => {
+    const view = coldZoneView(payload({
+      assets: [asset()],
+      groups: [group()],
+      totals: totals({ assets: 1, cold_asset_share_pct: null }),
+    }));
+    expect(coldEstateRow(view).sharePct).toBeNull();
+  });
+
+  it("is null with no totals to carry", () => {
+    expect(coldEstateRow(null)).toBeNull();
+    expect(coldEstateRow({ totals: null })).toBeNull();
+  });
+});
 
 describe("coldGroupRows", () => {
   it("keeps the payload's order and its own labels", () => {

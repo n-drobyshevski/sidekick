@@ -857,6 +857,44 @@ export function coldTeamRows(view) {
 }
 
 /**
+ * The pinned "Everything" row above the products — the estate's own totals, and the control
+ * that lets go of a product selection.
+ *
+ * IT IS A ROW, NOT A PRODUCT. It sorts and pages with nothing (`pagedTable`'s `leadRows`), and
+ * its key is null because null is what "no product" already means to `coldSelection` and the
+ * chips. It carries NO band distribution: the band key row above the table is the estate's
+ * distribution already, and an estate-sized bar on `coldBandScale` would either overflow the
+ * shared scale or shrink every product's bar to fit it. Verdict, rank, support group and last
+ * movement are per-product claims with no estate reading, so they are null rather than invented.
+ *
+ * Null when there are no totals — an unmeasured estate has no figures for the row to carry.
+ */
+export function coldEstateRow(view) {
+  const t = view && view.totals;
+  if (!t) return null;
+  return {
+    key: null,
+    label: "Everything",
+    isEstate: true,
+    supportGroup: null,
+    supportGroupText: absentText,
+    verdict: null,
+    verdictWord: absentText,
+    repos: num(t.repos, 0),
+    coldRepos: num(t.cold_repos, 0),
+    sharePct: num(t.cold_repo_share_pct),
+    relativeRank: null,
+    inColdestShare: false,
+    openInCold: num(t.open_in_cold, 0),
+    highRiskInCold: num(t.high_risk_in_cold, 0),
+    lastMovementAt: null,
+    lastMovementText: absentText,
+    bands: null,
+    bandTotal: 0,
+  };
+}
+
+/**
  * The band vocabulary, derived once from the payload's own column labels.
  *
  * THE LABELS COME FROM THE PAYLOAD AND THE RANKS DO NOT. `bucket_labels` moves with the
@@ -1502,15 +1540,23 @@ export async function renderRepos(host, _params, _ctx) {
     // defect it refuses.
     const scale = coldBandScale(rows);
     renderBandKeys(view);
+    // THE WAY BACK TO THE WHOLE ESTATE, pinned first, and pressed whenever no product is. See
+    // `coldEstateRow` for what it does and does not say.
+    const estate = coldEstateRow(view);
 
     coldHost.append(pagedTable({
+      leadRows: estate ? [estate] : [],
       columns: [
         {
           key: "label", label: "Product",
           // THE ROW'S NAME IS THE CONTROL, one tab stop per row — the stop a clickable row
           // already costs. The bars are NOT controls: five segments per row times N rows is
           // 5N stops, which is the arity rule `quad.js` states.
-          cell: (r) => el("button", {
+          cell: (r) => r.isEstate ? el("button", {
+            type: "button", class: "linklike group-pick", "data-group-all": "",
+            "aria-pressed": coldProduct === null ? "true" : "false",
+            onclick: pickAll,
+          }, r.label) : el("button", {
             type: "button", class: "linklike group-pick", "data-group-pick": r.key,
             "aria-pressed": coldProduct === r.key ? "true" : "false",
             onclick: () => pickProduct(r.key),
@@ -1529,7 +1575,7 @@ export async function renderRepos(host, _params, _ctx) {
           key: "verdict", label: "Verdict",
           // The dot AND the word, never the dot alone — `gas_shared/ui/verdict.js` carries the mapping
           // for both this page's verdict families.
-          cell: (r) => verdictMark(r.verdict, r.verdictWord),
+          cell: (r) => (r.isEstate ? absent() : verdictMark(r.verdict, r.verdictWord)),
         },
         { key: "repos", label: "Repos", className: "num", cell: (r) => fmtCount(r.repos) },
         {
@@ -1551,6 +1597,7 @@ export async function renderRepos(host, _params, _ctx) {
             ],
           },
           cell: (r) => {
+            if (r.isEstate) return "";
             const model = bandBarModel({
               bands: r.bands, max: scale, unit: "repositories", name: r.label,
             });
@@ -1584,6 +1631,7 @@ export async function renderRepos(host, _params, _ctx) {
           // row is where the absolute reading lives.
           key: "coldestRank", label: "Coldest rank", help: { term: "coldest-share" },
           cell: (r) => {
+            if (r.isEstate) return absent();
             const rank = r.relativeRank === null ? absentText : fmtCount(r.relativeRank);
             if (!r.inColdestShare) return rank;
             // The pill draws its own dot and its own word, so there is no new class and no
@@ -1623,6 +1671,9 @@ export async function renderRepos(host, _params, _ctx) {
       // `sortRows` leaves a list untouched when it is given no value function.
       emptyText: "No product has a repository to report on yet.",
     }));
+    // The pinned row's `.is-picked` is a row class `dataTable` has no hook for, so the first
+    // paint marks it the same way every later press does.
+    markAll();
     coldHost.append(denomNote(productCountNote(view, rows.length)));
     // The marks in the column above, counted — and the clamp that decides how many there are,
     // stated. Null when nobody is marked, which is every product in fixed mode.
@@ -1674,6 +1725,23 @@ export async function renderRepos(host, _params, _ctx) {
     syncSelection();
   }
 
+  /** "Everything": let go of the product. Never a toggle — there is nothing to press it off to. */
+  function pickAll() {
+    if (coldProduct === null) return;
+    coldProduct = null;
+    syncSelection();
+  }
+
+  /** The "Everything" button and its row follow "nothing picked". */
+  function markAll() {
+    for (const btn of coldHost.querySelectorAll("[data-group-all]")) {
+      const on = coldProduct === null;
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+      const row = btn.closest("tr");
+      if (row) row.classList.toggle("is-picked", on);
+    }
+  }
+
   /**
    * Repaint what the selection changed, and nothing else.
    *
@@ -1695,6 +1763,7 @@ export async function renderRepos(host, _params, _ctx) {
       const row = btn.closest("tr");
       if (row) row.classList.toggle("is-picked", on);
     }
+    markAll();
     for (const cell of coldHost.querySelectorAll(".bandcell")) {
       if (!cell.bandModel) continue;
       clear(cell).append(bandBar(cell.bandModel, { selected: band }));
