@@ -135,8 +135,8 @@ export function storageBody({ used, total, label, state = "", note, lines } = {}
  * `badge` and `action` are the caller's nodes — the badge because its count arrives from an RPC
  * that may fail (a decorative figure, left blank rather than faked), the action because the RPC
  * names and the sheet it opens are the app's. `covers` and `note` are what a NARROWER log owes
- * its reader: gas_devsecops's payload carries `covers: "jobs"` because it never ported the
- * errorLog tab and records job failures only.
+ * its reader: gas_devsecops's payload carries `covers` and a `note` because it merges two
+ * sources (failed jobs and a server-side log) and still leaves some refusals unrecorded.
  *
  * AN APP WITH NO ERROR LOG PASSES NOTHING AND GETS NO CARD. gas_ai has no recent-errors
  * mechanism at all, and an empty-state card there would claim a log exists and happens to be
@@ -360,7 +360,7 @@ export function diagnosticsPanel(spec = {}) {
  *
  * The two shapes in this tree disagree at the top level: `gas`'s `api_getRecentErrors` answers a
  * BARE ARRAY of `{ts, op, kind, message}`, and `gas_devsecops`'s answers an OBJECT
- * `{errors, covers, note}` whose rows are `{job_id, kind, phase, scope, at, error}`. Neither is
+ * `{errors, covers, note}` whose rows are `{source, job_id, kind, phase, scope, at, error}`. Neither is
  * wrong; a narrower log has something extra to say. Unwrapping both here is what lets one
  * renderer draw either.
  *
@@ -372,7 +372,8 @@ export function diagnosticsPanel(spec = {}) {
  *
  * `mapItem` exists because `kind` MEANS DIFFERENT THINGS in the two payloads: gas's is the
  * error's severity ("error" / "warn"), which is what the pill in the table is drawn from, while
- * devsecops's is the JOB's kind ("sync", "compact"). The default mapper takes gas's reading. An
+ * devsecops's is what was running (a job's kind, or an operation label). The default mapper
+ * takes gas's reading. An
  * app whose `kind` is not a severity must pass its own mapper rather than let this one guess.
  */
 export function normalizeErrorLog(payload, mapItem = defaultErrorItem) {
@@ -415,10 +416,10 @@ export function errorCountBadge(items) {
  * The body of the recent-errors drill-down: a toolbar, what the log does not cover, and either
  * the rows or an empty state.
  *
- * CLEAR IS A CAPABILITY, NOT A BUTTON THAT IS SOMETIMES DISABLED. `gas` has
- * `api_clearRecentErrors`; `gas_devsecops` has no clear RPC at all. Passing no `onClear` draws
- * no clear control — a disabled one would offer an operation that does not exist. Passed, it is
- * disabled only while there is nothing to clear, which is a different statement.
+ * CLEAR IS A CAPABILITY, NOT A BUTTON THAT IS SOMETIMES DISABLED. An app, or a viewer, with no
+ * `api_clearRecentErrors` to call passes no `onClear`, and that draws no clear control — a
+ * disabled one would offer an operation that does not exist. Passed, it is disabled only while
+ * there is nothing to clear, which is a different statement.
  *
  * `fmtDateTime` is the CALLER's, threaded in rather than imported, because the display zone is
  * resolved per app and a table of timestamps in the wrong zone is worse than one with none.

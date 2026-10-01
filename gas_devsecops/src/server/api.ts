@@ -90,6 +90,7 @@ import * as readModels from "./readModels";
 import * as scanJobs from "./scanJobs";
 import { testConnection, WizNotAuthorizedError } from "./wizClient";
 import * as currentDomains from "./currentDomains";
+import * as errorLog from "./errorLog";
 
 /**
  * THE ENVELOPE, and it lives here rather than in dist/entry.js.
@@ -106,7 +107,7 @@ export interface ApiResult<T = unknown> {
   errorKind?: string;
 }
 
-function run<T>(fn: () => T): ApiResult<T> {
+function run<T>(fn: () => T, label = "api"): ApiResult<T> {
   try {
     return { ok: true, data: fn() };
   } catch (e) {
@@ -119,16 +120,21 @@ function run<T>(fn: () => T): ApiResult<T> {
       e instanceof LedgerBusyError ? "busy"
       : e instanceof WizNotAuthorizedError ? "not-authorized"
       : "error";
+    // Into the durable recent-errors log (Data → Recent errors), so a failed RPC leaves a
+    // trace beyond the toast its caller saw. NOT "busy" — the expected "a write is running,
+    // retry" contention signal, which would evict real errors — and NOT "not-authorized",
+    // which is a deployment state the caller is already shown the remedy for, not a fault.
+    if (kind === "error") errorLog.recordError(label, e, kind);
     return { ok: false, error: String(e instanceof Error ? e.message : e), errorKind: kind };
   }
 }
 
 /** A write: take the lock, roll back a half-finished predecessor, then run. */
-function mutate<T>(fn: () => T): ApiResult<T> {
+function mutate<T>(fn: () => T, label = "api"): ApiResult<T> {
   return run(() => withScriptLock(() => {
     recoverIfNeeded();
     return fn();
-  }));
+  }), label);
 }
 
 export interface Bootstrap {
@@ -406,7 +412,7 @@ export function testWizConnection(
     const at = new Date().toISOString();
     setProp(PROP_KEYS.wizVerifiedAt, at);
     return { ...res, at };
-  });
+  }, "testWizConnection");
 }
 
 /**
@@ -665,7 +671,7 @@ export function putSettings(p: { settings?: unknown }): ApiResult<ReturnType<typ
   // way round the gate. Stripped, not refused: the Settings page sends the whole draft back.
   const patch = { ...((p.settings ?? {}) as Record<string, unknown>) };
   delete patch["supportGroupDomains"];
-  return mutate(() => saveSettings(withSettings(loadSettings(), patch as never)));
+  return mutate(() => saveSettings(withSettings(loadSettings(), patch as never)), "putSettings");
 }
 
 /**
@@ -707,7 +713,7 @@ export function saveSupportGroupDomain(p: {
     }];
     setSupportGroupDomains(items);
     return { saved: true, errors: [], items: getSupportGroupDomains().items };
-  });
+  }, "saveSupportGroupDomain");
 }
 
 /**
@@ -722,7 +728,7 @@ export function saveSupportGroupDomain(p: {
  * validated field would turn a retired project's stale name into a scope nobody can clear.
  */
 export function setProjectView(p: { projectView?: unknown }): ApiResult<ReturnType<typeof loadSettings>> {
-  return mutate(() => saveSettings(withProjectView(loadSettings(), p.projectView)));
+  return mutate(() => saveSettings(withProjectView(loadSettings(), p.projectView)), "setProjectView");
 }
 
 /**
@@ -735,7 +741,7 @@ export function setProjectView(p: { projectView?: unknown }): ApiResult<ReturnTy
  * that used the wrong helper — see `settingsLogic.withProjectView` for the argument.
  */
 export function setDomainView(p: { domainView?: unknown }): ApiResult<ReturnType<typeof loadSettings>> {
-  return mutate(() => saveSettings(withDomainView(loadSettings(), p.domainView)));
+  return mutate(() => saveSettings(withDomainView(loadSettings(), p.domainView)), "setDomainView");
 }
 
 /**
@@ -751,7 +757,7 @@ export function setDomainView(p: { domainView?: unknown }): ApiResult<ReturnType
  * repaints against the new map rather than answering from the old attribution.
  */
 export function refreshDomains(_p?: unknown): ApiResult<repoTags.RepoTagRefresh> {
-  return mutate(() => repoTags.refreshRepoTags());
+  return mutate(() => repoTags.refreshRepoTags(), "refreshDomains");
 }
 
 /**
@@ -1281,7 +1287,7 @@ export function runSync(p?: unknown): ApiResult {
       ? raw.map(String).filter((s): s is Scope => (SCOPES as readonly string[]).includes(s))
       : undefined;
     return scanJobs.startSync(scopes ? { scopes } : {});
-  });
+  }, "runSync");
 }
 
 /**
@@ -1316,7 +1322,7 @@ export function getJobStatus(p?: unknown): ApiResult {
  * exactly the execution Stop is trying to reach, for the full timeout, and then fail.
  */
 export function cancelSync(p?: unknown): ApiResult {
-  return run(() => scanJobs.cancelSync(String(((p ?? {}) as Rec)["jobId"] ?? "")));
+  return run(() => scanJobs.cancelSync(String(((p ?? {}) as Rec)["jobId"] ?? "")), "cancelSync");
 }
 
 // --------------------------------------------------------------------------------------- //
@@ -1327,7 +1333,7 @@ export function cancelSync(p?: unknown): ApiResult {
  *  layer's, so a delete cannot interleave with a persist. */
 export function deleteScans(p?: unknown): ApiResult {
   const scanIds = (((p ?? {}) as Rec)["scanIds"] as unknown[] | undefined ?? []).map(String);
-  return mutate(() => ledgerStore.deleteScans(scanIds));
+  return mutate(() => ledgerStore.deleteScans(scanIds), "deleteScans");
 }
 
 /**
@@ -1348,7 +1354,7 @@ export function compact(p?: unknown): ApiResult {
     ? Number(params["retentionDays"])
     : loadSettings().retentionDays;
   if (dryRun) return run(() => ledgerStore.previewMaintenance(days));
-  return mutate(() => ledgerStore.compactLedger(days, false));
+  return mutate(() => ledgerStore.compactLedger(days, false), "compact");
 }
 
 /**
@@ -1367,7 +1373,7 @@ export function resetLedger(_p?: unknown): ApiResult {
       console.warn(`resetLedger: continuation-trigger cleanup skipped: ${e}`);
     }
     return ledgerStore.resetLedger();
-  });
+  }, "resetLedger");
 }
 
 // --------------------------------------------------------------------------------------- //
@@ -1464,23 +1470,28 @@ function inViewerScope(r: Rec, v: readModels.ViewerScope): boolean {
 
 /**
  * How many failures the diagnostics panel looks back over. Jobs are single-flight and one row
- * is appended per sync, so 50 is several weeks of a daily schedule.
+ * is appended per sync, so 50 is several weeks of a daily schedule. The server log is capped
+ * at 25 by `errorLog` itself; this caps the merged list.
  */
 const RECENT_ERROR_LIMIT = 50;
 
 /**
- * The recent server-side failures, newest first.
+ * The recent server-side failures, newest first, from TWO SOURCES merged into one row shape
+ * `{source, at, kind, scope, phase, error}`:
  *
- * DIVERGENCE (gas/), AND THE SOURCE IS DIFFERENT ON PURPOSE. gas/ serves this from an
- * `errorLog` tab that S4 deliberately did not port: a tab written on every caught throw is a
- * second write path into the spreadsheet whose failure mode is a full sheet, and this register
- * has one place that already records a failure with its context — the `jobs` tab's `error`
- * column, which every terminal transition, `reclaimIfStale` and `recoverIfNeeded` write. So
- * this reads that, and NO ERROR-LOG TAB WAS CREATED.
+ *   * `source: "job"` — the `jobs` tab's `error` column, which every terminal transition,
+ *     `reclaimIfStale` and `recoverIfNeeded` write. A failed sync hop records its failure HERE
+ *     and nowhere else (`errorLog.markRecorded`), so it is listed once. `kind` is the JOB's
+ *     kind ("sync", …), `scope` and `phase` are where it stopped.
+ *   * `source: "server"` — `errorLog`'s Script-Property ring buffer, the same store gas/
+ *     serves this endpoint from: RPCs that threw, the post-commit chores, the read-model warm
+ *     and its durable level, the repository-tag map, the daily trigger. `kind` is the
+ *     operation label it was recorded under; `scope` and `phase` are null.
  *
- * WHAT THAT COSTS, STATED RATHER THAN HIDDEN: this reports job failures only. A read RPC that
- * throws returns `{ok:false}` to its caller and leaves no row, so it will not appear here.
- * That is a narrower panel than gas/'s and the payload says so in `covers`.
+ * WHAT IT STILL DOES NOT COVER, stated rather than hidden: a "busy" refusal (a write already
+ * holds the lock — contention, not a fault), a not-authorized one (the deployment cannot make
+ * outbound calls, a state the caller is shown the remedy for), and anything that only reached
+ * an execution's console. The payload says so in `note`.
  *
  * ENUMERATED, NOT SPREAD. `cursor` and `journal_ref` are on every `JobRow` and a spread would
  * ship both — the same allowlist discipline `jobSummarySlice` exists for.
@@ -1491,25 +1502,57 @@ export function getRecentErrors(p?: unknown): ApiResult {
     const limit = Number.isFinite(raw) && raw > 0
       ? Math.min(Math.floor(raw), RECENT_ERROR_LIMIT)
       : RECENT_ERROR_LIMIT;
-    const errors = listJobs()
+    const jobErrors = listJobs()
       .filter((j) => j.error !== null && j.error !== "")
       .map((j) => ({
+        source: "job",
         job_id: j.job_id,
-        kind: j.kind,
-        phase: j.phase,
-        scope: j.scope,
+        kind: j.kind as string,
+        phase: j.phase as string | null,
+        scope: j.scope as string | null,
         at: j.updated_at,
-        started_at: j.started_at,
+        started_at: j.started_at as string | null,
         error: j.error,
-      }))
+      }));
+    const serverErrors = errorLog.recentErrors().map((e) => ({
+      source: "server",
+      job_id: null,
+      kind: e.op,
+      phase: null,
+      scope: null,
+      at: e.ts,
+      started_at: null,
+      error: e.message,
+    }));
+    const errors = [...jobErrors, ...serverErrors]
       .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))
       .slice(0, limit);
     return {
       errors,
       // The panel must be able to say what it is NOT showing.
-      covers: "jobs",
-      note: "Job failures only — this register has no error-log tab. A read that fails returns "
-        + "its message to the caller and records no row.",
+      covers: "jobs+server",
+      note: "Failed sync jobs, and the last 25 failures recorded on the server — RPCs that "
+        + "threw and background chores. A request refused because a write was already running "
+        + "is not recorded.",
     };
   });
+}
+
+/**
+ * Clear the server half of the recent-errors log (the Data page's "Clear log" action).
+ * Owner/admin only, the same gate as every other operator-facing write here. The job rows'
+ * `error` column is NOT touched: those belong to the job history, and the panel keeps listing
+ * them until the jobs tab drops them.
+ *
+ * `run`, NOT `mutate`: one Script Property is deleted, and the ledger lock would make an
+ * operator clearing a diagnostic wait behind a running sync for nothing.
+ */
+export function clearRecentErrors(_p?: unknown): ApiResult<{ cleared: true }> {
+  return run(() => {
+    if (!access.canEditUsers()) {
+      throw new Error("Only the owner or an admin can clear the error log.");
+    }
+    errorLog.clearErrors();
+    return { cleared: true as const };
+  }, "clearRecentErrors");
 }

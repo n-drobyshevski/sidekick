@@ -42,6 +42,7 @@ import { DOMAIN_FIELD } from "../domain/domainScope";
 import { LIFECYCLE_FIELD, lifecycleOfTags, resolveLifecycleTagKey } from "../domain/lifecycleTag";
 import { present, type Rec } from "../domain/util";
 import { getProp, PROP_KEYS, setProp } from "./props";
+import { recordError } from "./errorLog";
 import { bumpDataVersion, cacheGetJson, cachePutJson, dataVersion } from "./serverCache";
 import { ensureTab, overwrite, readAll, TABS } from "./sheetsDb";
 import { queryPage } from "./wizClient";
@@ -265,6 +266,8 @@ export function getRepoTagMap(): RepoTagMap {
     writeMapCache(map);
   } catch (e) {
     console.warn(`Repository tag map unreadable — no tags attached this execution: ${String(e)}`);
+    // Once per execution: the empty map is memoised below, so this catch does not run again.
+    recordError("repoTagMap", e);
   }
   mapMemo = map;
   return map;

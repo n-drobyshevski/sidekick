@@ -1034,6 +1034,54 @@ describe("the history entry", () => {
   });
 });
 
+/* ================================================================== the error log */
+
+describe("what a trigger cannot report, it records", () => {
+  const recorded = (): Rec[] => JSON.parse(props["RECENT_ERRORS"] ?? "[]") as Rec[];
+
+  it("a daily sync with no credentials leaves an entry rather than silently not syncing", async () => {
+    const { scanJobs } = await load();
+    delete props["WIZ_API_TOKEN"];
+    delete props["WIZ_API_URL"];
+
+    scanJobs.dailySync();
+
+    expect(tenant.served).toHaveLength(0);
+    expect(recorded().map((e) => e["op"])).toEqual(["dailySync"]);
+    expect(String(recorded()[0]!["message"])).toMatch(/credentials/i);
+  });
+
+  it("a hop that fails is recorded on its job row, not a second time in the server log", async () => {
+    const { scanJobs } = await load();
+    tenant.plan.sca = { pages: 1, rowsPerPage: 2, partialOn: [] };
+    tenant.onPage = () => {
+      throw new Error("tenant refused the page");
+    };
+
+    expect(() => scanJobs.dailySync()).toThrow(/tenant refused/);
+
+    const failed = (tables["jobs"] ?? []).filter((j) => j["phase"] === "FAILED");
+    expect(failed).toHaveLength(1);
+    expect(String(failed[0]!["error"])).toContain("tenant refused");
+    expect(recorded()).toEqual([]);
+  });
+
+  it("a clean daily sync records nothing about the sync", async () => {
+    const { scanJobs } = await load();
+    tenant.plan = {
+      sca: { pages: 1, rowsPerPage: 2, partialOn: [] },
+      sast: { pages: 1, rowsPerPage: 2, partialOn: [] },
+      secrets: { pages: 1, rowsPerPage: 2, partialOn: [] },
+    };
+    scanJobs.dailySync();
+    // Only the sync's own labels are asserted. The read-model warm runs too, over fakes that
+    // do not implement Drive's named-file reads or `cellCount`, so it TRUTHFULLY records its
+    // own failures here (`readModelL2`, `cacheWarm`) — that is the log working, not the sync.
+    const syncOps = ["dailySync", "continueSync", "watchdogSync", "dailyHistory", "autoCompact"];
+    expect(recorded().filter((e) => syncOps.includes(String(e["op"])))).toEqual([]);
+  });
+});
+
 /* ================================================================== slimRecord */
 
 describe("slimRecord never carries a credential into the durable store", () => {

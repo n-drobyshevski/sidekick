@@ -33,6 +33,7 @@
 
 import { listNames, readGzJsonNamed, trashNamed, writeGzJson, subfolder } from "./archiveStore";
 import { cached, currentStamp, paramsHash, peekCached, primeCached } from "./serverCache";
+import { recordError } from "./errorLog";
 
 const FOLDER = "readmodels" as const;
 const ENVELOPE_V = 1;
@@ -109,6 +110,10 @@ export function readModelFileName(name: string, params: unknown): string {
   return `rm-${name}-${paramsHash(params)}.json.gz`;
 }
 
+function errText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
 function l2Read(
   name: string,
   params: unknown,
@@ -129,6 +134,8 @@ function l2Read(
   } catch (e) {
     disabled = true;
     console.warn(`Durable read-model read failed (${name}) — L2 disabled for this run: ${e}`);
+    // Once per execution at most — `disabled` stops every later attempt in this run.
+    recordError("readModelL2", `Read failed (${name}), L2 disabled for this run: ${errText(e)}`);
     return { hit: false, why: "absent" };
   }
 }
@@ -148,6 +155,7 @@ function l2Write(name: string, params: unknown, version: string | undefined, val
   } catch (e) {
     disabled = true;
     console.warn(`Durable read-model write failed (${name}) — L2 disabled for this run: ${e}`);
+    recordError("readModelL2", `Write failed (${name}), L2 disabled for this run: ${errText(e)}`);
   }
 }
 

@@ -329,8 +329,8 @@ export function registerDiagnosticsContract(ctx) {
     });
 
     it("lets a caller whose `kind` is not a severity supply its own mapper", () => {
-      // gas's `kind` is the error's severity ("error" / "warn"); gas_devsecops's is the JOB's
-      // kind ("sync", "compact"), and the default mapper would feed that straight to the pill.
+      // gas's `kind` is the error's severity ("error" / "warn"); gas_devsecops's is what was
+      // running ("sync", "cacheWarm"), and the default mapper would feed that straight to the pill.
       const rows = [{ job_id: "j1", kind: "sync", phase: "fetch", at: "T", error: "nope" }];
       const mine = normalizeErrorLog({ errors: rows }, (r) => ({
         at: r.at, op: r.job_id, kind: "error", message: r.error,
@@ -346,8 +346,8 @@ export function registerDiagnosticsContract(ctx) {
     });
 
     it("offers a Clear control only to a caller that has somewhere to send it", () => {
-      // gas has api_clearRecentErrors; gas_devsecops has no clear RPC at all, and a disabled
-      // button would offer an operation that does not exist.
+      // A caller with no clear RPC to reach passes no onClear, and a disabled button would
+      // offer an operation that does not exist.
       const withClear = errorLogBody({ items: [{ at: "T" }], onRefresh() {}, onClear() {} });
       expect(findTag(withClear[0], "button").map(text)).toEqual(["Refresh", "Clear log"]);
       const without = errorLogBody({ items: [{ at: "T" }], onRefresh() {} });

@@ -40,6 +40,7 @@ var Server = (() => {
     bootstrap: () => bootstrap,
     bootstrapIfWarm: () => bootstrapIfWarm,
     cancelSync: () => cancelSync2,
+    clearRecentErrors: () => clearRecentErrors,
     compact: () => compact,
     deleteScans: () => deleteScans2,
     domainMapHealth: () => domainMapHealth,
@@ -3713,6 +3714,62 @@ var Server = (() => {
     ) !== null;
   }
 
+  // src/server/errorLog.ts
+  var KEY = "RECENT_ERRORS";
+  var MAX_ENTRIES = 25;
+  var MAX_MESSAGE_LEN = 500;
+  var MAX_BLOB_CHARS = 8500;
+  var alreadyRecorded = /* @__PURE__ */ new WeakSet();
+  function truncate(s2) {
+    return s2.length > MAX_MESSAGE_LEN ? s2.slice(0, MAX_MESSAGE_LEN) + "\u2026" : s2;
+  }
+  function recentErrors() {
+    const raw = getProp(KEY);
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter((e) => Boolean(e) && typeof e === "object" && !Array.isArray(e)).map((e) => {
+        var _a, _b, _c, _d;
+        return {
+          ts: String((_a = e["ts"]) != null ? _a : ""),
+          op: String((_b = e["op"]) != null ? _b : "api"),
+          kind: String((_c = e["kind"]) != null ? _c : "error"),
+          message: String((_d = e["message"]) != null ? _d : "")
+        };
+      });
+    } catch {
+      return [];
+    }
+  }
+  function markRecorded(err) {
+    try {
+      if (err !== null && typeof err === "object") alreadyRecorded.add(err);
+    } catch {
+    }
+  }
+  function recordError(op, err, kind = "error", now) {
+    try {
+      if (err !== null && typeof err === "object") {
+        if (alreadyRecorded.has(err)) return;
+        alreadyRecorded.add(err);
+      }
+      const message = err instanceof Error ? err.message : typeof err === "string" ? err : String(err);
+      const entry = { ts: nowIso(now), op, kind, message: truncate(message) };
+      const next = [entry, ...recentErrors()].slice(0, MAX_ENTRIES);
+      let blob = JSON.stringify(next);
+      while (next.length > 1 && blob.length > MAX_BLOB_CHARS) {
+        next.pop();
+        blob = JSON.stringify(next);
+      }
+      setProp(KEY, blob);
+    } catch {
+    }
+  }
+  function clearErrors() {
+    deleteProp(KEY);
+  }
+
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var WIZ_VERSION_PROP = "WIZ_DATA_VERSION";
@@ -4880,6 +4937,7 @@ var Server = (() => {
       writeMapCache(map);
     } catch (e) {
       console.warn(`Repository tag map unreadable \u2014 no tags attached this execution: ${String(e)}`);
+      recordError("repoTagMap", e);
     }
     mapMemo = map;
     return map;
@@ -5478,7 +5536,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "4edcf20aacc9" : "dev";
+  var BUILD_ID = true ? "e6cb767875e1" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
@@ -6574,6 +6632,9 @@ var Server = (() => {
   function readModelFileName(name, params) {
     return `rm-${name}-${paramsHash(params)}.json.gz`;
   }
+  function errText(e) {
+    return e instanceof Error ? e.message : String(e);
+  }
   function l2Read(name, params, version) {
     if (disabled) return { hit: false, why: "absent" };
     try {
@@ -6588,6 +6649,7 @@ var Server = (() => {
     } catch (e) {
       disabled = true;
       console.warn(`Durable read-model read failed (${name}) \u2014 L2 disabled for this run: ${e}`);
+      recordError("readModelL2", `Read failed (${name}), L2 disabled for this run: ${errText(e)}`);
       return { hit: false, why: "absent" };
     }
   }
@@ -6606,6 +6668,7 @@ var Server = (() => {
     } catch (e) {
       disabled = true;
       console.warn(`Durable read-model write failed (${name}) \u2014 L2 disabled for this run: ${e}`);
+      recordError("readModelL2", `Write failed (${name}), L2 disabled for this run: ${errText(e)}`);
     }
   }
   function durablyCached(name, params, compute, ttlSec, version) {
@@ -10400,10 +10463,12 @@ var Server = (() => {
         warmed += 1;
       } catch (e) {
         console.warn(`Read-model warm (${target.label}) failed: ${e}`);
+        recordError("cacheWarm", `${target.label}: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
     if (skipped) {
       console.warn(`Read-model warm: out of budget after ${warmed} entries, ${skipped} left cold`);
+      recordError("cacheWarm", `Out of budget after ${warmed} entries, ${skipped} left cold.`);
     }
     const swept = skipped ? 0 : sweepReadModels();
     return { warmed, skipped, swept, blockedBy: null, elapsedMs: Date.now() - t0 };
@@ -10783,6 +10848,7 @@ var Server = (() => {
         phase: "FAILED",
         error: e == null ? "Sync failed." : String(e).slice(0, 1e3)
       });
+      markRecorded(e);
       throw e;
     }
   }
@@ -10814,6 +10880,7 @@ var Server = (() => {
       recordDaily(dailyStats(params, outcome));
     } catch (e) {
       console.warn(`Failed to record the daily history entry: ${e}`);
+      recordError("dailyHistory", e);
     }
     autoCompactIfDue();
     warmAfterSync();
@@ -10823,11 +10890,13 @@ var Server = (() => {
       const report = warmReadModels();
       if (report.blockedBy) {
         console.warn(`Post-sync read-model warm did not run: ${report.blockedBy}`);
+        recordError("cacheWarm", `Post-sync warm did not run: ${report.blockedBy}`);
       } else {
         console.log(`Post-sync read-model warm: ${report.warmed} warmed, ${report.skipped} cold.`);
       }
     } catch (e) {
       console.warn(`Post-sync read-model warm failed: ${e}`);
+      recordError("cacheWarm", e);
     }
   }
   function dailyStats(params, outcome) {
@@ -10866,6 +10935,7 @@ var Server = (() => {
       compactLedger(Math.floor(days));
     } catch (e) {
       console.warn(`Auto-compaction after the sync failed: ${e}`);
+      recordError("autoCompact", e);
     }
   }
   function cancelSync(jobId) {
@@ -10951,6 +11021,7 @@ var Server = (() => {
       }, 12e4);
     } catch (e) {
       if (e instanceof LedgerBusyError) scheduleContinuation(CONTINUE_RETRY_MS);
+      else recordError("continueSync", e);
       throw e;
     }
   }
@@ -10966,12 +11037,22 @@ var Server = (() => {
       }, 12e4);
     } catch (e) {
       if (e instanceof LedgerBusyError) scheduleWatchdog(CONTINUE_RETRY_MS);
+      else recordError("watchdogSync", e);
       throw e;
     }
   }
   function dailySync() {
-    if (!hasWizCredentials()) return;
-    startSync();
+    if (!hasWizCredentials()) {
+      recordError("dailySync", "Scheduled sync skipped: no Wiz credentials are configured.");
+      return;
+    }
+    try {
+      const res = startSync();
+      if (res.jobId === null) recordError("dailySync", `Scheduled sync skipped: ${res.message}`);
+    } catch (e) {
+      if (!(e instanceof LedgerBusyError)) recordError("dailySync", e);
+      throw e;
+    }
   }
   function jobStatus(jobId) {
     return getJob(jobId);
@@ -11006,19 +11087,20 @@ var Server = (() => {
   }
 
   // src/server/api.ts
-  function run(fn) {
+  function run(fn, label = "api") {
     try {
       return { ok: true, data: fn() };
     } catch (e) {
       const kind = e instanceof LedgerBusyError ? "busy" : e instanceof WizNotAuthorizedError ? "not-authorized" : "error";
+      if (kind === "error") recordError(label, e, kind);
       return { ok: false, error: String(e instanceof Error ? e.message : e), errorKind: kind };
     }
   }
-  function mutate(fn) {
+  function mutate(fn, label = "api") {
     return run(() => withScriptLock(() => {
       recoverIfNeeded();
       return fn();
-    }));
+    }), label);
   }
   function bootstrap(_p) {
     const viewer = enforcedScope();
@@ -11076,7 +11158,7 @@ var Server = (() => {
       const at = (/* @__PURE__ */ new Date()).toISOString();
       setProp(PROP_KEYS.wizVerifiedAt, at);
       return { ...res, at };
-    });
+    }, "testWizConnection");
   }
   function readViewerScope(p) {
     const raw = (p != null ? p : {})["viewerScope"];
@@ -11245,7 +11327,7 @@ var Server = (() => {
     var _a;
     const patch = { ...(_a = p.settings) != null ? _a : {} };
     delete patch["supportGroupDomains"];
-    return mutate(() => saveSettings(withSettings(loadSettings(), patch)));
+    return mutate(() => saveSettings(withSettings(loadSettings(), patch)), "putSettings");
   }
   function saveSupportGroupDomain(p) {
     var _a, _b, _c;
@@ -11280,16 +11362,16 @@ var Server = (() => {
       }];
       setSupportGroupDomains(items);
       return { saved: true, errors: [], items: getSupportGroupDomains2().items };
-    });
+    }, "saveSupportGroupDomain");
   }
   function setProjectView(p) {
-    return mutate(() => saveSettings(withProjectView(loadSettings(), p.projectView)));
+    return mutate(() => saveSettings(withProjectView(loadSettings(), p.projectView)), "setProjectView");
   }
   function setDomainView(p) {
-    return mutate(() => saveSettings(withDomainView(loadSettings(), p.domainView)));
+    return mutate(() => saveSettings(withDomainView(loadSettings(), p.domainView)), "setDomainView");
   }
   function refreshDomains(_p) {
-    return mutate(() => refreshRepoTags());
+    return mutate(() => refreshRepoTags(), "refreshDomains");
   }
   function domainMapHealth(_p) {
     return run(() => mapHealth());
@@ -11563,7 +11645,7 @@ var Server = (() => {
       const raw = (p != null ? p : {})["scopes"];
       const scopes = Array.isArray(raw) ? raw.map(String).filter((s2) => SCOPES.includes(s2)) : void 0;
       return startSync(scopes ? { scopes } : {});
-    });
+    }, "runSync");
   }
   function getJobStatus(p) {
     return run(() => {
@@ -11578,19 +11660,19 @@ var Server = (() => {
     return run(() => {
       var _a;
       return cancelSync(String((_a = (p != null ? p : {})["jobId"]) != null ? _a : ""));
-    });
+    }, "cancelSync");
   }
   function deleteScans2(p) {
     var _a;
     const scanIds = ((_a = (p != null ? p : {})["scanIds"]) != null ? _a : []).map(String);
-    return mutate(() => deleteScans(scanIds));
+    return mutate(() => deleteScans(scanIds), "deleteScans");
   }
   function compact(p) {
     const params = p != null ? p : {};
     const dryRun = params["dryRun"] === true;
     const days = params["retentionDays"] !== void 0 && params["retentionDays"] !== null ? Number(params["retentionDays"]) : loadSettings().retentionDays;
     if (dryRun) return run(() => previewMaintenance(days));
-    return mutate(() => compactLedger(days, false));
+    return mutate(() => compactLedger(days, false), "compact");
   }
   function resetLedger2(_p) {
     return mutate(() => {
@@ -11600,7 +11682,7 @@ var Server = (() => {
         console.warn(`resetLedger: continuation-trigger cleanup skipped: ${e}`);
       }
       return resetLedger();
-    });
+    }, "resetLedger");
   }
   function getExportCsv(p) {
     return run(() => {
@@ -11651,7 +11733,8 @@ var Server = (() => {
       var _a;
       const raw = Number((_a = (p != null ? p : {})["limit"]) != null ? _a : RECENT_ERROR_LIMIT);
       const limit = Number.isFinite(raw) && raw > 0 ? Math.min(Math.floor(raw), RECENT_ERROR_LIMIT) : RECENT_ERROR_LIMIT;
-      const errors = listJobs().filter((j) => j.error !== null && j.error !== "").map((j) => ({
+      const jobErrors = listJobs().filter((j) => j.error !== null && j.error !== "").map((j) => ({
+        source: "job",
         job_id: j.job_id,
         kind: j.kind,
         phase: j.phase,
@@ -11659,14 +11742,34 @@ var Server = (() => {
         at: j.updated_at,
         started_at: j.started_at,
         error: j.error
-      })).sort((a, b) => a.at < b.at ? 1 : a.at > b.at ? -1 : 0).slice(0, limit);
+      }));
+      const serverErrors = recentErrors().map((e) => ({
+        source: "server",
+        job_id: null,
+        kind: e.op,
+        phase: null,
+        scope: null,
+        at: e.ts,
+        started_at: null,
+        error: e.message
+      }));
+      const errors = [...jobErrors, ...serverErrors].sort((a, b) => a.at < b.at ? 1 : a.at > b.at ? -1 : 0).slice(0, limit);
       return {
         errors,
         // The panel must be able to say what it is NOT showing.
-        covers: "jobs",
-        note: "Job failures only \u2014 this register has no error-log tab. A read that fails returns its message to the caller and records no row."
+        covers: "jobs+server",
+        note: "Failed sync jobs, and the last 25 failures recorded on the server \u2014 RPCs that threw and background chores. A request refused because a write was already running is not recorded."
       };
     });
+  }
+  function clearRecentErrors(_p) {
+    return run(() => {
+      if (!canEditUsers()) {
+        throw new Error("Only the owner or an admin can clear the error log.");
+      }
+      clearErrors();
+      return { cleared: true };
+    }, "clearRecentErrors");
   }
 
   // ../gas_shared/server/inlineBoot.ts

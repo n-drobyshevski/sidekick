@@ -49,6 +49,10 @@ const compactCalls: Array<{ retentionDays: number | null; dryRun: boolean }> = [
 /** How many times a script lock was actually acquired. The write-RPC spec reads this. */
 let lockAcquisitions = 0;
 let externalLockHold = false;
+/** Whether the caller is the owner or an admin. Only clearRecentErrors' gate reads it. */
+const accessState = { canEdit: true };
+/** Set to make the fake tenant's next page throw — a sync hop that fails mid-walk. */
+let fetchFails: Error | null = null;
 
 const drive = {
   pages: {} as Record<string, Record<number, unknown>>,
@@ -266,7 +270,7 @@ vi.mock("../src/server/ledgerStore", async (importOriginal) => {
 
 /** Access is decided by `Session` in the real module; the RPC layer only asks one question. */
 vi.mock("../src/server/access", () => ({
-  canEditUsers: () => true,
+  canEditUsers: () => accessState.canEdit,
   // A full user: no viewer scope is forced, and nobody is on the scoped roster. The scoped
   // tier itself is exercised in test/scopedViewer.test.ts.
   enforcedScope: () => null,
@@ -366,6 +370,7 @@ vi.mock("../src/server/wizClient", async (importOriginal) => {
   return {
     ...real,
     fetchPage: (scope: Scope, _v: Rec, paging: { pageSize: number; pageNumber: number }) => {
+      if (fetchFails) throw fetchFails;
       const nodes = [0, 1, 2].map((i) => node(scope, i));
       for (const n of nodes) tamperNode?.(scope, n);
       paging.pageNumber += 1;
@@ -619,6 +624,8 @@ beforeEach(() => {
   projectTriggers = [];
   tamperNode = null;
   externalLockHold = false;
+  accessState.canEdit = true;
+  fetchFails = null;
   lockAcquisitions = 0;
   warmReports.length = 0;
   compactCalls.length = 0;
@@ -1078,11 +1085,11 @@ describe("getExportCsv", () => {
 });
 
 // --------------------------------------------------------------------------------------- //
-//  6. getRecentErrors — the jobs tab, and the honesty about what that omits
+//  6. getRecentErrors — the jobs tab and the server log, merged, and what that still omits
 // --------------------------------------------------------------------------------------- //
 
 describe("getRecentErrors", () => {
-  it("reads the jobs tab's error column and says so", async () => {
+  it("reads the jobs tab's error column and says what the panel covers", async () => {
     const { api } = await syncedRegister();
     tables["jobs"]!.push({
       job_id: "sync-broken", kind: "sync", phase: "FAILED", scan_id: null, scope: "sca",
@@ -1094,11 +1101,11 @@ describe("getRecentErrors", () => {
     const d = (api.getRecentErrors({}) as unknown as Rec)["data"] as Rec;
     const errors = d["errors"] as Rec[];
     expect(errors).toHaveLength(1);
-    expect(errors[0]!["job_id"]).toBe("sync-broken");
+    expect(errors[0]).toMatchObject({ source: "job", job_id: "sync-broken", scope: "sca" });
     expect(errors[0]!["error"]).toContain("died mid-sync");
-    // The panel must be able to state its own scope — this is not gas/'s error-log tab.
-    expect(d["covers"]).toBe("jobs");
-    expect(String(d["note"])).toContain("no error-log tab");
+    // The panel must be able to state its own scope, including what it still leaves out.
+    expect(d["covers"]).toBe("jobs+server");
+    expect(String(d["note"])).toContain("is not recorded");
   });
 
   it("is an allowlist, not a spread — no cursor, no journal_ref", async () => {
@@ -1119,7 +1126,76 @@ describe("getRecentErrors", () => {
     const { api } = await syncedRegister();
     const d = (api.getRecentErrors({}) as unknown as Rec)["data"] as Rec;
     expect(d["errors"]).toEqual([]);
-    expect(d["covers"]).toBe("jobs");
+    expect(d["covers"]).toBe("jobs+server");
+  });
+
+  it("lists a read RPC that threw — the failure the jobs tab never saw — newest first", async () => {
+    const { api } = await syncedRegister();
+    tables["jobs"]!.push({
+      job_id: "sync-old", kind: "sync", phase: "FAILED", scan_id: null, scope: "sast",
+      cursor: null, page: 0, findings_so_far: 0, page_size: 0, total_count: 0,
+      params_json: "{}", journal_ref: null, error: "old failure",
+      started_at: "2026-09-01T02:00:00Z", updated_at: "2026-09-01T02:01:00Z",
+    });
+    expect((api.getRegisterPage({ scope: "nope" }) as unknown as Rec)["ok"]).toBe(false);
+    const errors = ((api.getRecentErrors({}) as unknown as Rec)["data"] as Rec)["errors"] as Rec[];
+    expect(errors.map((e) => e["source"])).toEqual(["server", "job"]);
+    expect(errors[0]).toMatchObject({ kind: "api", scope: null, phase: null, job_id: null });
+    expect(String(errors[0]!["error"])).toMatch(/needs a scope/);
+  });
+
+  it("does not record a busy refusal — contention, not a fault", async () => {
+    const { api } = await syncedRegister();
+    externalLockHold = true;
+    try {
+      expect((api.deleteScans({ scanIds: ["nope"] }) as unknown as Rec)["errorKind"]).toBe("busy");
+    } finally {
+      externalLockHold = false;
+    }
+    const errors = ((api.getRecentErrors({}) as unknown as Rec)["data"] as Rec)["errors"] as Rec[];
+    expect(errors).toEqual([]);
+  });
+
+  it("lists a sync hop that failed ONCE — from its job row, not again from run()", async () => {
+    const { api } = await load();
+    fetchFails = new Error("tenant refused the page");
+    const out = api.runSync({}) as unknown as Rec;
+    expect(out["ok"]).toBe(false);
+    const errors = ((api.getRecentErrors({}) as unknown as Rec)["data"] as Rec)["errors"] as Rec[];
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({ source: "job", kind: "sync", phase: "FAILED" });
+    expect(String(errors[0]!["error"])).toContain("tenant refused the page");
+  });
+});
+
+describe("clearRecentErrors", () => {
+  it("drops the server log for the owner or an admin, and leaves job rows listed", async () => {
+    const { api } = await syncedRegister();
+    tables["jobs"]!.push({
+      job_id: "sync-broken", kind: "sync", phase: "FAILED", scan_id: null, scope: "sca",
+      cursor: null, page: 0, findings_so_far: 0, page_size: 0, total_count: 0,
+      params_json: "{}", journal_ref: null, error: "boom",
+      started_at: "2026-09-02T02:00:00Z", updated_at: "2026-09-02T02:31:00Z",
+    });
+    api.getRegisterPage({ scope: "nope" });
+    const before = ((api.getRecentErrors({}) as unknown as Rec)["data"] as Rec)["errors"] as Rec[];
+    expect(before.map((e) => e["source"]).sort()).toEqual(["job", "server"]);
+
+    const res = api.clearRecentErrors({}) as unknown as Rec;
+    expect(res).toMatchObject({ ok: true, data: { cleared: true } });
+    const after = ((api.getRecentErrors({}) as unknown as Rec)["data"] as Rec)["errors"] as Rec[];
+    expect(after.map((e) => e["source"])).toEqual(["job"]);
+  });
+
+  it("refuses anyone else and leaves the log alone", async () => {
+    const { api } = await syncedRegister();
+    api.getRegisterPage({ scope: "nope" });
+    accessState.canEdit = false;
+    const res = api.clearRecentErrors({}) as unknown as Rec;
+    expect(res["ok"]).toBe(false);
+    expect(String(res["error"])).toMatch(/owner or an admin/);
+    const errors = ((api.getRecentErrors({}) as unknown as Rec)["data"] as Rec)["errors"] as Rec[];
+    expect(errors.some((e) => String(e["error"]).includes("needs a scope"))).toBe(true);
   });
 });
 

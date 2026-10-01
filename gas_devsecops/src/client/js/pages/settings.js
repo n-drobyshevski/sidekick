@@ -1621,8 +1621,8 @@ export async function renderSettings(host, params, ctx) {
     //
     // WHAT THIS REGISTER DOES NOT PASS, and does not gain: no storage meter (its cell usage is
     // on the Data page, where `cellsSummary` computes it), and NO ERRORS SECTION — its
-    // `api_getRecentErrors` covers job failures only and is rendered on the Data page. Nothing
-    // moved between pages here.
+    // `api_getRecentErrors` (failed jobs plus the server-side log) is rendered on the Data
+    // page. Nothing moved between pages here.
     //
     // NO `client` STAMP EITHER, so no client-vs-server mismatch card. This app used to carry
     // the identical `buildInfo.js` module gas_ai uses for that comparison, imported by

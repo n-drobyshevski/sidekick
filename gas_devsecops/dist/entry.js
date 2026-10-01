@@ -85,6 +85,7 @@ function api_compact(p) { return timedApi_("compact", p); }
 function api_resetLedger(p) { return timedApi_("resetLedger", p); }
 function api_getExportCsv(p) { return timedApi_("getExportCsv", p); }
 function api_getRecentErrors(p) { return timedApi_("getRecentErrors", p); }
+function api_clearRecentErrors(p) { return timedApi_("clearRecentErrors", p); }
 function api_testWizConnection(p) { return timedApi_("testWizConnection", p); }
 function api_getAccess(p) { return timedApi_("getAccess", p); }
 function api_saveAccess(p) { return timedApi_("saveAccess", p); }

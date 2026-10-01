@@ -44,7 +44,7 @@ import {
 } from "../src/client/js/pages/history.js";
 import {
   cellsSummary, compactionView, confirmedAction, currentlyScoped, deletableScans, ledgerSummary,
-  recentErrorsView, tabCellsView,
+  errorSourceLabel, recentErrorsView, tabCellsView,
 } from "../src/client/js/pages/data.js";
 
 const REPOS_SRC = readFileSync(new URL("../src/client/js/pages/repos.js", import.meta.url), "utf8");
@@ -1784,13 +1784,42 @@ describe("data: compaction — the dry run's numbers, and archive_bytes_freed as
 describe("data: getRecentErrors' scope note is surfaced, not implied", () => {
   it("recentErrorsView carries covers and note through unchanged", () => {
     const v = recentErrorsView({
-      errors: [{ job_id: "j1", kind: "scan", phase: "FAILED", scope: "sca", at: "2026-01-01T00:00:00Z", error: "boom" }],
-      covers: "jobs",
-      note: "Job failures only — this register has no error-log tab.",
+      errors: [{ source: "job", job_id: "j1", kind: "sync", phase: "FAILED", scope: "sca", at: "2026-01-01T00:00:00Z", error: "boom" }],
+      covers: "jobs+server",
+      note: "Failed sync jobs, and the last 25 failures recorded on the server.",
     });
-    expect(v.covers).toBe("jobs");
-    expect(v.note).toMatch(/jobs|error-log/);
+    expect(v.covers).toBe("jobs+server");
+    expect(v.note).toMatch(/server/);
     expect(v.errors).toHaveLength(1);
+  });
+
+  it("serverCount counts only what Clear can remove — job rows stay listed", () => {
+    const v = recentErrorsView({
+      errors: [
+        { source: "job", kind: "sync", at: "T1", error: "a" },
+        { source: "server", kind: "cacheWarm", at: "T2", error: "b" },
+        { source: "server", kind: "api", at: "T3", error: "c" },
+      ],
+    });
+    expect(v.serverCount).toBe(2);
+    expect(recentErrorsView({ errors: [{ source: "job" }] }).serverCount).toBe(0);
+    expect(recentErrorsView(null).serverCount).toBe(0);
+  });
+
+  it("errorSourceLabel names both sources, and reads a source-less row as a job", () => {
+    expect(errorSourceLabel("server")).toBe("Server");
+    expect(errorSourceLabel("job")).toBe("Sync job");
+    expect(errorSourceLabel(undefined)).toBe("Sync job");
+  });
+
+  it("offers Clear only to the owner or an admin, and through the confirm chokepoint", () => {
+    const fn = DATA_SRC.slice(DATA_SRC.indexOf("function renderErrors"));
+    const body = fn.slice(0, fn.indexOf("\n  }\n"));
+    expect(body).toMatch(/boot\.canEditAccess/);
+    const clearFn = DATA_SRC.slice(DATA_SRC.indexOf("async function onClearErrors"));
+    expect(clearFn.slice(0, clearFn.indexOf("\n  }\n"))).toMatch(
+      /confirmedAction\([\s\S]*api_clearRecentErrors/,
+    );
   });
 
   it("the render path prints the note (or, absent one, the covers field) rather than staying silent", () => {

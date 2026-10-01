@@ -223,6 +223,7 @@ import {
 } from "./ledgerStore";
 import { latestHistory, listHistory } from "./historyStore";
 import { activeJob } from "./jobsStore";
+import * as errorLog from "./errorLog";
 import { cellCount, gridSize, TAB_HEADERS, TABS } from "./sheetsDb";
 import { BASE_FILTER_WORDS } from "./wizQueries";
 import { loadSettings } from "./settingsStore";
@@ -2989,10 +2990,12 @@ function warmInner(budgetMs: number): WarmReport {
       warmed += 1;
     } catch (e) {
       console.warn(`Read-model warm (${target.label}) failed: ${e}`);
+      errorLog.recordError("cacheWarm", `${target.label}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
   if (skipped) {
     console.warn(`Read-model warm: out of budget after ${warmed} entries, ${skipped} left cold`);
+    errorLog.recordError("cacheWarm", `Out of budget after ${warmed} entries, ${skipped} left cold.`);
   }
   const swept = skipped ? 0 : sweepReadModels();
   return { warmed, skipped, swept, blockedBy: null, elapsedMs: Date.now() - t0 };

@@ -59,8 +59,11 @@
 //     grounds that its shape was never checked against any of the three schemas — see that
 //     file's note. A second unverified filter shape is exactly the failure that cost this
 //     register its whole SAST population once.
-//   * NO `errorLog`. This project has no error-log tab; failures land in the job row's
-//     `error` column and in `console`.
+//   * THE ERROR LOG IS SPLIT IN TWO. A failed hop's message lands in the job row's `error`
+//     column, as before, and is MARKED recorded so the callers it rethrows to do not log it a
+//     second time; the post-commit chores, which never fail the sync, record into
+//     `errorLog`'s Script-Property buffer instead (gas/ records both there). The Data page
+//     lists the two merged — `api.getRecentErrors`.
 //
 // NOTHING MAY IMPORT THIS MODULE. `locks` imports `ledgerStore`, and this file imports both;
 // the graph stays acyclic only while scanJobs is a leaf (S7 wires it into `api.ts`, which
@@ -71,6 +74,7 @@ import { mttrFromLedger } from "../domain/lifecycle";
 import { effectiveSlaTargets } from "../domain/settingsLogic";
 import { nowIso, pushAll, type Rec } from "../domain/util";
 import * as archive from "./archiveStore";
+import * as errorLog from "./errorLog";
 import * as history from "./historyStore";
 import {
   activeJob,
@@ -635,6 +639,9 @@ function step(job: JobRow, budgetMs = BUDGET_MS): void {
       phase: "FAILED",
       error: e == null ? "Sync failed." : String(e).slice(0, 1000),
     });
+    // The job row IS this failure's record; `getRecentErrors` lists it from there. Marked so
+    // `api.run()` (first hop) and `continueJob` (later hops) do not add a second copy.
+    errorLog.markRecorded(e);
     throw e;
   }
 }
@@ -685,6 +692,7 @@ function afterPersist(params: SyncParams, outcome: ledgerStore.PersistOutcome): 
     history.recordDaily(dailyStats(params, outcome));
   } catch (e) {
     console.warn(`Failed to record the daily history entry: ${e}`);
+    errorLog.recordError("dailyHistory", e);
   }
   autoCompactIfDue();
   warmAfterSync();
@@ -716,11 +724,13 @@ function warmAfterSync(): void {
     const report = readModels.warmReadModels();
     if (report.blockedBy) {
       console.warn(`Post-sync read-model warm did not run: ${report.blockedBy}`);
+      errorLog.recordError("cacheWarm", `Post-sync warm did not run: ${report.blockedBy}`);
     } else {
       console.log(`Post-sync read-model warm: ${report.warmed} warmed, ${report.skipped} cold.`);
     }
   } catch (e) {
     console.warn(`Post-sync read-model warm failed: ${e}`);
+    errorLog.recordError("cacheWarm", e);
   }
 }
 
@@ -791,6 +801,7 @@ function autoCompactIfDue(): void {
     ledgerStore.compactLedger(Math.floor(days));
   } catch (e) {
     console.warn(`Auto-compaction after the sync failed: ${e}`);
+    errorLog.recordError("autoCompact", e);
   }
 }
 
@@ -939,6 +950,10 @@ export function continueJob(_e?: unknown): void {
     // already spent and no successor scheduled — the job would sit in FETCHING with nothing
     // alive to move it. Re-arm before rethrowing.
     if (e instanceof LedgerBusyError) scheduleContinuation(CONTINUE_RETRY_MS);
+    // A trigger's throw reaches only its execution log. Busy is the retry above, not a fault;
+    // a failed `step` already marked its error recorded on the job row, so this adds the rest
+    // (a persist or parse failure that never reached a FAILED transition).
+    else errorLog.recordError("continueSync", e);
     throw e;
   }
 }
@@ -963,14 +978,32 @@ export function watchdogSync(_e?: unknown): void {
     // The lock being held means the persist is STILL RUNNING. Re-arm rather than disarming
     // the only thing that would notice it dying a minute later.
     if (e instanceof LedgerBusyError) scheduleWatchdog(CONTINUE_RETRY_MS);
+    else errorLog.recordError("watchdogSync", e);
     throw e;
   }
 }
 
-/** Trigger target (`trigger_dailySync`): the scheduled full battery. */
+/**
+ * Trigger target (`trigger_dailySync`): the scheduled full battery.
+ *
+ * Every way this can do nothing is RECORDED, because nobody is watching a trigger: without the
+ * log, a deployment whose credentials were never set (or whose register list is empty) simply
+ * never syncs, and the only symptom is a "last sync" date that stops moving. A sync already in
+ * progress is not a failure (startSync reports it with that job's id); a busy lock is left to
+ * the execution log, as it is everywhere this log is written.
+ */
 export function dailySync(): void {
-  if (!hasWizCredentials()) return;
-  startSync();
+  if (!hasWizCredentials()) {
+    errorLog.recordError("dailySync", "Scheduled sync skipped: no Wiz credentials are configured.");
+    return;
+  }
+  try {
+    const res = startSync();
+    if (res.jobId === null) errorLog.recordError("dailySync", `Scheduled sync skipped: ${res.message}`);
+  } catch (e) {
+    if (!(e instanceof LedgerBusyError)) errorLog.recordError("dailySync", e);
+    throw e;
+  }
 }
 
 /** Job status for the UI poller. */
