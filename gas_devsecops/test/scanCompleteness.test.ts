@@ -9,9 +9,13 @@
 import { describe, expect, it } from "vitest";
 import {
   DROPOUT_MIN_OPEN,
+  FETCH_RETURNS_RESOLVED,
+  RESOLUTION_API,
   RESOLUTION_DISAPPEARED,
   RESOLUTION_REPO_DROPOUT,
+  RMST_HORIZON_DAYS,
 } from "../src/domain/config";
+import { assetProfile, type AssetRow } from "../src/domain/assets";
 import {
   baseRows,
   disappearanceWindow,
@@ -30,7 +34,7 @@ import {
 } from "../src/domain/maintenance";
 import { movementDecomposition } from "../src/domain/movementDecomposition";
 import { capacityByMonth, confusionMatrix, type RiskRow } from "../src/domain/program";
-import { kaplanMeier } from "../src/domain/remediation";
+import { actionableView, kaplanMeier } from "../src/domain/remediation";
 import {
   assessCompleteness,
   completenessTolerance,
@@ -38,7 +42,13 @@ import {
   distinctNodes,
   readDisappearance,
 } from "../src/domain/scanCompleteness";
-import { cohortSlaAttainment, trendFromFrames } from "../src/domain/trend";
+import { timeToRevoke, type SecretRow } from "../src/domain/secretsLifecycle";
+import {
+  cohortSlaAttainment,
+  kmMedianAsOf,
+  trendFromFrames,
+  withKmMedian,
+} from "../src/domain/trend";
 import type { Rec } from "../src/domain/util";
 
 // --------------------------------------------------------------------------- fixtures
@@ -301,12 +311,19 @@ describe("repository drop-out", () => {
       mttr_actionable_days: null,
       age_days: null,
       removed_at: null,
+      // Watched open from T(1) until B left at T(10): censored there, never an event.
+      censor_days: 9,
+      // No fixedVersion on these nodes, so no actionable clock to censor either.
+      censor_actionable_days: null,
     });
+    // Every other row carries no censoring age of its own.
+    expect(base.filter((r) => r.censor_days != null)).toHaveLength(3);
 
-    // KM: the three drop-outs are neither events nor censored.
-    const km = kaplanMeier(base);
+    // KM: the three drop-outs are censored where they left, never events.
+    const km = kaplanMeier(base, {});
     expect(km.events).toBe(2);
-    expect(km.censored).toBe(4); // a1..a4 still open
+    expect(km.censored).toBe(7); // a1..a4 still open + b1..b3 left coverage
+    expect(km.censoredLeftCoverage).toBe(3);
 
     // The ledger summary: B is neither resolved nor open.
     const summary = mttrFromLedger(base as unknown as Rec[], { now: Date.parse(T(20)) });
@@ -385,6 +402,47 @@ describe("repository drop-out", () => {
     expect(state.episodes.every((e) => e.superseded_by_scan === T(4))).toBe(true);
   });
 
+  it("sealed or not, a returning node the API already reports resolved closes the same way", () => {
+    // The live path resumes b1's drop-out row and the API closes it ("api", counted). Before
+    // the fix the sealed path dropped the fresh row and left the drop-out episode standing —
+    // resolved_count 0 and no fix on record.
+    const back = [...A, ...C, { ...B[0]!, status: "RESOLVED", resolvedAt: T(3) }, B[1]!, B[2]!];
+    const run = (seal: boolean) => {
+      const state = emptyState();
+      live(state, ALL, T(2));
+      live(state, [...A, ...C], T(3)); // B drops out
+      if (seal) {
+        for (const id of ["b1", "b2", "b3"]) {
+          const key = `sca:id:${id}`;
+          state.episodes.push(toEpisodeRow(state.ledger[key]!, "cmp-1"));
+          delete state.ledger[key];
+        }
+      }
+      const out = live(state, back, T(4));
+      const lifecycle = (id: string) => {
+        const r = row(state, id);
+        return {
+          status: r.status, resolved_at: r.resolved_at, resolution_src: r.resolution_src,
+          first_seen: r.first_seen, reopened_count: r.reopened_count,
+        };
+      };
+      const base = baseRows(state, { now: Date.parse(T(20)) });
+      return {
+        deltas: out.deltas,
+        resumed: out.absence.resumed,
+        rows: ["b1", "b2", "b3"].map(lifecycle),
+        mttr: base.find((r) => r.finding_key === "sca:id:b1")!.mttr_days,
+        // Nothing the sealed path left behind still answers as a drop-out.
+        dropouts: base.filter((r) => r.resolution_src === RESOLUTION_REPO_DROPOUT).length,
+      };
+    };
+    const unsealed = run(false);
+    expect(unsealed.rows[0]).toMatchObject({ status: "RESOLVED", resolution_src: RESOLUTION_API });
+    expect(unsealed.deltas).toEqual({ new_count: 0, resolved_count: 1, reopened_count: 0 });
+    expect(unsealed.mttr).toBe(2);
+    expect(run(true)).toEqual(unsealed);
+  });
+
   it("a secrets drop-out does not claim the string left HEAD", () => {
     const state = emptyState();
     const secret = (id: string, repo: string, line: number): Rec => ({
@@ -402,6 +460,188 @@ describe("repository drop-out", () => {
     const dropped = Object.values(state.ledger).filter((r) => r.resolution_src === RESOLUTION_REPO_DROPOUT);
     expect(dropped).toHaveLength(3);
     for (const r of dropped) expect(r.removed_at).toBeNull();
+  });
+});
+
+// --------------------------------------------------------------------------- SAST
+
+describe("SAST never reads a silent repository as a drop-out", () => {
+  // SAST's fetch returns open findings only (wizQueries.ts's SAST_FETCH_RESOLVED), so a
+  // repository whose findings were all fixed answers with nothing — exactly what a drop-out
+  // looks like on a fetch that does return resolved findings.
+  const sast = (id: string, repo: string): Rec => ({
+    id, severity: "HIGH", createdAt: T(1),
+    resource: { id: repo, name: `org/${repo}`, type: "REPOSITORY" },
+  });
+  const R = ["r1", "r2", "r3"].map((id) => sast(id, "R"));
+  const Q = ["q1", "q2", "q3", "q4"].map((id) => sast(id, "Q"));
+  const scan = (state: LedgerState, records: Rec[], ts: string) =>
+    persistFlatScan(state, records, {
+      scope: "sast",
+      mode: "live",
+      scanId: ts,
+      scannedSeverities: ["CRITICAL", "HIGH"],
+      completeness: complete(records.length),
+    });
+
+  it("the flag that decides it", () => {
+    expect(FETCH_RETURNS_RESOLVED).toEqual({ sca: true, sast: false, secrets: true });
+  });
+
+  it("a PR that fixes every finding on a repository closes them as fixes, with a clock", () => {
+    const state = emptyState();
+    scan(state, [...R, ...Q], T(2));
+    const out = scan(state, Q, T(5)); // R's three were fixed
+    const key = (id: string) => `sast:id:${id}`;
+    for (const id of ["r1", "r2", "r3"]) {
+      expect(state.ledger[key(id)]).toMatchObject({
+        status: "RESOLVED", resolution_src: RESOLUTION_DISAPPEARED, resolved_at: T(5),
+      });
+    }
+    expect(out.deltas.resolved_count).toBe(3);
+    expect(out.absence.dropouts).toBe(0);
+    // Not measured, rather than a measured zero: the pass cannot run on this fetch.
+    expect(out.scanRow!.dropout_count).toBeNull();
+    expect(out.scanRow!.disappearance).toBe("complete");
+    const base = baseRows(state, { now: Date.parse(T(20)) });
+    const km = kaplanMeier(base, {});
+    expect(km.events).toBe(3); // in SAST MTTR, at four days each
+    expect(km.curve[0]).toMatchObject({ t: 4, events: 3, atRisk: 7 });
+  });
+
+  it("replaying a stored complete SAST scan closes them the same way", () => {
+    const state = emptyState();
+    scan(state, [...R, ...Q], T(2));
+    const first = state.scans[0]!;
+    scan(state, Q, T(5));
+    const replayed = emptyState();
+    for (const [records, sc] of [[[...R, ...Q], first], [Q, state.scans[1]!]] as const) {
+      persistFlatScan(replayed, records as Rec[], {
+        scope: "sast", mode: "live", scanId: sc.scan_id,
+        scannedSeverities: ["CRITICAL", "HIGH"], stored: sc,
+      });
+    }
+    expect(replayed.ledger).toEqual(state.ledger);
+  });
+});
+
+// --------------------------------------------------------------------------- censoring
+
+describe("a drop-out is censored where it left, in every Kaplan–Meier figure", () => {
+  // The review's scenario. 60 findings fixed at day 5; 60 open at day 30; 120 open for 100
+  // days on a repository that then leaves the scan. Before the drop-out a quarter has closed
+  // and the median is "not reached". Deleting the 120 from the risk set would make it 60 of
+  // 120 closed at day 5 — a median of 5 days, conjured out of a repository leaving. Censoring
+  // them where they left keeps it not reached.
+  const D = (day: number): string =>
+    new Date(Date.UTC(2026, 0, 1) + day * 86_400_000).toISOString().replace(".000Z", "Z");
+  const sca = (id: string, repo: string, firstDay: number, extra: Rec = {}): Rec => ({
+    id, name: `CVE-${id}`, severity: "HIGH", status: "OPEN", firstDetectedAt: D(firstDay),
+    vulnerableAsset: { id: repo, name: `org/${repo}`, type: "REPOSITORY" }, ...extra,
+  });
+  const many = (prefix: string, n: number, repo: string, firstDay: number, extra: Rec = {}) =>
+    Array.from({ length: n }, (_, i) => sca(`${prefix}${i}`, repo, firstDay, extra));
+  const F = many("f", 60, "F", 0);
+  const Ffixed = many("f", 60, "F", 0, { status: "RESOLVED", resolvedAt: D(5) });
+  const O = many("o", 60, "O", 70);
+  const X = many("x", 120, "X", 0);
+  const NOW = Date.parse(D(100));
+
+  function scenario(withDropout: boolean): LedgerState {
+    const state = emptyState();
+    const step = (records: Rec[], day: number) => persistFlatScan(state, records, {
+      scope: "sca", mode: "live", scanId: D(day),
+      scannedSeverities: ["CRITICAL", "HIGH"], completeness: complete(records.length),
+    });
+    step([...F, ...X], 1);
+    step([...Ffixed, ...X], 6); // F's 60 are fixed (resolved nodes still come back)
+    step([...Ffixed, ...O, ...X], 70);
+    if (withDropout) step([...Ffixed, ...O], 100); // X leaves the scan whole
+    return state;
+  }
+  const base = (state: LedgerState) => baseRows(state, { now: NOW });
+
+  it("the scenario did what it says", () => {
+    const rows = base(scenario(true));
+    expect(rows.filter((r) => r.resolution_src === RESOLUTION_REPO_DROPOUT)).toHaveLength(120);
+    expect(rows.filter((r) => r.mttr_days === 5)).toHaveLength(60);
+  });
+
+  it("the half-life stays not reached — before and after the repository left", () => {
+    for (const withDropout of [false, true]) {
+      const rows = base(scenario(withDropout));
+      for (const opts of [{}, { horizonDays: RMST_HORIZON_DAYS, minRisk: true }]) {
+        const km = kaplanMeier(rows, opts);
+        expect(km.median, `dropout=${withDropout} ${JSON.stringify(opts)}`).toBeNull();
+        expect(km.events).toBe(60);
+        expect(km.censored).toBe(180);
+      }
+      // S(5) = 1 − 60/240 either way.
+      expect(kaplanMeier(rows, {}).curve[0]).toMatchObject({ t: 5, s: 0.75 });
+    }
+    expect(kaplanMeier(base(scenario(true)), {}).censoredLeftCoverage).toBe(120);
+  });
+
+  it("…while every closed-row figure and the backlog leave the drop-outs out", () => {
+    const rows = base(scenario(true));
+    const summary = mttrFromLedger(rows as unknown as Rec[], { now: NOW });
+    expect(summary.overall).toMatchObject({ resolved: 60, open: 60, mttr_median: 5 });
+    // No drop-out carries an open age, so no aging or open-past-SLA figure can count one.
+    expect(rows.filter((r) => r.age_days !== null).length).toBe(60);
+  });
+
+  it("the trend replays and the as-of median agree", () => {
+    const state = scenario(true);
+    const rows = base(state) as unknown as Rec[];
+    const [point] = withKmMedian([{ date: D(100) }], rows);
+    expect(point!.km_median_days).toBeNull();
+    expect(kmMedianAsOf(rows, null, NOW)).toBeNull();
+    expect(kmMedianAsOf(rows, null, NOW, { minRisk: true })).toBeNull();
+  });
+
+  it("the actionable clock censors them at the age they left on THAT clock", () => {
+    const state = emptyState();
+    const fixed = (recs: Rec[]) => recs.map((r) => ({ ...r, fixedVersion: "2.0.0" }));
+    live(state, fixed(ALL), T(2));
+    live(state, fixed([...A, ...C]), T(10)); // B leaves
+    const base = baseRows(state, { now: Date.parse(T(20)) });
+    const b1 = base.find((r) => r.finding_key === "sca:id:b1")!;
+    // Fixable from its first scan (T(2), fix_observed_at) until it left at T(10).
+    expect(b1.censor_actionable_days).toBe(8);
+    const km = kaplanMeier(actionableView(base), {});
+    expect(km.events).toBe(0);
+    expect(km.censored).toBe(9);
+    expect(km.censoredLeftCoverage).toBe(3);
+  });
+
+  it("the per-asset half-life censors them too", () => {
+    const rows = base(scenario(true)) as unknown as AssetRow[];
+    const profile = assetProfile(rows, { now: D(100), observedFrom: null });
+    const overall = profile.rows.find((r) => r.asset_group === "OVERALL")!;
+    expect(overall.km_median_days).toBeNull();
+  });
+
+  it("time-to-revoke already censored a drop-out's live credential (the credential axis)", () => {
+    const state = emptyState();
+    const secret = (id: string, repo: string, line: number): Rec => ({
+      id, secretDataId: `sd-${id}`, path: "cfg.yml", lineNumber: line, status: "OPEN",
+      firstSeenAt: T(1), validationStatus: "VALID", lastValidatedAt: T(1),
+      resource: { id: repo, name: `org/${repo}`, type: "REPOSITORY" },
+    });
+    const R = [secret("s1", "R", 1), secret("s2", "R", 2), secret("s3", "R", 3)];
+    const keep = [secret("k1", "K", 1)];
+    const opts = (ts: string, recs: Rec[]) => ({
+      scope: "secrets" as const, mode: "live", scanId: ts, scannedSeverities: [],
+      completeness: complete(recs.length),
+    });
+    persistFlatScan(state, [...R, ...keep], opts(T(2), [...R, ...keep]));
+    persistFlatScan(state, keep, opts(T(3), keep));
+    const ttr = timeToRevoke(
+      baseRows(state, { now: Date.parse(T(20)) }) as unknown as SecretRow[],
+      { now: Date.parse(T(20)) },
+    );
+    expect(ttr.km.events).toBe(0);
+    expect(ttr.km.censored).toBe(4);
   });
 });
 

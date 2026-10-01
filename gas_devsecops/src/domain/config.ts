@@ -267,8 +267,9 @@ export const RESOLUTION_DISAPPEARED = "disappeared";
  * The third way out, and the one that is NOT a fix: the finding's whole repository stopped
  * being returned by a complete scan (`reconcile.ts`'s drop-out pass). The row is closed so it
  * leaves the open backlog, but it carries no MTTR clock (`ledgerCore.withDerived`) and no
- * remediation count reads it as work; if the repository comes back, the row resumes its
- * original episode rather than reopening.
+ * remediation count reads it as work — a Kaplan–Meier estimate keeps it as censored at the
+ * age it left (`BaseRow.censor_days`), never as an event; if the repository comes back, the
+ * row resumes its original episode rather than reopening.
  */
 export const RESOLUTION_REPO_DROPOUT = "repo_dropout";
 
@@ -279,6 +280,26 @@ export const RESOLUTION_REPO_DROPOUT = "repo_dropout";
  * the ordinary case — a fix — and they resolve by disappearance as before.
  */
 export const DROPOUT_MIN_OPEN = 3;
+
+/**
+ * Whether each register's fetch returns RESOLVED findings beside the open ones — and so whether
+ * a repository with NO node in a complete scan is evidence that it left coverage.
+ *
+ * Where resolved findings come back, a repository whose findings were all fixed still returns
+ * them (resolved), so silence from it means the scan no longer sees it. Where they do not, an
+ * all-fixed repository — or one whose only remaining findings sit below the severity gate —
+ * returns nothing either, and silence is exactly what a fix looks like. SAST is that case
+ * (`server/wizQueries.ts`'s `SAST_FETCH_RESOLVED`, which reads this entry): it closes by
+ * disappearance alone, and the drop-out pass (`ledgerCore.persistFlatScan`) never runs on it.
+ *
+ * `test/wizQueries.test.js` binds every entry to the `status` filter `buildFilter` actually
+ * sends, so the flag cannot drift from the query.
+ */
+export const FETCH_RETURNS_RESOLVED: Readonly<Record<Scope, boolean>> = {
+  sca: true,
+  sast: false,
+  secrets: true,
+};
 
 /** Whether a row was closed by a repository drop-out — lost sight, not remediation. */
 export function isRepoDropout(row: { resolution_src?: unknown } | null | undefined): boolean {

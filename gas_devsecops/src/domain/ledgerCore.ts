@@ -33,6 +33,7 @@
 
 import {
   DISAPPEARANCE_RESOLUTION,
+  FETCH_RETURNS_RESOLVED,
   RESOLUTION_REPO_DROPOUT,
   SEVERITY_ORDER,
   isRepoDropout,
@@ -247,14 +248,20 @@ function reconcileEpisodeCollisions(
   }
   for (const [key, episode] of episodeReopens) {
     const row = updated[key]!;
-    if (row.status === "OPEN" && episode.resolution_src === RESOLUTION_REPO_DROPOUT) {
+    if (episode.resolution_src === RESOLUTION_REPO_DROPOUT) {
       // A repository drop-out that was sealed before its repository came back. The same rule
-      // reconcile applies to a live drop-out row: the episode RESUMES — its first_seen and
-      // reopen count carry over, and the row is neither new nor reopened in the deltas.
+      // reconcile applies to a live drop-out row: the episode RESUMES — its first_seen, reopen
+      // count and sticky fix clock carry over, and the row is neither new nor reopened in the
+      // deltas. WHETHER OR NOT the returning node is still open: one the API now reports
+      // resolved closed on the fresh row as an API resolution (counted in resolved_count,
+      // exactly as the live path's resume-then-close counts it), and the sealed episode,
+      // which never measured a fix, must not stay authoritative over the one that did.
       row.reopened_count = Number(episode.reopened_count ?? 0);
       if (episode.first_seen !== null && (row.first_seen === null || episode.first_seen < row.first_seen)) {
         row.first_seen = episode.first_seen;
       }
+      if (episode.fix_date != null) row.fix_date = episode.fix_date;
+      if (episode.fix_observed_at != null) row.fix_observed_at = episode.fix_observed_at;
       deltas.new_count -= 1;
       absence.resumed += 1;
       episode.superseded_by_scan = scanId;
@@ -411,6 +418,13 @@ export function persistFlatScan(
   //   stored        replay of a saved row: its verdict and its record, verbatim
   //   completeness  a live scan: assess, record, and run the drop-out pass if complete
   //   neither       a legacy caller: no gate, no drop-out, every new column null
+  //
+  // The drop-out pass also needs a fetch that returns RESOLVED findings — only then is a
+  // repository with no node at all evidence that it left coverage rather than that its
+  // findings were fixed (config.ts's FETCH_RETURNS_RESOLVED). SAST's fetch returns open
+  // findings only, so it never runs there and its scan rows record `dropout_count` as null:
+  // not measured, rather than a measured zero.
+  const dropoutEvidence = FETCH_RETURNS_RESOLVED[scope];
   let reportedTotal: number | null = null;
   let partialPages: number | null = null;
   let duplicates: number | null = null;
@@ -424,7 +438,7 @@ export function persistFlatScan(
     duplicates = options.stored.duplicates ?? null;
     disappearance = verdict.legacy ? null : String(options.stored.disappearance).trim();
     deferDisappearance = verdict.deferred;
-    detectDropouts = !verdict.legacy && !verdict.deferred;
+    detectDropouts = dropoutEvidence && !verdict.legacy && !verdict.deferred;
   } else if (options.completeness) {
     // "empty" asks whether the register holds anything this scan could have resolved — the
     // OPEN rows of this scope inside its severity scope.
@@ -441,7 +455,7 @@ export function persistFlatScan(
     duplicates = verdict.duplicates;
     disappearance = disappearanceValue(verdict.reason);
     deferDisappearance = verdict.reason !== null;
-    detectDropouts = verdict.reason === null;
+    detectDropouts = dropoutEvidence && verdict.reason === null;
   }
 
   const { ledger: updated, observations, deltas, twinStats, absence } = reconcile(
@@ -481,7 +495,8 @@ export function persistFlatScan(
     duplicates,
     disappearance,
     // Null where it was not measured: a legacy row never ran the pass, a deferred one ran no
-    // absence at all. A complete scan with no drop-out records a measured 0.
+    // absence at all, and a SAST scan cannot run it. A complete scan with no drop-out records
+    // a measured 0.
     dropout_count: detectDropouts ? absence.dropouts : null,
   };
   state.scans.push(scanRow);
@@ -561,10 +576,16 @@ function withDerived(
   const first = parseTs(row.first_seen);
   // A REPOSITORY DROP-OUT HAS NO REMEDIATION CLOCK. Its resolved_at dates when the register
   // lost sight of it, not when anyone fixed it, so both MTTR samples are null and every
-  // estimator built on them — KM, percentiles, In-SLA, the trend medians — skips the row
-  // exactly as it skips one whose clock was never captured. It is not open either
-  // (age_days stays null), so it leaves the backlog without entering the fix figures.
+  // closed-row figure — percentiles, In-SLA, the plain medians, resolved counts — skips it.
+  // It is not open either (age_days stays null), so it leaves the backlog too.
+  //
+  // BUT IT IS STILL EVIDENCE TO A SURVIVAL ESTIMATE, and dropping it there is a bias: the
+  // register watched it stay open until the repository left. So it carries its age at that
+  // moment as `censor_days` (and the actionable twin), which only the Kaplan–Meier inputs
+  // read — right-censored at the drop-out, never an event. A dedicated field rather than an
+  // `age_days`, because `age_days` is what every open-backlog and aging figure reads.
   const dropout = isRepoDropout(row);
+  const lostSight = dropout ? parseTs(row.resolved_at) : null;
   const resolved = dropout ? null : parseTs(row.resolved_at);
   const open = row.status === "OPEN";
   const isSca = row.scope === "sca";
@@ -590,6 +611,9 @@ function withDerived(
     mttr_actionable_days:
       resolved !== null && actionableMs !== null ? (resolved - actionableMs) / DAY_MS : null,
     actionable_age_days: open && actionableMs !== null ? (nowMs - actionableMs) / DAY_MS : null,
+    censor_days: lostSight !== null && first !== null ? (lostSight - first) / DAY_MS : null,
+    censor_actionable_days:
+      lostSight !== null && actionableMs !== null ? (lostSight - actionableMs) / DAY_MS : null,
     // `isSca &&` is the flag's DEFINITION, not a shortcut: "awaiting a vendor fix" names a
     // state only a dependency finding can be in. On sast/secrets it is false even for the
     // degenerate row whose first_seen is missing — that row cannot be measured (its actionable

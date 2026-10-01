@@ -80,6 +80,9 @@ export function execMttrSlice(mttr: unknown): Rec | null {
   const km = ((m["remediation"] ?? {}) as Rec)["km"] as Rec | undefined;
   return {
     rowCount: m["rowCount"],
+    // The third state beside open/resolved: rowCount is their sum with it (repository
+    // drop-outs, which the hero's ring must not read as fixed or as still open).
+    leftCoverage: m["leftCoverage"],
     overall: { resolved: overall["resolved"], open: overall["open"] },
     remediation: km
       ? {

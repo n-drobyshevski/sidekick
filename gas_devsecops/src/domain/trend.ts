@@ -541,12 +541,37 @@ function kmMedianOf(
 }
 
 /**
+ * A row RESOLVED by the replay instant, as the three KM replays below read it: an event at its
+ * stored `mttr_days` — or, for a repository drop-out (which has none), right-censored at the
+ * age it had when the register lost sight of it, the as-of twin of `BaseRow.censor_days`. Null
+ * when it contributes nothing: no clock, or an exit at-or-before its own entry (never
+ * observable by this register — `kaplanMeierExtended`'s `excludedPreEntry` rule).
+ */
+// Positional rather than a row object on purpose: `withKmMedian` calls this once per row per
+// trend point, and a spread to narrow `resolvedAt` would allocate on every one of those.
+function resolvedObservation(
+  first: number | null,
+  resolvedAt: number,
+  mttr: number | null,
+  dropout: boolean,
+  entry: number,
+): { obs: KMObservation; event: boolean } | null {
+  if (dropout) {
+    if (first === null) return null;
+    const t = (resolvedAt - first) / DAY_MS;
+    return t > entry ? { obs: { t, entry }, event: false } : null;
+  }
+  return mttr !== null && mttr > entry ? { obs: { t: mttr, entry }, event: true } : null;
+}
+
+/**
  * Kaplan–Meier median time-to-remediation per breakdown group over time — the censoring-aware
  * companion of `medianMttrByGroupTrend`, and the MTTR page's default series. For each saved
  * scan timestamp it computes, per group, the KM median over that group's rows: rows resolved
  * as of that instant (resolved_at <= ts) are events at their stored `mttr_days`; rows still
  * open as of ts (first_seen <= ts, not resolved by ts) are right-censored at age
- * (ts − first_seen)/day. The KM median is the smallest event time whose survival has fallen
+ * (ts − first_seen)/day, and a repository drop-out by ts is censored at its age when it left
+ * (`resolvedObservation`). The KM median is the smallest event time whose survival has fallen
  * to <= 0.5 (`kmMedianFromCurve` over `kmCurveEntry` — the same estimator `remediation.
  * kaplanMeier` and `withKmMedian` use, shared so the three can't drift), rounded to 3 decimals;
  * null before any event or when survival never reaches 0.5 (too much censoring) — where the
@@ -586,6 +611,7 @@ export function kmMedianByGroupTrend(
     resolvedAt: parseTs(r["resolved_at"]),
     mttr: mttrOf(r),
     fixAvail: parseTs(r["fix_available_at"]),
+    dropout: isRepoDropout(r),
     // MTTR delayed-entry package: relative to the TRACKING START, never to `ts` below —
     // TrendKmOptions's own note.
     entry: entryDaysFrom(opts.trackingStartByScope?.[r["scope"] as Scope], r["first_seen"]),
@@ -601,12 +627,12 @@ export function kmMedianByGroupTrend(
     for (const r of parsed) {
       if (!r.kept) continue;
       if (r.resolvedAt !== null && r.resolvedAt <= ts.ms) {
-        // Resolved by ts: an event at its final mttr_days (a null-mttr resolution drops out).
-        // A row resolved at-or-before its own entry was never observable by this register —
-        // drop it, mirroring kaplanMeierExtended's excludedPreEntry rule.
-        if (r.mttr !== null && r.mttr > r.entry) {
-          (events[r.group] ??= []).push({ t: r.mttr, entry: r.entry });
-          (risk[r.group] ??= []).push({ t: r.mttr, entry: r.entry });
+        // Resolved by ts: an event at its final mttr_days (a null-mttr resolution drops out),
+        // or a drop-out censored where it left — see resolvedObservation.
+        const o = resolvedObservation(r.first, r.resolvedAt, r.mttr, r.dropout, r.entry);
+        if (o !== null) {
+          if (o.event) (events[r.group] ??= []).push(o.obs);
+          (risk[r.group] ??= []).push(o.obs);
         }
       } else if (r.first !== null && r.first <= ts.ms) {
         // Open as of ts: right-censored at its current age — unless hiding no-fix rows and
@@ -737,7 +763,8 @@ export function kmSkipMask(points: { reconstructed?: boolean }[], max?: number):
  * closed-only median. For each point date d it replays the durable base as of d: rows
  * resolved by d (resolved_at <= d) are events at their stored `mttr_days` (fixed once
  * resolved); rows still open as of d (first_seen <= d and not resolved by d) are
- * right-censored at age `(d − first_seen)/day`. Rounded to 3 decimals like `trendFromFrames`;
+ * right-censored at age `(d − first_seen)/day`; a repository drop-out by d is censored at its
+ * age when it left (`resolvedObservation`). Rounded to 3 decimals like `trendFromFrames`;
  * null before any event or when survival never reaches 0.5 (too much censoring).
  *
  * opts.hideNoFix (default false) drops an open-as-of-d finding from the censored risk set when
@@ -770,6 +797,7 @@ export function withKmMedian<T extends { date: string; reconstructed?: boolean }
     resolvedAt: parseTs(r["resolved_at"]),
     mttr: mttrOf(r),
     fixAvail: parseTs(r["fix_available_at"]),
+    dropout: isRepoDropout(r),
     // MTTR delayed-entry package: relative to the TRACKING START, never to `d` below —
     // TrendKmOptions's own note.
     entry: entryDaysFrom(opts.trackingStartByScope?.[r["scope"] as Scope], r["first_seen"]),
@@ -788,10 +816,10 @@ export function withKmMedian<T extends { date: string; reconstructed?: boolean }
       const risk: KMObservation[] = []; // the risk set: events + open-as-of-d censored ages
       for (const r of parsed) {
         if (r.resolvedAt !== null && r.resolvedAt <= d) {
-          // A row resolved at-or-before its own entry was never observable by this register.
-          if (r.mttr !== null && r.mttr > r.entry) {
-            events.push({ t: r.mttr, entry: r.entry });
-            risk.push({ t: r.mttr, entry: r.entry });
+          const o = resolvedObservation(r.first, r.resolvedAt, r.mttr, r.dropout, r.entry);
+          if (o !== null) {
+            if (o.event) events.push(o.obs);
+            risk.push(o.obs);
           }
         } else if (r.first !== null && r.first <= d) {
           if (hideNoFix && awaitingFixAsOf(r.first, r.resolvedAt, r.fixAvail, d)) continue;
@@ -832,16 +860,15 @@ export function kmMedianAsOf(
     // own note.
     const entry = entryDaysFrom(opts.trackingStartByScope?.[r["scope"] as Scope], r["first_seen"]);
     const resolvedAt = parseTs(r["resolved_at"]);
+    const first = parseTs(r["first_seen"]);
     if (resolvedAt !== null && resolvedAt <= d) {
-      const mttr = mttrOf(r);
-      // A row resolved at-or-before its own entry was never observable by this register.
-      if (mttr !== null && mttr > entry) {
-        events.push({ t: mttr, entry });
-        risk.push({ t: mttr, entry });
+      const o = resolvedObservation(first, resolvedAt, mttrOf(r), isRepoDropout(r), entry);
+      if (o !== null) {
+        if (o.event) events.push(o.obs);
+        risk.push(o.obs);
       }
       continue;
     }
-    const first = parseTs(r["first_seen"]);
     if (first !== null && first <= d) {
       if (hideNoFix && awaitingFixAsOf(first, resolvedAt, parseTs(r["fix_available_at"]), d)) {
         continue;

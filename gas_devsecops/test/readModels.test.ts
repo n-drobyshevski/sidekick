@@ -486,14 +486,20 @@ describe("the caching audit is per model, and the header states it", () => {
     // "dsSecrets4" -> "dsSecrets5" (view switch keeps caches warm): the key gained the view.
     // "dsRegister3" -> "dsRegister4" (hasFix relabel, register page): `fetchFilter` joined the
     // payload — same claim.
-    expect(layerOf("dsExecutive3")).toEqual(["cached"]);
+    // "dsMttr6" -> "dsMttr7", "dsMttrSplit2" -> "dsMttrSplit3", "dsMttrGroup3" ->
+    // "dsMttrGroup4", "dsExecutive3" -> "dsExecutive4", "dsSecrets5" -> "dsSecrets6",
+    // "dsRegister4" -> "dsRegister5", "dsRepos2" -> "dsRepos3", "dsHistory7" -> "dsHistory8",
+    // "dsScopeSummary4" -> "dsScopeSummary5" (drop-outs censored and counted apart): every KM
+    // keeps a repository drop-out as censored, and resolved counts ship it as `leftCoverage`
+    // — same unchanged layer claim.
+    expect(layerOf("dsExecutive4")).toEqual(["cached"]);
     // "dsMttr1" -> "dsMttr2": the namespace was bumped when `remediation` gained its
     // `slaConsumed` block. A warm entry from THAT old namespace carries no deciles, and a
     // section missing for a cache reason reads as a register with nothing inside its SLA
-    // windows — the same shape of risk the newer dsMttr2 -> ... -> dsMttr6 bumps above
+    // windows — the same shape of risk the newer dsMttr2 -> ... -> dsMttr7 bumps above
     // guard against.
-    expect(layerOf("dsMttr6")).toEqual(["cached"]);
-    expect(layerOf("dsSecrets5")).toEqual(["cached"]);
+    expect(layerOf("dsMttr7")).toEqual(["cached"]);
+    expect(layerOf("dsSecrets6")).toEqual(["cached"]);
     // "dsRegister1" -> "dsRegister2": the namespace was bumped when the payload gained its
     // `population` block. The CLAIM these three lines encode is the LAYER each model caches
     // in, not the spelling of its namespace, and that is unchanged — a warm entry from the
@@ -501,7 +507,7 @@ describe("the caching audit is per model, and the header states it", () => {
     // over figures that have one is a silently missing caveat. (Unlike its three siblings
     // above, `registerModel`'s own build never calls `kaplanMeier`, so the delayed-entry
     // package left this namespace untouched.)
-    expect(layerOf("dsRegister4")).toEqual(["cached", "cached", "cached"]);
+    expect(layerOf("dsRegister5")).toEqual(["cached", "cached", "cached"]);
 
     // Time-invariant models: dated by the ledger's own clock, so a stored copy stays true.
     // "dsProgram1" -> "dsProgram2": the namespace was bumped when `capacity` gained
@@ -515,12 +521,12 @@ describe("the caching audit is per model, and the header states it", () => {
     // spelling of its namespace, and that is unchanged — a durable entry from the old
     // namespace carries no cold zone at all, and the page's first section would be missing
     // entirely, which reads as an estate where nothing has gone quiet.
-    expect(layerOf("dsRepos2")).toEqual(["durablyCached"]);
+    expect(layerOf("dsRepos3")).toEqual(["durablyCached"]);
     // "dsHistory1" -> "dsHistory2": the namespace was bumped when the payload gained its
     // per-register `movement` / `movementNote` blocks. A warm entry from THAT old namespace
     // carries no movement block, and the new section would draw "no movement decomposition in
     // this payload" over a window that is measurable.
-    expect(layerOf("dsHistory7")).toEqual(["durablyCached"]);
+    expect(layerOf("dsHistory8")).toEqual(["durablyCached"]);
     expect(layerOf("dsStorage1")).toEqual(["durablyCached"]);
 
     // And nothing reached both layers, which is the failure the spelling-out above exists to
@@ -575,7 +581,7 @@ describe("the caching audit is per model, and the header states it", () => {
     registerModel("sca", ALL);
     registerModel("sast", ALL);
     const keys = H.cacheCalls
-      .filter((c) => c.name === "dsRegister4")
+      .filter((c) => c.name === "dsRegister5")
       .map((c) => JSON.stringify(c.params));
     expect(new Set(keys).size).toBe(2);
   });
@@ -815,7 +821,7 @@ describe("effective SLA windows reach the models that publish them", () => {
     H.slaTargets = { CRITICAL: 90 };
     __resetModelMemosForTest();
     mttrModel(ALL);
-    const keys = H.cacheCalls.filter((c) => c.name === "dsMttr6").map((c) => JSON.stringify(c.params));
+    const keys = H.cacheCalls.filter((c) => c.name === "dsMttr7").map((c) => JSON.stringify(c.params));
     expect(new Set(keys).size).toBe(2);
   });
 });
@@ -872,7 +878,7 @@ describe("secretsModel has no severity axis", () => {
     secretsModel(ALL);
     secretsModel({ ...ALL, severities: ["CRITICAL"] });
     const keys = H.cacheCalls
-      .filter((c) => c.name === "dsSecrets5")
+      .filter((c) => c.name === "dsSecrets6")
       .map((c) => JSON.stringify(c.params));
     expect(new Set(keys).size).toBe(1);
   });
@@ -1338,7 +1344,7 @@ describe("reposModel", () => {
 
     // ...and it is a DIFFERENT cache entry that answered, not the same one re-computed: the
     // durable layer has no TTL, so a key without the threshold would have kept the old file.
-    const keys = H.cacheCalls.filter((c) => c.name === "dsRepos2").map((c) => JSON.stringify(c.params));
+    const keys = H.cacheCalls.filter((c) => c.name === "dsRepos3").map((c) => JSON.stringify(c.params));
     expect(new Set(keys).size).toBe(2);
   });
 
@@ -1422,7 +1428,7 @@ describe("reposModel", () => {
     H.coldZoneMode = "relative";
     __resetModelMemosForTest();
     expect((reposModel(ALL) as any).coldZone.cold_after_days).toBe(52);
-    const afterMode = H.cacheCalls.filter((c) => c.name === "dsRepos2").map((c) => JSON.stringify(c.params));
+    const afterMode = H.cacheCalls.filter((c) => c.name === "dsRepos3").map((c) => JSON.stringify(c.params));
     expect(new Set(afterMode).size).toBe(2);
 
     // ...and so are the two numbers only relative mode reads: changing the target moves the
@@ -1433,7 +1439,7 @@ describe("reposModel", () => {
     H.coldFloorDays = 30;
     __resetModelMemosForTest();
     expect((reposModel(ALL) as any).coldZone.cold_after_days).toBe(30);
-    const allKeys = H.cacheCalls.filter((c) => c.name === "dsRepos2").map((c) => JSON.stringify(c.params));
+    const allKeys = H.cacheCalls.filter((c) => c.name === "dsRepos3").map((c) => JSON.stringify(c.params));
     expect(new Set(allKeys).size).toBe(4);
   });
 
@@ -1715,7 +1721,7 @@ describe("executiveModel", () => {
     const after = executiveModel(ALL) as any;
     expect(after.coldZone.cold_after_days).toBe(7);
     const keys = H.cacheCalls
-      .filter((c) => c.name === "dsExecutive3")
+      .filter((c) => c.name === "dsExecutive4")
       .map((c) => JSON.stringify(c.params));
     expect(new Set(keys).size).toBe(2);
   });
@@ -1741,7 +1747,7 @@ describe("executiveModel", () => {
     expect(after.coldZone.target_share_pct).toBe(20);
 
     const keys = H.cacheCalls
-      .filter((c) => c.name === "dsExecutive3")
+      .filter((c) => c.name === "dsExecutive4")
       .map((c) => JSON.stringify(c.params));
     expect(new Set(keys).size).toBe(2);
   });
@@ -1774,8 +1780,8 @@ describe("warmReadModels", () => {
     expect(H.swept).toBe(1);
     expect(new Set(H.cacheCalls.map((c) => c.name))).toEqual(new Set([
       "dsBootCore1",
-      "dsHistory7", "dsProgram2", "dsRepos2", "dsStorage1",
-      "dsExecutive3", "dsMttr6", "dsMttrSplit2", "dsSecrets5", "dsRegister4",
+      "dsHistory8", "dsProgram2", "dsRepos3", "dsStorage1",
+      "dsExecutive4", "dsMttr7", "dsMttrSplit3", "dsSecrets6", "dsRegister5",
     ]));
     // FIRST, because doGet only inlines a bootstrap core that is already stored: a budget
     // cut-out must never be what leaves every page load paying the second round trip.
@@ -1832,10 +1838,10 @@ describe("warmReadModels", () => {
     warmReadModels();
     const first = (name: string) => H.cacheCalls.findIndex((c) => c.name === name);
     expect(first("dsBootCore1")).toBe(0);
-    expect(first("dsBootCore1")).toBeLessThan(first("dsExecutive3"));
-    expect(first("dsExecutive3")).toBeLessThan(first("dsMttr6"));
-    expect(first("dsMttr6")).toBeLessThan(first("dsHistory7"));
-    expect(first("dsStorage1")).toBeLessThan(first("dsMttrSplit2"));
+    expect(first("dsBootCore1")).toBeLessThan(first("dsExecutive4"));
+    expect(first("dsExecutive4")).toBeLessThan(first("dsMttr7"));
+    expect(first("dsMttr7")).toBeLessThan(first("dsHistory8"));
+    expect(first("dsStorage1")).toBeLessThan(first("dsMttrSplit3"));
   });
 
   it("logs one {stage:\"warm\"} line per target it ran", () => {
@@ -1891,7 +1897,7 @@ describe("the resumable warm chain", () => {
     // The sweep ran with the FIRST hop's keep-list seeded in — a sweep over this hop's touches
     // alone would trash the core and the durable four.
     expect(H.swept).toBe(1);
-    expect(H.carried.at(-1)).toEqual(expect.arrayContaining(["dsBootCore1", "dsHistory7", "dsStorage1"]));
+    expect(H.carried.at(-1)).toEqual(expect.arrayContaining(["dsBootCore1", "dsHistory8", "dsStorage1"]));
     // Its own fired trigger is gone, no new one armed, and the record cleared.
     expect(H.triggers).toEqual([]);
     expect(H.props[PROGRESS]).toBeUndefined();
@@ -2137,13 +2143,58 @@ describe("the remediation-speed end-of-life exclusion", () => {
     estate();
     mttrModel(ALL);
     reposModel(ALL);
-    const mttrKey = H.cacheCalls.find((c) => c.name === "dsMttr6")!.params as Record<string, any>;
-    const reposKey = H.cacheCalls.find((c) => c.name === "dsRepos2")!.params as Record<string, any>;
+    const mttrKey = H.cacheCalls.find((c) => c.name === "dsMttr7")!.params as Record<string, any>;
+    const reposKey = H.cacheCalls.find((c) => c.name === "dsRepos3")!.params as Record<string, any>;
     expect(mttrKey.mttrExcludeEndOfLife).toBe(false);
     // The Repositories page draws no remediation-speed aggregate, so the flag is deliberately
     // absent from its key — a param the compute does not read never joins one either.
     expect("mttrExcludeEndOfLife" in reposKey).toBe(false);
     // And the cold-zone flag, which belonged in that key from the day it shipped.
     expect(reposKey.coldExcludeEndOfLife).toBe(false);
+  });
+});
+
+describe("a repository drop-out is counted apart from resolved work, and censored in KM", () => {
+  // Three sca findings on a repository that left the scan on 2026-02-01, as ledgerCore's
+  // `withDerived` derives them: closed, no fix clock, no open age — censored at 31 days.
+  function addDropouts(): void {
+    for (const id of ["d1", "d2", "d3"]) {
+      H.rows.push(coincident(row({
+        finding_key: `sca:${id}`, scope: "sca", severity: "HIGH", identifier: id,
+        first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-02-01T00:00:00Z",
+        resolution_src: "repo_dropout", repo_id: "r9", repo_name: "repo-gone",
+        mttr_days: null, censor_days: 31, censor_actionable_days: 31,
+      })));
+    }
+  }
+
+  it("register, history and executive split open / resolved / leftCoverage, summing to the total", () => {
+    const before = registerModel("sca", ALL) as Record<string, any>;
+    addDropouts();
+    __resetModelMemosForTest();
+    H.store.clear();
+    const reg = registerModel("sca", ALL) as Record<string, any>;
+    expect(reg.resolved).toBe(before.resolved); // not three fixes
+    expect(reg.leftCoverage).toBe(3);
+    expect(reg.open + reg.resolved + reg.leftCoverage).toBe(reg.rowCount);
+
+    const k = (historyModel(ALL) as Record<string, any>).kpis;
+    expect(k.leftCoverage).toBe(3);
+    expect(k.tracked).toBe(k.open + k.resolvedAllTime); // the sparkline's own sum
+    expect(k.resolvedAllTime).toBe(H.rows.filter((r) => r.status === "RESOLVED").length - 3);
+
+    const sca = (executiveModel(ALL) as Record<string, any>).byScope.rows
+      .find((r: Record<string, any>) => r.group === "sca");
+    expect(sca).toMatchObject({ total: 6, open: 2, resolved: 1, leftCoverage: 3 });
+  });
+
+  it("the MTTR payload names them beside rowCount and inside the estimator's censored count", () => {
+    addDropouts();
+    const m = mttrModel(ALL) as Record<string, any>;
+    expect(m.leftCoverage).toBe(3);
+    expect(m.rowCount).toBe(m.overall.open + m.overall.resolved + m.leftCoverage);
+    expect(m.remediation.km.censoredLeftCoverage).toBe(3);
+    expect(m.remediation.km.rowsIn).toBe(m.remediation.km.events + m.remediation.km.censored
+      + m.remediation.km.excludedPreEntry + m.remediation.km.noClock);
   });
 });

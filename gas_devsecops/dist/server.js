@@ -134,6 +134,11 @@ var Server = (() => {
   var RESOLUTION_DISAPPEARED = "disappeared";
   var RESOLUTION_REPO_DROPOUT = "repo_dropout";
   var DROPOUT_MIN_OPEN = 3;
+  var FETCH_RETURNS_RESOLVED = {
+    sca: true,
+    sast: false,
+    secrets: true
+  };
   function isRepoDropout(row) {
     return row != null && row.resolution_src === RESOLUTION_REPO_DROPOUT;
   }
@@ -1411,11 +1416,13 @@ var Server = (() => {
     }
     for (const [key, episode] of episodeReopens) {
       const row = updated[key];
-      if (row.status === "OPEN" && episode.resolution_src === RESOLUTION_REPO_DROPOUT) {
+      if (episode.resolution_src === RESOLUTION_REPO_DROPOUT) {
         row.reopened_count = Number((_a = episode.reopened_count) != null ? _a : 0);
         if (episode.first_seen !== null && (row.first_seen === null || episode.first_seen < row.first_seen)) {
           row.first_seen = episode.first_seen;
         }
+        if (episode.fix_date != null) row.fix_date = episode.fix_date;
+        if (episode.fix_observed_at != null) row.fix_observed_at = episode.fix_observed_at;
         deltas.new_count -= 1;
         absence.resumed += 1;
         episode.superseded_by_scan = scanId;
@@ -1464,6 +1471,7 @@ var Server = (() => {
       if (key.startsWith(prefix)) existingLedger[key] = row;
       else otherScopes[key] = row;
     }
+    const dropoutEvidence = FETCH_RETURNS_RESOLVED[scope];
     let reportedTotal = null;
     let partialPages = null;
     let duplicates = null;
@@ -1477,7 +1485,7 @@ var Server = (() => {
       duplicates = (_e = options.stored.duplicates) != null ? _e : null;
       disappearance = verdict.legacy ? null : String(options.stored.disappearance).trim();
       deferDisappearance = verdict.deferred;
-      detectDropouts = !verdict.legacy && !verdict.deferred;
+      detectDropouts = dropoutEvidence && !verdict.legacy && !verdict.deferred;
     } else if (options.completeness) {
       const inScope = sevScope === null ? null : new Set(sevScope);
       let priorOpen = 0;
@@ -1492,7 +1500,7 @@ var Server = (() => {
       duplicates = verdict.duplicates;
       disappearance = disappearanceValue(verdict.reason);
       deferDisappearance = verdict.reason !== null;
-      detectDropouts = verdict.reason === null;
+      detectDropouts = dropoutEvidence && verdict.reason === null;
     }
     const { ledger: updated, observations, deltas, twinStats, absence } = reconcile(
       records,
@@ -1529,7 +1537,8 @@ var Server = (() => {
       duplicates,
       disappearance,
       // Null where it was not measured: a legacy row never ran the pass, a deferred one ran no
-      // absence at all. A complete scan with no drop-out records a measured 0.
+      // absence at all, and a SAST scan cannot run it. A complete scan with no drop-out records
+      // a measured 0.
       dropout_count: detectDropouts ? absence.dropouts : null
     };
     state.scans.push(scanRow);
@@ -1540,6 +1549,7 @@ var Server = (() => {
     var _a, _b;
     const first = parseTs(row.first_seen);
     const dropout = isRepoDropout(row);
+    const lostSight = dropout ? parseTs(row.resolved_at) : null;
     const resolved = dropout ? null : parseTs(row.resolved_at);
     const open = row.status === "OPEN";
     const isSca = row.scope === "sca";
@@ -1559,6 +1569,8 @@ var Server = (() => {
       actionable_from: actionableFrom,
       mttr_actionable_days: resolved !== null && actionableMs !== null ? (resolved - actionableMs) / DAY_MS3 : null,
       actionable_age_days: open && actionableMs !== null ? (nowMs - actionableMs) / DAY_MS3 : null,
+      censor_days: lostSight !== null && first !== null ? (lostSight - first) / DAY_MS3 : null,
+      censor_actionable_days: lostSight !== null && actionableMs !== null ? (lostSight - actionableMs) / DAY_MS3 : null,
       // `isSca &&` is the flag's DEFINITION, not a shortcut: "awaiting a vendor fix" names a
       // state only a dependency finding can be in. On sast/secrets it is false even for the
       // degenerate row whose first_seen is missing — that row cannot be measured (its actionable
@@ -2345,6 +2357,15 @@ var Server = (() => {
     const a = row.age_days;
     return typeof a === "number" && Number.isFinite(a) ? a : null;
   }
+  function leftCoverageAge(row) {
+    if (isOpen3(row.status)) return null;
+    const c = row.censor_days;
+    return typeof c === "number" && Number.isFinite(c) ? c : null;
+  }
+  function censoredAge(row) {
+    var _a;
+    return (_a = openAge2(row)) != null ? _a : leftCoverageAge(row);
+  }
   function kmCurve(events, times) {
     const ev = events.filter((x) => !Number.isNaN(x)).sort((a, b) => a - b);
     const ts = times.filter((x) => !Number.isNaN(x)).sort((a, b) => a - b);
@@ -2408,7 +2429,7 @@ var Server = (() => {
         events.push(m);
         continue;
       }
-      const c = openAge2(row);
+      const c = censoredAge(row);
       if (c !== null) censored.push(c);
     }
     const times = events.concat(censored);
@@ -2491,6 +2512,7 @@ var Server = (() => {
     const censored = [];
     let excludedPreEntry = 0;
     let noClock = 0;
+    let censoredLeftCoverage = 0;
     const lateEntryAges = [];
     for (const row of rows) {
       const entry = normalizedEntry(row);
@@ -2504,12 +2526,13 @@ var Server = (() => {
         }
         continue;
       }
-      const c = openAge2(row);
+      const c = censoredAge(row);
       if (c !== null) {
         if (c <= entry) {
           excludedPreEntry += 1;
         } else {
           censored.push({ t: c, entry });
+          if (openAge2(row) === null) censoredLeftCoverage += 1;
           if (entry > 0) lateEntryAges.push(entry);
         }
       } else {
@@ -2551,7 +2574,8 @@ var Server = (() => {
         medianBoundReason: maxObserved === null ? null : "not-reached",
         meanUnmeasuredReason: "no-events",
         lateEntrants,
-        lateEntryMedianAge
+        lateEntryMedianAge,
+        censoredLeftCoverage
       };
     }
     const fullCurve = kmCurveEntry(events, events.concat(censored));
@@ -2594,7 +2618,8 @@ var Server = (() => {
       eventsPastCut,
       medianBoundReason,
       lateEntrants,
-      lateEntryMedianAge
+      lateEntryMedianAge,
+      censoredLeftCoverage
     };
   }
   function filterScope(rows, scope) {
@@ -2681,6 +2706,8 @@ var Server = (() => {
         status: r.status,
         mttr_days: r.mttr_actionable_days,
         age_days: r.actionable_age_days,
+        // A drop-out is censored where it left coverage on this clock too.
+        censor_days: r.censor_actionable_days,
         entry_days: hasTrackingStart ? entryDaysFrom(opts.trackingStart, (_a = r.actionable_from) != null ? _a : null) : void 0
       };
     });
@@ -2861,6 +2888,14 @@ var Server = (() => {
     const cutAt = reliableUntilFromCurve(curve);
     return kmMedianFromCurve(cutAt === null ? [] : curve.filter((p) => p.t <= cutAt));
   }
+  function resolvedObservation(first, resolvedAt, mttr, dropout, entry) {
+    if (dropout) {
+      if (first === null) return null;
+      const t = (resolvedAt - first) / DAY_MS6;
+      return t > entry ? { obs: { t, entry }, event: false } : null;
+    }
+    return mttr !== null && mttr > entry ? { obs: { t: mttr, entry }, event: true } : null;
+  }
   function trendFromBase(scans, base, severities = null, opts = {}) {
     var _a;
     const hideNoFix = (_a = opts.hideNoFix) != null ? _a : false;
@@ -2918,6 +2953,7 @@ var Server = (() => {
         resolvedAt: parseTs(r["resolved_at"]),
         mttr: mttrOf(r),
         fixAvail: parseTs(r["fix_available_at"]),
+        dropout: isRepoDropout(r),
         // MTTR delayed-entry package: relative to the TRACKING START, never to `d` below —
         // TrendKmOptions's own note.
         entry: entryDaysFrom((_a2 = opts.trackingStartByScope) == null ? void 0 : _a2[r["scope"]], r["first_seen"])
@@ -2933,9 +2969,10 @@ var Server = (() => {
         const risk = [];
         for (const r of parsed) {
           if (r.resolvedAt !== null && r.resolvedAt <= d) {
-            if (r.mttr !== null && r.mttr > r.entry) {
-              events.push({ t: r.mttr, entry: r.entry });
-              risk.push({ t: r.mttr, entry: r.entry });
+            const o = resolvedObservation(r.first, r.resolvedAt, r.mttr, r.dropout, r.entry);
+            if (o !== null) {
+              if (o.event) events.push(o.obs);
+              risk.push(o.obs);
             }
           } else if (r.first !== null && r.first <= d) {
             if (hideNoFix && awaitingFixAsOf(r.first, r.resolvedAt, r.fixAvail, d)) continue;
@@ -2958,15 +2995,15 @@ var Server = (() => {
     for (const r of rows) {
       const entry = entryDaysFrom((_b = opts.trackingStartByScope) == null ? void 0 : _b[r["scope"]], r["first_seen"]);
       const resolvedAt = parseTs(r["resolved_at"]);
+      const first = parseTs(r["first_seen"]);
       if (resolvedAt !== null && resolvedAt <= d) {
-        const mttr = mttrOf(r);
-        if (mttr !== null && mttr > entry) {
-          events.push({ t: mttr, entry });
-          risk.push({ t: mttr, entry });
+        const o = resolvedObservation(first, resolvedAt, mttrOf(r), isRepoDropout(r), entry);
+        if (o !== null) {
+          if (o.event) events.push(o.obs);
+          risk.push(o.obs);
         }
         continue;
       }
-      const first = parseTs(r["first_seen"]);
       if (first !== null && first <= d) {
         if (hideNoFix && awaitingFixAsOf(first, resolvedAt, parseTs(r["fix_available_at"]), d)) {
           continue;
@@ -4875,7 +4912,7 @@ var Server = (() => {
     }
     return out;
   }
-  var SAST_FETCH_RESOLVED = false;
+  var SAST_FETCH_RESOLVED = FETCH_RETURNS_RESOLVED.sast;
   var OBJECT_FILTERS = {
     // VulnerabilityFindingFilters takes every LIST bare — severity, status,
     // codeToCloudPipelineStage — and wraps only the project restriction.
@@ -5546,6 +5583,9 @@ var Server = (() => {
     const km = ((_b = m["remediation"]) != null ? _b : {})["km"];
     return {
       rowCount: m["rowCount"],
+      // The third state beside open/resolved: rowCount is their sum with it (repository
+      // drop-outs, which the hero's ring must not read as fixed or as still open).
+      leftCoverage: m["leftCoverage"],
       overall: { resolved: overall["resolved"], open: overall["open"] },
       remediation: km ? {
         km: {
@@ -5867,7 +5907,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "80c6687baa60" : "dev";
+  var BUILD_ID = true ? "3e172583b6f9" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
@@ -8734,7 +8774,9 @@ var Server = (() => {
       severity: group,
       status: r.status,
       mttr_days: r.mttr_days,
-      age_days: r.age_days
+      age_days: r.age_days,
+      // A repository drop-out is censored where it left, as on every other KM in the product.
+      censor_days: r.censor_days
     }));
     const km = kaplanMeier(projection);
     return { median: km.median, medianLowerBound: km.medianLowerBound };
@@ -9494,6 +9536,17 @@ var Server = (() => {
   function isOpen8(status) {
     return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
   }
+  function stateCounts(rows) {
+    let open = 0;
+    let resolved = 0;
+    let leftCoverage = 0;
+    for (const r of rows) {
+      if (isOpen8(r.status)) open += 1;
+      else if (isRepoDropout(r)) leftCoverage += 1;
+      else resolved += 1;
+    }
+    return { open, resolved, leftCoverage };
+  }
   function scopedRows(rows, n2) {
     let out = rows;
     if (n2.scope) out = out.filter((r) => r.scope === n2.scope);
@@ -9602,7 +9655,7 @@ var Server = (() => {
     };
   }
   function shipKM(km) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
     return {
       curve: km.curve.map((p) => ({ t: p.t, s: p.s })),
       median: km.median,
@@ -9615,17 +9668,18 @@ var Server = (() => {
       restrictionTime: km.restrictionTime,
       events: km.events,
       censored: km.censored,
+      censoredLeftCoverage: (_c = km.censoredLeftCoverage) != null ? _c : 0,
       total: km.total,
-      q25: (_c = km.q25) != null ? _c : null,
-      q75: (_d = km.q75) != null ? _d : null,
-      reliableUntil: (_e = km.reliableUntil) != null ? _e : null,
-      excludedPreEntry: (_f = km.excludedPreEntry) != null ? _f : 0,
-      maxObserved: (_g = km.maxObserved) != null ? _g : null,
-      rowsIn: (_h = km.rowsIn) != null ? _h : 0,
-      noClock: (_i = km.noClock) != null ? _i : 0,
-      eventsPastCut: (_j = km.eventsPastCut) != null ? _j : 0,
-      lateEntrants: (_k = km.lateEntrants) != null ? _k : 0,
-      lateEntryMedianAge: (_l = km.lateEntryMedianAge) != null ? _l : null
+      q25: (_d = km.q25) != null ? _d : null,
+      q75: (_e = km.q75) != null ? _e : null,
+      reliableUntil: (_f = km.reliableUntil) != null ? _f : null,
+      excludedPreEntry: (_g = km.excludedPreEntry) != null ? _g : 0,
+      maxObserved: (_h = km.maxObserved) != null ? _h : null,
+      rowsIn: (_i = km.rowsIn) != null ? _i : 0,
+      noClock: (_j = km.noClock) != null ? _j : 0,
+      eventsPastCut: (_k = km.eventsPastCut) != null ? _k : 0,
+      lateEntrants: (_l = km.lateEntrants) != null ? _l : 0,
+      lateEntryMedianAge: (_m = km.lateEntryMedianAge) != null ? _m : null
     };
   }
   function latencySummary(rows, now, scope) {
@@ -9687,6 +9741,9 @@ var Server = (() => {
       severities: n2.severities,
       showNoFix: n2.showNoFix,
       rowCount: rows.length,
+      // `rowCount` = `overall.open` + `overall.resolved` + this: the repository drop-outs, which
+      // `mttrFromLedger` counts as neither (`stateCounts`).
+      leftCoverage: stateCounts(rows).leftCoverage,
       // WHO THIS PAGE MEASURED OVER, published whether or not anybody was removed — the figure
       // that makes the setting discoverable rather than hidden, and the only way a reader can
       // check a denominator that quietly shrank.
@@ -9771,7 +9828,7 @@ var Server = (() => {
   function mttrModel(p) {
     const n2 = norm(p);
     return cached(
-      "dsMttr6",
+      "dsMttr7",
       { ...keyOf(n2), slaTargets: n2.slaTargets, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => buildMttr(n2),
       CLOCK_TTL_SEC
@@ -9874,7 +9931,7 @@ var Server = (() => {
   function mttrSplitModel(p) {
     const n2 = norm({ ...p, split: null });
     return cached(
-      "dsMttrSplit2",
+      "dsMttrSplit3",
       { ...keyOf(n2), slaTargets: n2.slaTargets, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => buildMttrSplit(n2),
       CLOCK_TTL_SEC
@@ -9884,7 +9941,7 @@ var Server = (() => {
     const n2 = norm(p);
     if (!n2.split) throw new Error("mttrGroupModel: a split { by, value } is required.");
     return cached(
-      "dsMttrGroup3",
+      "dsMttrGroup4",
       { ...keyOf(n2), slaTargets: n2.slaTargets, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => {
         const snap = baseSnapshot();
@@ -9922,8 +9979,8 @@ var Server = (() => {
         group: scope,
         dimension: "scope",
         total: sub.length,
-        open: sub.filter((r) => isOpen8(r.status)).length,
-        resolved: sub.filter((r) => !isOpen8(r.status)).length,
+        // open + resolved + leftCoverage = total (`stateCounts`).
+        ...stateCounts(sub),
         kmMedian: km.median,
         kmMedianLowerBound: km.medianLowerBound,
         kmMedianBoundReason: (_a2 = km.medianBoundReason) != null ? _a2 : null,
@@ -10091,7 +10148,7 @@ var Server = (() => {
   function executiveModel(p) {
     const n2 = norm(p);
     return cached(
-      "dsExecutive3",
+      "dsExecutive4",
       {
         ...keyOf(n2),
         slaTargets: n2.slaTargets,
@@ -10166,8 +10223,8 @@ var Server = (() => {
       severities: isSecrets ? null : n2.severities,
       showNoFix: n2.showNoFix,
       rowCount: rows.length,
-      open: rows.filter((r) => isOpen8(r.status)).length,
-      resolved: rows.filter((r) => !isOpen8(r.status)).length,
+      // open + resolved + leftCoverage = rowCount (`stateCounts`).
+      ...stateCounts(rows),
       // The severity axis, or the reason there is not one.
       severityAxis: isSecrets ? { supported: false, reason: SEVERITY_AXIS_REFUSAL } : { supported: true },
       counts: isSecrets ? null : countsOf(rows),
@@ -10243,7 +10300,9 @@ var Server = (() => {
       // "dsRegister3" -> "dsRegister4" (hasFix relabel): the payload gained `fetchFilter`; a warm
       // dsRegister3 entry lacks it and the Dependencies page would draw the awaiting-a-vendor
       // count as a measurement again.
-      "dsRegister4",
+      // "dsRegister4" -> "dsRegister5" (drop-outs counted apart): `resolved` no longer counts
+      // repository drop-outs, which ship as `leftCoverage`.
+      "dsRegister5",
       { ...keyOf(n2), scope, slaTargets: n2.slaTargets },
       () => buildRegister(scope, n2),
       CLOCK_TTL_SEC
@@ -10446,7 +10505,7 @@ var Server = (() => {
   function secretsModel(p) {
     const n2 = norm(p);
     return cached(
-      "dsSecrets5",
+      "dsSecrets6",
       // `mttrExcludeEndOfLife` is here because `timeToRevoke` reads it; `severities` is pinned to
       // null because nothing reads it. One rule, both directions.
       {
@@ -10576,7 +10635,7 @@ var Server = (() => {
   function reposModel(p) {
     const n2 = norm(p);
     return durablyCached(
-      "dsRepos2",
+      "dsRepos3",
       {
         ...keyOf(n2),
         coldAfterDays: n2.coldAfterDays,
@@ -10646,9 +10705,19 @@ var Server = (() => {
       movement: movement2,
       movementNote,
       kpis: {
-        tracked: rows.length,
-        open: rows.filter((r) => isOpen8(r.status)).length,
-        resolvedAllTime: rows.filter((r) => !isOpen8(r.status)).length,
+        // TRACKED IS OPEN + RESOLVED, the same sum each trend point's `open` + `resolved` makes
+        // (the page's sparkline under this card is exactly that), so a repository drop-out is in
+        // neither: it ships apart as `leftCoverage` (`stateCounts`) rather than inflating the
+        // all-time resolved count with findings nobody fixed.
+        ...(() => {
+          const c = stateCounts(rows);
+          return {
+            tracked: c.open + c.resolved,
+            open: c.open,
+            resolvedAllTime: c.resolved,
+            leftCoverage: c.leftCoverage
+          };
+        })(),
         // THE KM MEDIAN, AND NOTHING BESIDE IT — the comment above this block used to say
         // exactly that while the field below it shipped `medianMttr: overall.mttr_median`, the
         // plain median over resolved rows. The page drew THAT one, captioned with the
@@ -10705,7 +10774,7 @@ var Server = (() => {
   function historyModel(p) {
     const n2 = norm(p);
     return durablyCached(
-      "dsHistory7",
+      "dsHistory8",
       { ...keyOf(n2), mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => buildHistory(n2)
     );
@@ -10774,7 +10843,9 @@ var Server = (() => {
       // domain / repository); a warm "2" entry would draw the summary with no split at all.
       // "dsScopeSummary3" -> "dsScopeSummary4" (KM false lower bound): the hero's and every
       // split row's lower bound is null where the reliability cut left nothing to bound.
-      "dsScopeSummary4",
+      // "dsScopeSummary4" -> "dsScopeSummary5" (drop-outs censored): every half-life it reads
+      // changed as `dsMttr7` did, and the history counts under it as `dsHistory8` did.
+      "dsScopeSummary5",
       { ...keyOf(n2), slaTargets: n2.slaTargets, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => {
         const latest = latestScanRowOf(loadScanRows());

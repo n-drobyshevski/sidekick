@@ -497,8 +497,8 @@ const ENTRIES = [
     term: "Unobserved",
     lines: [
       "The scanner stopped returning this repository: nothing on it reached the last scan.",
-      "Three or more open findings on it close as a drop-out: out of the backlog, not counted as fixes.",
-      "So it is tested first, counted apart, and never counted as warm or cold. No finding on it reached the last scan of any register it has rows in.",
+      "On Dependencies and Secrets, 3+ open findings on it close as a drop-out — not counted as fixes.",
+      "So it is tested first, counted apart, and never counted as warm or cold. No finding on it reached the last scan of any register it has rows in. Its Code findings close as fixes rather than as a drop-out: that scan returns open findings only, so a repository whose findings were all fixed looks exactly the same.",
       "Two very different things land here, and the census draws them apart. A repository that was fixed and then archived is unobserved for as long as the ledger remembers it — nothing open, nothing to do, and on a long-lived register most of the figure. The one worth acting on is a repository the scanner lost while findings were still open on it: that backlog is real and nobody will be told about it again.",
     ],
   },

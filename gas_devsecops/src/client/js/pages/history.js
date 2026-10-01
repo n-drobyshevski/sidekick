@@ -230,6 +230,9 @@ export function kpiView(kpis) {
     tracked,
     open: num(k.open, 0),
     resolvedAllTime: resolved,
+    // Repository drop-outs: in neither `tracked` (open + resolved) nor the resolved count —
+    // findings that left with their repository, not fixes. Printed under the tracked card.
+    leftCoverage: num(k.leftCoverage, 0),
     halfLife: kmHalfLifeView(k.km),
     resolvedSharePct: tracked > 0 ? (resolved / tracked) * 100 : null,
   };
@@ -712,8 +715,15 @@ export async function renderHistory(host, _params, _ctx) {
     const series = kpiSparkSeries(trend);
     clear(kpiHost);
     kpiHost.append(
-      sparkCard(kpiCard("Tracked (all-time)", fmtCount(v.tracked)),
-        series.tracked, "Findings tracked over time"),
+      sparkCard((() => {
+        const card = kpiCard("Tracked (all-time)", fmtCount(v.tracked));
+        if (v.leftCoverage > 0) {
+          card.append(denomNote(
+            `Not counted: ${fmtCount(v.leftCoverage)} left coverage with their repository.`,
+          ));
+        }
+        return card;
+      })(), series.tracked, "Findings tracked over time"),
       sparkCard(kpiCard("Currently open", fmtCount(v.open)),
         series.open, "Open findings over time"),
       sparkCard((() => {

@@ -1511,6 +1511,14 @@ describe("history: KPIs, KM points and the SLA-trend gap", () => {
     expect(v.tracked).toBe(100);
   });
 
+  it("kpiView carries the drop-outs apart from tracked and resolved", () => {
+    const v = kpiView({ tracked: 100, open: 40, resolvedAllTime: 60, leftCoverage: 12 });
+    expect(v.leftCoverage).toBe(12);
+    expect(v.tracked).toBe(v.open + v.resolvedAllTime);
+    expect(v.resolvedSharePct).toBeCloseTo(60, 5);
+    expect(kpiView({ tracked: 1, open: 1, resolvedAllTime: 0 }).leftCoverage).toBe(0);
+  });
+
   it("kpiView never divides by zero into a fake rate", () => {
     expect(kpiView({ tracked: 0, open: 0, resolvedAllTime: 0 }).resolvedSharePct).toBeNull();
   });

@@ -79,8 +79,13 @@ const DAY_MS = 86_400_000;
 // `Pick<BaseRow, ...>` so this file does not have to wait on BaseRow gaining the column
 // (a later package's job) to compile. Absent, null, or <= 0 all mean "no delayed entry" (0) —
 // see `normalizedEntry` below, the single place that rule is applied.
+//
+// `censor_days` is a sixth, OPTIONAL column, set only on a repository drop-out (ledgerCore.ts's
+// `withDerived`): a row the register watched stay open until its repository left the scan, so
+// it is right-censored at that age (`censoredAge` below) — never an event, never dropped.
 export type RemediationRow = Pick<BaseRow, "severity" | "status" | "mttr_days" | "age_days"> & {
   entry_days?: number | null;
+  censor_days?: number | null;
 };
 
 /**
@@ -119,6 +124,20 @@ function openAge(row: RemediationRow): number | null {
   if (!isOpen(row.status)) return null;
   const a = row.age_days;
   return typeof a === "number" && Number.isFinite(a) ? a : null;
+}
+
+// A closed row the register lost sight of rather than saw fixed (a repository drop-out): its
+// age when it left observation, or null for every other row. Only ever read after
+// `resolvedMttr` came back null, so a row with a real fix time can never be censored by it.
+function leftCoverageAge(row: RemediationRow): number | null {
+  if (isOpen(row.status)) return null;
+  const c = row.censor_days;
+  return typeof c === "number" && Number.isFinite(c) ? c : null;
+}
+
+// The censored reading: an open row's age, or a drop-out's age when it left coverage.
+function censoredAge(row: RemediationRow): number | null {
+  return openAge(row) ?? leftCoverageAge(row);
 }
 
 // One step of the Kaplan–Meier staircase: the survival S(t) after the drop at a distinct
@@ -203,9 +222,9 @@ export interface KMResult {
    *  accounting block reconciles every other field here against. */
   rowsIn?: number;
   /**
-   * Rows where NEITHER `resolvedMttr` (a finite `mttr_days`) NOR `openAge` (an open row's
-   * finite `age_days`) produced a reading — a resolved row with no captured remediation time,
-   * or an open row with no captured age. These used to fall out of the loop below with nothing
+   * Rows where NEITHER `resolvedMttr` (a finite `mttr_days`) NOR `censoredAge` (an open row's
+   * finite `age_days`, or a drop-out's `censor_days`) produced a reading — a resolved row with
+   * no captured remediation time, or an open row with no captured age. These used to fall out of the loop below with nothing
    * incremented anywhere: not an event, not censored, not `excludedPreEntry` (which only counts
    * rows that DID have a reading, just one at-or-before their own entry). 0 whenever the
    * extended estimator ran and every row had a readable clock.
@@ -261,6 +280,10 @@ export interface KMResult {
    *  least this old when we started watching". Null when `lateEntrants === 0` (nothing to take
    *  a median of, not a measured zero). */
   lateEntryMedianAge?: number | null;
+  /** Of `censored`, the rows censored where their repository LEFT the scan (`censor_days`)
+   *  rather than because they are still open — so a reader printing "still open" can subtract
+   *  them. Extended path only; 0 when none. */
+  censoredLeftCoverage?: number;
 }
 
 /**
@@ -474,7 +497,7 @@ function kaplanMeierLegacy(rows: RemediationRow[]): KMResult {
       events.push(m);
       continue;
     }
-    const c = openAge(row);
+    const c = censoredAge(row);
     if (c !== null) censored.push(c);
   }
   const times = events.concat(censored); // the risk set: every observation time
@@ -612,6 +635,7 @@ function kaplanMeierExtended(rows: RemediationRow[], opts: KMOptions | undefined
   // closes. `lateEntryAges` collects the entry of every row that DID survive (event or
   // censored) with `entry_days > 0`, for `lateEntrants`/`lateEntryMedianAge` below.
   let noClock = 0;
+  let censoredLeftCoverage = 0;
   const lateEntryAges: number[] = [];
   for (const row of rows) {
     const entry = normalizedEntry(row);
@@ -625,12 +649,13 @@ function kaplanMeierExtended(rows: RemediationRow[], opts: KMOptions | undefined
       }
       continue;
     }
-    const c = openAge(row);
+    const c = censoredAge(row);
     if (c !== null) {
       if (c <= entry) {
         excludedPreEntry += 1; // already this old, on this clock, before entry
       } else {
         censored.push({ t: c, entry });
+        if (openAge(row) === null) censoredLeftCoverage += 1;
         if (entry > 0) lateEntryAges.push(entry);
       }
     } else {
@@ -683,6 +708,7 @@ function kaplanMeierExtended(rows: RemediationRow[], opts: KMOptions | undefined
       meanUnmeasuredReason: "no-events",
       lateEntrants,
       lateEntryMedianAge,
+      censoredLeftCoverage,
     };
   }
 
@@ -763,6 +789,7 @@ function kaplanMeierExtended(rows: RemediationRow[], opts: KMOptions | undefined
     medianBoundReason,
     lateEntrants,
     lateEntryMedianAge,
+    censoredLeftCoverage,
   };
 }
 
@@ -988,7 +1015,8 @@ export function openPastSlaFromRecords(records: Rec[], now?: number): number {
  * a per-scope map — every caller of this function already narrows to one scope first.
  */
 export function actionableView(
-  rows: (Pick<BaseRow, "severity" | "status" | "mttr_actionable_days" | "actionable_age_days"> &
+  rows: (Pick<BaseRow, "severity" | "status" | "mttr_actionable_days" | "actionable_age_days"
+    | "censor_actionable_days"> &
     // `actionable_from` is OPTIONAL on the accepted row, not required: test/remediation.test.ts's
     // pre-existing bRes/bOpen fixtures (D4b, before this package) build rows without it, and
     // every one of those calls also omits `opts.trackingStart` — so `entryDaysFrom` reads
@@ -1010,6 +1038,8 @@ export function actionableView(
     status: r.status,
     mttr_days: r.mttr_actionable_days,
     age_days: r.actionable_age_days,
+    // A drop-out is censored where it left coverage on this clock too.
+    censor_days: r.censor_actionable_days,
     entry_days: hasTrackingStart
       ? entryDaysFrom(opts!.trackingStart, r.actionable_from ?? null)
       : undefined,

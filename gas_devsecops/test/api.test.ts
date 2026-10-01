@@ -921,8 +921,8 @@ describe("each read model reaches its slice", () => {
     const { api } = await syncedRegister();
     const d = (api.getExecutivePage({}) as unknown as Rec)["data"] as Rec;
     const mttr = d["mttr"] as Rec;
-    // execMttrSlice's exact shape: four numbers, and NOT the whole mttr model.
-    expect(Object.keys(mttr).sort()).toEqual(["overall", "remediation", "rowCount"]);
+    // execMttrSlice's exact shape: five numbers, and NOT the whole mttr model.
+    expect(Object.keys(mttr).sort()).toEqual(["leftCoverage", "overall", "remediation", "rowCount"]);
     expect(Object.keys(mttr["overall"] as Rec).sort()).toEqual(["open", "resolved"]);
     expect(mttr).not.toHaveProperty("sla");
     const byScope = d["byScope"] as Rec;

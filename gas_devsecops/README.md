@@ -158,11 +158,15 @@ repeated rows than `max(5, 1%)`. A scan that fails is still saved, but it is *de
 nothing it missed is resolved, the Data page's error log says so, and Scan history marks the
 row. The next complete scan resolves everything missed since the last complete one. The
 verdict is stored on the scan row, so deleting a scan and replaying the rest reaches the same
-ledger. **A repository that vanishes whole is not a fix either**: when a complete scan returns
-nothing for a repository whose missing open findings number three or more, they close as
-`repo_dropout` — out of the backlog, but with no MTTR, outside every remediation figure and
-outside the scan's resolved count. If the repository comes back, they resume their original
-clock rather than counting as reopened.
+ledger. **A repository that vanishes whole is not a fix either**: on SCA and secrets, whose
+fetch returns resolved findings too, a complete scan that returns nothing at all for a
+repository whose missing open findings number three or more closes them as `repo_dropout` —
+out of the backlog and out of every resolved count, MTTR, In-SLA and percentile figure, and
+in the Kaplan–Meier half-life as *censored* at the age they had when the repository left (the
+register watched them stay open that long, then lost sight). If the repository comes back,
+they resume their original clock rather than counting as reopened. SAST never takes this
+path: its fetch returns open findings only, so a repository whose findings were all fixed
+returns nothing either, and its findings close by disappearance as before.
 
 **The design that carried the risk.** Neither source register does three scopes in one
 ledger: `gas/` has one, and `brick/`'s reconcile takes a `scope` but only stamps it,

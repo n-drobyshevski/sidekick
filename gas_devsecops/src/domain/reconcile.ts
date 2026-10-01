@@ -25,8 +25,12 @@
 //   * Repository drop-out -> a repository with no node at all in a complete scan, whose
 //                            absent open rows number at least DROPOUT_MIN_OPEN, lost
 //                            coverage rather than its findings: those rows close as
-//                            `repo_dropout` (no MTTR clock, no resolved_count, no removed_at)
-//                            and RESUME their episode if the repository comes back.
+//                            `repo_dropout` (no fix clock — censored at the drop-out in every
+//                            Kaplan–Meier figure — no resolved_count, no removed_at) and
+//                            RESUME their episode if the repository comes back. Only on a
+//                            scope whose fetch returns resolved findings (sca, secrets —
+//                            config.ts's FETCH_RETURNS_RESOLVED): SAST's does not, so a fixed
+//                            repository is silent there too and closes by disappearance.
 //
 // WHAT THIS PORT CHANGES, and why each change is here rather than in gas/:
 //
@@ -1260,6 +1264,10 @@ export function reconcile(
     // would publish a mass remediation with an MTTR clock on every one. Below the threshold
     // the ordinary reading — the last finding or two on a repository got fixed — wins.
     // A row with no `repo_id` cannot be attributed to a repository and is never a drop-out.
+    //
+    // "No node" is evidence only because the fetch returns RESOLVED findings too: a repository
+    // whose findings were all fixed still answers, with resolved nodes. The caller turns this
+    // pass off where that is not true (`detectDropouts`, ledgerCore.persistFlatScan).
     const dropouts = new Set<string>();
     if (detectDropouts && !deferDisappearance && absentKeys.length) {
       const present = new Set<string>();

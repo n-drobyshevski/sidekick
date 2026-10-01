@@ -106,6 +106,7 @@ export type AssetRow = RiskRow &
   | "resolved_at"
   | "mttr_days"
   | "age_days"
+  | "censor_days"
   >;
 
 export interface AssetProfileOptions {
@@ -466,6 +467,8 @@ function halfLife(group: string, rows: AssetRow[]): { median: number | null; med
     status: r.status,
     mttr_days: r.mttr_days,
     age_days: r.age_days,
+    // A repository drop-out is censored where it left, as on every other KM in the product.
+    censor_days: r.censor_days,
   }));
   const km = kaplanMeier(projection);
   return { median: km.median, medianLowerBound: km.medianLowerBound };

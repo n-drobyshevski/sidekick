@@ -91,7 +91,9 @@ export function mttrFromLedger(
 ): MttrSummary {
   // A repository drop-out is neither open nor fixed — the register lost sight of it
   // (config.ts's RESOLUTION_REPO_DROPOUT) — so it leaves this summary entirely: counted as
-  // resolved it would put a lost-sight date into every MTTR and In-SLA figure here.
+  // resolved it would put a lost-sight date into every MTTR and In-SLA figure here, counted as
+  // open it would age forever. Nothing here is a survival estimate; the Kaplan–Meier figures
+  // keep it as a censored observation instead (`BaseRow.censor_days`).
   const rows = [...ledgerRows].filter((r) => !isRepoDropout(r));
   if (!rows.length) return { perSev: {}, overall: {} };
   const work = rows.map((r) => ({

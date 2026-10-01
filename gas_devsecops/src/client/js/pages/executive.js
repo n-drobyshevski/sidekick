@@ -77,7 +77,8 @@ import {
  * @param {object|null|undefined} payload  `api_getExecutivePage`'s reply
  * @returns {{measured: boolean, value: string, isLowerBound: boolean, days: number|null,
  *            q25Days: number|null, state: string, secondary: string|null,
- *            tracked: number, resolved: number, open: number, qualifier: string,
+ *            tracked: number, resolved: number, open: number, leftCoverage: number,
+ *            qualifier: string,
  *            censoredKnown: boolean}}
  */
 export function executiveHeroView(payload) {
@@ -87,6 +88,9 @@ export function executiveHeroView(payload) {
   const overall = (mttr && mttr.overall) || {};
   const resolved = Number(overall.resolved || 0);
   const open = Number(overall.open || 0);
+  // Repository drop-outs: tracked, but neither fixed nor still open — the third part of
+  // `tracked`, named so the ring's remainder is not read as all open.
+  const leftCoverage = Number((mttr && mttr.leftCoverage) || 0);
 
   const half = kmHalfLifeView(km);
 
@@ -97,6 +101,7 @@ export function executiveHeroView(payload) {
   const qualifier = tracked
     ? fmtCount(tracked) + " tracked " + pluralize(tracked, "lifecycle")
       + " · " + fmtCount(resolved) + " resolved · " + fmtCount(open) + " still open"
+      + (leftCoverage > 0 ? " · " + fmtCount(leftCoverage) + " left coverage" : "")
     : "No lifecycles tracked yet.";
 
   return {
@@ -104,6 +109,7 @@ export function executiveHeroView(payload) {
     tracked,
     resolved,
     open,
+    leftCoverage,
     qualifier,
     // The estimator's censored count is on MTTR & SLA, not here — see the module header.
     censoredKnown: false,
@@ -872,7 +878,10 @@ export async function renderExecutive(host, params, _ctx) {
           }),
           el("p", { class: "brief-caption" },
             el("strong", {}, fmtCount(view.resolved)), " fixed", el("br"),
-            el("strong", {}, fmtCount(view.open)), " still open"),
+            el("strong", {}, fmtCount(view.open)), " still open",
+            ...(view.leftCoverage > 0
+              ? [el("br"), el("strong", {}, fmtCount(view.leftCoverage)), " left coverage"]
+              : [])),
         ]
         : null,
       caption: view.secondary ? sentenceStart(view.secondary) + "." : null,

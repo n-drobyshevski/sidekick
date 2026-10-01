@@ -18,6 +18,7 @@ const FULL_MTTR = {
   slaPct: 61.2,
   oldestDays: 412,
   rowCount: 99,
+  leftCoverage: 0,
   remediation: {
     pctiles: { overall: { p50: 12, p90: 88 } },
     buckets: { "0-7": 4, "8-30": 11 },
@@ -49,9 +50,10 @@ const FULL_MTTR = {
 };
 
 describe("execMttrSlice — the hero's km block, eight fields now, and nothing else", () => {
-  it("ships exactly rowCount, overall.{resolved,open} and km.{median,medianLowerBound,medianBoundReason,q25,reliableUntil,events,total,excludedPreEntry}", () => {
+  it("ships exactly rowCount, leftCoverage, overall.{resolved,open} and km.{median,medianLowerBound,medianBoundReason,q25,reliableUntil,events,total,excludedPreEntry}", () => {
     const out = execMttrSlice(FULL_MTTR)!;
-    expect(Object.keys(out).sort()).toEqual(["overall", "remediation", "rowCount"]);
+    // leftCoverage: the repository drop-outs, the third state rowCount sums over.
+    expect(Object.keys(out).sort()).toEqual(["leftCoverage", "overall", "remediation", "rowCount"]);
     expect(Object.keys(out.overall as object).sort()).toEqual(["open", "resolved"]);
     expect(Object.keys(out.remediation as object)).toEqual(["km"]);
     // MTTR delayed-entry package: q25/reliableUntil joined median/medianLowerBound so the
@@ -84,7 +86,9 @@ describe("execMttrSlice — the hero's km block, eight fields now, and nothing e
     // far more curve/aging/kmPerSev weight than FULL_MTTR's 52-point curve does, so the margin
     // against a 52k-row register is unaffected. /12 still clears "well over an order of
     // magnitude" (>10x) with room for the next small field this slice gains.
-    expect(after).toBeLessThan(before / 12);
+    // /11 since `leftCoverage` (the repository drop-outs the hero names apart) took that room:
+    // ~11.9x on this fixture.
+    expect(after).toBeLessThan(before / 11);
   });
 
   it("keeps the client's read paths intact", () => {

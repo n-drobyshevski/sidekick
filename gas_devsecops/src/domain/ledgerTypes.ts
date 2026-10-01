@@ -195,7 +195,9 @@ export interface ReconcileOptions {
   deferDisappearance?: boolean;
   /**
    * Run the repository drop-out pass (`reconcile.ts`). On for every complete live scan and its
-   * replay; off for a legacy row's replay, which must reproduce what it reproduced before.
+   * replay on a scope whose fetch returns resolved findings (config.ts's
+   * FETCH_RETURNS_RESOLVED — never SAST); off for a legacy row's replay, which must reproduce
+   * what it reproduced before.
    */
   detectDropouts?: boolean;
 }
@@ -304,6 +306,17 @@ export type BaseRow = LedgerRow & {
   actionable_from: string | null;
   mttr_actionable_days: number | null;
   actionable_age_days: number | null;
+  /**
+   * A REPOSITORY DROP-OUT's age when the register lost sight of it (`resolved_at −
+   * first_seen`), and its actionable-clock twin (`resolved_at − actionable_from`); null on
+   * every other row. Read ONLY by the Kaplan–Meier inputs (`remediation.kaplanMeier` and the
+   * as-of replays in `trend.ts`), which right-censor the row there — it was observed open that
+   * long and then not observed at all. Kept apart from `age_days` because that one is the
+   * open-backlog clock every aging figure reads. OPTIONAL so hand-built test rows compile;
+   * absent means null.
+   */
+  censor_days?: number | null;
+  censor_actionable_days?: number | null;
   awaiting_vendor_fix: boolean;
   /**
    * The business domain that owns this finding's repository — ATTACHED IN MEMORY, NEVER A

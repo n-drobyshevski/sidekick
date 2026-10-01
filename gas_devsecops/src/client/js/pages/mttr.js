@@ -300,18 +300,23 @@ export function mttrHeroView(mttr) {
   const half = kmHalfLifeView(km);
   const events = Number((km && km.events) || 0);
   const censored = Number((km && km.censored) || 0);
+  // Of `censored`, the repository drop-outs: censored where their repository left the scan,
+  // so "still open" would be untrue of them — they are named apart.
+  const leftCoverage = Math.min(censored, Number((km && km.censoredLeftCoverage) || 0));
   const total = Number((km && km.total) || 0);
   return {
     ...half,
     events,
     censored,
+    leftCoverage,
     total,
     rowCount: Number((mttr && mttr.rowCount) || 0),
     // The censored count IS the qualifier — the estimate is only honest because those rows
     // stayed in, so the page never prints the number without them.
     qualifier: total
       ? fmtCount(total) + " observations · " + fmtCount(events) + " closed (events) · "
-        + fmtCount(censored) + " still open (censored)"
+        + fmtCount(censored - leftCoverage) + " still open (censored)"
+        + (leftCoverage > 0 ? " · " + fmtCount(leftCoverage) + " left coverage (censored)" : "")
       : "No observations yet.",
   };
 }
@@ -521,9 +526,9 @@ export const PAST_CUT_HELP = {
  * which is exactly the silent disappearance this block exists to rule out. Checking both fields
  * costs nothing in the common case and is the honest answer in the rare one.
  *
- * `lateEntrantsLine` — the onboarding-backlog sentence — is separate from the five rows because
- * it is not a partition of `rowsIn`: a late entrant is also counted as an event or a censored
- * row above it, so adding it to the sum would double count.
+ * `lateEntrantsLine` — the onboarding-backlog sentence — is separate from the partition rows
+ * because it is not a partition of `rowsIn`: a late entrant is also counted as an event or a
+ * censored row above it, so adding it to the sum would double count.
  *
  * @param {object|null|undefined} mttr  the MTTR page's own payload (`{remediation: {km}}`)
  */
@@ -534,6 +539,7 @@ export function accountingView(mttr) {
   const rowsIn = num(km.rowsIn, 0);
   const events = num(km.events, 0);
   const censored = num(km.censored, 0);
+  const leftCoverage = Math.min(censored, num(km.censoredLeftCoverage, 0));
   const excludedPreEntry = num(km.excludedPreEntry, 0);
   const noClock = num(km.noClock, 0);
   const eventsPastCut = num(km.eventsPastCut, 0);
@@ -558,11 +564,19 @@ export function accountingView(mttr) {
       tip: PAST_CUT_HELP,
     });
   }
+  rows.push({
+    key: "open", label: "Still open", count: censored - leftCoverage,
+    note: "censored, still counted as evidence",
+  });
+  // A repository drop-out is censored too — watched open until its repository left the scan —
+  // so it is a row of this partition, not a hole in it; only shown when there is one.
+  if (leftCoverage > 0) {
+    rows.push({
+      key: "leftCoverage", label: "Left coverage", count: leftCoverage,
+      note: "censored when their repository left the scan",
+    });
+  }
   rows.push(
-    {
-      key: "open", label: "Still open", count: censored,
-      note: "censored, still counted as evidence",
-    },
     {
       key: "closedBeforeWatching", label: "Closed before watching", count: excludedPreEntry,
       note: "resolved before this register looked", tip: WINDOW_LINE_HELP,
@@ -1729,7 +1743,7 @@ export async function renderMttr(host, params, ctx) {
    * "What the half-life is measured over" (row-accounting package) — directly under the
    * survival curve, in the same heading/table/footnote shape `renderBuckets` below already
    * uses: a `sectionLabel`, a `dataTable` of named counts, and a trailing `small muted`
-   * sentence for the one figure that is not part of the five-row partition.
+   * sentence for the one figure that is not part of the row partition.
    */
   function renderAccounting(mttr) {
     const view = accountingView(mttr);

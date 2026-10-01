@@ -14,7 +14,7 @@
 // INLINE LITERALS DO NOT SURVIVE THIS GATEWAY. Filters go through $filterBy as variables,
 // never interpolated into the document. gas_ai learned that twice.
 
-import type { Scope } from "../domain/config";
+import { FETCH_RETURNS_RESOLVED, type Scope } from "../domain/config";
 
 /* ------------------------------------------------------------------ page sizes */
 
@@ -457,9 +457,12 @@ function shapeBase(scope: Scope, base: Record<string, unknown>): Record<string, 
  * test_mttr_is_measured_from_the_ledgers_own_dates). So SAST gets a genuine MTTR from
  * `createdAt` + disappearance — not merely an age metric — once two scans exist.
  *
- * Flip this ONLY if a resolution date appears on the type.
+ * Flip this ONLY if a resolution date appears on the type — and flip it where it lives,
+ * `domain/config.ts`'s `FETCH_RETURNS_RESOLVED.sast`, because the same fact decides something
+ * the ledger does: with no resolved nodes coming back, a repository that returns nothing may
+ * simply have been fixed, so the repository drop-out pass does not run on SAST.
  */
-export const SAST_FETCH_RESOLVED = false;
+export const SAST_FETCH_RESOLVED: boolean = FETCH_RETURNS_RESOLVED.sast;
 
 /**
  * WHICH FILTER KEYS THIS SCOPE'S FILTER TYPE TAKES AS AN OBJECT rather than a bare list.

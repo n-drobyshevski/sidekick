@@ -404,6 +404,25 @@ describe("a curve that never reaches half", () => {
     expect(view.qualifier).toMatch(/censored/);
   });
 
+  it("the MTTR hero does not call a repository drop-out still open", () => {
+    const view = mttrHeroView(mttrPayload({ ...kmCensored(), censoredLeftCoverage: 30 }));
+    expect(view.censored).toBe(180);
+    expect(view.leftCoverage).toBe(30);
+    expect(view.qualifier).toContain("150 still open (censored)");
+    expect(view.qualifier).toContain("30 left coverage (censored)");
+  });
+
+  it("the Executive hero names drop-outs as the third part of tracked", () => {
+    const payload = execPayload(kmCensored());
+    payload.mttr = { ...payload.mttr, rowCount: 200, leftCoverage: 14 };
+    const view = executiveHeroView(payload);
+    expect(view.leftCoverage).toBe(14);
+    expect(view.tracked).toBe(view.resolved + view.open + view.leftCoverage);
+    expect(view.qualifier).toContain("14 left coverage");
+    // None: the line reads as it always did.
+    expect(executiveHeroView(execPayload(kmCensored())).qualifier).not.toContain("left coverage");
+  });
+
   it("reaches the Executive hero through execMttrSlice's widened four-field slice", () => {
     const view = executiveHeroView(execPayload(kmCensored()));
     expect(view.isLowerBound).toBe(true);
@@ -604,6 +623,19 @@ describe("accountingView — where every row the estimate started from went", ()
       ["Closed before watching", 1],
       ["No readable clock", 0],
     ]);
+  });
+
+  it("names repository drop-outs apart from \"Still open\" — both censored, only one still open", () => {
+    const view = accountingView({ remediation: { km: accountingKm({ censoredLeftCoverage: 125 }) } });
+    expect(view.rows.map((r) => [r.label, r.count])).toEqual([
+      ["Fixes used", 1162],
+      ["Fixes past the cut", 38],
+      ["Still open", 49000],
+      ["Left coverage", 125],
+      ["Closed before watching", 1],
+      ["No readable clock", 0],
+    ]);
+    expect(view.rows.reduce((a, r) => a + r.count, 0)).toBe(view.total);
   });
 
   it("every row's own reconciliation check: the sum-to-header invariant holds on many shapes", () => {
