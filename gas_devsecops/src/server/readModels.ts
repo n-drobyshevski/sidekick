@@ -2210,9 +2210,15 @@ export function registerRowsModel(scope: Scope, p?: RowPageParams): Rec {
  * (PRODUCT.md's seventh principle). The blob is one file per UTC day, latest write wins, so
  * this is the last sync recorded on the last day anything was recorded — which can be
  * Tuesday's fold read on Friday. `twinsAsOf` is the day that file names, shipped as a SIBLING
- * rather than folded into the block: `twins` has to stay a faithful `TwinStats` of exactly
- * `{keys, folded, medianGapDays}`, because the client's absent-vs-measured-zero decision keys
- * on those three fields and a fourth one in there would be a fourth thing to interpret.
+ * rather than folded into the block: `twins` has to stay a faithful `TwinStats`, because the
+ * client's absent-vs-measured-zero decision keys on `{keys, folded, medianGapDays}`, and a
+ * date in there would be one more thing to interpret.
+ *
+ * THE CROSS-REPOSITORY COUNTS ARE OPTIONAL ON THE WAY OUT. `crossRepoKeys`/`crossRepoNodes`/
+ * `maxBucketSize` joined `TwinStats` after days of history were already written without
+ * them, so an older blob still ships its three fields and simply omits the rest — each is
+ * refused by type on its own, never defaulted to 0, because a 0 there would claim a sync
+ * looked for cross-repository keys that it never counted.
  *
  * THE DAY, NOT THE INSTANT. `dailyStats` also writes an `at` timestamp, and it is tempting to
  * prefer it — but the FILE's grain is the day (a second sync the same day overwrites the
@@ -2249,7 +2255,12 @@ function latestSecretsTwins(): { twins: Rec; asOf: string | null } | null {
   // a reason to invent one.
   const date = entry.date;
   const asOf = typeof date === "string" && HISTORY_DAY_RE.test(date) ? date : null;
-  return { twins: { keys, folded, medianGapDays: gap }, asOf };
+  const out: Rec = { keys, folded, medianGapDays: gap };
+  for (const k of ["crossRepoKeys", "crossRepoNodes", "maxBucketSize"]) {
+    const v = t[k];
+    if (typeof v === "number" && Number.isFinite(v)) out[k] = v;
+  }
+  return { twins: out, asOf };
 }
 
 function buildSecrets(n: NormParams): Rec {
@@ -2318,8 +2329,11 @@ export function secretsModel(p?: ModelParams): Rec {
   // "dsSecrets2" -> "dsSecrets3" (KM false lower bound): `timeToRevoke.km`/`.medianLowerBound`
   // stop publishing the max observed time as a floor where the reliability cut left nothing
   // and the uncut curve does reach half; `km` gained `medianBoundReason`/`meanUnmeasuredReason`.
+  //
+  // "dsSecrets3" -> "dsSecrets4" (twin fold): `twins` can carry `crossRepoKeys`/
+  // `crossRepoNodes`/`maxBucketSize` (see `latestSecretsTwins`).
   return cached(
-    "dsSecrets3",
+    "dsSecrets4",
     // `mttrExcludeEndOfLife` is here because `timeToRevoke` reads it; `severities` is not
     // because nothing does. One rule, both directions.
     { scope: "secrets", showNoFix: n.showNoFix, mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },

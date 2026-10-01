@@ -237,7 +237,9 @@ describe("reconcile (reconcile.json parity, scope sca)", () => {
     const { twinStats } = reconcile(sc.input.records, {}, sc.input.scan_id, sc.input.scan_ts, null, {
       scope: "sca",
     });
-    expect(twinStats).toEqual({ keys: 0, folded: 0, medianGapDays: null });
+    expect(twinStats).toEqual({
+      keys: 0, folded: 0, medianGapDays: null, crossRepoKeys: 0, crossRepoNodes: 0, maxBucketSize: 0,
+    });
   });
 });
 
@@ -753,7 +755,12 @@ describe("secrets twin fold (rule 5)", () => {
     //                             gap = 19.5 d, and the median of one value is that value.
     // (The measured tenant-wide median is 19.9 d — §10.7 — which is why this is the shape of
     // the fixture rather than a round number.)
-    expect(twinStats).toEqual({ keys: 1, folded: 1, medianGapDays: 19.5 });
+    expect(twinStats).toEqual({
+      keys: 1, folded: 1, medianGapDays: 19.5,
+      // One repository on both twins ("dktunited/kconnect", the branch twin's name split off
+      // its branch) — the twin pair the fold exists for, not a cross-repository collision.
+      crossRepoKeys: 0, crossRepoNodes: 0, maxBucketSize: 2,
+    });
     const gapMs = Date.parse("2026-05-20T00:00:00Z") - Date.parse("2026-04-30T12:00:00Z");
     expect(gapMs / 86_400_000).toBe(19.5);
   });
@@ -770,7 +777,9 @@ describe("secrets twin fold (rule 5)", () => {
     const node = secretNode();
     const { ledger, twinStats } = run("secrets", [node], {}, S1);
     expect(Object.keys(ledger)).toEqual([findingKey("secrets", node)]);
-    expect(twinStats).toEqual({ keys: 0, folded: 0, medianGapDays: null });
+    expect(twinStats).toEqual({
+      keys: 0, folded: 0, medianGapDays: null, crossRepoKeys: 0, crossRepoNodes: 0, maxBucketSize: 0,
+    });
   });
 
   it("foldSecretTwins counts keys and folded nodes independently", () => {
@@ -792,6 +801,78 @@ describe("secrets twin fold (rule 5)", () => {
     // Gaps, by hand: twin pair 19.5 d (above); the triple spans 2026-01-01 -> 2026-01-21 =
     // 20 d. Median of [19.5, 20] = (19.5 + 20) / 2 = 19.75.
     expect(stats.medianGapDays).toBe(19.75);
+    // The triple is the largest bucket; every node names the same repository.
+    expect(stats.maxBucketSize).toBe(3);
+    expect(stats.crossRepoKeys).toBe(0);
+    expect(stats.crossRepoNodes).toBe(0);
+  });
+
+  it("counts a key whose nodes span more than one repository — the collision a re-key would split", () => {
+    // Same credential, same path, same line, committed in TWO repositories: the key has no
+    // repository in it, so both fold onto one row. One of them also has its branch twin, which
+    // splits to the same repository and must not count as a third.
+    const inA = secretNode({ id: "a", resource: { id: "r-a", name: "org/alpha", type: "REPOSITORY" } });
+    const inABranch = secretNode({
+      id: "a-main", resource: { id: "r-a-main", name: "org/alpha/main", type: "REPOSITORY_BRANCH" },
+    });
+    const inB = secretNode({ id: "b", resource: { id: "r-b", name: "org/beta", type: "REPOSITORY" } });
+    const { nodes, stats } = foldSecretTwins([inA, inABranch, inB]);
+    expect(nodes.length).toBe(1);
+    expect(stats.keys).toBe(1);
+    expect(stats.folded).toBe(2);
+    expect(stats.crossRepoKeys).toBe(1); // {org/alpha, org/beta}
+    expect(stats.crossRepoNodes).toBe(3);
+    expect(stats.maxBucketSize).toBe(3);
+  });
+
+  it("a measured twin's validation beats a fresher twin nobody checked", () => {
+    // The repository twin is seen LATER but its check came back UNKNOWN; the branch twin was
+    // checked and found dead. Freshness used to decide this, and threw the INVALID away.
+    const staleDead = secretNode({
+      id: "dead", lastSeenAt: "2026-05-01T00:00:00Z",
+      validationStatus: "INVALID", lastValidatedAt: "2026-04-28T00:00:00Z",
+      resource: { id: "r-br", name: "dktunited/kconnect/main", type: "REPOSITORY_BRANCH" },
+    });
+    const freshUnknown = secretNode({
+      id: "unk", lastSeenAt: "2026-06-01T00:00:00Z", validationStatus: "UNKNOWN", lastValidatedAt: null,
+    });
+    const { nodes } = foldSecretTwins([freshUnknown, staleDead]);
+    expect(nodes[0]!.validationStatus).toBe("INVALID");
+    expect(nodes[0]!.lastValidatedAt).toBe("2026-04-28T00:00:00Z");
+    // Status and the rest still come from the fresher twin.
+    expect(nodes[0]!.lastSeenAt).toBe("2026-06-01T00:00:00Z");
+
+    // And through reconcile: the death is recorded, dated by its own check.
+    const key = findingKey("secrets", staleDead);
+    const { ledger } = run("secrets", [freshUnknown, staleDead], {}, "2026-06-05T00:00:00Z");
+    expect(ledger[key].validation_state).toBe("INVALID");
+    expect(ledger[key].rotated_at).toBe("2026-04-28T00:00:00Z");
+  });
+
+  it("among measured twins the latest check wins, and an exact tie keeps VALID", () => {
+    const valid = (at: string, over: Record<string, unknown> = {}) =>
+      secretNode({ id: "v", validationStatus: "VALID", lastValidatedAt: at, ...over });
+    const invalid = (at: string, over: Record<string, unknown> = {}) =>
+      secretNode({ id: "i", validationStatus: "INVALID", lastValidatedAt: at, ...over });
+
+    // Later check wins, whichever order the pages arrived in.
+    for (const order of [[0, 1], [1, 0]]) {
+      const pair = [valid("2026-05-01T00:00:00Z"), invalid("2026-05-10T00:00:00Z")];
+      const { nodes } = foldSecretTwins(order.map((i) => pair[i]!));
+      expect(nodes[0]!.validationStatus).toBe("INVALID");
+    }
+    // Same instant: VALID, in both orders — the credential stays counted as live exposure.
+    for (const order of [[0, 1], [1, 0]]) {
+      const pair = [valid("2026-05-10T00:00:00Z"), invalid("2026-05-10T00:00:00Z")];
+      const { nodes } = foldSecretTwins(order.map((i) => pair[i]!));
+      expect(nodes[0]!.validationStatus).toBe("VALID");
+    }
+    // No measured twin at all: the fresher twin's unmeasured reading stands.
+    const { nodes } = foldSecretTwins([
+      secretNode({ id: "x", lastSeenAt: "2026-05-01T00:00:00Z", validationStatus: "ERROR" }),
+      secretNode({ id: "y", lastSeenAt: "2026-06-01T00:00:00Z", validationStatus: "UNKNOWN" }),
+    ]);
+    expect(nodes[0]!.validationStatus).toBe("UNKNOWN");
   });
 });
 

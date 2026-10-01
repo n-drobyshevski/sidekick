@@ -670,10 +670,55 @@ export interface TwinStats {
   folded: number;
   /** Median |max firstSeenAt - min firstSeenAt| in days over the folded keys; null when none. */
   medianGapDays: number | null;
+  /**
+   * Of `keys`, how many folded nodes from MORE THAN ONE repository (`splitRepoBranch`'s repo,
+   * the identity `repo_name` carries). The key is (secretDataId, path, lineNumber) — it has no
+   * repository in it — so the same credential committed at the same path and line in two
+   * repositories folds into one row. The repository/branch twins this fold exists for never
+   * do that; a non-zero here is the measurement that says whether the key needs a repository.
+   */
+  crossRepoKeys: number;
+  /** The nodes those `crossRepoKeys` carried, before the fold — the rows a re-key would add. */
+  crossRepoNodes: number;
+  /** The most nodes any one key carried; 0 when no key carried more than one. */
+  maxBucketSize: number;
 }
 
 export function emptyTwinStats(): TwinStats {
-  return { keys: 0, folded: 0, medianGapDays: null };
+  return {
+    keys: 0, folded: 0, medianGapDays: null, crossRepoKeys: 0, crossRepoNodes: 0, maxBucketSize: 0,
+  };
+}
+
+/**
+ * The twin whose validation reading the fold keeps: a MEASURED state (VALID/INVALID) beats an
+ * unmeasured one (UNKNOWN, ERROR, blank) — the same rule `applyValidation` applies across
+ * scans, applied here across twins, because the fresher twin by `lastSeenAt` is often the one
+ * nobody checked. Among measured twins the LATEST `lastValidatedAt` wins (a missing date is
+ * the oldest); an exact tie prefers VALID, the reading that keeps the credential counted as
+ * live exposure rather than closing it on a coin toss. Null when no twin is measured.
+ */
+function measuredValidationTwin(bucket: Rec[]): Rec | null {
+  let best: Rec | null = null;
+  let bestAt: number | null = null;
+  for (const n of bucket) {
+    const state = (str(n, "validationStatus") ?? "").trim().toUpperCase();
+    if (!MEASURED_VALIDATION.has(state)) continue;
+    const at = parseTs(n["lastValidatedAt"]);
+    if (best === null) {
+      best = n;
+      bestAt = at;
+      continue;
+    }
+    const later = at !== null && (bestAt === null || at > bestAt);
+    const tie = at === bestAt;
+    const bestState = (str(best, "validationStatus") ?? "").trim().toUpperCase();
+    if (later || (tie && state === "VALID" && bestState !== "VALID")) {
+      best = n;
+      bestAt = at;
+    }
+  }
+  return best;
 }
 
 /**
@@ -695,12 +740,20 @@ export function emptyTwinStats(): TwinStats {
  *   resource (and so repo_*,   the REPOSITORY_BRANCH twin when one is present. The branch
  *   branch, platform)          form is strictly more specific: it names the branch the string
  *                              is actually on, which the repository form cannot.
- *   status / validationStatus  the twin with the LATER lastSeenAt — the freshest observation
+ *   status                     the twin with the LATER lastSeenAt — the freshest observation
  *   (and everything else)      of the two, since a stale twin's OPEN says nothing about a
  *                              removal the fresher one already recorded.
+ *   validationStatus /         a MEASURED twin (VALID/INVALID) over an unmeasured one, then
+ *   lastValidatedAt            the latest lastValidatedAt, then VALID on a tie — see
+ *                              `measuredValidationTwin`. Falls back to the fresher twin's
+ *                              reading when none is measured.
  *
  * Ties on lastSeenAt keep input order (first wins), so the fold is deterministic on a payload
  * whose twins carry the same timestamp.
+ *
+ * It also MEASURES the key it folds on (`TwinStats.crossRepoKeys`): a bucket whose nodes name
+ * more than one repository is not a twin pair but two copies of one credential, and the
+ * fold collapses them all the same.
  */
 export function foldSecretTwins(nodes: Rec[]): { nodes: Rec[]; stats: TwinStats } {
   const groups = new Map<string, Rec[]>();
@@ -719,6 +772,9 @@ export function foldSecretTwins(nodes: Rec[]): { nodes: Rec[]; stats: TwinStats 
   const gaps: number[] = [];
   let keys = 0;
   let folded = 0;
+  let crossRepoKeys = 0;
+  let crossRepoNodes = 0;
+  let maxBucketSize = 0;
 
   for (const key of order) {
     const bucket = groups.get(key)!;
@@ -728,6 +784,16 @@ export function foldSecretTwins(nodes: Rec[]): { nodes: Rec[]; stats: TwinStats 
     }
     keys += 1;
     folded += bucket.length - 1;
+    if (bucket.length > maxBucketSize) maxBucketSize = bucket.length;
+    const repos = new Set<string>();
+    for (const n of bucket) {
+      const repo = splitRepoBranch(str(n, "resource.name"), str(n, "resource.type")).repo;
+      if (repo !== null) repos.add(repo);
+    }
+    if (repos.size > 1) {
+      crossRepoKeys += 1;
+      crossRepoNodes += bucket.length;
+    }
 
     const births: number[] = [];
     for (const n of bucket) {
@@ -751,6 +817,11 @@ export function foldSecretTwins(nodes: Rec[]): { nodes: Rec[]; stats: TwinStats 
 
     const merged: Rec = { ...base };
     if (births.length) merged["firstSeenAt"] = toIso(minNum(births));
+    const validated = measuredValidationTwin(bucket);
+    if (validated !== null && validated !== base) {
+      merged["validationStatus"] = validated["validationStatus"];
+      merged["lastValidatedAt"] = validated["lastValidatedAt"] ?? null;
+    }
 
     const branchTwin = bucket.find(
       (n) => (str(n, "resource.type") ?? "").toUpperCase() === RESOURCE_BRANCH,
@@ -771,7 +842,14 @@ export function foldSecretTwins(nodes: Rec[]): { nodes: Rec[]; stats: TwinStats 
 
   return {
     nodes: out,
-    stats: { keys, folded, medianGapDays: gaps.length ? median(gaps) : null },
+    stats: {
+      keys,
+      folded,
+      medianGapDays: gaps.length ? median(gaps) : null,
+      crossRepoKeys,
+      crossRepoNodes,
+      maxBucketSize,
+    },
   };
 }
 

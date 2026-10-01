@@ -550,14 +550,15 @@ because it *preserves* the repo/branch duplicate, and the two twins carry `first
 a median of 20 days apart. Key on `(secretDataId, path, lineNumber)` with the earliest
 `firstSeenAt` (§10.6, §10.7).
 
-**That key is now implemented.** `src/domain/secretsLedger.ts` is the secrets normalizer: it
-derives the key from the triple, folds the twins, and resolves every field they can disagree
-about rather than taking whichever row the API returned first — earliest `first_seen`, latest
-`last_seen`, OPEN beating RESOLVED, the worse severity, and `VALID` beating `INVALID` beating
-`UNKNOWN` on the rotation axis. Because the fold *discards* a measurement, each row records
-what it discarded: `twin_count`, `twin_first_seen_spread_days` and `source_external_ids`.
-`test/secretsLedger.test.js` pins each rule to the section that measured it, and pins the
-`externalId` key producing two findings where the ledger key produces one.
+**That key is now implemented.** `lifecycle.ts`'s `findingKey` hashes the triple, and
+`reconcile.ts`'s `foldSecretTwins` collapses the twins before the reconcile loop: earliest
+`firstSeenAt`, the `REPOSITORY_BRANCH` twin's resource, status from the twin seen last, and
+the validation reading from a measured twin (`VALID`/`INVALID` over `UNKNOWN`, then the latest
+`lastValidatedAt`, `VALID` on a tie). The fold records what it did per sync as `TwinStats` —
+keys and nodes folded, the median birth-date gap, and how many keys spanned more than one
+repository (the measurement that says whether the key needs a repository in it) — which the
+secrets page prints from the daily history blob. `test/reconcile.test.ts` pins the rules and
+the `externalId` key producing two findings where the ledger key produces one.
 
 §10.9's probe defect is fixed in the same pass, along with one of the same family it did not
 name: an unrecognised argument is now **refused** rather than ignored (`--crosstab` was never

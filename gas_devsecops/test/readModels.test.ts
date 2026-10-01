@@ -433,6 +433,7 @@ describe("the caching audit is per model, and the header states it", () => {
     // "dsHistory5" -> "dsHistory6" (KM false lower bound): an empty reliability cut no longer
     // ships a false floor or mean — same unchanged layer claim. "dsMttr5" -> "dsMttr6" (hasFix
     // relabel): `remediation.fetchFilter` joined the payload — same claim again.
+    // "dsSecrets3" -> "dsSecrets4" (twin fold): `twins` can carry the cross-repository counts.
     expect(layerOf("dsExecutive3")).toEqual(["cached"]);
     // "dsMttr1" -> "dsMttr2": the namespace was bumped when `remediation` gained its
     // `slaConsumed` block. A warm entry from THAT old namespace carries no deciles, and a
@@ -440,7 +441,7 @@ describe("the caching audit is per model, and the header states it", () => {
     // windows — the same shape of risk the newer dsMttr2 -> ... -> dsMttr6 bumps above
     // guard against.
     expect(layerOf("dsMttr6")).toEqual(["cached"]);
-    expect(layerOf("dsSecrets3")).toEqual(["cached"]);
+    expect(layerOf("dsSecrets4")).toEqual(["cached"]);
     // "dsRegister1" -> "dsRegister2": the namespace was bumped when the payload gained its
     // `population` block. The CLAIM these three lines encode is the LAYER each model caches
     // in, not the spelling of its namespace, and that is unchanged — a warm entry from the
@@ -813,7 +814,7 @@ describe("secretsModel has no severity axis", () => {
     secretsModel(ALL);
     secretsModel({ ...ALL, severities: ["CRITICAL"] });
     const keys = H.cacheCalls
-      .filter((c) => c.name === "dsSecrets3")
+      .filter((c) => c.name === "dsSecrets4")
       .map((c) => JSON.stringify(c.params));
     expect(new Set(keys).size).toBe(1);
   });
@@ -907,9 +908,9 @@ describe("secretsModel: the twin fold is read from the newest per-sync history b
   /**
    * THE DAY RIDES BESIDE THE BLOCK, and both halves of that matter.
    *
-   * BESIDE: `twins` has to stay exactly `{keys, folded, medianGapDays}`, because that is what
-   * the client's absent-vs-measured-zero decision reads and a fourth field in there is a
-   * fourth thing to interpret. So the date is its own payload key.
+   * BESIDE: `twins` has to stay a faithful `TwinStats`, because `{keys, folded, medianGapDays}`
+   * is what the client's absent-vs-measured-zero decision reads and a date in there is one
+   * more thing to interpret. So the date is its own payload key.
    *
    * AT ALL: the blob is one file per UTC day, latest write wins, so this can be Tuesday's
    * fold read on Friday. PRODUCT.md's seventh principle — a clock has to say where it started
@@ -921,7 +922,7 @@ describe("secretsModel: the twin fold is read from the newest per-sync history b
     ])];
     const m = freshSecrets();
     expect(m.twinsAsOf).toBe("2026-03-02");
-    // The block itself stays a faithful TwinStats — three fields, no fourth.
+    // The block itself stays a faithful TwinStats — no date in it.
     expect(Object.keys(m.twins).sort()).toEqual(["folded", "keys", "medianGapDays"]);
   });
 
@@ -940,6 +941,26 @@ describe("secretsModel: the twin fold is read from the newest per-sync history b
     // The fold was measured; only its day is unknown. Both facts survive.
     expect(m.twins).toEqual({ keys: 6, folded: 7, medianGapDays: 19.94 });
     expect("twinsAsOf" in m).toBe(false);
+  });
+
+  it("ships the cross-repository counts when the day recorded them, and omits them when it did not", () => {
+    H.history = [historyDay("2026-03-02", [{
+      scope: "secrets",
+      twins: {
+        keys: 6, folded: 7, medianGapDays: 19.94, crossRepoKeys: 2, crossRepoNodes: 4, maxBucketSize: 3,
+      },
+    }])];
+    expect(freshSecrets().twins).toEqual({
+      keys: 6, folded: 7, medianGapDays: 19.94, crossRepoKeys: 2, crossRepoNodes: 4, maxBucketSize: 3,
+    });
+
+    // A day written before the fields existed — and one carrying a malformed count — still
+    // ships its three measured fields, and never a defaulted zero for what it did not count.
+    H.history = [historyDay("2026-03-03", [{
+      scope: "secrets",
+      twins: { keys: 6, folded: 7, medianGapDays: 19.94, crossRepoKeys: null, maxBucketSize: "3" },
+    }])];
+    expect(freshSecrets().twins).toEqual({ keys: 6, folded: 7, medianGapDays: 19.94 });
   });
 
   it("no fold means no date either — an absence dates nothing", () => {
@@ -1674,7 +1695,7 @@ describe("warmReadModels", () => {
     expect(new Set(H.cacheCalls.map((c) => c.name))).toEqual(new Set([
       "dsBootCore1",
       "dsHistory6", "dsProgram2", "dsRepos2", "dsStorage1",
-      "dsExecutive3", "dsMttr6", "dsMttrSplit2", "dsSecrets3", "dsRegister3",
+      "dsExecutive3", "dsMttr6", "dsMttrSplit2", "dsSecrets4", "dsRegister3",
     ]));
     // FIRST, because doGet only inlines a bootstrap core that is already stored: a budget
     // cut-out must never be what leaves every page load paying the second round trip.

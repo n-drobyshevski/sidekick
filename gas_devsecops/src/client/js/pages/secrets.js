@@ -133,8 +133,8 @@ export const TWIN_NOTE =
  * (PRODUCT.md's seventh principle). The figure comes off the newest per-UTC-day history blob
  * — one file per day, latest write wins — so on a register nobody has synced since Tuesday
  * this is Tuesday's fold read on Friday. `asOf` is the day that file names, and it arrives as
- * its own payload field (`twinsAsOf`) rather than inside the stats, so the three fields the
- * absent-vs-measured decision keys on stay exactly the three fields of a `TwinStats`.
+ * its own payload field (`twinsAsOf`) rather than inside the stats, so the block stays a
+ * `TwinStats` and the three fields the absent-vs-measured decision keys on stay its own.
  *
  * A DATE THAT DID NOT ARRIVE IS NOT TODAY. Refused before any cast, like the counts: a
  * missing or unparseable day prints the fold WITHOUT one rather than dating it now, which
@@ -143,19 +143,28 @@ export const TWIN_NOTE =
  * THE UNMEASURED LINE TAKES NO DATE, whatever is passed beside it — it makes no claim about
  * a measurement, so there is nothing to date.
  *
+ * KEYS THAT SPAN REPOSITORIES ARE NAMED, ONLY WHEN THERE ARE ANY. The fold keys on
+ * (secret, path, line), with no repository in it, so one credential committed at the same
+ * path and line in two repositories folds into one row (`reconcile.ts`'s
+ * `TwinStats.crossRepoKeys`). A positive count adds one clause to the line; zero adds nothing
+ * (the twins themselves never span repositories), and a count from a history day written
+ * before the field existed is absent, not zero — refused before the cast like the others.
+ *
  * `fmtDate` IS THE APP'S OWN FORMATTER, not a hand-rolled slice. It renders in the display
  * zone, which is ahead of UTC, so a UTC day never reads back as the day before.
  *
  * @param {{keys?: *, folded?: *, medianGapDays?: *}|null|undefined} twins
  * @param {*} [asOf]  the blob's UTC day, `YYYY-MM-DD` — anything else is no date at all
  * @returns {{measured: boolean, keys: (number|null), folded: (number|null),
- *            medianGapDays: (number|null), asOf: (string|null), line: string}}
+ *            medianGapDays: (number|null), crossRepoKeys: (number|null), asOf: (string|null),
+ *            line: string}}
  */
 export function twinFoldView(twins, asOf) {
   const t = twins && typeof twins === "object" && !Array.isArray(twins) ? twins : null;
   const keys = t ? num(t.keys) : null;
   const folded = t ? num(t.folded) : null;
   const gap = t ? num(t.medianGapDays) : null;
+  const crossRepo = t ? num(t.crossRepoKeys) : null;
   const day = typeof asOf === "string" && asOf !== "" && !Number.isNaN(Date.parse(asOf))
     ? asOf
     : null;
@@ -165,19 +174,25 @@ export function twinFoldView(twins, asOf) {
       keys: null,
       folded: null,
       medianGapDays: null,
+      crossRepoKeys: null,
       asOf: null,
       line: "Twin fold: not measured on this sync",
     };
   }
   const gapText = gap === null ? "no birth-date gap recorded" : `median gap ${days1(gap)}`;
   const when = day === null ? "" : ` · measured ${fmtDate(day)}`;
+  const spans = crossRepo !== null && crossRepo > 0
+    ? ` · ${fmtCount(crossRepo)} ${pluralize(crossRepo, "key")} `
+      + `${crossRepo === 1 ? "spans" : "span"} more than one repository`
+    : "";
   return {
     measured: true,
     keys,
     folded,
     medianGapDays: gap,
+    crossRepoKeys: crossRepo,
     asOf: day,
-    line: `${fmtCount(folded)} ${pluralize(folded, "twin")} folded · ${gapText}${when}`,
+    line: `${fmtCount(folded)} ${pluralize(folded, "twin")} folded · ${gapText}${spans}${when}`,
   };
 }
 
@@ -532,7 +547,7 @@ export function secretsModel(payload, opts) {
     //
     // `twinsAsOf` IS A SIBLING FIELD, NOT PART OF THE BLOCK. The blob is per-UTC-day and
     // latest-write-wins, so a fold can be days old; the day it names rides beside the stats
-    // so `twins` stays exactly the three fields of a `TwinStats`. A missing date prints the
+    // so `twins` stays a `TwinStats` and nothing else. A missing date prints the
     // fold undated rather than as of today.
     twinFold: twinFoldView(sec.twins, sec.twinsAsOf),
     resolvedNote:

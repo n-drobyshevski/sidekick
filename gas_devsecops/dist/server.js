@@ -890,9 +890,40 @@ var Server = (() => {
     }
   }
   function emptyTwinStats() {
-    return { keys: 0, folded: 0, medianGapDays: null };
+    return {
+      keys: 0,
+      folded: 0,
+      medianGapDays: null,
+      crossRepoKeys: 0,
+      crossRepoNodes: 0,
+      maxBucketSize: 0
+    };
+  }
+  function measuredValidationTwin(bucket) {
+    var _a, _b;
+    let best = null;
+    let bestAt = null;
+    for (const n2 of bucket) {
+      const state = ((_a = str(n2, "validationStatus")) != null ? _a : "").trim().toUpperCase();
+      if (!MEASURED_VALIDATION.has(state)) continue;
+      const at = parseTs(n2["lastValidatedAt"]);
+      if (best === null) {
+        best = n2;
+        bestAt = at;
+        continue;
+      }
+      const later2 = at !== null && (bestAt === null || at > bestAt);
+      const tie = at === bestAt;
+      const bestState = ((_b = str(best, "validationStatus")) != null ? _b : "").trim().toUpperCase();
+      if (later2 || tie && state === "VALID" && bestState !== "VALID") {
+        best = n2;
+        bestAt = at;
+      }
+    }
+    return best;
   }
   function foldSecretTwins(nodes) {
+    var _a;
     const groups = /* @__PURE__ */ new Map();
     const order = [];
     for (const n2 of nodes) {
@@ -908,6 +939,9 @@ var Server = (() => {
     const gaps = [];
     let keys = 0;
     let folded = 0;
+    let crossRepoKeys = 0;
+    let crossRepoNodes = 0;
+    let maxBucketSize = 0;
     for (const key of order) {
       const bucket = groups.get(key);
       if (bucket.length === 1) {
@@ -916,6 +950,16 @@ var Server = (() => {
       }
       keys += 1;
       folded += bucket.length - 1;
+      if (bucket.length > maxBucketSize) maxBucketSize = bucket.length;
+      const repos = /* @__PURE__ */ new Set();
+      for (const n2 of bucket) {
+        const repo = splitRepoBranch(str(n2, "resource.name"), str(n2, "resource.type")).repo;
+        if (repo !== null) repos.add(repo);
+      }
+      if (repos.size > 1) {
+        crossRepoKeys += 1;
+        crossRepoNodes += bucket.length;
+      }
       const births = [];
       for (const n2 of bucket) {
         const t = parseTs(n2["firstSeenAt"]);
@@ -934,10 +978,15 @@ var Server = (() => {
       }
       const merged = { ...base };
       if (births.length) merged["firstSeenAt"] = toIso(minNum(births));
+      const validated = measuredValidationTwin(bucket);
+      if (validated !== null && validated !== base) {
+        merged["validationStatus"] = validated["validationStatus"];
+        merged["lastValidatedAt"] = (_a = validated["lastValidatedAt"]) != null ? _a : null;
+      }
       const branchTwin = bucket.find(
         (n2) => {
-          var _a;
-          return ((_a = str(n2, "resource.type")) != null ? _a : "").toUpperCase() === RESOURCE_BRANCH;
+          var _a2;
+          return ((_a2 = str(n2, "resource.type")) != null ? _a2 : "").toUpperCase() === RESOURCE_BRANCH;
         }
       );
       if (branchTwin !== void 0 && branchTwin !== base) {
@@ -952,7 +1001,14 @@ var Server = (() => {
     }
     return {
       nodes: out,
-      stats: { keys, folded, medianGapDays: gaps.length ? median(gaps) : null }
+      stats: {
+        keys,
+        folded,
+        medianGapDays: gaps.length ? median(gaps) : null,
+        crossRepoKeys,
+        crossRepoNodes,
+        maxBucketSize
+      }
     };
   }
   function repoIdOf(rec, scope) {
@@ -5787,7 +5843,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "154641d21204" : "dev";
+  var BUILD_ID = true ? "ee0062621222" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
@@ -10273,7 +10329,12 @@ var Server = (() => {
     if (gap !== null && (typeof gap !== "number" || !Number.isFinite(gap))) return null;
     const date = entry.date;
     const asOf = typeof date === "string" && HISTORY_DAY_RE.test(date) ? date : null;
-    return { twins: { keys, folded, medianGapDays: gap }, asOf };
+    const out = { keys, folded, medianGapDays: gap };
+    for (const k of ["crossRepoKeys", "crossRepoNodes", "maxBucketSize"]) {
+      const v = t[k];
+      if (typeof v === "number" && Number.isFinite(v)) out[k] = v;
+    }
+    return { twins: out, asOf };
   }
   function buildSecrets(n2) {
     const snap = baseSnapshot();
@@ -10321,7 +10382,7 @@ var Server = (() => {
   function secretsModel(p) {
     const n2 = norm(p);
     return cached(
-      "dsSecrets3",
+      "dsSecrets4",
       // `mttrExcludeEndOfLife` is here because `timeToRevoke` reads it; `severities` is not
       // because nothing does. One rule, both directions.
       { scope: "secrets", showNoFix: n2.showNoFix, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },

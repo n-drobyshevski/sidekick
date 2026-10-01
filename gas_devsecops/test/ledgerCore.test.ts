@@ -232,7 +232,9 @@ describe("ledger flow (SQLite fixture parity, scope sca)", () => {
     // sca and sast fold no twins, so the stats are zeroed rather than absent.
     expect(persistFlatScan(emptyState(), fx.scans.s1.records, {
       scope: "sca", mode: "live", scanId: fx.scans.s1.id,
-    }).twinStats).toEqual({ keys: 0, folded: 0, medianGapDays: null });
+    }).twinStats).toEqual({
+      keys: 0, folded: 0, medianGapDays: null, crossRepoKeys: 0, crossRepoNodes: 0, maxBucketSize: 0,
+    });
   });
 
   it("re-persisting an existing (scan_id, scope) is a no-op returning stored deltas", () => {
