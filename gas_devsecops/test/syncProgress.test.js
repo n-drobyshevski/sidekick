@@ -68,7 +68,7 @@ describe("shouldContinuePolling", () => {
 // The REAL poll loop app.js drives (`createJobPoller`), under fake timers, with a hand-held
 // fetch so each test decides when an answer lands. `doc` is a stand-in `document` whose
 // `hidden` flag and `visibilitychange` listeners the test controls.
-function harness() {
+function harness({ onJob = null } = {}) {
   const answers = []; // queued resolvers, oldest first
   const fetched = [];
   const seen = [];
@@ -83,7 +83,7 @@ function harness() {
       fetched.push(jobId);
       answers.push({ resolve, reject });
     }),
-    onJob: (j) => seen.push(j),
+    onJob: (j) => { seen.push(j); if (onJob) onJob(j); },
     doc,
   });
   /** Answer the oldest outstanding request and let its continuation run. */
@@ -138,6 +138,37 @@ describe("createJobPoller — the job poll app.js drives", () => {
     expect(h.fetched).toHaveLength(1);
     expect(h.seen).toHaveLength(1); // one "Sync complete." toast, one refresh()
     expect(h.listeners.size).toBe(0);
+  });
+
+  // `applyJob` repaints the card and the drawer; a throw there used to skip the reschedule,
+  // so the poll stopped for good while isRunning() still said true.
+  it("keeps polling when onJob throws on a running job, and logs it", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    let throws = true;
+    const h = harness({ onJob: () => { if (throws) throw new Error("paint failed"); } });
+    h.poller.watch("job-1");
+    await h.answer(job());
+    expect(err).toHaveBeenCalledTimes(1);
+    expect(h.poller.isRunning()).toBe(true);
+    await vi.advanceTimersByTimeAsync(POLL_VISIBLE_MS);
+    expect(h.fetched).toHaveLength(2);
+    throws = false;
+    await h.answer(job({ phase: "DONE" }));
+    expect(h.seen.map((j) => j.phase)).toEqual(["FETCHING", "DONE"]);
+    expect(h.poller.isRunning()).toBe(false);
+    err.mockRestore();
+  });
+
+  it("a terminal answer whose onJob throws still stops, without an unhandled rejection", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const h = harness({ onJob: () => { throw new Error("paint failed"); } });
+    h.poller.watch("job-1");
+    await h.answer(job({ phase: "DONE" }));
+    expect(err).toHaveBeenCalledTimes(1);
+    expect(h.poller.isRunning()).toBe(false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(h.fetched).toHaveLength(1);
+    err.mockRestore();
   });
 
   it("stops on a null job — nothing running, never started or already reclaimed", async () => {

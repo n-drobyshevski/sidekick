@@ -88,6 +88,9 @@ export const POLL_HIDDEN_MS = 15000;
  *   - 15 s WHILE THE TAB IS HIDDEN, because nobody is looking and every tick is a GAS execution
  *     against the quota; and an immediate tick when it comes back into view, so the card is
  *     current the moment someone is. A failed fetch is transient: the next tick tries again.
+ *   - AN `onJob` THAT THROWS IS LOGGED, NOT FATAL. The next tick is scheduled after `onJob`
+ *     returns, so a paint that threw on one answer used to end the poll for good while
+ *     `isRunning()` still said true — a card frozen mid-sync that no later answer could fix.
  *
  * `fetchJob(jobId)` returns a promise of the job summary (null once nothing is running).
  * `doc` and `timers` are seams for the test; the app passes neither.
@@ -127,11 +130,19 @@ export function createJobPoller({ fetchJob, onJob, doc = globalThis.document, ti
     if (gen !== generation) return; // stopped, or re-pointed at another job, meanwhile
     if (answered && !shouldContinuePolling(job)) {
       stop();
-      onJob(job);
+      deliver(job);
       return;
     }
-    if (answered) onJob(job);
+    if (answered) deliver(job);
     if (gen === generation) schedule(); // unless `onJob` stopped or re-pointed the poll
+  }
+
+  function deliver(job) {
+    try {
+      onJob(job);
+    } catch (e) {
+      console.error("[sync] applying a job poll answer failed:", e);
+    }
   }
 
   function onVisibility() {
