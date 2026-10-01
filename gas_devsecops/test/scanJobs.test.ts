@@ -246,7 +246,9 @@ interface ScopePlan {
 const tenant: {
   plan: Record<Scope, ScopePlan>;
   msPerPage: number;
-  served: Array<{ scope: Scope; pageNumber: number; after: string | null; first: number }>;
+  served: Array<{
+    scope: Scope; pageNumber: number; after: string | null; first: number; includeTotalCount: boolean;
+  }>;
   onPage: ((scope: Scope, pageNumber: number) => void) | null;
 } = {
   plan: {
@@ -382,6 +384,7 @@ vi.mock("../src/server/wizClient", async (importOriginal) => {
         pageNumber,
         after: (variables["after"] as string | null) ?? null,
         first: Number(variables["first"] ?? 0),
+        includeTotalCount: variables["includeTotalCount"] === true,
       });
       const nodes: Rec[] = [];
       for (let i = 0; i < plan.rowsPerPage; i++) {
@@ -396,7 +399,9 @@ vi.mock("../src/server/wizClient", async (importOriginal) => {
           hasNextPage: paging.pageNumber < plan.pages,
           endCursor: `${scope}-cursor-${paging.pageNumber}`,
         },
-        totalCount: pageNumber === 0 ? plan.pages * plan.rowsPerPage : null,
+        // Like the real documents: the count is selected only when the variables ask for it
+        // (`@include(if: $includeTotalCount)`), so a sync that stopped asking reads null here.
+        totalCount: variables["includeTotalCount"] === true ? plan.pages * plan.rowsPerPage : null,
         partialErrors: plan.partialOn.includes(pageNumber + 1)
           ? [`Cannot return null for non-nullable field Weakness.name (page ${pageNumber + 1})`]
           : [],
@@ -545,6 +550,12 @@ describe("one job walks all three scopes and commits once", () => {
     expect(byScope("sast")).toEqual([0]);
     expect(byScope("secrets")).toEqual([0, 1, 2, 3]);
     expect(tenant.served).toHaveLength(41);
+
+    // THE COUNT IS ASKED FOR ON PAGE 0 OF EACH SCOPE AND NOWHERE ELSE — including page 3 of
+    // sca, the first page of the resumed hop, which a flag keyed on "first page of this
+    // execution" would wrongly ask again.
+    expect(tenant.served.filter((s) => s.includeTotalCount))
+      .toEqual(SCOPES.map((scope) => expect.objectContaining({ scope, pageNumber: 0 })));
 
     // ONE persistSync, three ScopePersist entries, in battery order.
     expect(calls.persistSync).toHaveLength(1);

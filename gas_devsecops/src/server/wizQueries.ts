@@ -67,6 +67,7 @@ export const Q_SAST = `query DevSecOpsSastFindings(
   $filterBy: SASTFindingFilters
   $first: Int
   $after: String
+  $includeTotalCount: Boolean = false
 ) {
   sastFindings(filterBy: $filterBy, first: $first, after: $after) {
     nodes {
@@ -89,7 +90,7 @@ export const Q_SAST = `query DevSecOpsSastFindings(
       vcsDetails { commitHash }
       aiAnalysis { verdict }
     }
-    totalCount
+    totalCount @include(if: $includeTotalCount)
     pageInfo { hasNextPage endCursor }
   }
 }`;
@@ -121,6 +122,7 @@ export const Q_SCA = `query DevSecOpsVulnerabilityFindings(
   $filterBy: VulnerabilityFindingFilters
   $first: Int
   $after: String
+  $includeTotalCount: Boolean = false
 ) {
   vulnerabilityFindings(filterBy: $filterBy, first: $first, after: $after) {
     nodes {
@@ -157,7 +159,7 @@ export const Q_SCA = `query DevSecOpsVulnerabilityFindings(
       artifactType { codeLibraryLanguage }
       projects { id name isFolder slug }
     }
-    totalCount
+    totalCount @include(if: $includeTotalCount)
     pageInfo { hasNextPage endCursor }
   }
 }`;
@@ -201,6 +203,7 @@ export const Q_SECRETS = `query DevSecOpsSecretInstances(
   $filterBy: SecretInstanceFilters
   $first: Int
   $after: String
+  $includeTotalCount: Boolean = false
 ) {
   secretInstances(filterBy: $filterBy, first: $first, after: $after) {
     nodes {
@@ -225,7 +228,7 @@ export const Q_SECRETS = `query DevSecOpsSecretInstances(
       resource { id name type externalId nativeType cloudPlatform }
       projects { id name isFolder slug }
     }
-    totalCount
+    totalCount @include(if: $includeTotalCount)
     pageInfo { hasNextPage endCursor }
   }
 }`;
@@ -550,14 +553,25 @@ export function buildFilter(scope: Scope, opts: FilterOptions = {}): Record<stri
   return filterBy;
 }
 
-/** The full variables object one page of a scope is fetched with. */
+/**
+ * The full variables object one page of a scope is fetched with.
+ *
+ * `includeTotalCount` IS OFF UNLESS ASKED FOR, the same `@include` pattern gas/'s generated
+ * query uses. A count is an aggregate over the WHOLE filtered population, re-run by the tenant
+ * on every page that selects it, and nothing reads it past page 0: the sync stores the first
+ * page's figure as the scope's total (`scanJobs.step`), and the connection checks
+ * (`wizClient.testConnection`, `diagnostics.wizDiagnostic`) and `probe.mjs` fetch one page
+ * and ask for it explicitly. A caller that wants the figure and forgets the flag gets
+ * `totalCount: null` — "not measured" — never a wrong number.
+ */
 export function buildVariables(
   scope: Scope,
-  opts: FilterOptions & { first?: number; after?: string | null } = {},
+  opts: FilterOptions & { first?: number; after?: string | null; includeTotalCount?: boolean } = {},
 ): Record<string, unknown> {
   return {
     filterBy: buildFilter(scope, opts),
     first: opts.first ?? PAGE_SIZE,
     after: opts.after ?? null,
+    includeTotalCount: opts.includeTotalCount === true,
   };
 }

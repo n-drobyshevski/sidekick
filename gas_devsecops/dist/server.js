@@ -4387,6 +4387,7 @@ var Server = (() => {
   $filterBy: SASTFindingFilters
   $first: Int
   $after: String
+  $includeTotalCount: Boolean = false
 ) {
   sastFindings(filterBy: $filterBy, first: $first, after: $after) {
     nodes {
@@ -4409,7 +4410,7 @@ var Server = (() => {
       vcsDetails { commitHash }
       aiAnalysis { verdict }
     }
-    totalCount
+    totalCount @include(if: $includeTotalCount)
     pageInfo { hasNextPage endCursor }
   }
 }`;
@@ -4417,6 +4418,7 @@ var Server = (() => {
   $filterBy: VulnerabilityFindingFilters
   $first: Int
   $after: String
+  $includeTotalCount: Boolean = false
 ) {
   vulnerabilityFindings(filterBy: $filterBy, first: $first, after: $after) {
     nodes {
@@ -4453,7 +4455,7 @@ var Server = (() => {
       artifactType { codeLibraryLanguage }
       projects { id name isFolder slug }
     }
-    totalCount
+    totalCount @include(if: $includeTotalCount)
     pageInfo { hasNextPage endCursor }
   }
 }`;
@@ -4461,6 +4463,7 @@ var Server = (() => {
   $filterBy: SecretInstanceFilters
   $first: Int
   $after: String
+  $includeTotalCount: Boolean = false
 ) {
   secretInstances(filterBy: $filterBy, first: $first, after: $after) {
     nodes {
@@ -4485,7 +4488,7 @@ var Server = (() => {
       resource { id name type externalId nativeType cloudPlatform }
       projects { id name isFolder slug }
     }
-    totalCount
+    totalCount @include(if: $includeTotalCount)
     pageInfo { hasNextPage endCursor }
   }
 }`;
@@ -4614,7 +4617,8 @@ var Server = (() => {
     return {
       filterBy: buildFilter(scope, opts),
       first: (_a = opts.first) != null ? _a : PAGE_SIZE,
-      after: (_b = opts.after) != null ? _b : null
+      after: (_b = opts.after) != null ? _b : null,
+      includeTotalCount: opts.includeTotalCount === true
     };
   }
 
@@ -4829,7 +4833,7 @@ var Server = (() => {
   }
   function testConnection(scope = "sast") {
     forgetToken();
-    const page = fetchPage(scope, {}, { pageSize: 1, pageNumber: 0 });
+    const page = fetchPage(scope, { includeTotalCount: true }, { pageSize: 1, pageNumber: 0 });
     return { ok: true, rows: page.totalCount };
   }
 
@@ -5536,7 +5540,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "e6cb767875e1" : "dev";
+  var BUILD_ID = true ? "a04eaed1047a" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
@@ -10770,7 +10774,10 @@ var Server = (() => {
           const variables = buildVariables(scope, {
             severities: (_e = params.severitiesByScope[scope]) != null ? _e : [],
             projectId,
-            after: cursor
+            after: cursor,
+            // Page 0 only — the one page whose count is kept (`progress.totalCount` below).
+            // Every later page would make the tenant recount the whole population for nothing.
+            includeTotalCount: paging.pageNumber === 0
           });
           const pageIndex = paging.pageNumber + 1;
           const page = fetchPage(scope, variables, paging);
@@ -12055,7 +12062,7 @@ var Server = (() => {
       return r.text();
     }
     try {
-      const page = fetchPage("sast", { first: 1 });
+      const page = fetchPage("sast", { first: 1, includeTotalCount: true });
       r.line(`  Step 2 OK    query answered \u2014 ${(_d = page.totalCount) != null ? _d : "?"} finding(s) in scope`);
       if (page.partialErrors.length) {
         r.line(`               with partial errors: ${page.partialErrors.join("; ").slice(0, 300)}`);

@@ -543,6 +543,9 @@ function step(job: JobRow, budgetMs = BUDGET_MS): void {
           severities: params.severitiesByScope[scope] ?? [],
           projectId,
           after: cursor,
+          // Page 0 only — the one page whose count is kept (`progress.totalCount` below).
+          // Every later page would make the tenant recount the whole population for nothing.
+          includeTotalCount: paging.pageNumber === 0,
         });
         // 1-based archive page name, computed BEFORE the fetch: `fetchPage` advances
         // `paging.pageNumber` itself (and owns the 500 -> 250 size probe).

@@ -216,10 +216,19 @@ describe("the documents are valid GraphQL, and lean", () => {
     }
   });
 
-  it("asks for a total count on every connection, so a sync can report progress", () => {
+  it("can ask for a total count on every connection, so a sync can report progress", () => {
     for (const [scope, doc] of Object.entries(QUERIES)) {
       if (!doc) continue;
       expect(doc, `${scope} selects no totalCount`).toContain("totalCount");
+      // Selected only when asked: the tenant recounts the whole population on every page that
+      // selects it, and only page 0's figure is kept.
+      expect(doc, `${scope} selects totalCount unconditionally`)
+        .toMatch(/\btotalCount @include\(if: \$includeTotalCount\)/);
+      expect(doc.match(/totalCount/g), `${scope} selects totalCount twice`).toHaveLength(1);
+      // DEFAULT FALSE, declared in the document — so a caller that sends no flag at all (an
+      // old variables object, a hand-written probe) costs nothing rather than failing.
+      expect(doc, `${scope} has no includeTotalCount variable defaulting to false`)
+        .toMatch(/\$includeTotalCount: Boolean = false/);
     }
   });
 });
@@ -383,6 +392,15 @@ describe("scope coverage", () => {
     // must fail loudly at the call rather than send `undefined` and read as an empty
     // register. Asserted against a scope that does not exist, since all three now have one.
     expect(() => buildVariables("iac")).toThrow(/no query document/);
+  });
+
+  it("asks for the total count only when the caller says so", () => {
+    for (const scope of ["sca", "sast", "secrets"]) {
+      expect(buildVariables(scope).includeTotalCount).toBe(false);
+      expect(buildVariables(scope, { includeTotalCount: true }).includeTotalCount).toBe(true);
+      // Strictly true — a truthy non-boolean is not a request.
+      expect(buildVariables(scope, { includeTotalCount: 1 }).includeTotalCount).toBe(false);
+    }
   });
 
   it("pages at a size the estate needs", () => {

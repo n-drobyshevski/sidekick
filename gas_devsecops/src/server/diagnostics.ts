@@ -235,7 +235,8 @@ export function wizDiagnostic(): string {
 
   // Step 2 — one row, through the app's own query for that scope.
   try {
-    const page = fetchPage("sast", { first: 1 });
+    // The count is selected only when asked for (wizQueries.buildVariables); this line prints it.
+    const page = fetchPage("sast", { first: 1, includeTotalCount: true });
     r.line(`  Step 2 OK    query answered — ${page.totalCount ?? "?"} finding(s) in scope`);
     if (page.partialErrors.length) {
       r.line(`               with partial errors: ${page.partialErrors.join("; ").slice(0, 300)}`);

@@ -266,6 +266,7 @@ if (DRY_RUN) {
     }
     const vars = app.buildVariables(scope, {
       severities: app.DEFAULT_FETCH_SEVERITIES[scope], projectId: PROJECT_ID, first: FIRST,
+      includeTotalCount: true,
     });
     console.log("  variables: " + JSON.stringify(vars, null, 2).replace(/\n/g, "\n  "));
     console.log(`  document:  ${doc.split("\n")[0]} … (${doc.split("\n").length} lines)\n`);
@@ -404,8 +405,10 @@ console.log("=== the battery's own queries, one page each ===");
 for (const scope of SCOPES) {
   const doc = app.QUERIES[scope];
   if (!doc) { console.log(`\n--- ${scope} ---\n  no document yet (see --roots above)`); continue; }
+  // The documents select totalCount only when asked; the report records it, so ask.
   const vars = app.buildVariables(scope, {
     severities: app.DEFAULT_FETCH_SEVERITIES[scope], projectId: PROJECT_ID, first: FIRST,
+    includeTotalCount: true,
   });
   const r = await post(doc, vars);
   console.log(`\n--- ${scope} ---`);
@@ -475,6 +478,9 @@ if (SCOPES.includes("secrets") && app.QUERIES.secrets) {
   while (pages < 4) {
     const r = await post(app.QUERIES.secrets, app.buildVariables("secrets", {
       severities: [], projectId: PROJECT_ID, first: 500, after: cursor,
+      // Every page, not just the first: `total = conn.totalCount ?? total` below keeps the
+      // last figure seen, and the crosstab's coverage line compares the rows against it.
+      includeTotalCount: true,
     }));
     if (!r.ok) {
       console.log(`  refused: ${(r.errors?.[0] ?? r.error ?? "").slice(0, 160)}`);
