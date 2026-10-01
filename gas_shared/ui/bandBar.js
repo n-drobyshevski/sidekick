@@ -14,6 +14,11 @@
 // every figure in the `aria-label`, so the tip hands the pointer the same words and says
 // nothing twice.
 //
+// THE TIP CARRIES THE SEGMENT'S OWN MARK. A swatch on the same `data-rank` ramp opens the band
+// line, so the card names its band by colour as well as by word — and the whole-bar card is
+// the row's legend, one marked line per band. The mark is never the only carrier: the word is
+// always beside it.
+//
 // THE SCALE IS A PROPERTY OF THE TABLE, NEVER OF A ROW, and this is the defect the component
 // exists to refuse. A bar normalised to its own row's total draws 280 subjects and 30 subjects
 // at the same length, so a reader comparing two rows compares two different units — the exact
@@ -59,7 +64,8 @@ import { tipAnchor } from "./tip.js";
  *   keeps the plural, which is the old reading rather than a wrong one.
  * @param {string} spec.name  the row's own label, opening the sentence.
  * @returns {{total: number, fillPct: number, segments: Array, aria: string, empty: boolean}}
- *   Each segment carries `tip`: the lines its hover card shows.
+ *   Each segment carries `tip` (the lines its hover card shows) and `phrase` (its clause of the
+ *   sentence); `name` is the row's label.
  */
 export function bandBarModel(spec) {
   const p = spec || {};
@@ -104,17 +110,15 @@ export function bandBarModel(spec) {
       extra: b.extra,
       pct,
       tip: segmentTip(b, pct, total, counted, name),
+      phrase: counted(b.count) + " at " + b.label + (b.extra ? " (" + b.extra + ")" : ""),
     };
   });
 
-  const clauses = segments.map((s) => {
-    const head = counted(s.count) + " at " + s.label;
-    return s.extra ? head + " (" + s.extra + ")" : head;
-  });
+  const clauses = segments.map((s) => s.phrase);
   const body = clauses.length ? clauses.join(", ") + "." : "nothing to show.";
   const aria = name ? name + ": " + body : body;
 
-  return { total, fillPct, segments, aria, empty: segments.length === 0 };
+  return { total, fillPct, segments, aria, name, empty: segments.length === 0 };
 }
 
 /**
@@ -133,6 +137,17 @@ function segmentTip(b, pct, total, counted, name) {
   ];
   if (b.extra) lines.push(b.extra);
   return lines;
+}
+
+/** A band's swatch for the tip card, on the bar's own ramp. Decorative: the word is beside it. */
+function tipMarked(rank, text) {
+  return el("span", { class: "bandbar-tip__band" },
+    el("span", {
+      class: "bandbar-tip__mark",
+      "data-rank": rank === null ? "none" : String(rank),
+      "aria-hidden": "true",
+    }),
+    text);
 }
 
 /**
@@ -165,13 +180,19 @@ export function bandBar(model, opts) {
       "data-on": selected === null ? "true" : String(s.key === selected),
       style: "width:" + s.pct.toFixed(2) + "%",
     });
-    if (Array.isArray(s.tip) && s.tip.length) tipAnchor(seg, () => s.tip);
+    if (Array.isArray(s.tip) && s.tip.length) {
+      // Built on each reveal: the card empties itself between anchors.
+      tipAnchor(seg, () => [tipMarked(s.rank, s.tip[0]), ...s.tip.slice(1)]);
+    }
     fill.append(seg);
   }
   // The innermost anchor wins (`closest("[data-tip]")`), so this answers only over the track
-  // a segment does not cover.
+  // a segment does not cover — with the row's legend, one marked line per band.
   return tipAnchor(
     el("span", { class: cls, role: "img", "aria-label": model.aria }, fill),
-    () => [model.aria],
+    () => ({
+      aka: model.name || null,
+      lines: model.segments.map((s) => tipMarked(s.rank, s.phrase)),
+    }),
   );
 }

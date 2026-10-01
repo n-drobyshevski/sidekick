@@ -194,6 +194,22 @@ export function registerBandBarContract(ctx) {
       expect(bare.aria).toBe("1 assets at band 0.");
     });
 
+    // THE WHOLE-BAR CARD IS THE ROW'S LEGEND: one clause per band, the same clauses the
+    // sentence is built from, under the row's name.
+    it("hands the bar's legend its row name and one phrase per band", () => {
+      const m = bandBarModel({
+        bands: [
+          { key: "a", label: "0-30 d", count: 1, rank: 1, extra: "3 open" },
+          { key: "b", label: "never", count: 2, rank: null },
+        ],
+        max: 3, unit: "repositories", unitOne: "repository", name: "Payments",
+      });
+      expect(m.name).toBe("Payments");
+      expect(m.segments.map((x) => x.phrase))
+        .toEqual(["1 repository at 0-30 d (3 open)", "2 repositories at never"]);
+      expect(m.aria).toBe("Payments: " + m.segments.map((x) => x.phrase).join(", ") + ".");
+    });
+
     it("writes a sliver as <1%, never as a 0% that contradicts the drawn segment", () => {
       const m = bandBarModel({ bands: bands([999, 1]), max: 1000 });
       expect(m.segments[1].tip[1]).toBe("1 · <1% of the 1000");
@@ -221,6 +237,13 @@ export function registerBandBarContract(ctx) {
     it("anchors a pointer tip on every segment and on the bar", () => {
       expect(BAND_SRC).toContain("tipAnchor(seg");
       expect(BAND_SRC).toMatch(/return tipAnchor\(\s*el\("span", \{ class: cls, role: "img"/);
+    });
+
+    // THE CARD'S MARK IS THE BAR'S RAMP, and decorative: the band's word sits beside it.
+    it("marks each band in the tip with a data-rank swatch hidden from assistive technology", () => {
+      expect(BAND_SRC).toContain("bandbar-tip__mark");
+      expect(BAND_SRC).toMatch(/"bandbar-tip__mark",\s*"data-rank"/);
+      expect(BAND_SRC).toMatch(/"aria-hidden": "true"/);
     });
 
     it("is one role=img carrying the whole sentence", () => {
