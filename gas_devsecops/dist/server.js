@@ -3928,6 +3928,11 @@ var Server = (() => {
     // `settings.js`'s domainMapCard exists to prevent, so the card compares the two and says so.
     // Not a column on the tab: this is one fact about the whole map, not a fact per token.
     repoTagMapKeys: "REPO_TAG_MAP_KEYS",
+    // The generation of the persisted repository-tag map — the cross-execution cache key
+    // `repoTags.getRepoTagMap` reads it under. Written by repoTags.setRepoTagMap, the tab's only
+    // writer, and by nothing else, so a sync (which bumps DATA_VERSION but never touches the tab)
+    // no longer throws the cached map away.
+    repoTagMapGen: "REPO_TAG_MAP_GEN",
     ledgerSpreadsheetId: "LEDGER_SPREADSHEET_ID",
     archiveFolderId: "ARCHIVE_FOLDER_ID",
     // Who may open the web app, on top of the deployment's own "anyone within <domain>" fence.
@@ -5252,15 +5257,17 @@ var Server = (() => {
     return map;
   }
   var MAP_CACHE_TTL_SEC = 21600;
+  var MAP_CACHE_NAME = "dsRepoTagMap2";
   function mapCacheKey() {
-    return "dsRepoTagMap1:" + dataVersion();
+    var _a;
+    return `${MAP_CACHE_NAME}:${(_a = getProp(PROP_KEYS.repoTagMapGen)) != null ? _a : "0"}`;
   }
   function readMapCache() {
     const t0 = Date.now();
     try {
       const got = cacheGetJson(mapCacheKey());
       const hit = !!got && typeof got === "object" && !Array.isArray(got);
-      console.log(JSON.stringify({ stage: "cache", name: "dsRepoTagMap1", hit, getMs: Date.now() - t0 }));
+      console.log(JSON.stringify({ stage: "cache", name: MAP_CACHE_NAME, hit, getMs: Date.now() - t0 }));
       return hit ? got : void 0;
     } catch (e) {
       console.warn(`Repository tag map cache read failed: ${String(e)}`);
@@ -5288,6 +5295,7 @@ var Server = (() => {
     setProp(PROP_KEYS.repoTagMapKeys, JSON.stringify(configuredTagKeys()));
     mapMemo = { ...map };
     bumpDataVersion();
+    setProp(PROP_KEYS.repoTagMapGen, dataVersion());
     writeMapCache(mapMemo);
   }
   function builtUnderKeys() {
@@ -5851,7 +5859,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "17f42ab08a88" : "dev";
+  var BUILD_ID = true ? "0f7e1543fad1" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");

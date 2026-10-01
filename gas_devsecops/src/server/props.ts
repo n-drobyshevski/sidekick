@@ -36,6 +36,11 @@ export const PROP_KEYS = {
   // `settings.js`'s domainMapCard exists to prevent, so the card compares the two and says so.
   // Not a column on the tab: this is one fact about the whole map, not a fact per token.
   repoTagMapKeys: "REPO_TAG_MAP_KEYS",
+  // The generation of the persisted repository-tag map — the cross-execution cache key
+  // `repoTags.getRepoTagMap` reads it under. Written by repoTags.setRepoTagMap, the tab's only
+  // writer, and by nothing else, so a sync (which bumps DATA_VERSION but never touches the tab)
+  // no longer throws the cached map away.
+  repoTagMapGen: "REPO_TAG_MAP_GEN",
   ledgerSpreadsheetId: "LEDGER_SPREADSHEET_ID",
   archiveFolderId: "ARCHIVE_FOLDER_ID",
   // Who may open the web app, on top of the deployment's own "anyone within <domain>" fence.

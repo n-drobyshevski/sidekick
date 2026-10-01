@@ -3,8 +3,9 @@
 //
 // Measured in production (PERF_PLAN.md step 1): `domain_map` cost 1.5–1.7 s in every
 // execution that attached tags, and the settings read was the first Sheets access of a warm
-// Executive load — ~0.85 s of a ~1.2 s page, most of it opening the spreadsheet. Both are
-// keyed on DATA_VERSION, and both writers bump it and write through; these specs pin exactly
+// Executive load — ~0.85 s of a ~1.2 s page, most of it opening the spreadsheet. Settings are
+// keyed on DATA_VERSION plus their own generation, the tag map on its generation alone (a sync
+// never writes it); both writers move their key and write through. These specs pin exactly
 // that, plus the fallbacks: any cache failure reads the tab as before.
 //
 // A fresh module graph (`vi.resetModules()` + re-import) stands for a fresh GAS execution, so
@@ -201,11 +202,30 @@ describe("domain_map: cross-execution cache", () => {
     expect(readsOf("domain_map")).toBe(0);
   });
 
-  it("re-reads the tab once the data version moves", async () => {
+  // A sync bumps DATA_VERSION and never touches the tab, so it must not cost the 1.5 s read.
+  it("keeps serving the cached map across a data-version bump", async () => {
     (await nextExecution()).getRepoTagMap();
     props.set("DATA_VERSION", "999");
     (await nextExecution()).getRepoTagMap();
+    expect(readsOf("domain_map")).toBe(1);
+  });
+
+  it("re-reads the tab once the map's generation moves", async () => {
+    (await nextExecution()).getRepoTagMap();
+    props.set("REPO_TAG_MAP_GEN", "elsewhere");
+    (await nextExecution()).getRepoTagMap();
     expect(readsOf("domain_map")).toBe(2);
+  });
+
+  it("moves the generation on every save, so a second save is not served the first", async () => {
+    const one = { "repo-1": { domain: "one", lifecycle: null } };
+    const two = { "repo-2": { domain: "two", lifecycle: null } };
+    (await nextExecution()).setRepoTagMap(one);
+    const genOne = props.get("REPO_TAG_MAP_GEN");
+    (await nextExecution()).setRepoTagMap(two);
+    expect(props.get("REPO_TAG_MAP_GEN")).not.toBe(genOne);
+    expect((await nextExecution()).getRepoTagMap()).toEqual(two);
+    expect(readsOf("domain_map")).toBe(0);
   });
 
   it("round-trips a register-sized map through the chunked store", async () => {

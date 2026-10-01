@@ -277,15 +277,25 @@ export function getRepoTagMap(): RepoTagMap {
 // is ~9,800 rows and cost 1.5–1.7 s in EVERY execution that attached tags — the bootstrap core
 // and every read-model compute — so a cold landing page paid it twice.
 //
-// KEYED ON THE DATA VERSION, the settings cache's argument: `setRepoTagMap` is the only writer
-// of the tab and it bumps the version, then writes the new map under the new key itself. The
-// six-hour TTL bounds only a hand edit of the tab in Sheets. Through serverCache's gzip +
-// chunked store, because a map this size is several times one 100 KB CacheService value.
-// Any cache failure reads the tab, exactly as before this cache existed.
+// KEYED ON THE MAP'S OWN GENERATION (`REPO_TAG_MAP_GEN`), NOT THE DATA VERSION. It used to be
+// the data version, the settings cache's argument — but every sync bumps that, and a sync never
+// touches this tab, so the 1.5 s read came back after every sync for nothing. `setRepoTagMap` is
+// the tab's only writer (`devSeed` goes through it too); it moves the generation and writes the
+// new map under the new key itself. The tag-key properties (WIZ_DOMAIN_TAG_KEY /
+// WIZ_LIFECYCLE_TAG_KEY) are not in the key on purpose: the tab holds both tag VALUES as
+// fetched, whatever the keys say now — a key change reaches the stored rows only through a
+// refresh, which is a `setRepoTagMap` — and `attachRepoTags` resolves against the configured
+// keys after the map is read. The six-hour TTL bounds only a hand edit of the tab in Sheets.
+// Through serverCache's gzip + chunked store, because a map this size is several times one
+// 100 KB CacheService value. Any cache failure reads the tab, exactly as before this cache
+// existed.
 const MAP_CACHE_TTL_SEC = 21_600;
+// "dsRepoTagMap1" -> "dsRepoTagMap2": the key's suffix changed from DATA_VERSION to the
+// generation; a "1" entry is never asked for again and ages out with its TTL.
+const MAP_CACHE_NAME = "dsRepoTagMap2";
 
 function mapCacheKey(): string {
-  return "dsRepoTagMap1:" + dataVersion();
+  return `${MAP_CACHE_NAME}:${getProp(PROP_KEYS.repoTagMapGen) ?? "0"}`;
 }
 
 function readMapCache(): RepoTagMap | undefined {
@@ -293,7 +303,7 @@ function readMapCache(): RepoTagMap | undefined {
   try {
     const got = cacheGetJson(mapCacheKey());
     const hit = !!got && typeof got === "object" && !Array.isArray(got);
-    console.log(JSON.stringify({ stage: "cache", name: "dsRepoTagMap1", hit, getMs: Date.now() - t0 }));
+    console.log(JSON.stringify({ stage: "cache", name: MAP_CACHE_NAME, hit, getMs: Date.now() - t0 }));
     return hit ? (got as RepoTagMap) : undefined;
   } catch (e) {
     console.warn(`Repository tag map cache read failed: ${String(e)}`);
@@ -336,7 +346,11 @@ export function setRepoTagMap(map: RepoTagMap): void {
   setProp(PROP_KEYS.repoTagMapKeys, JSON.stringify(configuredTagKeys()));
   mapMemo = { ...map };
   bumpDataVersion();
-  // Under the NEW version's key, so the next execution reads the saved map from the cache.
+  // A new generation, named by the version just minted: unique and never reused, so a deleted
+  // property (which reads "0") cannot collide with a generation an older map was cached under
+  // for longer than that entry's TTL.
+  setProp(PROP_KEYS.repoTagMapGen, dataVersion());
+  // Under the NEW generation's key, so the next execution reads the saved map from the cache.
   writeMapCache(mapMemo);
 }
 
