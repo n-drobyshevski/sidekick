@@ -23,9 +23,11 @@
 
 import { configureApp } from "../../../../gas_shared/appConfig.js";
 import { call } from "../../../../gas_shared/api.js";
-import { bootstrapCached, navigate, swrCall } from "../../../../gas_shared/store.js";
+import { bootstrapCached, navigate } from "../../../../gas_shared/store.js";
 import { createAppShell } from "../../../../gas_shared/shell/appShell.js";
-import { openSyncDetails, renderSyncCard, resumePlan, shouldContinuePolling } from "./syncProgress.js";
+import {
+  createJobPoller, openSyncDetails, renderSyncCard, resumePlan, shouldContinuePolling,
+} from "./syncProgress.js";
 import {
   clear, confirmDialog, el, statusPill, syncCaption, tipAnchor, toast,
 } from "./ui.js";
@@ -117,10 +119,20 @@ const SYNC_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" st
 
 // The sync zone rebuilds these two nodes on every rail render (boot, refresh, and every
 // experimental-flag flip), so they are held at module scope and re-pointed each time — the
-// poll interval and the job it is watching outlive any one rail render.
+// poll and the job it is watching outlive any one rail render.
 let syncCardHost = null;
 let syncButtonsRow = null;
-let jobPoller = null;
+
+/**
+ * The job poll — `syncProgress.createJobPoller`: a plain `call()` per tick (never the session
+ * cache — a cached FETCHING arriving after the fresh DONE is how the card used to reappear and
+ * the finish be announced twice), one request in flight, 3 s in view and 15 s hidden.
+ */
+const jobPoller = createJobPoller({
+  fetchJob: (jobId) => call("api_getJobStatus", { jobId }),
+  onJob: (job) => applyJob(job),
+});
+
 let lastJob = null; // the most recent job summary the poll has seen, or null between syncs
 let stoppingJobId = null; // set while a Stop request is in flight, so the card can say so
 let syncDetails = null; // the open details-drawer handle, kept live by the poller
@@ -278,14 +290,14 @@ function clearCard() {
 }
 
 function stopWatch() {
-  if (jobPoller) clearInterval(jobPoller);
-  jobPoller = null;
+  jobPoller.stop();
 }
 
 /**
- * The 3s poll. THE STOP CONDITION IS `shouldContinuePolling` AND NOWHERE ELSE — a null job
- * (nothing running) and every terminal phase (DONE / FAILED / CANCELLED) clear the interval
- * before this function does anything else, which is what stops a poll outliving its job.
+ * What one job summary means for the card. THE STOP CONDITION IS `shouldContinuePolling` AND
+ * NOWHERE ELSE — a null job (nothing running) and every terminal phase (DONE / FAILED /
+ * CANCELLED) stop the poll; `createJobPoller` has already stopped it before handing such a job
+ * here, and hands it here exactly once, so the DONE branch's toast and `refresh()` run once.
  *
  * Only DONE re-fetches the bootstrap payload and every cached RPC: a cancelled sync commits
  * nothing (scanJobs.ts — persistSync's append is the only commit, and Stop is cooperative only
@@ -316,27 +328,8 @@ function applyJob(job) {
   paintCard(job);
 }
 
-/**
- * One poll tick, through store.js's `swrCall` rather than a bare `call()` — a revisit with the
- * same `{jobId}` resolves instantly from the session cache while the RPC refetches in the
- * background, and `onFresh` repaints the moment the revalidated summary actually differs. The
- * awaited return handles the very first tick (a cache miss, so it IS the fresh fetch); every
- * tick after that is a cache hit and its real update arrives through `onFresh` instead — both
- * paths funnel through the same `applyJob`, so the poll's stop condition is asked in one place.
- */
-async function pollTick(jobId) {
-  try {
-    const job = await swrCall("api_getJobStatus", { jobId }, (fresh) => applyJob(fresh));
-    applyJob(job);
-  } catch {
-    /* a transient poll failure is fine — the next tick tries again */
-  }
-}
-
 function watchJob(jobId) {
-  stopWatch();
-  pollTick(jobId); // paint immediately rather than leaving the card blank for the first 3s
-  jobPoller = setInterval(() => pollTick(jobId), 3000);
+  jobPoller.watch(jobId); // its first tick runs now, not one interval from now
 }
 
 /** A page LOAD is the only time worth asking whether a sync is already running (a reload
@@ -351,7 +344,9 @@ async function resumeActiveJob(bootData) {
     return;
   }
   try {
-    const job = await swrCall("api_getJobStatus", {}, () => {});
+    // A plain call: a session-cached answer could name a sync that has since finished, and
+    // watching it would announce that finish as if it had just happened.
+    const job = await call("api_getJobStatus", {});
     if (job && shouldContinuePolling(job)) watchJob(job.job_id);
   } catch {
     /* unreachable, or nothing active — nothing to resume either way */
