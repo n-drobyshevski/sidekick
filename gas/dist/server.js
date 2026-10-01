@@ -1180,6 +1180,51 @@ var Server = (() => {
     return summarize(work, opts.now);
   }
 
+  // ../gas_shared/domain/scanCompleteness.ts
+  var DISAPPEARANCE_COMPLETE = "complete";
+  var DEFERRED_PREFIX = "deferred:";
+  function completenessTolerance(n) {
+    return Math.max(5, Math.ceil(Math.max(0, n) * 0.01));
+  }
+  function distinctNodes(records) {
+    const ids = /* @__PURE__ */ new Set();
+    let anonymous = 0;
+    for (const r of records) {
+      const raw = r ? r["id"] : null;
+      const id = raw === null || raw === void 0 ? "" : String(raw).trim();
+      if (id === "") anonymous += 1;
+      else ids.add(id);
+    }
+    const distinct2 = ids.size + anonymous;
+    return { distinct: distinct2, duplicates: records.length - distinct2 };
+  }
+  function assessCompleteness(input) {
+    const { distinct: distinct2, duplicates } = distinctNodes(input.records);
+    const total = input.reportedTotal;
+    const verdict = (reason) => ({
+      reason,
+      distinct: distinct2,
+      duplicates
+    });
+    if (input.records.length === 0 && input.priorOpen > 0 && total !== 0) return verdict("empty");
+    if (total !== null && total > 0 && input.partialPages === 0 && distinct2 < total - completenessTolerance(total)) {
+      return verdict("short");
+    }
+    if (duplicates > completenessTolerance(input.records.length)) return verdict("duplicates");
+    return verdict(null);
+  }
+  function disappearanceValue(reason) {
+    return reason === null ? DISAPPEARANCE_COMPLETE : `${DEFERRED_PREFIX}${reason}`;
+  }
+  function readDisappearance(v) {
+    const s = v === null || v === void 0 ? "" : String(v).trim();
+    if (s === "") return { legacy: true, deferred: false, reason: null };
+    if (s.startsWith(DEFERRED_PREFIX)) {
+      return { legacy: false, deferred: true, reason: s.slice(DEFERRED_PREFIX.length) || null };
+    }
+    return { legacy: false, deferred: false, reason: null };
+  }
+
   // src/domain/compaction.ts
   var CHECKPOINT_VERSION = 1;
   function serializeSeverities(sevs) {
@@ -1402,12 +1447,14 @@ var Server = (() => {
     if (iso !== null) row.published_date = iso;
   }
   function reconcile(currentRecords, existingLedger, scanId, scanTs, prevScanId, options = {}) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
     const {
       disappearanceMode = "scan_ts",
       prevScanTs = null,
       scannedSeverities = null,
-      prevScanIdBySeverity: prevScanIdBySeverity2 = null
+      prevScanIdBySeverity = null,
+      disappearanceWindow: disappearanceWindow2 = null,
+      deferDisappearance = false
     } = options;
     const updated = {};
     for (const [key, row] of Object.entries(existingLedger)) updated[key] = { ...row };
@@ -1484,16 +1531,31 @@ var Server = (() => {
         status: row.status
       });
     }
+    let absent = 0;
     if (prevScanId !== null) {
       const scope = scannedSeverities !== null ? new Set(scannedSeverities) : null;
+      const windowBySev = /* @__PURE__ */ new Map();
+      const windowFallback = disappearanceWindow2 ? new Set(disappearanceWindow2.fallback) : null;
+      if (disappearanceWindow2) {
+        for (const [sev2, ids] of Object.entries(disappearanceWindow2.bySeverity)) {
+          windowBySev.set(sev2, new Set(ids));
+        }
+      }
       for (const [key, row] of Object.entries(updated)) {
         if (seen2.has(key) || row.status === "RESOLVED") continue;
         const sevRow = row.severity;
         if (scope !== null && (sevRow === null || !scope.has(sevRow))) {
           continue;
         }
-        const expectedPrev = (_m = (prevScanIdBySeverity2 != null ? prevScanIdBySeverity2 : {})[sevRow != null ? sevRow : ""]) != null ? _m : prevScanId;
-        if (row.last_scan_id !== expectedPrev) continue;
+        if (windowFallback !== null) {
+          const ids = (_m = windowBySev.get(sevRow != null ? sevRow : "")) != null ? _m : windowFallback;
+          if (row.last_scan_id === null || !ids.has(row.last_scan_id)) continue;
+        } else {
+          const expectedPrev = (_n = (prevScanIdBySeverity != null ? prevScanIdBySeverity : {})[sevRow != null ? sevRow : ""]) != null ? _n : prevScanId;
+          if (row.last_scan_id !== expectedPrev) continue;
+        }
+        absent += 1;
+        if (deferDisappearance) continue;
         if (disappearanceMode === "midpoint" && prevScanTs) {
           row.resolved_at = midpointIso(prevScanTs, scanTsIso);
         } else {
@@ -1518,7 +1580,8 @@ var Server = (() => {
         new_count: newCount,
         resolved_count: resolvedCount,
         reopened_count: reopenedCount
-      }
+      },
+      absent
     };
   }
 
@@ -1539,21 +1602,35 @@ var Server = (() => {
     const asc = scansAsc(scans);
     return asc.length ? asc[asc.length - 1] : null;
   }
-  function prevScanIdBySeverity(scans) {
-    const remaining = new Set(SEVERITY_ORDER);
-    const mapping = {};
+  function disappearanceWindow(scans) {
     const desc = scansAsc(scans).reverse();
+    if (!desc.length) return null;
+    const remaining = new Set(SEVERITY_ORDER);
+    const bySeverity = {};
     for (const r of desc) {
       const scope = parseSeverities(r.severities);
+      const deferred = readDisappearance(r.disappearance).deferred;
       const covered = scope === null ? [...remaining] : [...remaining].filter((s) => scope.includes(s));
-      for (const sev2 of covered) mapping[sev2] = r.scan_id;
-      covered.forEach((s) => remaining.delete(s));
+      for (const sev2 of covered) {
+        const ids = bySeverity[sev2];
+        if (ids) ids.push(r.scan_id);
+        else bySeverity[sev2] = [r.scan_id];
+      }
+      if (!deferred) covered.forEach((s) => remaining.delete(s));
       if (!remaining.size) break;
     }
-    return Object.keys(mapping).length ? mapping : null;
+    const fallback = [];
+    for (const r of desc) {
+      fallback.push(r.scan_id);
+      if (!readDisappearance(r.disappearance).deferred) break;
+    }
+    return { bySeverity, fallback };
   }
   function rowReachesScan(row, newest) {
     if (present(row.last_scan_id)) {
+      if (newest.window_ids && newest.window_ids.length) {
+        return newest.window_ids.includes(String(row.last_scan_id));
+      }
       return present(newest.scan_id) && String(row.last_scan_id) === String(newest.scan_id);
     }
     const newestTs = parseTs(newest.ts);
@@ -1563,13 +1640,22 @@ var Server = (() => {
   function newestFlatScanBySeverity(scans) {
     const remaining = new Set(SEVERITY_ORDER);
     const out = {};
+    const windows = {};
     const desc = scansAsc(scans.filter((s) => s.shape === "flat")).reverse();
     for (const r of desc) {
       const scope = parseSeverities(r.severities);
       const covered = scope === null ? [...remaining] : [...remaining].filter((s) => scope.includes(s));
-      for (const sev2 of covered) out[sev2] = { scan_id: r.scan_id, ts: r.ts };
-      covered.forEach((s) => remaining.delete(s));
+      for (const sev2 of covered) {
+        if (!out[sev2]) out[sev2] = { scan_id: r.scan_id, ts: r.ts };
+        const ids = windows[sev2];
+        if (ids) ids.push(r.scan_id);
+        else windows[sev2] = [r.scan_id];
+      }
+      if (!readDisappearance(r.disappearance).deferred) covered.forEach((s) => remaining.delete(s));
       if (!remaining.size) break;
+    }
+    for (const [sev2, ids] of Object.entries(windows)) {
+      if (ids.length > 1) out[sev2].window_ids = ids;
     }
     return out;
   }
@@ -1608,20 +1694,53 @@ var Server = (() => {
     }
   }
   function persistFlatScan(state, records, options) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e, _f, _g;
     const scanId = options.scanId || nowIso(options.now);
     const scanTs = scanId;
     const disappearanceMode = (_a = options.disappearanceMode) != null ? _a : DISAPPEARANCE_RESOLUTION;
     const severitiesText = serializeSeverities((_b = options.scannedSeverities) != null ? _b : null);
     const scope = parseSeverities(severitiesText);
     const existing = existingScanDeltas(state.scans, scanId);
-    if (existing !== null) return { deltas: existing, observations: [], scanRow: null };
+    if (existing !== null) return { deltas: existing, observations: [], scanRow: null, absent: 0 };
     const prev = latestScan(state.scans);
     const prevScanId = prev ? prev.scan_id : null;
     const prevScanTs = prev ? prev.ts : null;
-    const prevBySev = prevScanId !== null ? prevScanIdBySeverity(state.scans) : null;
+    const window = prevScanId !== null ? disappearanceWindow(state.scans) : null;
     const existingLedger = state.ledger;
-    const { ledger: updated, observations, deltas } = reconcile(
+    let reportedTotal = null;
+    let partialPages = null;
+    let duplicates = null;
+    let disappearance = null;
+    let deferDisappearance = false;
+    if (options.stored) {
+      const verdict = readDisappearance(options.stored.disappearance);
+      reportedTotal = (_c = options.stored.reported_total) != null ? _c : null;
+      partialPages = (_d = options.stored.partial_pages) != null ? _d : null;
+      duplicates = (_e = options.stored.duplicates) != null ? _e : null;
+      disappearance = verdict.legacy ? null : String(options.stored.disappearance).trim();
+      deferDisappearance = verdict.deferred;
+    } else if (options.completeness) {
+      const inScope = scope === null ? null : new Set(scope);
+      let priorOpen = 0;
+      for (const row of Object.values(existingLedger)) {
+        if (row.status !== "OPEN") continue;
+        if (inScope !== null && (row.severity === null || !inScope.has(row.severity))) continue;
+        priorOpen += 1;
+      }
+      reportedTotal = options.completeness.reportedTotal;
+      partialPages = options.completeness.partialPages;
+      const verdict = assessCompleteness({ records, reportedTotal, partialPages, priorOpen });
+      duplicates = verdict.duplicates;
+      disappearance = disappearanceValue(verdict.reason);
+      deferDisappearance = verdict.reason !== null;
+    } else if (options.incremental) {
+      const base = readDisappearance(options.incremental.baselineDisappearance);
+      partialPages = options.incremental.partialPages;
+      duplicates = options.incremental.duplicates;
+      disappearance = base.deferred ? String(options.incremental.baselineDisappearance).trim() : DISAPPEARANCE_COMPLETE;
+      deferDisappearance = base.deferred;
+    }
+    const { ledger: updated, observations, deltas, absent } = reconcile(
       records,
       existingLedger,
       scanId,
@@ -1631,7 +1750,8 @@ var Server = (() => {
         disappearanceMode,
         prevScanTs,
         scannedSeverities: scope,
-        prevScanIdBySeverity: prevBySev
+        disappearanceWindow: window,
+        deferDisappearance
       }
     );
     reconcileEpisodeCollisions(state, updated, existingLedger, deltas, scanId);
@@ -1644,14 +1764,18 @@ var Server = (() => {
       new_count: deltas.new_count,
       resolved_count: deltas.resolved_count,
       reopened_count: deltas.reopened_count,
-      raw_ref: (_c = options.rawRef) != null ? _c : null,
-      obs_ref: (_d = options.obsRef) != null ? _d : null,
+      raw_ref: (_f = options.rawRef) != null ? _f : null,
+      obs_ref: (_g = options.obsRef) != null ? _g : null,
       severities: severitiesText,
-      sealed: 0
+      sealed: 0,
+      reported_total: reportedTotal,
+      partial_pages: partialPages,
+      duplicates,
+      disappearance
     };
     state.scans.push(scanRow);
     state.ledger = updated;
-    return { deltas, observations, scanRow };
+    return { deltas, observations, scanRow, absent };
   }
   function persistGroupedScan(state, nodes, options) {
     var _a, _b;
@@ -3815,7 +3939,12 @@ var Server = (() => {
           scanId: row.scan_id,
           scannedSeverities: parseSeverities(row.severities),
           rawRef: row.raw_ref,
-          obsRef: row.obs_ref
+          obsRef: row.obs_ref,
+          // The completeness verdict the LIVE persist reached, re-applied — never re-assessed. The
+          // tenant's total and the partial-page count are not in the archived records, so a replay
+          // that re-ran the gate would have to guess them; reading the stored row is what makes a
+          // delete-and-replay land on the ledger the live sequence wrote.
+          stored: row
         });
         observationsByScan[row.scan_id] = observations;
       }
@@ -3934,7 +4063,10 @@ var Server = (() => {
         persistFlatScan(tmp, recordsFromPayload(payload), {
           mode: r.mode,
           scanId: r.scan_id,
-          scannedSeverities: scope
+          scannedSeverities: scope,
+          // Same rule as `replayScans`: the stored verdict, so the checkpoint is the ledger the
+          // live sequence actually reached at the floor.
+          stored: r
         });
       } else if (payload === null) {
         reinsertScanRow(tmp, r);
@@ -4316,8 +4448,22 @@ var Server = (() => {
       raw_ref: null,
       obs_ref: null,
       severities: str(r["severities"]),
-      sealed: 1
+      sealed: 1,
+      // The completeness record, when the bundle carries one (a GAS export since the gate;
+      // migrate.py's never does). An imported scan is never replayed, but the NEWEST imported
+      // one bounds the disappearance window the first replayed scan resolves against — a
+      // deferred import read back as complete would resolve less than the live register did.
+      // Blank stays null: that is the legacy marker, not a value to coerce.
+      reported_total: numOrNull(r["reported_total"]),
+      partial_pages: numOrNull(r["partial_pages"]),
+      duplicates: numOrNull(r["duplicates"]),
+      disappearance: str(r["disappearance"])
     };
+  }
+  function numOrNull(v) {
+    if (v === null || v === void 0 || v === "") return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
   }
   function coerceLedger(r) {
     var _a, _b;
@@ -4525,7 +4671,11 @@ var Server = (() => {
     "resolved_count",
     "reopened_count",
     "severities",
-    "sealed"
+    "sealed",
+    "reported_total",
+    "partial_pages",
+    "duplicates",
+    "disappearance"
   ];
   var BUNDLE_EPISODE_COLUMNS = [
     "vuln_key",
@@ -5310,7 +5460,11 @@ var Server = (() => {
     "resolved_count",
     "reopened_count",
     "severities",
-    "sealed"
+    "sealed",
+    // The completeness verdict — what the table marks a deferred scan by
+    // (gas_shared/domain/scanCompleteness.ts). The other three record columns (reported_total,
+    // partial_pages, duplicates) are operator diagnostics that reach the error log instead.
+    "disappearance"
   ];
   function scanRowsSlice(scans) {
     return pickRows(scans, SCAN_ROW_KEYS);
@@ -6543,7 +6697,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "a10459953f59" : "dev";
+  var BUILD_ID = true ? "9d1ff5d00e18" : "dev";
   var CACHE_EPOCH = "3";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
@@ -6691,7 +6845,15 @@ var Server = (() => {
       "raw_ref",
       "obs_ref",
       "severities",
-      "sealed"
+      "sealed",
+      // THE COMPLETENESS RECORD (gas_shared/domain/scanCompleteness.ts), appended last so
+      // `ensureHeaders` adds them to an existing tab without moving a column. `disappearance` is
+      // the verdict a replay reads back — "complete", "deferred:<reason>", or blank on a row
+      // written before the gate, which replays under the old rules.
+      "reported_total",
+      "partial_pages",
+      "duplicates",
+      "disappearance"
     ],
     [TABS.vulnLedger]: [
       "vuln_key",
@@ -6788,7 +6950,12 @@ var Server = (() => {
       "journal_ref",
       "error",
       "started_at",
-      "updated_at"
+      "updated_at",
+      // A scan's fetch-side account, carried across continuation hops to the persist that runs
+      // the completeness gate: whether the tenant reported a total at all (`total_count` reads 0
+      // for both "reported 0" and "not reported"), and how many pages came back PARTIAL.
+      "total_reported",
+      "partial_pages"
     ]
   };
   var SCHEMA_VERSION = 2;
@@ -7045,7 +7212,7 @@ var Server = (() => {
     forgetActiveJob();
   }
   function rowToJob(r) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o;
     return {
       job_id: String((_a = r["job_id"]) != null ? _a : ""),
       kind: (_b = r["kind"]) != null ? _b : "scan",
@@ -7056,11 +7223,13 @@ var Server = (() => {
       findings_so_far: Number((_g = r["findings_so_far"]) != null ? _g : 0),
       page_size: Number((_h = r["page_size"]) != null ? _h : 0),
       total_count: Number((_i = r["total_count"]) != null ? _i : 0),
-      params_json: (_j = r["params_json"]) != null ? _j : null,
-      journal_ref: (_k = r["journal_ref"]) != null ? _k : null,
+      total_reported: r["total_reported"] === true || r["total_reported"] === 1 || r["total_reported"] === "1" || String((_j = r["total_reported"]) != null ? _j : "").toUpperCase() === "TRUE",
+      partial_pages: Number((_k = r["partial_pages"]) != null ? _k : 0) || 0,
+      params_json: (_l = r["params_json"]) != null ? _l : null,
+      journal_ref: (_m = r["journal_ref"]) != null ? _m : null,
       error: normError(r["error"]),
-      started_at: String((_l = r["started_at"]) != null ? _l : ""),
-      updated_at: String((_m = r["updated_at"]) != null ? _m : "")
+      started_at: String((_n = r["started_at"]) != null ? _n : ""),
+      updated_at: String((_o = r["updated_at"]) != null ? _o : "")
     };
   }
   function listJobs() {
@@ -7166,8 +7335,20 @@ var Server = (() => {
       raw_ref: (_h = r["raw_ref"]) != null ? _h : null,
       obs_ref: (_i = r["obs_ref"]) != null ? _i : null,
       severities: (_j = r["severities"]) != null ? _j : null,
-      sealed: r["sealed"] === 1 || r["sealed"] === "1" || r["sealed"] === true ? 1 : 0
+      sealed: r["sealed"] === 1 || r["sealed"] === "1" || r["sealed"] === true ? 1 : 0,
+      // The completeness record. Blank cells stay null — on a row written before these columns
+      // existed that is the LEGACY marker the replay reads (`scanCompleteness.readDisappearance`),
+      // so it must not be coerced to 0 or to "complete" on the way in.
+      reported_total: numOrNull2(r["reported_total"]),
+      partial_pages: numOrNull2(r["partial_pages"]),
+      duplicates: numOrNull2(r["duplicates"]),
+      disappearance: r["disappearance"] === null || r["disappearance"] === void 0 || r["disappearance"] === "" ? null : String(r["disappearance"])
     };
+  }
+  function numOrNull2(v) {
+    if (v === null || v === void 0 || v === "") return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
   }
   function rowToLedger(r) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u;
@@ -7265,6 +7446,7 @@ var Server = (() => {
   function writeStateTables(state) {
     ensureTab(TABS.vulnLedger);
     ensureTab(TABS.episodes);
+    ensureTab(TABS.scans);
     overwrite(TABS.vulnLedger, Object.values(state.ledger));
     overwrite(TABS.episodes, state.episodes);
     overwrite(TABS.scans, scansAsc(state.scans));
@@ -7272,7 +7454,7 @@ var Server = (() => {
     invalidateLedgerMemos();
   }
   function persistFlatScan2(records, options) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d, _e;
     const state = loadState();
     const scanId = options.scanId || nowIso();
     const existing = state.scans.find((s) => s.scan_id === scanId);
@@ -7283,7 +7465,8 @@ var Server = (() => {
           resolved_count: existing.resolved_count,
           reopened_count: existing.reopened_count
         },
-        scanRow: null
+        scanRow: null,
+        absent: 0
       };
     }
     const jobId = (_a = options.jobId) != null ? _a : newJobId("scan");
@@ -7306,14 +7489,17 @@ var Server = (() => {
         error: null
       });
     }
-    const { deltas, observations, scanRow } = persistFlatScan(state, records, {
+    const { deltas, observations, scanRow, absent } = persistFlatScan(state, records, {
       mode: options.mode,
       scanId,
       scannedSeverities: (_b = options.scannedSeverities) != null ? _b : null,
-      rawRef: (_c = options.rawRef) != null ? _c : null
+      rawRef: (_c = options.rawRef) != null ? _c : null,
+      completeness: (_d = options.completeness) != null ? _d : null,
+      incremental: (_e = options.incremental) != null ? _e : null
     });
     const obsRef = writeObservations(scanId, observations);
     if (scanRow) scanRow.obs_ref = obsRef;
+    ensureTab(TABS.scans);
     overwrite(TABS.vulnLedger, Object.values(state.ledger));
     overwrite(TABS.episodes, state.episodes);
     writeLedgerSnapshot(state);
@@ -7321,7 +7507,7 @@ var Server = (() => {
     invalidateLedgerMemos();
     updateJob(jobId, { phase: "DONE" });
     trashFile(journalRef);
-    return { deltas, scanRow };
+    return { deltas, scanRow, absent };
   }
   function persistGroupedScan2(nodes, options) {
     var _a, _b, _c;
@@ -7336,7 +7522,7 @@ var Server = (() => {
       appendRows(TABS.scans, [scanRow]);
       invalidateLedgerMemos();
     }
-    return { deltas, scanRow };
+    return { deltas, scanRow, absent: 0 };
   }
   var readPayloadForRow = (row) => readScanPayload(row.raw_ref);
   function loadBaseRows(now) {
@@ -7691,6 +7877,7 @@ var Server = (() => {
     });
     const present2 = new Set(loadScanRows().map((s) => s.scan_id));
     const toAppend = session.sealedScans.filter((s) => !present2.has(s.scan_id));
+    ensureTab(TABS.scans);
     chunkedAppend(TABS.scans, toAppend);
     invalidateLedgerMemos();
     const cpRef = writeCheckpointManifest(
@@ -8460,6 +8647,13 @@ var Server = (() => {
     cache.put(TOKEN_CACHE_KEY, token, ttl);
     return token;
   }
+  function errorMessages(errors) {
+    if (!Array.isArray(errors)) return [];
+    return errors.map((e) => {
+      var _a;
+      return e && typeof e === "object" ? String((_a = e["message"]) != null ? _a : "") : String(e);
+    }).filter(Boolean).map((m) => m.slice(0, 300));
+  }
   function baseVariables() {
     return JSON.parse(JSON.stringify(BASE_VARIABLES));
   }
@@ -8522,7 +8716,8 @@ var Server = (() => {
         nodes: (_c = connection["nodes"]) != null ? _c : [],
         hasNextPage: Boolean(pageInfo["hasNextPage"]),
         endCursor: (_d = pageInfo["endCursor"]) != null ? _d : null,
-        totalCount: typeof rawTotal === "number" ? rawTotal : null
+        totalCount: typeof rawTotal === "number" ? rawTotal : null,
+        partialErrors: errorMessages(body["errors"])
       };
     }
     throw new WizQueryError(`Wiz query failed after retries (${lastError}).`);
@@ -9609,7 +9804,7 @@ var Server = (() => {
   // ../gas_shared/domain/scopeSummary.ts
   var DEFAULT_SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
   var SUMMARY_TREND_POINTS = 60;
-  function numOrNull(v) {
+  function numOrNull3(v) {
     return typeof v === "number" && Number.isFinite(v) ? v : null;
   }
   function numOr0(v) {
@@ -9652,12 +9847,12 @@ var Server = (() => {
         sev: sev2,
         open,
         resolved,
-        kmMedian: numOrNull(kmMedianPerSev[sev2]),
-        kmP90: numOrNull(kmP90PerSev[sev2]),
-        kmLowerBound: numOrNull(kmLowerBoundPerSev[sev2]),
-        slaPct: numOrNull(st["sla_pct"]),
+        kmMedian: numOrNull3(kmMedianPerSev[sev2]),
+        kmP90: numOrNull3(kmP90PerSev[sev2]),
+        kmLowerBound: numOrNull3(kmLowerBoundPerSev[sev2]),
+        slaPct: numOrNull3(st["sla_pct"]),
         pastSla: numOr0(obj(pastPerSev[sev2])["breached"]),
-        slaTarget: numOrNull(st["sla_target"]),
+        slaTarget: numOrNull3(st["sla_target"]),
         awaiting: numOr0(awaitingPerSev[sev2])
       });
     }
@@ -9666,12 +9861,12 @@ var Server = (() => {
       var _a2;
       return {
         date: String((_a2 = p["date"]) != null ? _a2 : ""),
-        open: numOrNull(p["open"]),
+        open: numOrNull3(p["open"]),
         // THE KAPLAN-MEIER MEDIAN ONLY — the estimator the hero reads. Falling back to the naive
         // closed-only median where KM is unobservable put "30 days" at the end of this line under a
         // hero reading "at least 210 days": two estimators on one page, the lower one looking like
         // the answer. A point with no KM median is a gap in the line, not a different number.
-        medianDays: numOrNull(p["km_median_days"])
+        medianDays: numOrNull3(p["km_median_days"])
       };
     });
     return {
@@ -9680,21 +9875,21 @@ var Server = (() => {
       open: numOr0(overall["open"]),
       resolved: numOr0(overall["resolved"]),
       mttr: {
-        median: numOrNull(km["median"]),
-        medianLowerBound: numOrNull(km["medianLowerBound"]),
+        median: numOrNull3(km["median"]),
+        medianLowerBound: numOrNull3(km["medianLowerBound"]),
         // gas publishes the overall p90 beside the curve; gas_devsecops inside it.
-        p90: (_a = numOrNull(rem["kmP90"])) != null ? _a : numOrNull(km["p90"]),
-        naiveMedian: numOrNull(km["naiveMedian"])
+        p90: (_a = numOrNull3(rem["kmP90"])) != null ? _a : numOrNull3(km["p90"]),
+        naiveMedian: numOrNull3(km["naiveMedian"])
       },
       sla: {
-        attainmentPct: numOrNull(mttr["slaPct"]),
+        attainmentPct: numOrNull3(mttr["slaPct"]),
         pastSla: numOr0(pastOverall["breached"]),
-        pastSlaPct: numOrNull(pastOverall["pct"]),
+        pastSlaPct: numOrNull3(pastOverall["pct"]),
         unknown: numOr0(pastOverall["unknown"])
       },
       awaiting: {
         count: numOr0(awaiting["overall"]),
-        pctOfOpen: numOrNull(awaiting["pctOfOpen"])
+        pctOfOpen: numOrNull3(awaiting["pctOfOpen"])
       },
       backlog: Object.keys(backlog).length ? { observed: numOr0(backlog["observed"]), unobserved: numOr0(backlog["unobserved"]) } : null,
       perSev: sevRows,
@@ -10509,7 +10704,7 @@ var Server = (() => {
     return { jobId: null, message: "Dry-run scan saved." };
   }
   function step3(job, budgetMs = BUDGET_MS3) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
     const started = Date.now();
     const params = JSON.parse((_a = job.params_json) != null ? _a : "{}");
     const scanId = job.scan_id;
@@ -10519,6 +10714,8 @@ var Server = (() => {
     let page = job.page;
     let findings = job.findings_so_far;
     let totalCount = job.total_count;
+    let totalReported = job.total_reported === true;
+    let partialPages = (_d = job.partial_pages) != null ? _d : 0;
     try {
       for (; ; ) {
         if (isCancelRequested(job.job_id)) throw new ScanCancelled();
@@ -10535,9 +10732,33 @@ var Server = (() => {
         page += 1;
         findings += result.nodes.length;
         cursor = result.endCursor;
-        if (result.totalCount !== null) totalCount = result.totalCount;
-        updateJob(job.job_id, { cursor, page, findings_so_far: findings, total_count: totalCount });
-        if (!result.hasNextPage || page >= MAX_PAGES) break;
+        if (result.totalCount !== null) {
+          totalCount = result.totalCount;
+          totalReported = true;
+        }
+        if (result.partialErrors.length) {
+          partialPages += 1;
+          console.warn(JSON.stringify({
+            stage: "partialPage",
+            scanId,
+            page: pageName,
+            errors: result.partialErrors.slice(0, 3)
+          }));
+        }
+        updateJob(job.job_id, {
+          cursor,
+          page,
+          findings_so_far: findings,
+          total_count: totalCount,
+          total_reported: totalReported,
+          partial_pages: partialPages
+        });
+        if (!result.hasNextPage) break;
+        if (page >= MAX_PAGES) {
+          throw new WizQueryError(
+            `Wiz walk reached MAX_PAGES (${MAX_PAGES}) and the cursor still reports more. Refusing to truncate silently \u2014 a partial register that looks complete is worse than a failed scan.`
+          );
+        }
         if (Date.now() - started > budgetMs) {
           writeSlimRecords(scanId, slim);
           writePageRuns(scanId, pageRuns);
@@ -10548,7 +10769,7 @@ var Server = (() => {
       writeSlimRecords(scanId, slim);
       writePageRuns(scanId, pageRuns);
       updateJob(job.job_id, { phase: "RECONCILING" });
-      finishScan(job.job_id, scanId, params, slim);
+      finishScan(job.job_id, scanId, params, slim, fetchAccount(totalCount, totalReported, partialPages));
     } catch (e) {
       if (e instanceof ScanCancelled) {
         finalizeCancel(job);
@@ -10571,9 +10792,17 @@ var Server = (() => {
       throw e;
     }
   }
-  function finishScan(jobId, scanId, params, slim) {
+  function fetchAccount(totalCount, totalReported, partialPages) {
+    const n = Number(totalCount);
+    const reportedTotal = Number.isFinite(n) && (totalReported || n > 0) ? n : null;
+    return { reportedTotal, partialPages: Number(partialPages) || 0 };
+  }
+  function finishScan(jobId, scanId, params, slim, fetched) {
+    var _a;
     clearCancel(jobId);
     let records = slim;
+    let completeness = null;
+    let incremental = null;
     if (params.incremental) {
       if (!slim.length) {
         updateJob(jobId, { phase: "DONE", error: null });
@@ -10588,6 +10817,14 @@ var Server = (() => {
         });
         return;
       }
+      const baselineRow = loadScanRows().find((s) => s.scan_id === params.baselineScanId);
+      incremental = {
+        baselineDisappearance: (_a = baselineRow == null ? void 0 : baselineRow.disappearance) != null ? _a : null,
+        partialPages: fetched.partialPages,
+        // Measured on the DELTA as fetched: the merge below keys by vulnKey, so the merged set
+        // can hold no repeat to count.
+        duplicates: distinctNodes(slim).duplicates
+      };
       records = mergeNodes(baselineSlim, slim);
       let pageNo = 1;
       for (let i = 0; i < records.length; i += 500) {
@@ -10597,20 +10834,45 @@ var Server = (() => {
       writeFrameSafely(scanId, records, (i) => Math.floor(i / 500) + 1);
     } else {
       writeFrameSafely(scanId, records, pageOfFromRuns(readPageRuns(scanId), records.length));
+      completeness = fetched;
     }
     updateJob(jobId, { phase: "PERSISTING", scan_id: scanId });
     scheduleContinuation3();
-    persistFlatScan2(records, {
+    const outcome = persistFlatScan2(records, {
       mode: params.mode,
       scanId,
       scannedSeverities: params.severities,
       rawRef: scanFolder(scanId).getId(),
-      jobId
+      jobId,
+      completeness,
+      incremental
     });
+    recordDeferral(outcome);
     afterPersist(records);
     updateJob(jobId, { phase: "DONE" });
     clearContinuationTriggers3();
     clearCancel(jobId);
+  }
+  function recordDeferral(outcome) {
+    var _a, _b, _c, _d, _e, _f;
+    try {
+      const row = outcome.scanRow;
+      const verdict = readDisappearance((_a = row == null ? void 0 : row.disappearance) != null ? _a : null);
+      if (!row || !verdict.deferred) return;
+      const reported = (_b = row.reported_total) != null ? _b : null;
+      const total = reported === null ? "no total reported" : `${reported} reported`;
+      const held = `${outcome.absent} open finding(s) it did not return were left open; the next complete scan will resolve them.`;
+      recordError(
+        "scanCompleteness",
+        // A quick refresh is not judged on its own records (ledgerCore.PersistFlatOptions); it
+        // inherited the deferral, and saying "looked incomplete" of it would send the operator
+        // after a delta that was fine.
+        row.mode.includes("incremental") ? `Quick refresh ${row.scan_id} was built on a deferred scan (${(_c = verdict.reason) != null ? _c : "unknown"}), so it was deferred too. ${held}` : `Scan ${row.scan_id} looked incomplete (${(_d = verdict.reason) != null ? _d : "unknown"}: ${row.total} received, ${total}, ${(_e = row.duplicates) != null ? _e : 0} duplicate(s), ${(_f = row.partial_pages) != null ? _f : 0} partial page(s)). ${held}`,
+        "warning"
+      );
+    } catch (e) {
+      console.warn(`Recording a deferred scan failed: ${e}`);
+    }
   }
   function loadBaselineSlim(baselineScanId) {
     const slim = readSlimRecords(baselineScanId);
@@ -10683,7 +10945,7 @@ var Server = (() => {
   function continueJob(_e) {
     try {
       withScriptLock(() => {
-        var _a, _b;
+        var _a, _b, _c;
         clearContinuationTriggers3();
         const job = activeJob();
         if (!job || job.kind !== "scan") return;
@@ -10696,7 +10958,13 @@ var Server = (() => {
         } else if (job.phase === "RECONCILING") {
           const params = JSON.parse((_a = job.params_json) != null ? _a : "{}");
           const slim = (_b = readSlimRecords(job.scan_id)) != null ? _b : [];
-          finishScan(job.job_id, job.scan_id, params, slim);
+          finishScan(
+            job.job_id,
+            job.scan_id,
+            params,
+            slim,
+            fetchAccount(job.total_count, job.total_reported === true, (_c = job.partial_pages) != null ? _c : 0)
+          );
         } else if (job.phase === "PERSISTING" || job.phase === "REPLAYING") {
           recoverIfNeeded();
           clearCancel(job.job_id);
@@ -12916,7 +13184,10 @@ var Server = (() => {
     // (a no-op on `null`) through `visibleBase` — byte-for-byte this function's own `base` —
     // so the two share both the population and the `showNoFix` gate, and reusing the MTTR
     // page's already-cached estimate is the correct answer, not a shortcut.
-    durablyCached("scanHistory4", { showNoFix: getShowNoFix2() }, scanHistoryData)
+    // "scanHistory4" → "scanHistory5" (completeness gate): every `scans` row gained the
+    // completeness record (`disappearance`, `reported_total`, `partial_pages`, `duplicates`) the
+    // Saved scans table marks a deferred scan from; a warm scanHistory4 entry would draw none.
+    durablyCached("scanHistory5", { showNoFix: getShowNoFix2() }, scanHistoryData)
   );
   function getScanHistory(_p) {
     return run(() => {

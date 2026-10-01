@@ -390,7 +390,7 @@ const ENTRIES = [
     id: "disappearance",
     term: "Dated by disappearance",
     lines: [
-      "A finding dated resolved at the first scan that stopped returning it.",
+      "A finding dated resolved at the first complete scan that stopped returning it.",
       "An upper bound: \"gone by 12 Aug\", never \"resolved 12 Aug\".",
       "The API publishes no resolution date for it, so the error is the interval between two scans.",
       "Until two scans have run and findings have begun to disappear between them, a register dated this way reads near-zero — an absence of observations, not a fast team.",

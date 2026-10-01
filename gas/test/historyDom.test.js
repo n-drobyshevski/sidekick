@@ -135,3 +135,11 @@ describe("chart tables stay 1:1 with their canvases (P1.2's rule, unmoved by thi
     expect(mttr).toBe(1);
   });
 });
+
+describe("the −Resolved cell marks a deferred scan beside its count", () => {
+  it("draws statusPill(\"warn\", \"Deferred\", …) from deferralOf(s.disappearance)", () => {
+    expect(CODE).toContain("deferralOf(s.disappearance)");
+    expect(CODE).toContain('statusPill("warn", "Deferred", deferral.help)');
+    expect(CODE).toContain("cell: (s) => resolvedCell(s)");
+  });
+});

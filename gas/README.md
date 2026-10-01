@@ -378,15 +378,16 @@ The MTTR page's primary numbers come from a **Kaplan–Meier** survival estimate
 
 ### Present, unobserved, and what each figure is allowed to count
 
-A finding this register stopped seeing is not resolved — `coldZone.ts` refuses to infer a
-fix from silence, and that refusal stands. It is also not live exposure, so the figures
-draw a line the population does not:
+An asset this register stopped seeing is not remediated — `coldZone.ts` refuses to infer a
+fix from silence, and that refusal stands. Its open findings are also not live exposure, so
+the figures draw a line the population does not:
 
 - **`BaseRow.observed`** is true when the row reached the newest scan **of its own
   severity** (`ledgerCore.rowReachesScan`, the same predicate `coldZone.isObserved` uses —
   one definition, because two would drift). A severity with no scan on record is
   undecidable and counts as observed: never accuse an asset of vanishing on the strength
-  of a scan that never looked.
+  of a scan that never looked. When that newest scan was **deferred** (below), any scan back
+  to the last complete one counts, for the same reason.
 - **`seen_age_days`** is how long a row was open while we could still see it.
 - **Counts include everything open; figures that measure elapsed time do not.** The
   triage funnel, tier counts and severity totals count every open finding. Age buckets,
@@ -401,6 +402,24 @@ draw a line the population does not:
   the front door decides who is "late".
 - Every page states which population it means — `N present · M unobserved since <date>` —
   and all of it disappears when nothing is unobserved.
+
+### Absence only resolves a finding when the scan was complete
+
+A finding the newest scan did not return is closed **by disappearance**
+(`resolution_src: "disappeared"`) — but only if that scan can be trusted to say what is
+missing. Each live full scan is checked first (`gas_shared/domain/scanCompleteness.ts`, the
+gate `gas_devsecops/` runs too): no rows while open findings exist (unless Wiz itself reported
+a total of 0), fewer distinct rows than Wiz's own total minus `max(5, 1%)` (only when no page
+came back with GraphQL errors beside its rows), or more repeated rows than `max(5, 1%)`. A scan
+that fails is still saved, and everything it did see lands, but it is **deferred**: nothing it
+missed is resolved, Settings → Recent errors carries a warning saying how many open findings
+were held, and Scan history marks the row. The next complete scan resolves everything missed
+since the last complete one (`ledgerCore.disappearanceWindow`). A quick refresh merges a delta
+into its baseline, so it inherits the baseline's verdict instead of being judged on its own. A
+walk that reaches `MAX_PAGES` with the cursor still reporting more now fails the scan rather
+than saving a truncated register. The verdict is stored on the scan row, so deleting a scan
+and replaying the rest, compaction's checkpoint and a bundle import all reach the ledger the
+live sequence did; rows saved before the gate carry no verdict and count as complete.
 
 ### What the ledger actually holds (measured 2026-09-23)
 
@@ -608,7 +627,7 @@ breakdown is — never a stored ledger column), how long since anything on it la
 - **`unobserved`** — a fact about the scanner. It stopped returning the asset at all.
 
 `unobserved` is tested **first**, and the order is load-bearing: `reconcile` resolves a
-finding that drops out of the newest scan **by disappearance**
+finding that drops out of the newest complete scan **by disappearance**
 (`resolution_src: "disappeared"`), so an asset the scanner has simply lost sight of looks,
 for one scan, exactly like it was mass-remediated. Reading that as warmth would reward
 losing coverage — the single worst thing this page could do — so an unobserved asset is

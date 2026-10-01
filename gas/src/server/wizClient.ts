@@ -94,6 +94,24 @@ export interface PageResult {
   hasNextPage: boolean;
   endCursor: string | null;
   totalCount: number | null;
+  /**
+   * PARTIAL: the GraphQL `errors` that arrived BESIDE a findings connection. Empty on every
+   * healthy page, and not an error channel — the nodes are good, and it is the page's count
+   * that is suspect. The scan counts such pages (`partial_pages` on its row) and the
+   * completeness gate stops comparing against the tenant's total when any page was partial
+   * (gas_shared/domain/scanCompleteness.ts). Dropping them, as this client used to, made a
+   * page that had lost rows indistinguishable from a whole one.
+   */
+  partialErrors: string[];
+}
+
+/** Each GraphQL error's message, capped; an absent or non-array `errors` is none. */
+function errorMessages(errors: unknown): string[] {
+  if (!Array.isArray(errors)) return [];
+  return (errors as unknown[])
+    .map((e) => (e && typeof e === "object" ? String((e as Rec)["message"] ?? "") : String(e)))
+    .filter(Boolean)
+    .map((m) => m.slice(0, 300));
 }
 
 /** Deep-ish clone of the baseline variables (they contain nested filter objects). */
@@ -178,6 +196,7 @@ export function queryPage(variables: Rec, isDeltaFetch = false): PageResult {
       hasNextPage: Boolean(pageInfo["hasNextPage"]),
       endCursor: (pageInfo["endCursor"] as string | null) ?? null,
       totalCount: typeof rawTotal === "number" ? rawTotal : null,
+      partialErrors: errorMessages(body["errors"]),
     };
   }
   throw new WizQueryError(`Wiz query failed after retries (${lastError}).`);

@@ -3253,7 +3253,10 @@ const cachedScanHistoryData = () =>
   // (a no-op on `null`) through `visibleBase` — byte-for-byte this function's own `base` —
   // so the two share both the population and the `showNoFix` gate, and reusing the MTTR
   // page's already-cached estimate is the correct answer, not a shortcut.
-  durablyCached("scanHistory4", { showNoFix: settingsStore.getShowNoFix() }, scanHistoryData);
+  // "scanHistory4" → "scanHistory5" (completeness gate): every `scans` row gained the
+  // completeness record (`disappearance`, `reported_total`, `partial_pages`, `duplicates`) the
+  // Saved scans table marks a deferred scan from; a warm scanHistory4 entry would draw none.
+  durablyCached("scanHistory5", { showNoFix: settingsStore.getShowNoFix() }, scanHistoryData);
 
 export function getScanHistory(_p?: unknown): ApiResult {
   return run(() => {
@@ -3265,8 +3268,8 @@ export function getScanHistory(_p?: unknown): ApiResult {
     // `base` population.
     const mttr = cachedMttrData(undefined) as Rec;
     const km = ((mttr["remediation"] as Rec | undefined)?.["km"] ?? null) as Rec | null;
-    // The scans tab, narrowed to the ten columns the table draws. Projected here rather than
-    // in the cached compute so `scanHistory2` keeps its shape and no namespace moves.
+    // The scans tab, narrowed to the columns the table draws. Projected here rather than in
+    // the cached compute so the cached shape does not move with the table's column list.
     return {
       ...d,
       scans: scanRowsSlice(d["scans"]),

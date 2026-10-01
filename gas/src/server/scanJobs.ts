@@ -40,7 +40,11 @@ import { deleteProp, getProp, hasWizCredentials, setProp } from "./props";
 import { SAMPLE_FLAT, SAMPLE_GROUPED } from "./sampleData";
 import * as settingsStore from "./settingsStore";
 import * as supportGroups from "./supportGroups";
-import { fetchPage, MAX_PAGES, WizDeltaFilterError } from "./wizClient";
+import { fetchPage, MAX_PAGES, WizDeltaFilterError, WizQueryError } from "./wizClient";
+import {
+  distinctNodes,
+  readDisappearance,
+} from "../../../gas_shared/domain/scanCompleteness";
 
 const BUDGET_MS = 270_000; // 4.5 min of a 6-min execution (continuation hops)
 const FIRST_STEP_BUDGET_MS = 45_000; // keep the "Run scan" RPC snappy; rest via trigger
@@ -415,6 +419,10 @@ function step(job: JobRow, budgetMs = BUDGET_MS): void {
   let page = job.page;
   let findings = job.findings_so_far;
   let totalCount = job.total_count;
+  // The fetch's own account of itself, carried across hops on the job row for the completeness
+  // gate the persist runs (gas_shared/domain/scanCompleteness.ts).
+  let totalReported = job.total_reported === true;
+  let partialPages = job.partial_pages ?? 0;
 
   try {
     for (;;) {
@@ -437,11 +445,42 @@ function step(job: JobRow, budgetMs = BUDGET_MS): void {
       page += 1;
       findings += result.nodes.length;
       cursor = result.endCursor;
-      // totalCount arrives only on page 0; keep it once seen so the UI can show a %.
-      if (result.totalCount !== null) totalCount = result.totalCount;
-      updateJob(job.job_id, { cursor, page, findings_so_far: findings, total_count: totalCount });
+      // totalCount arrives only on page 0; keep it once seen so the UI can show a % — and so
+      // the completeness gate can compare the scan against it.
+      if (result.totalCount !== null) {
+        totalCount = result.totalCount;
+        totalReported = true;
+      }
+      if (result.partialErrors.length) {
+        // Recorded beside the rows, never fatal — the nodes are good and the count is suspect
+        // (wizClient.PageResult). The count goes on the scan row, the messages to the
+        // execution log.
+        partialPages += 1;
+        console.warn(JSON.stringify({
+          stage: "partialPage", scanId, page: pageName, errors: result.partialErrors.slice(0, 3),
+        }));
+      }
+      updateJob(job.job_id, {
+        cursor,
+        page,
+        findings_so_far: findings,
+        total_count: totalCount,
+        total_reported: totalReported,
+        partial_pages: partialPages,
+      });
 
-      if (!result.hasNextPage || page >= MAX_PAGES) break;
+      if (!result.hasNextPage) break;
+      // MAX_PAGES THROWS. Stopping the walk quietly here — what this loop used to do — handed
+      // the ledger a truncated register that looked complete, and every finding past the last
+      // page resolved by disappearance. It is a backstop against a cursor that never ends, not
+      // an expectation (1,000 pages is up to 500k findings), so the scan fails instead.
+      if (page >= MAX_PAGES) {
+        throw new WizQueryError(
+          `Wiz walk reached MAX_PAGES (${MAX_PAGES}) and the cursor still reports more. ` +
+            "Refusing to truncate silently — a partial register that looks complete is worse " +
+            "than a failed scan.",
+        );
+      }
       if (Date.now() - started > budgetMs) {
         archive.writeSlimRecords(scanId, slim);
         archive.writePageRuns(scanId, pageRuns);
@@ -453,7 +492,7 @@ function step(job: JobRow, budgetMs = BUDGET_MS): void {
     archive.writeSlimRecords(scanId, slim);
     archive.writePageRuns(scanId, pageRuns);
     updateJob(job.job_id, { phase: "RECONCILING" });
-    finishScan(job.job_id, scanId, params, slim);
+    finishScan(job.job_id, scanId, params, slim, fetchAccount(totalCount, totalReported, partialPages));
   } catch (e) {
     if (e instanceof ScanCancelled) {
       finalizeCancel(job);
@@ -483,11 +522,39 @@ function step(job: JobRow, budgetMs = BUDGET_MS): void {
   }
 }
 
-function finishScan(jobId: string, scanId: string, params: ScanParams, slim: Rec[]): void {
+/** What the fetch said about itself: the tenant's total (null when never reported), partial pages. */
+interface FetchAccount {
+  reportedTotal: number | null;
+  partialPages: number;
+}
+
+/**
+ * The fetch account off the job row's fields. A total of 0 counts as REPORTED only when the row
+ * says so — a job started before `total_reported` existed reads 0 as "not reported", which
+ * defers an empty scan rather than letting it resolve the register.
+ */
+function fetchAccount(totalCount: number, totalReported: boolean, partialPages: number): FetchAccount {
+  const n = Number(totalCount);
+  const reportedTotal = Number.isFinite(n) && (totalReported || n > 0) ? n : null;
+  return { reportedTotal, partialPages: Number(partialPages) || 0 };
+}
+
+function finishScan(
+  jobId: string,
+  scanId: string,
+  params: ScanParams,
+  slim: Rec[],
+  fetched: FetchAccount,
+): void {
   // Past FETCHING the scan finishes (seconds) rather than cancelling; drop any pending
   // Stop request so its flag can't outlive the job.
   clearCancel(jobId);
   let records = slim;
+  // The completeness gate's input — see ledgerCore.PersistFlatOptions. A full scan is assessed
+  // on its own records; an incremental one inherits its baseline's verdict, because its
+  // records are the baseline's plus a delta.
+  let completeness: ledgerStore.PersistFlatOptionsArg["completeness"] = null;
+  let incremental: ledgerStore.PersistFlatOptionsArg["incremental"] = null;
   if (params.incremental) {
     if (!slim.length) {
       // Nothing changed: no scan row, no snapshot — the badge baseline stays put.
@@ -503,6 +570,16 @@ function finishScan(jobId: string, scanId: string, params: ScanParams, slim: Rec
       });
       return;
     }
+    const baselineRow = ledgerStore
+      .loadScanRows()
+      .find((s) => s.scan_id === params.baselineScanId);
+    incremental = {
+      baselineDisappearance: baselineRow?.disappearance ?? null,
+      partialPages: fetched.partialPages,
+      // Measured on the DELTA as fetched: the merge below keys by vulnKey, so the merged set
+      // can hold no repeat to count.
+      duplicates: distinctNodes(slim).duplicates,
+    };
     records = mergeNodes(baselineSlim, slim);
     // The merged set becomes the scan's replayable payload (page-0001..N).
     let pageNo = 1;
@@ -514,6 +591,7 @@ function finishScan(jobId: string, scanId: string, params: ScanParams, slim: Rec
     writeFrameSafely(scanId, records, (i) => Math.floor(i / 500) + 1);
   } else {
     writeFrameSafely(scanId, records, pageOfFromRuns(archive.readPageRuns(scanId), records.length));
+    completeness = fetched;
   }
 
   updateJob(jobId, { phase: "PERSISTING", scan_id: scanId });
@@ -524,19 +602,56 @@ function finishScan(jobId: string, scanId: string, params: ScanParams, slim: Rec
   // fires shortly after, finds the job still PERSISTING with the lock free, and rolls it back
   // from the journal. Cleared below the moment the write lands.
   scheduleContinuation();
-  ledgerStore.persistFlatScan(records, {
+  const outcome = ledgerStore.persistFlatScan(records, {
     mode: params.mode,
     scanId,
     scannedSeverities: params.severities,
     rawRef: archive.scanFolder(scanId).getId(),
     jobId,
+    completeness,
+    incremental,
   });
+  recordDeferral(outcome);
   afterPersist(records);
   updateJob(jobId, { phase: "DONE" });
   clearContinuationTriggers(); // the commit record landed — retire the watchdog
   // A Stop pressed after finishScan's clearCancel above (i.e. during the persist) would
   // otherwise leave its CANCEL_ property behind for good.
   clearCancel(jobId);
+}
+
+/**
+ * A deferred scan is a scan that SUCCEEDED and still owes the operator a sentence: its absences
+ * were held back, so the register's open count is carrying findings this scan could not
+ * confirm. That goes in the error log (Settings → Recent errors) as a warning, because the job
+ * row records DONE and nothing else on the server would say it. Best effort, like every chore
+ * after the commit.
+ */
+function recordDeferral(outcome: ledgerStore.PersistOutcome): void {
+  try {
+    const row = outcome.scanRow;
+    const verdict = readDisappearance(row?.disappearance ?? null);
+    if (!row || !verdict.deferred) return;
+    const reported = row.reported_total ?? null;
+    const total = reported === null ? "no total reported" : `${reported} reported`;
+    const held = `${outcome.absent} open finding(s) it did not return were left open; the next `
+      + "complete scan will resolve them.";
+    errorLog.recordError(
+      "scanCompleteness",
+      // A quick refresh is not judged on its own records (ledgerCore.PersistFlatOptions); it
+      // inherited the deferral, and saying "looked incomplete" of it would send the operator
+      // after a delta that was fine.
+      row.mode.includes("incremental")
+        ? `Quick refresh ${row.scan_id} was built on a deferred scan `
+          + `(${verdict.reason ?? "unknown"}), so it was deferred too. ${held}`
+        : `Scan ${row.scan_id} looked incomplete (${verdict.reason ?? "unknown"}: `
+          + `${row.total} received, ${total}, ${row.duplicates ?? 0} duplicate(s), `
+          + `${row.partial_pages ?? 0} partial page(s)). ${held}`,
+      "warning",
+    );
+  } catch (e) {
+    console.warn(`Recording a deferred scan failed: ${e}`);
+  }
 }
 
 function loadBaselineSlim(baselineScanId: string): Rec[] | null {
@@ -645,7 +760,13 @@ export function continueJob(_e?: unknown): void {
       } else if (job.phase === "RECONCILING") {
         const params = JSON.parse(job.params_json ?? "{}") as ScanParams;
         const slim = (archive.readSlimRecords(job.scan_id!) as Rec[]) ?? [];
-        finishScan(job.job_id, job.scan_id!, params, slim);
+        finishScan(
+          job.job_id,
+          job.scan_id!,
+          params,
+          slim,
+          fetchAccount(job.total_count, job.total_reported === true, job.partial_pages ?? 0),
+        );
       } else if (job.phase === "PERSISTING" || job.phase === "REPLAYING") {
         // The watchdog finishScan arms before the write. Reaching it means that execution
         // died mid-persist: recoverIfNeeded() restores the ledger from the journal, or closes

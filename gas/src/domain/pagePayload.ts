@@ -177,6 +177,10 @@ export function programTrendSlice(trends: unknown): Rec | null {
 const SCAN_ROW_KEYS = [
   "scan_id", "ts", "mode", "shape", "total",
   "new_count", "resolved_count", "reopened_count", "severities", "sealed",
+  // The completeness verdict — what the table marks a deferred scan by
+  // (gas_shared/domain/scanCompleteness.ts). The other three record columns (reported_total,
+  // partial_pages, duplicates) are operator diagnostics that reach the error log instead.
+  "disappearance",
 ] as const;
 
 /** `getScanHistory`'s scans, narrowed to the columns the table reads. */

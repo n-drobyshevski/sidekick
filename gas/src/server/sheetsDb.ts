@@ -24,6 +24,11 @@ export const TAB_HEADERS: Record<string, string[]> = {
   [TABS.scans]: [
     "scan_id", "ts", "mode", "shape", "total", "new_count", "resolved_count",
     "reopened_count", "raw_ref", "obs_ref", "severities", "sealed",
+    // THE COMPLETENESS RECORD (gas_shared/domain/scanCompleteness.ts), appended last so
+    // `ensureHeaders` adds them to an existing tab without moving a column. `disappearance` is
+    // the verdict a replay reads back — "complete", "deferred:<reason>", or blank on a row
+    // written before the gate, which replays under the old rules.
+    "reported_total", "partial_pages", "duplicates", "disappearance",
   ],
   [TABS.vulnLedger]: [
     "vuln_key", "cve", "severity", "asset_id", "asset_name", "asset_type", "cloud",
@@ -68,6 +73,10 @@ export const TAB_HEADERS: Record<string, string[]> = {
     "job_id", "kind", "phase", "scan_id", "cursor", "page", "findings_so_far",
     "page_size", "total_count", "params_json", "journal_ref", "error",
     "started_at", "updated_at",
+    // A scan's fetch-side account, carried across continuation hops to the persist that runs
+    // the completeness gate: whether the tenant reported a total at all (`total_count` reads 0
+    // for both "reported 0" and "not reported"), and how many pages came back PARTIAL.
+    "total_reported", "partial_pages",
   ],
 };
 

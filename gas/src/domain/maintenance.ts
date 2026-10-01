@@ -99,6 +99,11 @@ export function replayScans(
         scannedSeverities: parseSeverities(row.severities),
         rawRef: row.raw_ref,
         obsRef: row.obs_ref,
+        // The completeness verdict the LIVE persist reached, re-applied — never re-assessed. The
+        // tenant's total and the partial-page count are not in the archived records, so a replay
+        // that re-ran the gate would have to guess them; reading the stored row is what makes a
+        // delete-and-replay land on the ledger the live sequence wrote.
+        stored: row,
       });
       observationsByScan[row.scan_id] = observations;
     }
@@ -289,6 +294,9 @@ export function buildCheckpoint(
         mode: r.mode,
         scanId: r.scan_id,
         scannedSeverities: scope,
+        // Same rule as `replayScans`: the stored verdict, so the checkpoint is the ledger the
+        // live sequence actually reached at the floor.
+        stored: r,
       });
     } else if (payload === null) {
       reinsertScanRow(tmp, r); // grouped scans never touch the ledger

@@ -44,6 +44,13 @@ export interface JobRow {
   // 0 = unknown (older deployment without the column, or a tenant that omits it) →
   // the progress UI falls back to an indeterminate bar.
   total_count: number;
+  // Scan jobs only (0 elsewhere). Whether `total_count` is the tenant's answer rather than the
+  // placeholder — the one bit it cannot carry, since a register the tenant reports EMPTY reads 0
+  // too, and the completeness gate treats "reported 0" (everything is gone) and "reported
+  // nothing" very differently. And how many pages came back with GraphQL errors beside their
+  // nodes. Both optional on create: a row from before the columns reads 0 / false.
+  total_reported?: boolean;
+  partial_pages?: number;
   params_json: string | null;
   journal_ref: string | null;
   error: string | null;
@@ -96,6 +103,10 @@ function rowToJob(r: Rec): JobRow {
     findings_so_far: Number(r["findings_so_far"] ?? 0),
     page_size: Number(r["page_size"] ?? 0),
     total_count: Number(r["total_count"] ?? 0),
+    total_reported:
+      r["total_reported"] === true || r["total_reported"] === 1 || r["total_reported"] === "1" ||
+      String(r["total_reported"] ?? "").toUpperCase() === "TRUE",
+    partial_pages: Number(r["partial_pages"] ?? 0) || 0,
     params_json: (r["params_json"] as string | null) ?? null,
     journal_ref: (r["journal_ref"] as string | null) ?? null,
     error: normError(r["error"]),

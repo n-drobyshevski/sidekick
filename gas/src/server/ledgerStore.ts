@@ -28,6 +28,7 @@ import {
   severityCountsFromObservations,
   type BaseRow,
   type LedgerState,
+  type PersistFlatOptions,
   type ScanRow,
 } from "../domain/ledgerCore";
 import {
@@ -103,7 +104,23 @@ function rowToScan(r: Rec): ScanRow {
     obs_ref: (r["obs_ref"] as string | null) ?? null,
     severities: (r["severities"] as string | null) ?? null,
     sealed: r["sealed"] === 1 || r["sealed"] === "1" || r["sealed"] === true ? 1 : 0,
+    // The completeness record. Blank cells stay null — on a row written before these columns
+    // existed that is the LEGACY marker the replay reads (`scanCompleteness.readDisappearance`),
+    // so it must not be coerced to 0 or to "complete" on the way in.
+    reported_total: numOrNull(r["reported_total"]),
+    partial_pages: numOrNull(r["partial_pages"]),
+    duplicates: numOrNull(r["duplicates"]),
+    disappearance:
+      r["disappearance"] === null || r["disappearance"] === undefined || r["disappearance"] === ""
+        ? null
+        : String(r["disappearance"]),
   };
+}
+
+function numOrNull(v: unknown): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 }
 
 function rowToLedger(r: Rec): LedgerRow {
@@ -221,6 +238,10 @@ export function writeStateTables(state: LedgerState): void {
   // every write until someone re-ran setup(). Cheap (one header read per tab) and idempotent.
   ensureTab(TABS.vulnLedger);
   ensureTab(TABS.episodes);
+  // The scans tab too: a replay writes back every row's completeness verdict, and a tab that
+  // predates those columns would drop it — turning a deferred scan into a legacy one on the
+  // next replay.
+  ensureTab(TABS.scans);
   overwrite(TABS.vulnLedger, Object.values(state.ledger) as unknown as Rec[]);
   overwrite(TABS.episodes, state.episodes as unknown as Rec[]);
   overwrite(TABS.scans, scansAsc(state.scans) as unknown as Rec[]);
@@ -233,7 +254,12 @@ export function writeStateTables(state: LedgerState): void {
 export interface PersistOutcome {
   deltas: Deltas;
   scanRow: ScanRow | null;
+  /** Open rows the scan would close by absence — held back when it was deferred. 0 on a no-op. */
+  absent: number;
 }
+
+/** The completeness inputs `persistFlatScan` below forwards to the pure core. */
+export type PersistFlatOptionsArg = Pick<PersistFlatOptions, "completeness" | "incremental">;
 
 /**
  * Persist a flat scan (records already fetched; raw pages already archived under
@@ -247,6 +273,10 @@ export function persistFlatScan(
     scannedSeverities?: string[] | null;
     rawRef?: string | null;
     jobId?: string | null;
+    /** A live full scan's fetch account — see `ledgerCore.PersistFlatOptions.completeness`. */
+    completeness?: PersistFlatOptions["completeness"];
+    /** A live incremental scan's inherited verdict — see `PersistFlatOptions.incremental`. */
+    incremental?: PersistFlatOptions["incremental"];
   },
 ): PersistOutcome {
   const state = loadState();
@@ -260,6 +290,7 @@ export function persistFlatScan(
         reopened_count: existing.reopened_count,
       },
       scanRow: null,
+      absent: 0,
     };
   }
 
@@ -284,14 +315,22 @@ export function persistFlatScan(
     });
   }
 
-  const { deltas, observations, scanRow } = coreFlat(state, records, {
+  const { deltas, observations, scanRow, absent } = coreFlat(state, records, {
     mode: options.mode,
     scanId,
     scannedSeverities: options.scannedSeverities ?? null,
     rawRef: options.rawRef ?? null,
+    completeness: options.completeness ?? null,
+    incremental: options.incremental ?? null,
   });
   const obsRef = archive.writeObservations(scanId, observations);
   if (scanRow) scanRow.obs_ref = obsRef;
+
+  // The commit row below must land on a header row that has the completeness columns:
+  // `appendRows` maps by the headers read off the sheet, and would silently drop the verdict of
+  // a deployment whose tab predates them (`sheetsDb.ensureTab`). Healed before any write, so a
+  // failure here leaves nothing to roll back.
+  ensureTab(TABS.scans);
 
   // 4. Wholesale rewrites (episodes may carry new supersessions from collisions).
   overwrite(TABS.vulnLedger, Object.values(state.ledger) as unknown as Rec[]);
@@ -304,7 +343,7 @@ export function persistFlatScan(
 
   updateJob(jobId, { phase: "DONE" });
   archive.trashFile(journalRef);
-  return { deltas, scanRow };
+  return { deltas, scanRow, absent };
 }
 
 /** Persist a grouped scan (archive + scans row only; zero deltas). */
@@ -328,7 +367,7 @@ export function persistGroupedScan(
     appendRows(TABS.scans, [scanRow as unknown as Rec]);
     invalidateLedgerMemos();
   }
-  return { deltas, scanRow };
+  return { deltas, scanRow, absent: 0 };
 }
 
 // ------------------------------------------------------------------------- readers
@@ -878,6 +917,7 @@ export function importFinalizeSharded(sessionId: string): ImportCounts & {
   // Append sealed scans (dedup for finalize-resume).
   const present = new Set(loadScanRows().map((s) => s.scan_id));
   const toAppend = session.sealedScans.filter((s) => !present.has(s.scan_id));
+  ensureTab(TABS.scans); // the imported completeness record needs its columns
   chunkedAppend(TABS.scans, toAppend as unknown as Rec[]);
   invalidateLedgerMemos();
 

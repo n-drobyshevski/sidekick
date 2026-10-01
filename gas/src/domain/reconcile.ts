@@ -4,10 +4,18 @@
 //   * First sighting      -> OPEN, first_seen = min(API firstDetectedAt, scan ts).
 //   * Persisting (OPEN)   -> advance last_seen; keep first_seen earliest-known.
 //   * API-resolved        -> resolvedAt present or status in RESOLVED_STATUSES.
-//   * Disappearance       -> was OPEN and present in the immediately previous scan but
-//                            absent now -> resolved at the current scan ts.
+//   * Disappearance       -> was OPEN and present in the immediately previous scan (or,
+//                            after deferred scans, anywhere in the window since the last
+//                            complete one) but absent now -> resolved at the current scan ts.
 //   * Reopen              -> a RESOLVED vuln reappears as active -> OPEN again,
 //                            reopened_count++, first_seen reset (new episode).
+//
+// AND ONE THE PYTHON NEVER HAD:
+//   * Deferral            -> a scan that failed the completeness gate
+//                            (gas_shared/domain/scanCompleteness.ts) lands what it saw and
+//                            resolves NOTHING by absence; the next complete scan adjudicates the
+//                            whole window since the last complete one
+//                            (`ledgerCore.disappearanceWindow`).
 
 import { RESOLVED_STATUSES } from "./config";
 import { field, vulnKey } from "./lifecycle";
@@ -314,11 +322,28 @@ export interface ReconcileOptions {
   prevScanTs?: string | null;
   scannedSeverities?: string[] | null;
   prevScanIdBySeverity?: Record<string, string> | null;
+  /**
+   * Which prior scans a row may have last been seen in for its absence now to resolve it — per
+   * severity, plus a fallback for a severity the map does not name. Built by
+   * `ledgerCore.disappearanceWindow`: the newest COMPLETE scan covering the severity and every
+   * DEFERRED scan after it. Takes precedence over `prevScanIdBySeverity`, which is the one-scan
+   * special case of the same idea (and what the Python fixture pins).
+   */
+  disappearanceWindow?: DisappearanceWindow | null;
+  /** The scan failed the completeness gate: land what it saw, resolve nothing by absence. */
+  deferDisappearance?: boolean;
+}
+
+export interface DisappearanceWindow {
+  bySeverity: Record<string, string[]>;
+  fallback: string[];
 }
 
 /**
  * Reconcile one flat scan against the prior ledger.
- * Returns {ledger, observations, deltas}; neither input is mutated.
+ * Returns {ledger, observations, deltas, absent}; neither input is mutated. `absent` counts the
+ * OPEN rows this scan would close by absence — deferred or not, so a deferral can say what it
+ * held back.
  */
 export function reconcile(
   currentRecords: Rec[],
@@ -327,12 +352,19 @@ export function reconcile(
   scanTs: string,
   prevScanId: string | null,
   options: ReconcileOptions = {},
-): { ledger: Record<string, LedgerRow>; observations: Observation[]; deltas: Deltas } {
+): {
+  ledger: Record<string, LedgerRow>;
+  observations: Observation[];
+  deltas: Deltas;
+  absent: number;
+} {
   const {
     disappearanceMode = "scan_ts",
     prevScanTs = null,
     scannedSeverities = null,
     prevScanIdBySeverity = null,
+    disappearanceWindow = null,
+    deferDisappearance = false,
   } = options;
 
   // Rows are flat scalar dicts, so a shallow per-row copy preserves the inputs.
@@ -349,7 +381,10 @@ export function reconcile(
 
   for (const rec of currentRecords) {
     const key = vulnKey(rec);
-    if (seen.has(key)) continue; // duplicate within the same scan — first wins
+    // Duplicate within the same scan — first wins. How many there were is the completeness
+    // gate's `duplicates` count (by Wiz `id`, which is this key for every node carrying one),
+    // taken before reconcile runs, because a cursor that repeats rows has skipped others.
+    if (seen.has(key)) continue;
     seen.add(key);
 
     const sev = normalizeSeverity(clean(rec["severity"]));
@@ -457,9 +492,17 @@ export function reconcile(
     });
   }
 
-  // Disappearance: OPEN vulns present in the immediately-previous scan but absent now.
+  // Disappearance: OPEN vulns last seen inside the disappearance window but absent now.
+  let absent = 0;
   if (prevScanId !== null) {
     const scope = scannedSeverities !== null ? new Set(scannedSeverities) : null;
+    const windowBySev = new Map<string, Set<string>>();
+    const windowFallback = disappearanceWindow ? new Set(disappearanceWindow.fallback) : null;
+    if (disappearanceWindow) {
+      for (const [sev, ids] of Object.entries(disappearanceWindow.bySeverity)) {
+        windowBySev.set(sev, new Set(ids));
+      }
+    }
     for (const [key, row] of Object.entries(updated)) {
       if (seen.has(key) || row.status === "RESOLVED") continue;
       const sevRow = row.severity;
@@ -467,9 +510,24 @@ export function reconcile(
         // This severity wasn't scanned — absence is expected, not resolution.
         continue;
       }
-      const expectedPrev =
-        (prevScanIdBySeverity ?? {})[sevRow ?? ""] ?? prevScanId;
-      if (row.last_scan_id !== expectedPrev) continue;
+      // Only a row last seen INSIDE THE WINDOW can be said to have disappeared now. A row last
+      // seen before it already had its disappearance adjudicated; re-resolving it would push
+      // resolved_at forward every run. Without deferred scans the window is exactly the
+      // immediately previous covering scan — the Python's `expectedPrev`, which is what a caller
+      // that passes no window still gets.
+      if (windowFallback !== null) {
+        const ids = windowBySev.get(sevRow ?? "") ?? windowFallback;
+        if (row.last_scan_id === null || !ids.has(row.last_scan_id)) continue;
+      } else {
+        const expectedPrev =
+          (prevScanIdBySeverity ?? {})[sevRow ?? ""] ?? prevScanId;
+        if (row.last_scan_id !== expectedPrev) continue;
+      }
+      absent += 1;
+      // A DEFERRED scan resolves nothing by absence: it could not prove its absences are real.
+      // The row stays OPEN with its old last_scan_id, which is still inside the next complete
+      // scan's window, so it is adjudicated there.
+      if (deferDisappearance) continue;
       if (disappearanceMode === "midpoint" && prevScanTs) {
         row.resolved_at = midpointIso(prevScanTs, scanTsIso);
       } else {
@@ -496,5 +554,6 @@ export function reconcile(
       resolved_count: resolvedCount,
       reopened_count: reopenedCount,
     },
+    absent,
   };
 }
