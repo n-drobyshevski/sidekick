@@ -151,6 +151,25 @@ row rather than in a footnote. Where `resolution_src` is `disappeared` the date 
 that first stopped seeing the finding — an upper bound whose error is the scan interval. On
 SAST that is *every* closed row; on SCA and secrets it is most of them.
 
+**Absence only resolves a finding when the scan was complete.** Each live scan is checked
+first (`src/domain/scanCompleteness.ts`): no rows while open findings exist, fewer distinct
+rows than Wiz's own total (only when no page came back partial — SAST always does), or more
+repeated rows than `max(5, 1%)`. A scan that fails is still saved, but it is *deferred*:
+nothing it missed is resolved, the Data page's error log says so, and Scan history marks the
+row. The next complete scan resolves everything missed since the last complete one. The
+verdict is stored on the scan row, so deleting a scan and replaying the rest reaches the same
+ledger. **A repository that vanishes whole is not a fix either**: on SCA and secrets, whose
+fetch returns resolved findings too, a complete scan that returns nothing at all for a
+repository whose missing open findings number three or more closes them as `repo_dropout` —
+out of the backlog and out of every resolved count, MTTR, In-SLA and percentile figure, and
+in the Kaplan–Meier half-life as *censored* at the age they had when a scan last saw them (the
+register watched them stay open that long, then lost sight; a credential is censored there
+too, or at its last validation if earlier, and is not counted as still live). If the
+repository comes back,
+they resume their original clock rather than counting as reopened. SAST never takes this
+path: its fetch returns open findings only, so a repository whose findings were all fixed
+returns nothing either, and its findings close by disappearance as before.
+
 **The design that carried the risk.** Neither source register does three scopes in one
 ledger: `gas/` has one, and `brick/`'s reconcile takes a `scope` but only stamps it,
 because its caller hands it a prior already filtered down. Here the prior is one tab holding
@@ -305,10 +324,22 @@ about at least two of them, and the clock is the product.
 3. `npm run push`
 4. In the Apps Script editor, run `setup()` once. It creates the ledger spreadsheet and the
    Drive archive folder, ensures every tab and header, and seeds `ALLOWED_USERS` with the
-   owner. It also installs the standing triggers — one daily sync plus three staggered
-   read-model warms — and records their schedule as a signature so a second `setup()` on an
-   unchanged schedule adds nothing rather than accumulating duplicates against the 20-trigger
-   quota. Budget: 4 standing + up to 2 transient (continuation and watchdog) = 6 of 20.
+   owner. It also installs the standing triggers — one daily sync at Settings → System's
+   sync hour plus three staggered read-model warms, all pinned to Europe/Paris — and records
+   their schedule as a signature so a second `setup()` on an unchanged schedule adds nothing
+   rather than accumulating duplicates against the 20-trigger quota. Budget: 4 standing + up
+   to 3 transient (a sync's continuation and watchdog, and the post-sync warm's one-shot
+   `trigger_continueWarm`) = 7 of 20.
+
+   **Run `setup()` as the account that deploys the web app.** The manifest sets
+   `executeAs: USER_DEPLOYING`, so every RPC — including a Settings save that moves the sync
+   hour, which reinstalls the daily trigger on the spot — runs as the deploying account, and
+   installable triggers belong to the account that created them: `getProjectTriggers()` lists
+   only the running account's. A `setup()` run by another editor installs a daily trigger the
+   web app can neither see nor move, and the next hour change adds a second one beside it.
+   A reinstall that fails on save keeps the saved hour and lands in Data → Recent errors;
+   `deploymentDiagnostic()` flags the trigger's recorded hour against the saved one until the
+   next Settings save (any save retries it) or a `setup()` run converges them.
 5. Set `WIZ_API_TOKEN`, or `WIZ_CLIENT_ID` + `WIZ_CLIENT_SECRET`, in Project Settings. Then
    open Settings → System and press **Test connection**: `hasCredentials` only means three
    Script Properties are non-empty, and the button is what turns that into a token exchange
@@ -335,8 +366,9 @@ about at least two of them, and the clock is the product.
    2. In the editor, run **`wizDiagnostic()`** and **accept the consent prompt**. Read the
       **Execution log** — that is where both diagnostics print, and it names which step
       failed.
-   3. **Deploy → Manage deployments → Edit → New version.** `clasp push` changes the code the
-      editor runs; the `/exec` URL keeps serving the version it was pinned to.
+   3. **Deploy → Manage deployments → Edit → New version** (or `npm run deploy`, step 8).
+      `clasp push` changes the code the editor runs; the `/exec` URL keeps serving the version
+      it was pinned to.
    4. Check the daily sync trigger still fires. A scope change is the one thing that can
       suspend an installable trigger with nothing in the UI to say so.
 6. Optionally, set the two **repository tag keys** in Project Settings → Script Properties.
@@ -359,6 +391,12 @@ about at least two of them, and the clock is the product.
    rather than stopping at the first failure. `wizDiagnostic()` is its network-touching
    sibling: it does the real token exchange and one query, and names which of the two failed
    — they look identical from the app and have different remedies.
+8. Deploy: **Deploy → New deployment → Web app** (execute as you, access: domain), or
+   `npm run deploy:new`, once. Every later deploy goes **in place** —
+   `DEPLOYMENT_ID=<id> npm run deploy` (the id is on Deploy → Manage deployments, or
+   `npx clasp deployments`) pushes, cuts a version and repoints that deployment, so the `/exec`
+   URL people and the hub hold keeps working. It refuses to run without the id rather than
+   minting a new URL.
 
 Access fails **closed**: an unset `ALLOWED_USERS` means owner-only, and the owner is allowed
 by identity rather than by membership.
@@ -530,14 +568,15 @@ because it *preserves* the repo/branch duplicate, and the two twins carry `first
 a median of 20 days apart. Key on `(secretDataId, path, lineNumber)` with the earliest
 `firstSeenAt` (§10.6, §10.7).
 
-**That key is now implemented.** `src/domain/secretsLedger.ts` is the secrets normalizer: it
-derives the key from the triple, folds the twins, and resolves every field they can disagree
-about rather than taking whichever row the API returned first — earliest `first_seen`, latest
-`last_seen`, OPEN beating RESOLVED, the worse severity, and `VALID` beating `INVALID` beating
-`UNKNOWN` on the rotation axis. Because the fold *discards* a measurement, each row records
-what it discarded: `twin_count`, `twin_first_seen_spread_days` and `source_external_ids`.
-`test/secretsLedger.test.js` pins each rule to the section that measured it, and pins the
-`externalId` key producing two findings where the ledger key produces one.
+**That key is now implemented.** `lifecycle.ts`'s `findingKey` hashes the triple, and
+`reconcile.ts`'s `foldSecretTwins` collapses the twins before the reconcile loop: earliest
+`firstSeenAt`, the `REPOSITORY_BRANCH` twin's resource, status from the twin seen last, and
+the validation reading from a measured twin (`VALID`/`INVALID` over `UNKNOWN`, then the latest
+`lastValidatedAt`, `VALID` on a tie). The fold records what it did per sync as `TwinStats` —
+keys and nodes folded, the median birth-date gap, and how many keys spanned more than one
+repository (the measurement that says whether the key needs a repository in it) — which the
+secrets page prints from the daily history blob. `test/reconcile.test.ts` pins the rules and
+the `externalId` key producing two findings where the ledger key produces one.
 
 §10.9's probe defect is fixed in the same pass, along with one of the same family it did not
 name: an unrecognised argument is now **refused** rather than ignored (`--crosstab` was never

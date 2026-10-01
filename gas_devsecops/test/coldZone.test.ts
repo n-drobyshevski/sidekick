@@ -48,6 +48,7 @@ import {
   DEFAULT_COLD_TARGET_SHARE_PCT,
   DEFAULT_COLD_ZONE_MODE,
   RESOLUTION_DISAPPEARED,
+  RESOLUTION_REPO_DROPOUT,
   type ColdZoneMode,
 } from "../src/domain/config";
 
@@ -285,6 +286,44 @@ describe("a repository the scanner stopped returning is 'unobserved', never warm
     expect(repoOf(out2, "repo-blank").observed).toBe(true);
     const out3 = profile([row({ repo_id: "repo-blank", last_scan_id: "", last_seen: back(30) })]);
     expect(repoOf(out3, "repo-blank").observed).toBe(false);
+  });
+});
+
+describe("a deferred newest scan does not make the repositories it missed unobserved", () => {
+  // The newest sca scan came back short and was deferred (scanCompleteness.ts), so it proved
+  // nothing about what it missed. With the window back to the last COMPLETE scan, a repository
+  // last seen there is still observed; without it, it would read as gone.
+  const rows = [row({ repo_id: "repo-missed", last_scan_id: "scan-sca-8" })];
+  it("is observed when its last scan is inside the window", () => {
+    const out = profile(rows, {
+      newestScanByScope: { sca: { ...NEWEST_SCA, window_ids: ["scan-sca-9", "scan-sca-8"] } },
+    });
+    expect(repoOf(out, "repo-missed").observed).toBe(true);
+  });
+  it("is unobserved once a complete scan is the newest and it was not in it", () => {
+    const out = profile(rows, {
+      newestScanByScope: { sca: { ...NEWEST_SCA, window_ids: ["scan-sca-9"] } },
+    });
+    expect(repoOf(out, "repo-missed").observed).toBe(false);
+  });
+});
+
+describe("a repository drop-out is the fingerprint, never movement", () => {
+  // The repository left an sca scan (repo_dropout) but is still observed through sast, so the
+  // verdict is decided by movement — and the drop-out's resolved_at must not be that movement.
+  const out = profile(
+    [
+      row({ status: "RESOLVED", resolution_src: RESOLUTION_REPO_DROPOUT, resolved_at: back(1), last_scan_id: "scan-sca-1" }),
+      row({ status: "RESOLVED", resolution_src: RESOLUTION_REPO_DROPOUT, resolved_at: back(1), last_scan_id: "scan-sca-1" }),
+      row({ scope: "sast", last_scan_id: "scan-sast-9" }),
+    ],
+    { newestScanByScope: { sca: NEWEST_SCA, sast: { scan_id: "scan-sast-9", ts: AS_OF } } },
+  );
+  const repo = repoOf(out, "repo-1");
+  it("is observed through its other scope, has no movement, and publishes the drop-out", () => {
+    expect(repo.observed).toBe(true);
+    expect(repo.idle_days).toBeNull(); // nothing closed — the drop-out is not a close
+    expect(repo.disappeared_at_last_observation).toBe(2);
   });
 });
 

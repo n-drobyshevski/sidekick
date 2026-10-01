@@ -18,6 +18,7 @@ const FULL_MTTR = {
   slaPct: 61.2,
   oldestDays: 412,
   rowCount: 99,
+  leftCoverage: 0,
   remediation: {
     pctiles: { overall: { p50: 12, p90: 88 } },
     buckets: { "0-7": 4, "8-30": 11 },
@@ -25,6 +26,7 @@ const FULL_MTTR = {
       curve: Array.from({ length: 52 }, (_, i) => ({ t: i, s: 1 - i / 104 })),
       median: null,
       medianLowerBound: 118.4,
+      medianBoundReason: "past-cut",
       q25: 52.7,
       reliableUntil: 118.4,
       mean: 63.2,
@@ -47,10 +49,11 @@ const FULL_MTTR = {
   },
 };
 
-describe("execMttrSlice — the hero's km block, seven fields now, and nothing else", () => {
-  it("ships exactly rowCount, overall.{resolved,open} and km.{median,medianLowerBound,q25,reliableUntil,events,total,excludedPreEntry}", () => {
+describe("execMttrSlice — the hero's km block, eight fields now, and nothing else", () => {
+  it("ships exactly rowCount, leftCoverage, overall.{resolved,open} and km.{median,medianLowerBound,medianBoundReason,q25,reliableUntil,events,total,excludedPreEntry}", () => {
     const out = execMttrSlice(FULL_MTTR)!;
-    expect(Object.keys(out).sort()).toEqual(["overall", "remediation", "rowCount"]);
+    // leftCoverage: the repository drop-outs, the third state rowCount sums over.
+    expect(Object.keys(out).sort()).toEqual(["leftCoverage", "overall", "remediation", "rowCount"]);
     expect(Object.keys(out.overall as object).sort()).toEqual(["open", "resolved"]);
     expect(Object.keys(out.remediation as object)).toEqual(["km"]);
     // MTTR delayed-entry package: q25/reliableUntil joined median/medianLowerBound so the
@@ -58,8 +61,8 @@ describe("execMttrSlice — the hero's km block, seven fields now, and nothing e
     // window package: events/total/excludedPreEntry joined them so the hero's "Window …" line
     // can state how many fixes the estimate rests on without a second round trip to MTTR & SLA.
     expect((out.remediation as { km: object }).km).toEqual({
-      median: null, medianLowerBound: 118.4, q25: 52.7, reliableUntil: 118.4,
-      events: 32, total: 99, excludedPreEntry: 5,
+      median: null, medianLowerBound: 118.4, medianBoundReason: "past-cut", q25: 52.7,
+      reliableUntil: 118.4, events: 32, total: 99, excludedPreEntry: 5,
     });
   });
 
@@ -83,7 +86,9 @@ describe("execMttrSlice — the hero's km block, seven fields now, and nothing e
     // far more curve/aging/kmPerSev weight than FULL_MTTR's 52-point curve does, so the margin
     // against a 52k-row register is unaffected. /12 still clears "well over an order of
     // magnitude" (>10x) with room for the next small field this slice gains.
-    expect(after).toBeLessThan(before / 12);
+    // /11 since `leftCoverage` (the repository drop-outs the hero names apart) took that room:
+    // ~11.9x on this fixture.
+    expect(after).toBeLessThan(before / 11);
   });
 
   it("keeps the client's read paths intact", () => {
@@ -278,10 +283,11 @@ describe("execGroupSlice — five columns and the dimension tag", () => {
     const out = execGroupSlice(FULL_GROUP)!;
     expect(Object.keys(out).sort()).toEqual(["dimension", "rows"]);
     // MTTR delayed-entry package: kmQ25/kmMedianLowerBound joined kmMedian so the byScope
-    // table can run kmHalfLifeView per row too.
+    // table can run kmHalfLifeView per row too; kmMedianBoundReason so it can tell a floor
+    // from a reliability cut that left nothing.
     expect((out.rows as object[]).map((r) => Object.keys(r).sort())).toEqual([
-      ["group", "kmMedian", "kmMedianLowerBound", "kmQ25", "open"],
-      ["group", "kmMedian", "kmMedianLowerBound", "kmQ25", "open"],
+      ["group", "kmMedian", "kmMedianBoundReason", "kmMedianLowerBound", "kmQ25", "open"],
+      ["group", "kmMedian", "kmMedianBoundReason", "kmMedianLowerBound", "kmQ25", "open"],
     ]);
   });
 
@@ -348,8 +354,9 @@ describe("mttrPageTrendSlice — nine fields of thirteen", () => {
     expect((mttrPageTrendSlice(TRENDS)!.trend as { sla_net: number }[])[0]!.sla_net).toBe(1);
   });
 
-  it("keeps history, unlike the Scan History slice", () => {
-    expect(mttrPageTrendSlice(TRENDS)!.history).toEqual(TRENDS.history);
+  // No client reads it, and historyModel no longer builds it — a stray one is not passed on.
+  it("ships no history array", () => {
+    expect(mttrPageTrendSlice(TRENDS)).not.toHaveProperty("history");
   });
 });
 
@@ -399,13 +406,26 @@ describe("scanRowsSlice — the columns the table draws (no `shape`, adds `scope
     scan_id: "s1", ts: "2026-08-01T00:00:00Z", scope: "sca", mode: "full", total: 161,
     new_count: 4, resolved_count: 2, reopened_count: 0, severities: "CRITICAL,HIGH",
     sealed: 0, raw_ref: "1AbCdEfGhIjKlMnOpQrStUvWxYz012345", obs_ref: "1ZyXwVuTsRqPoNmLkJ",
+    reported_total: 170, partial_pages: 0, duplicates: 0, disappearance: "deferred:short",
+    dropout_count: null,
   };
 
   it("keeps every column the page reads", () => {
     expect(Object.keys(scanRowsSlice([ROW])[0]!).sort()).toEqual([
+      "disappearance", "dropout_count",
       "mode", "new_count", "reopened_count", "resolved_count", "scan_id",
       "scope", "sealed", "severities", "total", "ts",
     ]);
+  });
+
+  // The completeness verdict ships; the fetch diagnostics behind it do not — they are the
+  // operator's (Data → Recent errors), and the table marks a deferral from the verdict alone.
+  it("ships the completeness verdict and drops the fetch diagnostics", () => {
+    const out = scanRowsSlice([ROW])[0]!;
+    expect(out["disappearance"]).toBe("deferred:short");
+    expect(out).not.toHaveProperty("reported_total");
+    expect(out).not.toHaveProperty("partial_pages");
+    expect(out).not.toHaveProperty("duplicates");
   });
 
   // Drive file ids for the archived pages and the observation set: internal storage addresses

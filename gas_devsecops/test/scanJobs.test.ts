@@ -241,12 +241,16 @@ interface ScopePlan {
   rowsPerPage: number;
   /** Pages (1-based) that come back PARTIAL — nodes AND errors. */
   partialOn: number[];
+  /** What page 0 reports as the total; defaults to `pages * rowsPerPage` (an honest tenant). */
+  reportedTotal?: number | null;
 }
 
 const tenant: {
   plan: Record<Scope, ScopePlan>;
   msPerPage: number;
-  served: Array<{ scope: Scope; pageNumber: number; after: string | null; first: number }>;
+  served: Array<{
+    scope: Scope; pageNumber: number; after: string | null; first: number; includeTotalCount: boolean;
+  }>;
   onPage: ((scope: Scope, pageNumber: number) => void) | null;
 } = {
   plan: {
@@ -382,6 +386,7 @@ vi.mock("../src/server/wizClient", async (importOriginal) => {
         pageNumber,
         after: (variables["after"] as string | null) ?? null,
         first: Number(variables["first"] ?? 0),
+        includeTotalCount: variables["includeTotalCount"] === true,
       });
       const nodes: Rec[] = [];
       for (let i = 0; i < plan.rowsPerPage; i++) {
@@ -396,7 +401,13 @@ vi.mock("../src/server/wizClient", async (importOriginal) => {
           hasNextPage: paging.pageNumber < plan.pages,
           endCursor: `${scope}-cursor-${paging.pageNumber}`,
         },
-        totalCount: pageNumber === 0 ? plan.pages * plan.rowsPerPage : null,
+        // Like the real documents: the count is selected only when the variables ask for it
+        // (`@include(if: $includeTotalCount)`), so a sync that stopped asking reads null here.
+        totalCount: variables["includeTotalCount"] !== true
+          ? null
+          : plan.reportedTotal !== undefined
+            ? plan.reportedTotal
+            : plan.pages * plan.rowsPerPage,
         partialErrors: plan.partialOn.includes(pageNumber + 1)
           ? [`Cannot return null for non-nullable field Weakness.name (page ${pageNumber + 1})`]
           : [],
@@ -546,6 +557,12 @@ describe("one job walks all three scopes and commits once", () => {
     expect(byScope("secrets")).toEqual([0, 1, 2, 3]);
     expect(tenant.served).toHaveLength(41);
 
+    // THE COUNT IS ASKED FOR ON PAGE 0 OF EACH SCOPE AND NOWHERE ELSE — including page 3 of
+    // sca, the first page of the resumed hop, which a flag keyed on "first page of this
+    // execution" would wrongly ask again.
+    expect(tenant.served.filter((s) => s.includeTotalCount))
+      .toEqual(SCOPES.map((scope) => expect.objectContaining({ scope, pageNumber: 0 })));
+
     // ONE persistSync, three ScopePersist entries, in battery order.
     expect(calls.persistSync).toHaveLength(1);
     const battery = calls.persistSync[0]!;
@@ -563,8 +580,9 @@ describe("one job walks all three scopes and commits once", () => {
     expect(new Set(scanRows().map((r) => r["scan_id"])).size).toBe(1);
 
     expect(jobRow(jobId)["phase"]).toBe("DONE");
-    // The commit landed: both one-shots retired.
-    expect(projectTriggers).toEqual([]);
+    // The commit landed: both of the sync's one-shots retired, and the ONLY trigger left is
+    // the post-sync warm's — armed after the commit rather than run inside the sync's lock.
+    expect(projectTriggers).toEqual(["trigger_continueWarm"]);
   });
 
   it("gives every scope its own Drive archive under the shared syncId", async () => {
@@ -1031,6 +1049,118 @@ describe("the history entry", () => {
     // The caveat travels with the figure.
     expect(scopes[0]!["partial_pages"]).toBe(1);
     expect(stats["mttr"]).toBeTruthy();
+  });
+});
+
+/* ========================================================== the completeness gate */
+
+describe("the completeness gate on a live sync", () => {
+  const recorded = (): Rec[] => JSON.parse(props["RECENT_ERRORS"] ?? "[]") as Rec[];
+  const small = (): Record<Scope, ScopePlan> => ({
+    sca: { pages: 2, rowsPerPage: 2, partialOn: [] },
+    sast: { pages: 1, rowsPerPage: 2, partialOn: [1] },
+    secrets: { pages: 1, rowsPerPage: 2, partialOn: [] },
+  });
+
+  it("hands persistSync the tenant's total and the partial pages, and stores the verdict", async () => {
+    const { scanJobs } = await load();
+    tenant.plan = small();
+    scanJobs.startSync();
+
+    const handed = calls.persistSync[0]!.perScope as Array<{ scope: Scope; completeness: Rec }>;
+    expect(handed.map((e) => [e.scope, e.completeness])).toEqual([
+      ["sca", { reportedTotal: 4, partialPages: 0 }],
+      ["sast", { reportedTotal: 2, partialPages: 1 }],
+      ["secrets", { reportedTotal: 2, partialPages: 0 }],
+    ]);
+    // The record lands on the scans tab — through the REAL headers, so a column the tab lacks
+    // would read null here.
+    expect(scanRows().map((r) => [r["scope"], r["disappearance"], r["reported_total"], r["partial_pages"]]))
+      .toEqual([
+        ["sca", "complete", 4, 0],
+        ["sast", "complete", 2, 1],
+        ["secrets", "complete", 2, 0],
+      ]);
+    expect(recorded().filter((e) => e["op"] === "syncCompleteness")).toEqual([]);
+  });
+
+  it("a short scope is deferred: its absences stay open, and the error log and history say so", async () => {
+    const { scanJobs } = await load();
+    tenant.plan = small();
+    scanJobs.startSync();
+
+    // A day later sca returns one page of two where it reports twenty.
+    setClock(Date.parse("2026-09-04T02:00:00.000Z"));
+    tenant.plan = { ...small(), sca: { pages: 1, rowsPerPage: 2, partialOn: [], reportedTotal: 20 } };
+    const jobId = scanJobs.startSync().jobId!;
+    const syncId = String(jobRow(jobId)["scan_id"]);
+
+    const sca = scanRows().find((r) => r["scan_id"] === syncId && r["scope"] === "sca")!;
+    expect(sca).toMatchObject({ disappearance: "deferred:short", resolved_count: 0 });
+    // sca-2 and sca-3 were not returned and are still OPEN — nothing was resolved by absence.
+    const ledger = tables["finding_ledger"] ?? [];
+    for (const key of ["sca:id:sca-2", "sca:id:sca-3"]) {
+      expect(ledger.find((r) => r["finding_key"] === key)!["status"]).toBe("OPEN");
+    }
+
+    const entries = recorded().filter((e) => e["op"] === "syncCompleteness");
+    expect(entries).toHaveLength(1);
+    expect(String(entries[0]!["message"])).toMatch(/^sca scan of sync .* looked incomplete \(short: 2 received, 20 reported/);
+    expect(String(entries[0]!["message"])).toMatch(/2 open finding\(s\) it did not return were left open/);
+
+    const day = drive.named["history/2026-09-04.json.gz"] as Rec;
+    const scaStats = (day["scopes"] as Rec[]).find((s) => s["scope"] === "sca")!;
+    expect(scaStats["completeness"]).toMatchObject({
+      disappearance: "deferred:short", reported_total: 20, absent: 2, dropouts: 0,
+    });
+  });
+});
+
+/* ================================================================== the error log */
+
+describe("what a trigger cannot report, it records", () => {
+  const recorded = (): Rec[] => JSON.parse(props["RECENT_ERRORS"] ?? "[]") as Rec[];
+
+  it("a daily sync with no credentials leaves an entry rather than silently not syncing", async () => {
+    const { scanJobs } = await load();
+    delete props["WIZ_API_TOKEN"];
+    delete props["WIZ_API_URL"];
+
+    scanJobs.dailySync();
+
+    expect(tenant.served).toHaveLength(0);
+    expect(recorded().map((e) => e["op"])).toEqual(["dailySync"]);
+    expect(String(recorded()[0]!["message"])).toMatch(/credentials/i);
+  });
+
+  it("a hop that fails is recorded on its job row, not a second time in the server log", async () => {
+    const { scanJobs } = await load();
+    tenant.plan.sca = { pages: 1, rowsPerPage: 2, partialOn: [] };
+    tenant.onPage = () => {
+      throw new Error("tenant refused the page");
+    };
+
+    expect(() => scanJobs.dailySync()).toThrow(/tenant refused/);
+
+    const failed = (tables["jobs"] ?? []).filter((j) => j["phase"] === "FAILED");
+    expect(failed).toHaveLength(1);
+    expect(String(failed[0]!["error"])).toContain("tenant refused");
+    expect(recorded()).toEqual([]);
+  });
+
+  it("a clean daily sync records nothing about the sync", async () => {
+    const { scanJobs } = await load();
+    tenant.plan = {
+      sca: { pages: 1, rowsPerPage: 2, partialOn: [] },
+      sast: { pages: 1, rowsPerPage: 2, partialOn: [] },
+      secrets: { pages: 1, rowsPerPage: 2, partialOn: [] },
+    };
+    scanJobs.dailySync();
+    // Only the sync's own labels are asserted. The read-model warm runs too, over fakes that
+    // do not implement Drive's named-file reads or `cellCount`, so it TRUTHFULLY records its
+    // own failures here (`readModelL2`, `cacheWarm`) — that is the log working, not the sync.
+    const syncOps = ["dailySync", "continueSync", "watchdogSync", "dailyHistory", "autoCompact"];
+    expect(recorded().filter((e) => syncOps.includes(String(e["op"])))).toEqual([]);
   });
 });
 

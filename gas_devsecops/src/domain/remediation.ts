@@ -13,9 +13,10 @@
 //   openPastSlaFromRecords now come from metrics.ts, which already exists in this tree (D4's
 //   own header worried it might not; it does).
 //
-//   NO REMEDIATION_ROLLOUT_ISO / ROLLOUT_MS / published_date (D4b rule 2) — this is a fresh
-//   register with no legacy hasFix-only ingestion to grandfather in, and its ledger carries no
-//   published_date column (LedgerRow in ledgerTypes.ts has no CVE-publication timestamp — sca,
+//   NO REMEDIATION_ROLLOUT_ISO / ROLLOUT_MS / published_date (D4b rule 2) — gas/'s constant
+//   marks the day its ingestion filter CHANGED; this register's SCA fetch has carried
+//   `hasFix: true` (server/wizQueries.ts `SCA_FETCH_HAS_FIX`) on every scan, so there is no
+//   such day and nothing to grandfather in. Its ledger also carries no published_date column (LedgerRow in ledgerTypes.ts has no CVE-publication timestamp — sca,
 //   sast and secrets all lack one). Three DIVERGENCEs follow from that:
 //     - latencyObservation drops the "legacy row assumed a fix" branch outright; a row with no
 //       captured first_seen is simply unmeasured, same as it would be anyway.
@@ -48,7 +49,7 @@
 // test/remediation.test.ts asserts all 12 against this file, per severity AND OVERALL. The
 // functions D4b adds have no brick counterpart and are pinned by hand-written cases instead.
 
-import { RESOLVED_STATUSES, SEVERITY_ORDER, SLA_TARGETS, type Scope } from "./config";
+import { RESOLVED_STATUSES, SEVERITY_ORDER, SLA_TARGETS, isRepoDropout, type Scope } from "./config";
 import type { BaseRow } from "./ledgerTypes";
 import { findCol, recordColumns } from "./metrics";
 import { normalizeSeverity } from "./severity";
@@ -78,8 +79,13 @@ const DAY_MS = 86_400_000;
 // `Pick<BaseRow, ...>` so this file does not have to wait on BaseRow gaining the column
 // (a later package's job) to compile. Absent, null, or <= 0 all mean "no delayed entry" (0) —
 // see `normalizedEntry` below, the single place that rule is applied.
+//
+// `censor_days` is a sixth, OPTIONAL column, set only on a repository drop-out (ledgerCore.ts's
+// `withDerived`): a row the register watched stay open until its repository left the scan, so
+// it is right-censored at that age (`censoredAge` below) — never an event, never dropped.
 export type RemediationRow = Pick<BaseRow, "severity" | "status" | "mttr_days" | "age_days"> & {
   entry_days?: number | null;
+  censor_days?: number | null;
 };
 
 /**
@@ -120,6 +126,20 @@ function openAge(row: RemediationRow): number | null {
   return typeof a === "number" && Number.isFinite(a) ? a : null;
 }
 
+// A closed row the register lost sight of rather than saw fixed (a repository drop-out): its
+// age when it left observation, or null for every other row. Only ever read after
+// `resolvedMttr` came back null, so a row with a real fix time can never be censored by it.
+function leftCoverageAge(row: RemediationRow): number | null {
+  if (isOpen(row.status)) return null;
+  const c = row.censor_days;
+  return typeof c === "number" && Number.isFinite(c) ? c : null;
+}
+
+// The censored reading: an open row's age, or a drop-out's age when it left coverage.
+function censoredAge(row: RemediationRow): number | null {
+  return openAge(row) ?? leftCoverageAge(row);
+}
+
 // One step of the Kaplan–Meier staircase: the survival S(t) after the drop at a distinct
 // event time t, the risk-set size just before it, and how many events landed at it.
 export interface KMPoint {
@@ -129,11 +149,18 @@ export interface KMPoint {
   events: number;
 }
 
+/** See `KMResult.medianBoundReason`. */
+export type MedianBoundReason = "not-reached" | "past-cut" | "cut-empty-not-reached" | "cut-empty";
+
 export interface KMResult {
   curve: KMPoint[]; // distinct event times ascending; the implicit anchor S(0)=1 is not stored
   median: number | null; // smallest event time with S(t) <= 0.5
-  medianLowerBound: number | null; // when median is null: the max observed time (else null)
-  mean: number | null; // restricted mean (RMST); null when there are no events
+  // When median is null: the max observed time (legacy path); the extended path's own rule is
+  // `medianBoundReason` below — the reliability cut, the max observed time, or null.
+  medianLowerBound: number | null;
+  // Restricted mean (RMST); null when there are no events, or (extended path) when the
+  // reliability cut left no curve to integrate — see `meanUnmeasuredReason`.
+  mean: number | null;
   restrictionTime: number | null; // τ = max observed time (events ∪ censored); null when empty
   meanTruncated: boolean; // S(τ) > 0 → survival hadn't reached 0, so RMST is a lower bound
   naiveMean: number | null; // mean of closed-only mttr_days (util.mean); null with no events
@@ -195,9 +222,9 @@ export interface KMResult {
    *  accounting block reconciles every other field here against. */
   rowsIn?: number;
   /**
-   * Rows where NEITHER `resolvedMttr` (a finite `mttr_days`) NOR `openAge` (an open row's
-   * finite `age_days`) produced a reading — a resolved row with no captured remediation time,
-   * or an open row with no captured age. These used to fall out of the loop below with nothing
+   * Rows where NEITHER `resolvedMttr` (a finite `mttr_days`) NOR `censoredAge` (an open row's
+   * finite `age_days`, or a drop-out's `censor_days`) produced a reading — a resolved row with
+   * no captured remediation time, or an open row with no captured age. These used to fall out of the loop below with nothing
    * incremented anywhere: not an event, not censored, not `excludedPreEntry` (which only counts
    * rows that DID have a reading, just one at-or-before their own entry). 0 whenever the
    * extended estimator ran and every row had a readable clock.
@@ -219,6 +246,31 @@ export interface KMResult {
    * `rowsIn` identity above: `events` already carries both eventsUsed and eventsPastCut summed.
    */
   eventsPastCut?: number;
+  /**
+   * WHY `medianLowerBound` IS WHAT IT IS when `median` is null — so a reader can tell a floor
+   * that holds from an absence with no floor to offer (extended path only):
+   *
+   *   "not-reached"            the published curve never falls to half by the last
+   *                            observation (no cut ran, or nothing closed):
+   *                            `medianLowerBound = maxObserved`.
+   *   "past-cut"               the cut curve stays above half up to `reliableUntil`, where the
+   *                            uncut curve is the same curve: `medianLowerBound = reliableUntil`.
+   *   "cut-empty-not-reached"  the reliability cut left nothing (`reliableUntil` null under
+   *                            `minRisk`) and the UNCUT curve never falls to half either:
+   *                            `medianLowerBound = maxObserved`, a floor on the MEDIAN only —
+   *                            `q25` is null because the cut withheld it, not because a quarter
+   *                            never closed.
+   *   "cut-empty"              the reliability cut left nothing and the UNCUT curve DOES fall
+   *                            to half, so nothing observed is a true floor:
+   *                            `medianLowerBound = null`.
+   *
+   * Null when `median` is measured, or when nothing was observed at all.
+   */
+  medianBoundReason?: MedianBoundReason | null;
+  /** Why `mean` is null (extended path): "no-events" (nothing closed), "cut-empty" (the
+   *  reliability cut left no curve to integrate — see `kaplanMeierExtended`). Null when `mean`
+   *  is a number. */
+  meanUnmeasuredReason?: "no-events" | "cut-empty" | null;
   /** Of the rows that survived pre-entry exclusion (became an event or a censored
    *  observation), how many had `entry_days > 0` — the onboarding backlog: findings already
    *  open, on their own clock, the day this register started watching. 0 when nothing entered
@@ -228,6 +280,10 @@ export interface KMResult {
    *  least this old when we started watching". Null when `lateEntrants === 0` (nothing to take
    *  a median of, not a measured zero). */
   lateEntryMedianAge?: number | null;
+  /** Of `censored`, the rows censored where their repository LEFT the scan (`censor_days`)
+   *  rather than because they are still open — so a reader printing "still open" can subtract
+   *  them. Extended path only; 0 when none. */
+  censoredLeftCoverage?: number;
 }
 
 /**
@@ -398,7 +454,9 @@ export function kmMedianFromCurve(curve: KMPoint[]): number | null {
  *   - computes the risk set with `kmCurveEntry` (entry < t <= exit) instead of `kmCurve`;
  *   - when `opts.minRisk`, cuts the curve at the Gebski et al. (Int J Epidemiol 2018)
  *     reliability boundary and reads `median`/`q25`/`q75` off the CUT curve only (see
- *     `reliableUntilFromCurve`);
+ *     `reliableUntilFromCurve`); when the cut leaves nothing, `medianLowerBound` survives
+ *     only if the uncut curve never reaches half either, and the RMST is withdrawn
+ *     (`medianBoundReason`, `meanUnmeasuredReason`);
  *   - when `opts.horizonDays`, restricts RMST to τ = min(horizonDays, the reliability cut (if
  *     any) else the max observed time), reporting that τ as `restrictionTime` and keeping the
  *     uncapped figure in the new `maxObserved` field.
@@ -439,7 +497,7 @@ function kaplanMeierLegacy(rows: RemediationRow[]): KMResult {
       events.push(m);
       continue;
     }
-    const c = openAge(row);
+    const c = censoredAge(row);
     if (c !== null) censored.push(c);
   }
   const times = events.concat(censored); // the risk set: every observation time
@@ -577,6 +635,7 @@ function kaplanMeierExtended(rows: RemediationRow[], opts: KMOptions | undefined
   // closes. `lateEntryAges` collects the entry of every row that DID survive (event or
   // censored) with `entry_days > 0`, for `lateEntrants`/`lateEntryMedianAge` below.
   let noClock = 0;
+  let censoredLeftCoverage = 0;
   const lateEntryAges: number[] = [];
   for (const row of rows) {
     const entry = normalizedEntry(row);
@@ -590,12 +649,13 @@ function kaplanMeierExtended(rows: RemediationRow[], opts: KMOptions | undefined
       }
       continue;
     }
-    const c = openAge(row);
+    const c = censoredAge(row);
     if (c !== null) {
       if (c <= entry) {
         excludedPreEntry += 1; // already this old, on this clock, before entry
       } else {
         censored.push({ t: c, entry });
+        if (openAge(row) === null) censoredLeftCoverage += 1;
         if (entry > 0) lateEntryAges.push(entry);
       }
     } else {
@@ -642,8 +702,13 @@ function kaplanMeierExtended(rows: RemediationRow[], opts: KMOptions | undefined
       rowsIn,
       noClock,
       eventsPastCut: 0, // no events at all -> nothing to have been cut past
+      // Nothing closed: survival never left 1, so "median > maxObserved" holds whenever there
+      // was anything to observe.
+      medianBoundReason: maxObserved === null ? null : "not-reached",
+      meanUnmeasuredReason: "no-events",
       lateEntrants,
       lateEntryMedianAge,
+      censoredLeftCoverage,
     };
   }
 
@@ -675,20 +740,39 @@ function kaplanMeierExtended(rows: RemediationRow[], opts: KMOptions | undefined
     opts?.horizonDays !== undefined
       ? Math.min(opts.horizonDays, reliableUntil ?? maxObserved!)
       : maxObserved!;
+  // THE CUT LEFT NOTHING (`minRisk`, first event already unreliable — every population under
+  // 50 at risk lands here). Nothing on the curve is trusted, so nothing read off the empty
+  // curve may stand in for it. Two figures used to: `medianLowerBound = maxObserved` ("the
+  // median is past the longest observation") and RMST = τ over a curve of S ≡ 1, flagged
+  // `meanTruncated` and so drawn as "≥ τ". Ten findings, eight closed on day 2, two open at
+  // day 30 published "MTTR at least 30 days" and "mean ≥ 30 days" for a median of 2. So:
+  //  - the median bound survives only where the UNCUT curve also never reaches half (then
+  //    every reading of the data agrees it is past the last observation);
+  //  - the restricted mean is withdrawn outright (null, not truncated) — the area under a
+  //    curve nobody trusts is not a floor on anything. `meanUnmeasuredReason` says why.
+  const cutEmpty = !!opts?.minRisk && reliableUntil === null;
+  const uncutMedian = cutEmpty ? kmMedianFromCurve(fullCurve) : null;
   const { rmst, sAtTau } = rmstToTau(curve, tau);
 
-  const medianLowerBound =
+  const medianBoundReason: MedianBoundReason | null =
     median_ !== null ? null
-    : opts?.minRisk ? (reliableUntil ?? maxObserved)
-    : maxObserved;
+    : cutEmpty ? (uncutMedian === null ? "cut-empty-not-reached" : "cut-empty")
+    : opts?.minRisk ? "past-cut"
+    : "not-reached";
+  const medianLowerBound =
+    medianBoundReason === "past-cut" ? reliableUntil
+    : medianBoundReason === "not-reached" || medianBoundReason === "cut-empty-not-reached"
+      ? maxObserved
+    : null;
 
   return {
     curve,
     median: median_,
     medianLowerBound,
-    mean: rmst,
+    mean: cutEmpty ? null : rmst,
     restrictionTime: tau,
-    meanTruncated: sAtTau > 0,
+    meanTruncated: cutEmpty ? false : sAtTau > 0,
+    meanUnmeasuredReason: cutEmpty ? "cut-empty" : null,
     naiveMean,
     naiveMedian,
     events: events.length,
@@ -702,8 +786,10 @@ function kaplanMeierExtended(rows: RemediationRow[], opts: KMOptions | undefined
     rowsIn,
     noClock,
     eventsPastCut,
+    medianBoundReason,
     lateEntrants,
     lateEntryMedianAge,
+    censoredLeftCoverage,
   };
 }
 
@@ -929,7 +1015,8 @@ export function openPastSlaFromRecords(records: Rec[], now?: number): number {
  * a per-scope map — every caller of this function already narrows to one scope first.
  */
 export function actionableView(
-  rows: (Pick<BaseRow, "severity" | "status" | "mttr_actionable_days" | "actionable_age_days"> &
+  rows: (Pick<BaseRow, "severity" | "status" | "mttr_actionable_days" | "actionable_age_days"
+    | "censor_actionable_days"> &
     // `actionable_from` is OPTIONAL on the accepted row, not required: test/remediation.test.ts's
     // pre-existing bRes/bOpen fixtures (D4b, before this package) build rows without it, and
     // every one of those calls also omits `opts.trackingStart` — so `entryDaysFrom` reads
@@ -951,6 +1038,8 @@ export function actionableView(
     status: r.status,
     mttr_days: r.mttr_actionable_days,
     age_days: r.actionable_age_days,
+    // A drop-out is censored where it left coverage on this clock too.
+    censor_days: r.censor_actionable_days,
     entry_days: hasTrackingStart
       ? entryDaysFrom(opts!.trackingStart, r.actionable_from ?? null)
       : undefined,
@@ -974,7 +1063,10 @@ export interface AwaitingVendorFix {
 /**
  * The "awaiting vendor fix" segment: OPEN, SCA findings with no vendor fix available yet
  * (awaiting_vendor_fix), which is exactly the population the actionable clock excludes — they
- * sit outside every SLA/MTTR deadline until a fix appears. perSev / overall count those rows by
+ * sit outside every SLA/MTTR deadline until a fix appears. Under the `hasFix: true` SCA fetch
+ * (server/wizQueries.ts `SCA_FETCH_HAS_FIX`) that population is never fetched, so `overall` is
+ * near zero by construction — only a fetched row whose fix columns were not captured lands
+ * here — and the MTTR page labels it not measurable rather than reading it as a count. perSev / overall count those rows by
  * normalized severity; openTotal is the full open backlog for context (every scope), and
  * pctOfOpen is the awaiting share of it — null when nothing is open, so the UI never renders a
  * fake 0% against an empty denominator. `opts.scope` narrows to one register before computing.
@@ -1047,7 +1139,7 @@ export interface LatencySegments {
   /**
    * Resolved without a fix ever being observed — the repository went away, the finding was
    * ignored, or Wiz simply stopped returning it. Censored at its resolution, because that is
-   * when we stopped being able to observe a fix. It is a competing risk and not a fix, so it
+   * when we stopped being able to observe a fix — a repository drop-out at its last sighting. It is a competing risk and not a fix, so it
    * is counted apart: `resolution_src` only distinguishes `api` from `disappeared`, never
    * "patched" from "abandoned", so a cause-specific model is not available and this counter is
    * the honest substitute.
@@ -1073,7 +1165,9 @@ export interface LatencySegments {
 type LatencyRow = Pick<
   BaseRow,
   "severity" | "status" | "first_seen" | "fix_available_at" | "resolved_at" | "entry_days"
-> & { scope?: Scope };
+> & { scope?: Scope } &
+  // Read only to censor a repository drop-out at its last sighting (`latencyObservation`).
+  Partial<Pick<BaseRow, "resolution_src" | "last_seen">>;
 
 /** One row's classification: null when it contributes to no clock. */
 function latencyObservation(
@@ -1092,7 +1186,11 @@ function latencyObservation(
     return { t: Math.max(0, raw) / DAY_MS, event: true, closedBeforeFix: false };
   }
 
-  const resolved = parseTs(row.resolved_at);
+  // A repository drop-out stopped being observable at its last sighting, not at the later scan
+  // that noticed it gone — the same censoring point `BaseRow.censor_days` uses.
+  const resolved = isRepoDropout(row)
+    ? (parseTs(row.last_seen) ?? parseTs(row.resolved_at))
+    : parseTs(row.resolved_at);
   if (resolved !== null) {
     return { t: Math.max(0, resolved - first) / DAY_MS, event: false, closedBeforeFix: true };
   }
@@ -1113,6 +1211,12 @@ function latencyObservation(
  * population rather than an excluded one, which is the whole point — dropping them would leave
  * only the findings that got fixed and measure how fast the fixed ones were fixed, the
  * survivorship bias the KM estimator exists to avoid.
+ *
+ * THE SCA FETCH DOES EXACTLY THAT DROPPING UPSTREAM. It asks Wiz for `hasFix: true`
+ * (server/wizQueries.ts `SCA_FETCH_HAS_FIX`), so a finding still waiting on a vendor never
+ * reaches the ledger and this censored population never arrives. The function is right; its
+ * input is not, which is why the MTTR page prints the vendor wait as not measurable while that
+ * flag (`remediation.fetchFilter.scaHasFix`) is on.
  *
  * Note the projected `status`: an event carries "RESOLVED" and a censored row "OPEN", because
  * `openAge` gates on `isOpen(status)` while `resolvedMttr` does not. A finding that closed
@@ -1198,8 +1302,10 @@ export function baseRowNoFix(row: Pick<BaseRow, "scope" | "awaiting_vendor_fix">
  * reconcile.ts uses to derive fix_observed_at.
  *
  * DIVERGENCE (D4b rule 2): gas/'s recordNoFix also exempted a record first seen before
- * REMEDIATION_ROLLOUT_ISO (a fix by construction, under the old hasFix-only ingestion filter).
- * This is a fresh register with no such legacy migration, so that branch is dropped outright.
+ * REMEDIATION_ROLLOUT_ISO (a fix by construction, under its old hasFix-only ingestion filter).
+ * This register's SCA fetch has carried `hasFix: true` on every scan, so no date separates
+ * records ingested under a different filter, and that branch is dropped outright. A record the
+ * fetch returned with neither fix field is still no-fix here — rare, but a real reading.
  *
  * DIVERGENCE (D4b rule 3): a record explicitly tagged with a non-sca `scope` is never no-fix —
  * same guard as baseRowNoFix, applied to the frame shape. A record with no `scope` key at all

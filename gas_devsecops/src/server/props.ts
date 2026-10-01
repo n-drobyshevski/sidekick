@@ -36,6 +36,11 @@ export const PROP_KEYS = {
   // `settings.js`'s domainMapCard exists to prevent, so the card compares the two and says so.
   // Not a column on the tab: this is one fact about the whole map, not a fact per token.
   repoTagMapKeys: "REPO_TAG_MAP_KEYS",
+  // The generation of the persisted repository-tag map — the cross-execution cache key
+  // `repoTags.getRepoTagMap` reads it under. Written by repoTags.setRepoTagMap, the tab's only
+  // writer, and by nothing else, so a sync (which bumps DATA_VERSION but never touches the tab)
+  // no longer throws the cached map away.
+  repoTagMapGen: "REPO_TAG_MAP_GEN",
   ledgerSpreadsheetId: "LEDGER_SPREADSHEET_ID",
   archiveFolderId: "ARCHIVE_FOLDER_ID",
   // Who may open the web app, on top of the deployment's own "anyone within <domain>" fence.
@@ -61,8 +66,14 @@ export const PROP_KEYS = {
   urlHub: "URL_HUB",
   // The warm schedule setup() last installed, as a signature string. A ClockTrigger exposes
   // its handler and nothing else, so this is the ONLY way to tell a correctly-scheduled set
-  // from one an older deployment left behind. Written by setup(), read by setup().
+  // from one an older deployment left behind. Written by setup(), read by setup() and by
+  // deploymentDiagnostic().
   warmTriggerSchedule: "WARM_TRIGGER_SCHEDULE",
+  // The daily sync trigger's counterpart: `${tz}|${hour}` as setup.dailySyncSchedule() builds
+  // it, for the hour `Settings.syncSchedule` asked for. Written by setup.reconcileDailySyncTrigger
+  // (from setup() and from a Settings save that moves the hour), read by it and by
+  // deploymentDiagnostic(), which flags a recorded hour that is not the saved one.
+  dailySyncSchedule: "DAILY_SYNC_SCHEDULE",
   /**
    * When a real token exchange plus a real query last succeeded.
    *

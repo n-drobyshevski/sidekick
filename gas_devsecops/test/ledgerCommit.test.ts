@@ -603,3 +603,29 @@ describe("readers", () => {
     expect(fresh.ledger.syncCommitted(null)).toBe(false);
   });
 });
+
+describe("the scans tab carries the completeness record", () => {
+  it("a live scope's verdict round-trips; a scope persisted without one reads as legacy", async () => {
+    const { ledger, jobs, TABS } = await load();
+    seedJob(jobs, "job-1");
+    const [sca, sast, secrets] = battery();
+    ledger.persistSync("job-1", "2026-06-01T00:00:00Z", [
+      { ...sca!, completeness: { reportedTotal: 1, partialPages: 0 } },
+      sast!,
+      secrets!,
+    ]);
+    // As Sheets would hand it back: every cell a string, blanks as "".
+    tables[TABS.scans] = tables[TABS.scans]!.map((r) =>
+      Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v === null ? "" : String(v)])),
+    );
+    const fresh = await load();
+    const rows = fresh.ledger.loadScanRows();
+    const pick = (scope: string) => {
+      const r = rows.find((x) => x.scope === scope)!;
+      return [r.reported_total, r.partial_pages, r.duplicates, r.disappearance, r.dropout_count];
+    };
+    expect(pick("sca")).toEqual([1, 0, 0, "complete", 0]);
+    // Blank stays null — the legacy marker the replay reads, never coerced to 0 or "complete".
+    expect(pick("sast")).toEqual([null, null, null, null, null]);
+  });
+});

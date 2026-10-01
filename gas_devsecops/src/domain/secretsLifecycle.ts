@@ -48,11 +48,22 @@
 //     books at the last sync is exposed until it is proven dead, so the exposure runs to the
 //     moment of the report. `now` is an explicit option so the figure is reproducible.
 //
+//     EXCEPT A REPOSITORY DROP-OUT (config.ts's RESOLUTION_REPO_DROPOUT). Its repository left
+//     the scan, so it is no longer on the books and nothing after that is observable: a
+//     credential last measured VALID there would otherwise be censored at `now` forever, a
+//     risk-set member whose age grows with every report. It is censored where the register
+//     lost sight of it — `last_seen`, the same point `BaseRow.censor_days` uses — or at its
+//     last validation if that came earlier, since a VALID reading is the only evidence the
+//     CREDENTIAL (not the string) was alive. It is not "still live": `leftCoverage` counts it
+//     apart inside `censored`. (Before this rule the drop-out commit claimed time-to-revoke
+//     "already censored" these rows; it did, but at `now`, which is the defect.)
+//
 //  6. A ROW THAT CANNOT BE TIMED IS EXCLUDED AND COUNTED (`excludedNoClock`), NOT ZEROED.
-//     Three ways in: no parsable `first_seen`; a derived duration that comes out negative (a
-//     death before its birth, or a birth after `now`); or an INVALID row carrying no
+//     Four ways in: no parsable `first_seen`; a derived duration that comes out negative (a
+//     death before its birth, or a birth after `now`); an INVALID row carrying no
 //     `rotated_at` — known dead, UNDATED, which is neither an event (no duration) nor
-//     censorable (censoring asserts "still alive at c", which INVALID contradicts). No
+//     censorable (censoring asserts "still alive at c", which INVALID contradicts); or a
+//     repository drop-out whose censoring point (decision 5) is not after its detection. No
 //     clamping — a negative duration is a data defect and pinning it at zero would hide it
 //     inside a healthy-looking median. The exclusion buckets are disjoint and tested in
 //     order: wrong scope, then unmeasured, then untimeable.
@@ -94,7 +105,13 @@
 //     null, says that no twin statistics were recorded rather than printing zeros. Pure: no
 //     clock, no locale, no I/O.
 
-import { RESOLVED_STATUSES, RMST_HORIZON_DAYS, STATUS_OPEN, STATUS_RESOLVED } from "./config";
+import {
+  RESOLVED_STATUSES,
+  RMST_HORIZON_DAYS,
+  STATUS_OPEN,
+  STATUS_RESOLVED,
+  isRepoDropout,
+} from "./config";
 import type { LedgerRow } from "./ledgerTypes";
 import {
   kaplanMeier,
@@ -123,7 +140,10 @@ export type SecretRow = Pick<
   | "validation_state"
   | "validated_at"
   | "confidence"
->;
+> &
+  // Read only to censor a repository drop-out where it left (decision 5). OPTIONAL so a
+  // hand-built row without them reads as an ordinary, still-on-the-books one.
+  Partial<Pick<LedgerRow, "resolution_src" | "last_seen" | "resolved_at">>;
 
 /** The two validation states that constitute a MEASUREMENT — decision 2. */
 const MEASURED_STATES: ReadonlySet<string> = new Set(["VALID", "INVALID"]);
@@ -245,6 +265,10 @@ export interface TimeToRevoke {
   medianLowerBound: number | null; // max observed time when the median is unreachable
   events: number; // rotations observed (rotated_at set and timeable)
   censored: number; // measured-live credentials with no confirmed death — the open exposure
+  // Of `censored`, the repository drop-outs: censored where their repository left the scan
+  // (decision 5), so neither "still live" nor dead — unobservable. `censored − leftCoverage`
+  // is the still-live count.
+  leftCoverage: number;
   excludedUnmeasured: number; // nobody ever checked these — decision 3
   excludedNoClock: number; // measured, but no usable duration — decision 6
   total: number; // secrets-scope rows seen; the four counts above sum to it
@@ -316,6 +340,31 @@ export function timeToRevoke(rows: readonly SecretRow[], opts: TimeToRevokeOptio
       excludedNoClock += 1;
       continue;
     }
+    if (isRepoDropout(row)) {
+      // Decision 5's exception: censored where the register lost sight of it, or at its last
+      // validation if earlier. Projected as a closed row with no event and a `censor_days` —
+      // the shape the shared engine reads as "left coverage" (remediation.ts's
+      // `leftCoverageAge`), so it counts it in `censoredLeftCoverage` as on every other KM.
+      const lost = parseTs(row.last_seen) ?? parseTs(row.resolved_at);
+      const checked = parseTs(row.validated_at);
+      const at = lost === null ? checked : checked === null ? lost : Math.min(lost, checked);
+      const censorDays = at === null ? null : (at - born) / DAY_MS;
+      // Zero included: a credential validated only at detection, then lost, was never watched
+      // alive for any length of time — decision 6's "no usable duration", counted there.
+      if (censorDays === null || !Number.isFinite(censorDays) || censorDays <= 0) {
+        excludedNoClock += 1;
+        continue;
+      }
+      projected.push({
+        severity: null,
+        status: STATUS_RESOLVED,
+        mttr_days: null,
+        age_days: null,
+        censor_days: censorDays,
+        entry_days: entryDays,
+      });
+      continue;
+    }
     const age = (opts.now - born) / DAY_MS;
     if (!Number.isFinite(age) || age < 0) {
       excludedNoClock += 1;
@@ -347,6 +396,7 @@ export function timeToRevoke(rows: readonly SecretRow[], opts: TimeToRevokeOptio
     medianLowerBound: km.medianLowerBound,
     events: km.events,
     censored: km.censored,
+    leftCoverage: km.censoredLeftCoverage ?? 0,
     excludedUnmeasured,
     excludedNoClock,
     total: secrets.length,

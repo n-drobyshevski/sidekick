@@ -19,7 +19,8 @@
     "check:exact": "npm run typecheck && npm run lint && npm run test:exact && npm run check-dist-fresh",
     "density": "node ../gas_devsecops/dev/density.mjs --root . --port 8787",
     "push": "npm run check:exact && clasp push",
-    "deploy": "npm run push && clasp deploy"
+    "deploy": "node ../gas_shared/build/deploy.mjs",
+    "deploy:new": "npm run push && clasp deploy"
   },
   "devDependencies": {
     "@google/clasp": "^3.4.0",

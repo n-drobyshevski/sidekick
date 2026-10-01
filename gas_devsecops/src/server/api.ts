@@ -21,7 +21,7 @@
 //
 // NO NEW SLICE WAS NEEDED, AND THAT WAS CHECKED RATHER THAN ASSUMED. Every endpoint below
 // feeds an EXISTING `pagePayload` function with the key the model already publishes:
-// `programModel().trend` -> `programTrendSlice`, `historyModel().{history,trend}` ->
+// `programModel().trend` -> `programTrendSlice`, `historyModel().trend` ->
 // `mttrPageTrendSlice` / `historyTrendSlice`, `historyModel().scans` -> `scanRowsSlice`,
 // `mttrModel()` -> `execMttrSlice`, `executiveModel().byScope` -> `execGroupSlice` /
 // `mttrGroupTableSlice`. `test/api.test.ts`'s "each read model reaches its slice" block asserts
@@ -81,6 +81,7 @@ import * as bootCore from "./bootCore";
 import { stageLaps } from "./stageLog";
 import * as access from "./access";
 import { rosterRows, serializeScoped, validateScoped } from "../../../gas_shared/domain/scopedAccess";
+import { csvCell } from "../../../gas_shared/domain/csv";
 import { canEditUsers } from "./access";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
 import { activeJob, getJob, isStaleJob, isTerminalPhase, listJobs, type JobRow } from "./jobsStore";
@@ -89,6 +90,8 @@ import * as readModels from "./readModels";
 import * as scanJobs from "./scanJobs";
 import { testConnection, WizNotAuthorizedError } from "./wizClient";
 import * as currentDomains from "./currentDomains";
+import * as errorLog from "./errorLog";
+import { dailySyncSchedule, reconcileDailySyncTrigger } from "./setup";
 
 /**
  * THE ENVELOPE, and it lives here rather than in dist/entry.js.
@@ -105,7 +108,7 @@ export interface ApiResult<T = unknown> {
   errorKind?: string;
 }
 
-function run<T>(fn: () => T): ApiResult<T> {
+function run<T>(fn: () => T, label = "api"): ApiResult<T> {
   try {
     return { ok: true, data: fn() };
   } catch (e) {
@@ -118,16 +121,25 @@ function run<T>(fn: () => T): ApiResult<T> {
       e instanceof LedgerBusyError ? "busy"
       : e instanceof WizNotAuthorizedError ? "not-authorized"
       : "error";
+    // Into the durable recent-errors log (Data → Recent errors), so a failed RPC leaves a
+    // trace beyond the toast its caller saw. NOT "busy" — the expected "a write is running,
+    // retry" contention signal, which would evict real errors — and NOT "not-authorized",
+    // which is a deployment state the caller is already shown the remedy for, not a fault.
+    if (kind === "error") errorLog.recordError(label, e, kind);
     return { ok: false, error: String(e instanceof Error ? e.message : e), errorKind: kind };
   }
 }
 
-/** A write: take the lock, roll back a half-finished predecessor, then run. */
-function mutate<T>(fn: () => T): ApiResult<T> {
+/**
+ * A write: take the lock, roll back a half-finished predecessor, then run. `lockWaitMs` is how
+ * long to queue behind another writer before answering "busy" — `withScriptLock`'s 30 s unless
+ * a caller has a reason to give up sooner (the header view switch, below).
+ */
+function mutate<T>(fn: () => T, label = "api", lockWaitMs?: number): ApiResult<T> {
   return run(() => withScriptLock(() => {
     recoverIfNeeded();
     return fn();
-  }));
+  }, lockWaitMs), label);
 }
 
 export interface Bootstrap {
@@ -302,8 +314,8 @@ export interface Bootstrap {
  *
  * A CACHED CORE PLUS LIVE FIELDS. Everything derived from the ledger, the settings, the scans
  * tab and the repository tag map is `bootCore.bootCoreModel()` — durably cached per data
- * version, since every writer of those four bumps it. What changes without a bump, or differs
- * per viewer, is read live on every call: see `withLiveBootFields`.
+ * version, since every writer of those four bumps it. What changes without a bump (the header
+ * view among it), or differs per viewer, is read live on every call: see `withLiveBootFields`.
  *
  * Timed to the execution log as `{"stage":"bootstrap",core,live}`; the core's own parts log
  * as `{"stage":"bootCore",…}` when it is actually computed. test/api.test.ts pins both.
@@ -362,9 +374,18 @@ export function bootstrapIfWarm(): ApiResult<Bootstrap> {
  * data-version bump (credentials saved, a connection test, the hub address edited), so a copy
  * in the core would keep serving the old value until some unrelated sync; `buildId` is the
  * code actually answering, which a durable entry written by an earlier deploy must not claim.
+ *
+ * AND THE HEADER VIEW: `settings` (which echoes `projectView` / `domainView`) and the scope
+ * block's view half — `projectView`, `domainView`, `shown`. A view switch saves the settings
+ * without a data-version bump (`settingsStore.saveSettings`'s `viewOnly`), so a core holding any
+ * of them would keep answering for the previous view. `loadSettings()` is one CacheService get
+ * here (its key moves on every save), and `shown` comes off the core's own catalogues
+ * (`bootCore.viewShown`), so neither costs a pass over the ledger. doGet's inline path
+ * (`bootstrapIfWarm`) comes through here too, so the page it renders shows the view in force.
  */
 function withLiveBootFields(core: bootCore.BootCore): Bootstrap {
   const job = activeJob();
+  const settings = loadSettings();
   return {
     product: core.product,
     buildId: BUILD_ID,
@@ -380,8 +401,13 @@ function withLiveBootFields(core: bootCore.BootCore): Bootstrap {
     activeJob: job ? jobSummarySlice(job, !isTerminalPhase(job.phase) && isStaleJob(job)) : null,
     canEditAccess: canEditUsers(),
     hubUrl: readHubUrl(),
-    settings: core.settings,
-    scope: core.scope,
+    settings,
+    scope: {
+      projectView: settings.projectView,
+      domainView: settings.domainView,
+      shown: bootCore.viewShown(core, settings.projectView, settings.domainView),
+      ...core.scope,
+    },
     filterOptions: core.filterOptions,
   };
 }
@@ -405,7 +431,7 @@ export function testWizConnection(
     const at = new Date().toISOString();
     setProp(PROP_KEYS.wizVerifiedAt, at);
     return { ...res, at };
-  });
+  }, "testWizConnection");
 }
 
 /**
@@ -664,7 +690,28 @@ export function putSettings(p: { settings?: unknown }): ApiResult<ReturnType<typ
   // way round the gate. Stripped, not refused: the Settings page sends the whole draft back.
   const patch = { ...((p.settings ?? {}) as Record<string, unknown>) };
   delete patch["supportGroupDomains"];
-  return mutate(() => saveSettings(withSettings(loadSettings(), patch as never)));
+  return mutate(() => {
+    const saved = saveSettings(withSettings(loadSettings(), patch as never));
+    // The trigger follows the saved hour here rather than at the next setup() run — a saved
+    // hour that only took effect from the editor was a setting that looked wired and was not.
+    // GATED ON THE RECORDED SIGNATURE, NOT ON WHETHER THIS SAVE MOVED THE HOUR: a trigger
+    // installed before the signature existed (no property) or a reinstall that failed on an
+    // earlier save (the property still names the old hour) both differ from the saved hour, so
+    // any later save repairs them. A matching signature skips the ScriptApp listing entirely.
+    // BEST-EFFORT AND AFTER THE SAVE: the settings are already stored, and a trigger quota or
+    // permission failure must not turn a good save into an error toast. It lands in the recent-
+    // errors log instead, and deploymentDiagnostic() keeps flagging the recorded hour against
+    // the saved one until a later save or setup() converges them. Under the lock, so two saves
+    // in flight cannot both delete-and-create and leave two daily triggers.
+    if (getProp(PROP_KEYS.dailySyncSchedule) !== dailySyncSchedule(saved.syncSchedule)) {
+      try {
+        reconcileDailySyncTrigger(saved.syncSchedule);
+      } catch (e) {
+        errorLog.recordError("syncHourTrigger", e);
+      }
+    }
+    return saved;
+  }, "putSettings");
 }
 
 /**
@@ -706,8 +753,22 @@ export function saveSupportGroupDomain(p: {
     }];
     setSupportGroupDomains(items);
     return { saved: true, errors: [], items: getSupportGroupDomains().items };
-  });
+  }, "saveSupportGroupDomain");
 }
+
+/**
+ * How long a header view switch queues behind another writer. STILL UNDER THE LOCK: it rewrites
+ * the whole settings tab, and an unlocked rewrite racing a Settings save could put the other
+ * fields back the way they were. But it is a click in the header that blocks the page, not a
+ * sync, so it gives up after 10 s rather than 30 — another save or a view switch holds the lock
+ * for well under a second, and a sync's commit for longer than either wait is worth spending.
+ * The client shows the "busy" error and the reader picks again.
+ *
+ * THE SWITCH NO LONGER BUMPS THE DATA VERSION (`saveSettings`'s `viewOnly`): every payload that
+ * depends on the view carries it in its cache key, and the bootstrap core reads the view live,
+ * so switching leaves every cached entry — the inline boot included — warm for every user.
+ */
+const VIEW_SWITCH_LOCK_WAIT_MS = 10_000;
 
 /**
  * Set the view scope alone — which project's rows the pages show, out of everything the
@@ -721,7 +782,11 @@ export function saveSupportGroupDomain(p: {
  * validated field would turn a retired project's stale name into a scope nobody can clear.
  */
 export function setProjectView(p: { projectView?: unknown }): ApiResult<ReturnType<typeof loadSettings>> {
-  return mutate(() => saveSettings(withProjectView(loadSettings(), p.projectView)));
+  return mutate(
+    () => saveSettings(withProjectView(loadSettings(), p.projectView), { viewOnly: true }),
+    "setProjectView",
+    VIEW_SWITCH_LOCK_WAIT_MS,
+  );
 }
 
 /**
@@ -734,7 +799,11 @@ export function setProjectView(p: { projectView?: unknown }): ApiResult<ReturnTy
  * that used the wrong helper — see `settingsLogic.withProjectView` for the argument.
  */
 export function setDomainView(p: { domainView?: unknown }): ApiResult<ReturnType<typeof loadSettings>> {
-  return mutate(() => saveSettings(withDomainView(loadSettings(), p.domainView)));
+  return mutate(
+    () => saveSettings(withDomainView(loadSettings(), p.domainView), { viewOnly: true }),
+    "setDomainView",
+    VIEW_SWITCH_LOCK_WAIT_MS,
+  );
 }
 
 /**
@@ -750,7 +819,7 @@ export function setDomainView(p: { domainView?: unknown }): ApiResult<ReturnType
  * repaints against the new map rather than answering from the old attribution.
  */
 export function refreshDomains(_p?: unknown): ApiResult<repoTags.RepoTagRefresh> {
-  return mutate(() => repoTags.refreshRepoTags());
+  return mutate(() => repoTags.refreshRepoTags(), "refreshDomains");
 }
 
 /**
@@ -933,8 +1002,7 @@ export function getExecutivePage(p?: unknown): ApiResult {
  * `trends` comes from `historyModel`, not from `mttrModel`, and that is the caching audit
  * rather than a convenience: the trend backbone is time-invariant and lives in the durable
  * layer, while `mttrModel` is a clock model on a 1 h TTL. `mttrPageTrendSlice` reads
- * `{history, trend}` — both keys `historyModel` publishes — and keeps `history` because this
- * page is the only reader of it (the change chips, and the young-ledger chart fallback).
+ * `trend` alone.
  */
 export function getMttrPage(p?: unknown): ApiResult {
   return run(() => {
@@ -1108,10 +1176,9 @@ export function getReposPage(p?: unknown): ApiResult {
 /**
  * Scan History: what was measured and when.
  *
- * ENUMERATED, NOT SPREAD, and both omissions are the reason. `historyModel().history` is the
- * whole `mttr_history` set and this page never dereferences it — only the MTTR page does — and
- * the raw `trend` carries nine fields per point where this page draws five. Spreading the
- * model and patching two keys would ship both by default the day a third key is added.
+ * ENUMERATED, NOT SPREAD. The raw `trend` carries nine fields per point where this page draws
+ * five, and `scanScopeApplies`-style flags are named one by one; spreading the model and
+ * patching keys would ship whatever it gains next by default.
  */
 export function getScanHistory(p?: unknown): ApiResult {
   return run(() => {
@@ -1280,7 +1347,7 @@ export function runSync(p?: unknown): ApiResult {
       ? raw.map(String).filter((s): s is Scope => (SCOPES as readonly string[]).includes(s))
       : undefined;
     return scanJobs.startSync(scopes ? { scopes } : {});
-  });
+  }, "runSync");
 }
 
 /**
@@ -1315,7 +1382,7 @@ export function getJobStatus(p?: unknown): ApiResult {
  * exactly the execution Stop is trying to reach, for the full timeout, and then fail.
  */
 export function cancelSync(p?: unknown): ApiResult {
-  return run(() => scanJobs.cancelSync(String(((p ?? {}) as Rec)["jobId"] ?? "")));
+  return run(() => scanJobs.cancelSync(String(((p ?? {}) as Rec)["jobId"] ?? "")), "cancelSync");
 }
 
 // --------------------------------------------------------------------------------------- //
@@ -1326,7 +1393,7 @@ export function cancelSync(p?: unknown): ApiResult {
  *  layer's, so a delete cannot interleave with a persist. */
 export function deleteScans(p?: unknown): ApiResult {
   const scanIds = (((p ?? {}) as Rec)["scanIds"] as unknown[] | undefined ?? []).map(String);
-  return mutate(() => ledgerStore.deleteScans(scanIds));
+  return mutate(() => ledgerStore.deleteScans(scanIds), "deleteScans");
 }
 
 /**
@@ -1347,7 +1414,7 @@ export function compact(p?: unknown): ApiResult {
     ? Number(params["retentionDays"])
     : loadSettings().retentionDays;
   if (dryRun) return run(() => ledgerStore.previewMaintenance(days));
-  return mutate(() => ledgerStore.compactLedger(days, false));
+  return mutate(() => ledgerStore.compactLedger(days, false), "compact");
 }
 
 /**
@@ -1366,18 +1433,12 @@ export function resetLedger(_p?: unknown): ApiResult {
       console.warn(`resetLedger: continuation-trigger cleanup skipped: ${e}`);
     }
     return ledgerStore.resetLedger();
-  });
+  }, "resetLedger");
 }
 
 // --------------------------------------------------------------------------------------- //
 //  Data page — export and diagnostics
 // --------------------------------------------------------------------------------------- //
-
-function csvCell(v: unknown): string {
-  if (v === null || v === undefined) return "";
-  const s = String(v);
-  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
 
 /**
  * The ledger as CSV — the audit artifact.
@@ -1389,6 +1450,10 @@ function csvCell(v: unknown): string {
  * that nothing downstream could round-trip — and a second literal list would drift from the
  * tab the day a column is added. Reading the live headers means the export is exactly the
  * ledger.
+ *
+ * EVERY CELL GOES THROUGH `csvCell` (gas_shared/domain/csv.ts), which neutralises a value that
+ * a spreadsheet would read as a formula: repository names, file paths and titles come from
+ * whatever was scanned.
  *
  * NO SECRET VALUE CAN APPEAR HERE, and that is true by construction rather than by filtering:
  * the ledger has no column holding one (`scanJobs.DENIED_KEY` refuses `snippet` and
@@ -1465,23 +1530,32 @@ function inViewerScope(r: Rec, v: readModels.ViewerScope): boolean {
 
 /**
  * How many failures the diagnostics panel looks back over. Jobs are single-flight and one row
- * is appended per sync, so 50 is several weeks of a daily schedule.
+ * is appended per sync, so 50 is several weeks of a daily schedule. The server log is capped
+ * at 25 by `errorLog` itself; this caps the merged list.
  */
 const RECENT_ERROR_LIMIT = 50;
 
 /**
- * The recent server-side failures, newest first.
+ * The recent server-side failures, newest first, from TWO SOURCES merged into one row shape
+ * `{source, level, at, kind, scope, phase, error}`:
  *
- * DIVERGENCE (gas/), AND THE SOURCE IS DIFFERENT ON PURPOSE. gas/ serves this from an
- * `errorLog` tab that S4 deliberately did not port: a tab written on every caught throw is a
- * second write path into the spreadsheet whose failure mode is a full sheet, and this register
- * has one place that already records a failure with its context — the `jobs` tab's `error`
- * column, which every terminal transition, `reclaimIfStale` and `recoverIfNeeded` write. So
- * this reads that, and NO ERROR-LOG TAB WAS CREATED.
+ *   * `source: "job"` — the `jobs` tab's `error` column, which every terminal transition,
+ *     `reclaimIfStale` and `recoverIfNeeded` write. A failed sync hop records its failure HERE
+ *     and nowhere else (`errorLog.markRecorded`), so it is listed once. `kind` is the JOB's
+ *     kind ("sync", …), `scope` and `phase` are where it stopped.
+ *   * `source: "server"` — `errorLog`'s Script-Property ring buffer, the same store gas/
+ *     serves this endpoint from: RPCs that threw, the post-commit chores, the read-model warm
+ *     and its durable level, the repository-tag map, the daily trigger. `kind` is the
+ *     operation label it was recorded under; `scope` and `phase` are null.
  *
- * WHAT THAT COSTS, STATED RATHER THAN HIDDEN: this reports job failures only. A read RPC that
- * throws returns `{ok:false}` to its caller and leaves no row, so it will not appear here.
- * That is a narrower panel than gas/'s and the payload says so in `covers`.
+ * `level` is "error" or "warning". A job row is always an error; a server row carries the kind
+ * it was recorded with, so a condition that is not a fault — a sync whose absences were held
+ * back by the completeness gate — reads as a warning on the Data page, not as a failure.
+ *
+ * WHAT IT STILL DOES NOT COVER, stated rather than hidden: a "busy" refusal (a write already
+ * holds the lock — contention, not a fault), a not-authorized one (the deployment cannot make
+ * outbound calls, a state the caller is shown the remedy for), and anything that only reached
+ * an execution's console. The payload says so in `note`.
  *
  * ENUMERATED, NOT SPREAD. `cursor` and `journal_ref` are on every `JobRow` and a spread would
  * ship both — the same allowlist discipline `jobSummarySlice` exists for.
@@ -1492,25 +1566,59 @@ export function getRecentErrors(p?: unknown): ApiResult {
     const limit = Number.isFinite(raw) && raw > 0
       ? Math.min(Math.floor(raw), RECENT_ERROR_LIMIT)
       : RECENT_ERROR_LIMIT;
-    const errors = listJobs()
+    const jobErrors = listJobs()
       .filter((j) => j.error !== null && j.error !== "")
       .map((j) => ({
+        source: "job",
+        level: "error",
         job_id: j.job_id,
-        kind: j.kind,
-        phase: j.phase,
-        scope: j.scope,
+        kind: j.kind as string,
+        phase: j.phase as string | null,
+        scope: j.scope as string | null,
         at: j.updated_at,
-        started_at: j.started_at,
+        started_at: j.started_at as string | null,
         error: j.error,
-      }))
+      }));
+    const serverErrors = errorLog.recentErrors().map((e) => ({
+      source: "server",
+      level: e.kind === "warning" ? "warning" : "error",
+      job_id: null,
+      kind: e.op,
+      phase: null,
+      scope: null,
+      at: e.ts,
+      started_at: null,
+      error: e.message,
+    }));
+    const errors = [...jobErrors, ...serverErrors]
       .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))
       .slice(0, limit);
     return {
       errors,
       // The panel must be able to say what it is NOT showing.
-      covers: "jobs",
-      note: "Job failures only — this register has no error-log tab. A read that fails returns "
-        + "its message to the caller and records no row.",
+      covers: "jobs+server",
+      note: "Failed sync jobs, and the last 25 failures and warnings recorded on the server — "
+        + "RPCs that threw and background chores. A request refused because a write was already "
+        + "running is not recorded.",
     };
   });
+}
+
+/**
+ * Clear the server half of the recent-errors log (the Data page's "Clear log" action).
+ * Owner/admin only, the same gate as every other operator-facing write here. The job rows'
+ * `error` column is NOT touched: those belong to the job history, and the panel keeps listing
+ * them until the jobs tab drops them.
+ *
+ * `run`, NOT `mutate`: one Script Property is deleted, and the ledger lock would make an
+ * operator clearing a diagnostic wait behind a running sync for nothing.
+ */
+export function clearRecentErrors(_p?: unknown): ApiResult<{ cleared: true }> {
+  return run(() => {
+    if (!access.canEditUsers()) {
+      throw new Error("Only the owner or an admin can clear the error log.");
+    }
+    errorLog.clearErrors();
+    return { cleared: true as const };
+  }, "clearRecentErrors");
 }

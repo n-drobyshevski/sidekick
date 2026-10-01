@@ -183,9 +183,81 @@ describe("delayed entry: the reliability cut (Gebski et al.)", () => {
     expect(cut.median).toBeNull();
     expect(cut.q25).toBeNull();
     expect(cut.q75).toBeNull();
-    // legacy median-null convention was "the max observed time"; under minRisk it is the
-    // honest "median > last reliable time" — and here nothing at all was reliable.
-    expect(cut.medianLowerBound).toBe(cut.maxObserved);
+    // Nothing on the cut curve is trusted AND the uncut curve reaches half (at t=2), so no
+    // observed figure is a floor on the median: no bound, and the reason says why. This used
+    // to publish `maxObserved` (4) as "median ≥ 4" for a median of 2.
+    expect(cut.medianLowerBound).toBeNull();
+    expect(cut.medianBoundReason).toBe("cut-empty");
+    // And no restricted mean: the area under an untrusted (empty) curve was τ itself, flagged
+    // truncated — "mean ≥ 4" — over four findings that all closed within four days.
+    expect(cut.mean).toBeNull();
+    expect(cut.meanTruncated).toBe(false);
+    expect(cut.meanUnmeasuredReason).toBe("cut-empty");
+  });
+
+  it("8 of 10 closed on day 2, 2 open at day 30: no false 'at least 30 days' floor", () => {
+    // Ten findings, eight fixed on day 2 and two still open at day 30. The uncut curve drops to
+    // S(2) = 1 − 8/10 = 0.2, so its median is 2. Ten at risk is far under the 50 the cut
+    // requires at S=1, so the cut leaves nothing — and the old rule then shipped
+    // `medianLowerBound = maxObserved = 30` and RMST = τ = 30 (truncated): "at least 30 days".
+    const rows = [...Array.from({ length: 8 }, () => res(2)), open(30), open(30)];
+    expect(kaplanMeier(rows, {}).median).toBe(2);
+
+    const cut = kaplanMeier(rows, { horizonDays: 365, minRisk: true });
+    expect(cut.reliableUntil).toBeNull();
+    expect(cut.curve).toEqual([]);
+    expect(cut.median).toBeNull();
+    expect(cut.medianLowerBound).toBeNull();
+    expect(cut.medianBoundReason).toBe("cut-empty");
+    expect(cut.mean).toBeNull();
+    expect(cut.meanTruncated).toBe(false);
+    expect(cut.meanUnmeasuredReason).toBe("cut-empty");
+    // The counts still say what was observed.
+    expect(cut.events).toBe(8);
+    expect(cut.censored).toBe(2);
+    expect(cut.eventsPastCut).toBe(8);
+  });
+
+  it("an empty cut keeps the max-observed floor where even the uncut curve never reaches half", () => {
+    // Two of ten fixed on day 2, eight open at day 30: the uncut curve stops at S = 0.8, so
+    // "median past day 30" is what every reading of these rows agrees on.
+    const rows = [res(2), res(2), ...Array.from({ length: 8 }, () => open(30))];
+    expect(kaplanMeier(rows, {}).median).toBeNull();
+
+    const cut = kaplanMeier(rows, { horizonDays: 365, minRisk: true });
+    expect(cut.reliableUntil).toBeNull();
+    expect(cut.median).toBeNull();
+    expect(cut.medianLowerBound).toBe(30);
+    expect(cut.medianBoundReason).toBe("cut-empty-not-reached");
+    // The mean is withdrawn either way: there is no trusted curve to take an area under.
+    expect(cut.mean).toBeNull();
+    expect(cut.meanUnmeasuredReason).toBe("cut-empty");
+  });
+
+  it("names the other bound reasons: past the cut, never reached, and measured", () => {
+    // The 100-row cliff population below: cut at 40, median beyond it.
+    const phase1 = dailyEvents(40);
+    const cliff = Array.from({ length: 40 }, () => open(41, 0));
+    const phase2 = Array.from({ length: 20 }, (_, i) => res(42 + i, 0));
+    const pastCut = kaplanMeier([...phase1, ...cliff, ...phase2], { minRisk: true });
+    expect(pastCut.medianBoundReason).toBe("past-cut");
+    expect(pastCut.medianLowerBound).toBe(40);
+    expect(pastCut.meanUnmeasuredReason).toBeNull();
+
+    // No cut requested, curve never reaches half.
+    const notReached = kaplanMeier([res(1), open(9), open(9)], {});
+    expect(notReached.medianBoundReason).toBe("not-reached");
+    expect(notReached.medianLowerBound).toBe(9);
+
+    // Nothing closed at all.
+    const noEvents = kaplanMeier([open(5), open(7)], { minRisk: true });
+    expect(noEvents.medianBoundReason).toBe("not-reached");
+    expect(noEvents.medianLowerBound).toBe(7);
+    expect(noEvents.meanUnmeasuredReason).toBe("no-events");
+
+    // A measured median has no bound to explain; nothing observed has none either.
+    expect(kaplanMeier([res(1), res(2), res(3)], {}).medianBoundReason).toBeNull();
+    expect(kaplanMeier([], { minRisk: true }).medianBoundReason).toBeNull();
   });
 
   it("a 100-row population passes for a while, then fails: reliableUntil cuts mid-curve", () => {

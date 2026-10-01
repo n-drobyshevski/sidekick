@@ -54,6 +54,7 @@ import {
   NET_CAPACITY_BAND_PCT,
   RESOLVED_STATUSES,
   SEVERITY_ORDER,
+  isRepoDropout,
   ruleForScope,
   type RiskRule,
   type SastRiskRule,
@@ -130,7 +131,13 @@ export type RiskClass = "high" | "low" | "unknown";
 export type RiskRow = Pick<
   BaseRow,
   "scope" | "severity" | "status" | "has_kev" | "has_exploit" | "epss" | "cwe" | "ai_verdict"
->;
+> & {
+  /**
+   * Optional, read by the confusion matrix only: a repository drop-out is neither remediated
+   * nor open, so it leaves the matrix (see `tallyRow`). The classifier never reads it.
+   */
+  resolution_src?: string | null;
+};
 
 /** `(name, fired, observed)` — brick's clause triple, evaluated per row rather than per column. */
 interface Clause {
@@ -466,6 +473,10 @@ function finalize(m: ConfusionMatrix): ConfusionMatrix {
 
 /** Tally one row into a matrix (shared by the overall and per-severity passes). */
 function tallyRow(m: ConfusionMatrix, row: RiskRow, rule?: AnyRiskRule): void {
+  // A repository drop-out is closed because the register lost sight of it, not because it was
+  // remediated — counted as "remediated" it would lift coverage by exactly the findings nobody
+  // fixed. It is not open either, so it leaves the matrix entirely.
+  if (isRepoDropout(row)) return;
   const open = isOpen(row.status);
   switch (classifyRisk(row, rule)) {
     case "high":
@@ -487,7 +498,8 @@ function tallyRow(m: ConfusionMatrix, row: RiskRow, rule?: AnyRiskRule): void {
  *
  * "Remediated" is the same `RESOLVED_STATUSES` test the rest of the domain uses, so it
  * includes disappearance-resolutions (a finding that stopped appearing in scans). That is a
- * slightly soft notion of remediated and the methodology copy says so. Note it reads
+ * slightly soft notion of remediated and the methodology copy says so. A repository drop-out
+ * is the one closed row it does NOT count — see `tallyRow`. Note it reads
  * *status*, while the MTTR clock reads `resolved_at`: a finding can be status-RESOLVED with
  * no timestamp, and it counts as remediated here while contributing no MTTR.
  */
@@ -842,12 +854,12 @@ export function capacityByMonth(
 ): Capacity {
   const nowMs = options.now ?? Date.now();
 
-  const parsed: { first: number; resolved: number | null }[] = [];
+  const parsed: { first: number; resolved: number | null; dropout: boolean }[] = [];
   for (const row of rows) {
     if (options.highRiskOnly && classifyRisk(row, options.rule) !== "high") continue;
     const first = parseTs(row.first_seen);
     if (first === null) continue;
-    parsed.push({ first, resolved: parseTs(row.resolved_at) });
+    parsed.push({ first, resolved: parseTs(row.resolved_at), dropout: isRepoDropout(row) });
   }
 
   // `shape` is gas/'s flat-vs-grouped distinction. This register's scan log carries no such
@@ -907,7 +919,11 @@ export function capacityByMonth(
     for (const p of parsed) {
       if (p.first < start && (p.resolved === null || p.resolved >= start)) openAtStart += 1;
       if (p.first >= start && p.first < end) opened += 1;
-      if (p.resolved !== null && p.resolved >= start && p.resolved < end) closed += 1;
+      // A repository drop-out leaves the backlog at its resolved_at (so `openAtStart` above
+      // reads it as gone) but is not a closure anybody worked for.
+      if (!p.dropout && p.resolved !== null && p.resolved >= start && p.resolved < end) {
+        closed += 1;
+      }
     }
     const netPct = openAtStart > 0 ? ((closed - opened) / openAtStart) * 100 : null;
     months.push({

@@ -60,7 +60,13 @@
 // to be able to ask for just its rows. Defaults to all rows, matching gas/'s original behaviour
 // exactly when the argument is omitted.
 
-import { EPSS_PRIORITY_THRESHOLD, RESOLVED_STATUSES, SLA_TARGETS, type Scope } from "./config";
+import {
+  EPSS_PRIORITY_THRESHOLD,
+  RESOLVED_STATUSES,
+  SLA_TARGETS,
+  isRepoDropout,
+  type Scope,
+} from "./config";
 import type { BaseRow, ScanRow } from "./ledgerTypes";
 import { RISK_TIER_ORDER, riskTier, type AnyRiskRule, type RiskRow } from "./program";
 import { normalizeSeverity } from "./severity";
@@ -113,20 +119,26 @@ export interface SeverityStat {
   total: number;
   open: number;
   resolved: number;
+  /** Repository drop-outs (config.ts's RESOLUTION_REPO_DROPOUT): closed, but not fixed. */
+  leftCoverage: number;
 }
 
 /**
- * Per-severity total / open / resolved. Open vs resolved is the same status test the rest of
- * this module uses; every record lands in exactly one bucket, so open + resolved === total.
+ * Per-severity total / open / resolved / left coverage. Open is the same status test the rest
+ * of this module uses; a closed row is `resolved` unless it is a repository drop-out, which
+ * the register lost sight of rather than saw fixed — counted apart, as the register model's
+ * own top-line counts do. Every record lands in exactly one bucket, so open + resolved +
+ * leftCoverage === total.
  */
 export function severityStats(records: Rec[], scope?: Scope): Record<string, SeverityStat> {
   const rows = scope ? records.filter((r) => r["scope"] === scope) : records;
   const out: Record<string, SeverityStat> = {};
   for (const r of rows) {
     const s = sev(r);
-    const stat = out[s] ?? (out[s] = { total: 0, open: 0, resolved: 0 });
+    const stat = out[s] ?? (out[s] = { total: 0, open: 0, resolved: 0, leftCoverage: 0 });
     stat.total += 1;
     if (isOpen(r["status"])) stat.open += 1;
+    else if (isRepoDropout(r)) stat.leftCoverage += 1;
     else stat.resolved += 1;
   }
   return out;

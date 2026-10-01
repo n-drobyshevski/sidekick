@@ -92,6 +92,14 @@ export function registerScopedViewContract({ describe, it, expect, dims }) {
       expect(mttrHeroView({}).value).toBe("Not measured");
     });
 
+    it("does not say nothing was fixed when fixes exist but no median or floor was published", () => {
+      // gas_devsecops' reliability cut can leave neither: too few at risk, though fixes exist.
+      const view = mttrHeroView({ mttr: { median: null, medianLowerBound: null }, open: 2, resolved: 8 });
+      expect(view.value).toBe("Not measured");
+      expect(view.qualifier).toMatch(/too few findings/i);
+      expect(mttrHeroView({ open: 2, resolved: 0 }).qualifier).toMatch(/nothing in your scope/i);
+    });
+
     it("measures each severity's median against its own target, capped at a full bar", () => {
       const rows = sevMttrRows({ perSev: [
         { sev: "CRITICAL", kmMedian: 30, slaTarget: 15, pastSla: 2 },

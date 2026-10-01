@@ -11,7 +11,8 @@
 //                       insights.ts's header for why bySupportGroup/byDomain were dropped
 //                       (host-only; no analog for a source repository).
 //   SCAN_ROW_KEYS       drops `shape` (ledgerTypes.ts's ScanRow has no such column — every
-//                       scan here is flat) and adds `scope` (the register a scan covered,
+//                       scan here is flat), adds `disappearance`/`dropout_count` (the
+//                       completeness verdict), and adds `scope` (the register a scan covered,
 //                       which the Scan History table needs on a three-scope register gas/'s
 //                       single-register version never had to show). raw_ref/obs_ref (the
 //                       Drive ids) stay OUT of the allowlist, same as gas/'s raw_ref/obs_ref —
@@ -47,7 +48,7 @@ import { parseTs, type Rec } from "./util";
  * `fmtKmMedian` distinguishes a missing estimate (renders "—") from a present one, and an
  * absent `remediation` and an absent `remediation.km` have to reach it the same way.
  *
- * `km` CARRIES SEVEN FIELDS NOW, NOT TWO (MTTR delayed-entry package, then the measurement-
+ * `km` CARRIES EIGHT FIELDS NOW, NOT TWO (MTTR delayed-entry package, then the measurement-
  * window package): `q25` and `reliableUntil` joined `median`/`medianLowerBound` so the
  * Executive hero can run the SAME `kmHalfLifeView` decision MTTR & SLA does — "Not reached"
  * plus a 25th-percentile or reliability-cut reading, never the retired "at least N days" —
@@ -57,7 +58,9 @@ import { parseTs, type Rec } from "./util";
  * many fixes the estimate actually rests on and how many rows never entered observation at
  * all, and neither number was on this slice before — `curveNote()` on that page already says
  * the CURVE itself stays MTTR-only; these three are scalars the estimate is ABOUT, not the
- * curve. Still an allowlist of exactly what the hero reads, not a field wider than that —
+ * curve. `medianBoundReason` joined last: it is what lets `kmHalfLifeView` tell a floor that
+ * holds from a reliability cut that left nothing (`remediation.ts`'s `KMResult`). Still an
+ * allowlist of exactly what the hero reads, not a field wider than that —
  * `censored` stays off the wire here (Executive's own qualifier line deliberately does not
  * claim it; see `executiveHeroView`'s header).
  *
@@ -77,11 +80,15 @@ export function execMttrSlice(mttr: unknown): Rec | null {
   const km = ((m["remediation"] ?? {}) as Rec)["km"] as Rec | undefined;
   return {
     rowCount: m["rowCount"],
+    // The third state beside open/resolved: rowCount is their sum with it (repository
+    // drop-outs, which the hero's ring must not read as fixed or as still open).
+    leftCoverage: m["leftCoverage"],
     overall: { resolved: overall["resolved"], open: overall["open"] },
     remediation: km
       ? {
         km: {
           median: km["median"], medianLowerBound: km["medianLowerBound"],
+          medianBoundReason: km["medianBoundReason"],
           q25: km["q25"], reliableUntil: km["reliableUntil"],
           events: km["events"], total: km["total"], excludedPreEntry: km["excludedPreEntry"],
         },
@@ -102,7 +109,8 @@ export function execMttrSlice(mttr: unknown): Rec | null {
  * `kmQ25` AND `kmMedianLowerBound` JOINED `kmMedian` (MTTR delayed-entry package), for the same
  * reason `execMttrSlice`'s `km` widened: the byScope table now runs `kmHalfLifeView` per row
  * too, so a register whose curve never reaches half reads "Not reached" (with its own quartile
- * reading) instead of a bare dash with a footnote pointing at MTTR & SLA.
+ * reading) instead of a bare dash with a footnote pointing at MTTR & SLA. `kmMedianBoundReason`
+ * joined them for the reason `execMttrSlice`'s `medianBoundReason` did.
  *
  * ROWS ARE NOT CAPPED HERE, though the page draws five. How many rows are worth showing is a
  * presentation decision, and it already lives in `executiveByDomainView` where it is tested;
@@ -121,6 +129,7 @@ export function execGroupSlice(byGroup: unknown): Rec | null {
       kmMedian: r["kmMedian"],
       kmQ25: r["kmQ25"],
       kmMedianLowerBound: r["kmMedianLowerBound"],
+      kmMedianBoundReason: r["kmMedianBoundReason"],
       open: r["open"],
     })),
   };
@@ -170,24 +179,19 @@ const PROGRAM_TREND_KEYS = ["date", "reconstructed", "coverage_pct", "efficiency
 /**
  * `getMttrPage`'s trend slice.
  *
- * `history` SURVIVES HERE, unlike on Scan History, and that asymmetry is deliberate. The MTTR
- * page reads it twice: `hist[hist.length - 2]` feeds the change chips, and — when the
- * reconstructed series is empty and the vendor-fix filter is on — the whole array is the
- * FALLBACK the median and open-past-SLA charts draw from. Dropping it would blank those charts
- * on a young ledger, which is exactly the state they exist to cover.
+ * NO `history`. It used to survive here on the strength of an MTTR page that read it for change
+ * chips and a young-ledger chart fallback — readers gas/'s page has and this one never grew:
+ * `mttr.js` draws `trend` alone (`halfLifeTrendPoints`). `historyModel` no longer builds the
+ * array at all, so a key passed through here would only ever be the empty default.
  */
 export function mttrPageTrendSlice(trends: unknown): Rec | null {
   if (!trends || typeof trends !== "object") return null;
-  const t = trends as Rec;
-  return { history: t["history"] ?? [], trend: pickRows(t["trend"], MTTR_TREND_KEYS) };
+  return { trend: pickRows((trends as Rec)["trend"], MTTR_TREND_KEYS) };
 }
 
 /**
- * `getMttrTrend`'s slice — the Scan History page, its only caller.
- *
- * `history` is dropped WHOLE: this page never dereferences it. It is the entire `mttr_history`
- * tab, shipped on every visit for nobody, and it is the one place the array can go because the
- * MTTR page's fallback (above) is the only thing that needs it.
+ * `getScanHistory`'s slice — the Scan History page, its only caller. Same shape as the MTTR
+ * page's, five fields per point where that one keeps nine.
  */
 export function historyTrendSlice(trends: unknown): Rec | null {
   if (!trends || typeof trends !== "object") return null;
@@ -214,6 +218,11 @@ export function programTrendSlice(trends: unknown): Rec | null {
 const SCAN_ROW_KEYS = [
   "scan_id", "ts", "scope", "mode", "total",
   "new_count", "resolved_count", "reopened_count", "severities", "sealed",
+  // The completeness verdict and the drop-outs it closed — what the table marks a deferred
+  // scan by, and the count `resolved_count` deliberately leaves out (domain/scanCompleteness.ts).
+  // The other three record columns (reported_total, partial_pages, duplicates) are operator
+  // diagnostics that reach the Data page's error log instead.
+  "disappearance", "dropout_count",
 ] as const;
 
 /** `getScanHistory`'s scans, narrowed to the columns the table reads. */

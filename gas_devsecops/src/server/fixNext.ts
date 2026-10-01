@@ -53,7 +53,10 @@
 //                PRODUCT.md says so — so these are excluded from the list and COUNTED, never
 //                dropped. Only SCA can be here: `ledgerCore.baseRows` collapses
 //                `fix_available_at` onto `first_seen` for sast and secrets, so neither scope
-//                can produce a null.
+//                can produce a null. Expect it near zero: the SCA fetch asks for `hasFix: true`
+//                (wizQueries.ts `SCA_FETCH_HAS_FIX`), so a finding still waiting on a vendor is
+//                never fetched; what lands here is a fetched row whose fix columns were not
+//                captured.
 //   unvalidated  A secret not confirmed live: UNKNOWN, ERROR, never checked — and INVALID,
 //                which is "confirmed dead". Both are "not known to be live", which is the
 //                claim tier 1 rests on, so they share a bucket and the client names both.

@@ -35,9 +35,9 @@ import {
 } from "../src/client/js/pages/executive.js";
 import {
   accountingView, actionableClockView, awaitingView, endOfLifeExclusionNote, fmtCount, fmtDays,
-  kmHalfLifeView, mttrHeroView,
-  mttrSeverityRows, PAST_CUT_HELP, rateView, resolutionBucketView, rmstView, slaSeverityRows,
-  survivalAxisNote, trackingSinceView, WINDOW_LINE_HELP, windowLineView,
+  HAS_FIX_NOT_MEASURABLE, kmHalfLifeView, mttrHeroView,
+  mttrSeverityRows, PAST_CUT_HELP, TOO_FEW_TO_ESTIMATE, rateView, resolutionBucketView, rmstView, slaSeverityRows,
+  stillOpenFigure, survivalAxisNote, trackingSinceView, WINDOW_LINE_HELP, windowLineView,
 } from "../src/client/js/pages/mttr.js";
 import {
   boundedRateView, capacityView, confusionView, coverageEfficiencyView, sensitivityView,
@@ -369,6 +369,31 @@ describe("a curve that never reaches half", () => {
     }
   });
 
+  it("[unmeasured] a reliability cut that left nothing says so, with no floor at all", () => {
+    // "cut-empty" (remediation.ts `medianBoundReason`): too few at risk to trust any of the
+    // curve while the uncut curve DOES reach half — so no observed figure is a floor.
+    const view = kmHalfLifeView({
+      median: null, q25: null, medianLowerBound: null, reliableUntil: null,
+      medianBoundReason: "cut-empty", events: 8,
+    });
+    expect(view).toEqual({
+      measured: false, value: "Not measured", isLowerBound: false, days: null,
+      q25Days: null, state: "unmeasured", secondary: TOO_FEW_TO_ESTIMATE,
+    });
+  });
+
+  it("[half-bound] an empty cut whose uncut curve never reaches half bounds the median only", () => {
+    const view = kmHalfLifeView({
+      median: null, q25: null, medianLowerBound: 30, reliableUntil: null,
+      medianBoundReason: "cut-empty-not-reached",
+    });
+    expect(view.state).toBe("half-bound");
+    expect(view.value).toBe("Not reached");
+    // Never "under 25%": the empty cut's null q25 says nothing about a quarter.
+    expect(view.secondary).toBe("under half fixed within 30 days");
+    expect(view.secondary).not.toMatch(/25%/);
+  });
+
   it("reaches the MTTR hero, with the censored count beside it", () => {
     const view = mttrHeroView(mttrPayload(kmCensored()));
     expect(view.isLowerBound).toBe(true);
@@ -377,6 +402,40 @@ describe("a curve that never reaches half", () => {
     expect(view.events).toBe(6);
     expect(view.qualifier).toContain("180");
     expect(view.qualifier).toMatch(/censored/);
+  });
+
+  it("the MTTR hero does not call a repository drop-out still open", () => {
+    const view = mttrHeroView(mttrPayload({ ...kmCensored(), censoredLeftCoverage: 30 }));
+    expect(view.censored).toBe(180);
+    expect(view.leftCoverage).toBe(30);
+    expect(view.qualifier).toContain("150 still open (censored)");
+    expect(view.qualifier).toContain("30 left coverage (censored)");
+  });
+
+  it("the briefing's Still open figure is censored less left coverage, and names the rest", () => {
+    const view = mttrHeroView(mttrPayload({ ...kmCensored(), censoredLeftCoverage: 30 }));
+    const fig = stillOpenFigure(view);
+    expect(fig.count).toBe(150);
+    expect(fig.trackLabel).toBe("150 of " + fmtCount(view.total) + " observations still open");
+    expect(fig.caption).toMatch(/30 more left coverage with their repository/);
+    // No drop-out: the figure is the censored count and the caption names nothing extra.
+    const plain = stillOpenFigure(mttrHeroView(mttrPayload(kmCensored())));
+    expect(plain.count).toBe(180);
+    expect(plain.caption).not.toMatch(/left coverage/);
+    // And the briefing draws THIS figure, not the raw censored count.
+    expect(SRC.mttr).toMatch(/value: fmtCount\(stillOpen\.count\)/);
+    expect(SRC.mttr).not.toMatch(/fmtCount\(view\.censored\)/);
+  });
+
+  it("the Executive hero names drop-outs as the third part of tracked", () => {
+    const payload = execPayload(kmCensored());
+    payload.mttr = { ...payload.mttr, rowCount: 200, leftCoverage: 14 };
+    const view = executiveHeroView(payload);
+    expect(view.leftCoverage).toBe(14);
+    expect(view.tracked).toBe(view.resolved + view.open + view.leftCoverage);
+    expect(view.qualifier).toContain("14 left coverage");
+    // None: the line reads as it always did.
+    expect(executiveHeroView(execPayload(kmCensored())).qualifier).not.toContain("left coverage");
   });
 
   it("reaches the Executive hero through execMttrSlice's widened four-field slice", () => {
@@ -581,6 +640,19 @@ describe("accountingView — where every row the estimate started from went", ()
     ]);
   });
 
+  it("names repository drop-outs apart from \"Still open\" — both censored, only one still open", () => {
+    const view = accountingView({ remediation: { km: accountingKm({ censoredLeftCoverage: 125 }) } });
+    expect(view.rows.map((r) => [r.label, r.count])).toEqual([
+      ["Fixes used", 1162],
+      ["Fixes past the cut", 38],
+      ["Still open", 49000],
+      ["Left coverage", 125],
+      ["Closed before watching", 1],
+      ["No readable clock", 0],
+    ]);
+    expect(view.rows.reduce((a, r) => a + r.count, 0)).toBe(view.total);
+  });
+
   it("every row's own reconciliation check: the sum-to-header invariant holds on many shapes", () => {
     const shapes = [
       accountingKm(),
@@ -706,6 +778,15 @@ describe("the restricted mean", () => {
 
   it("is \"Not measured\", not zero, with no events", () => {
     expect(rmstView({ mean: null, meanTruncated: false }).text).toBe("Not measured");
+  });
+
+  it("says why it is unmeasured when the reliability cut left no curve", () => {
+    const view = rmstView({ mean: null, meanTruncated: false, meanUnmeasuredReason: "cut-empty" });
+    expect(view.measured).toBe(false);
+    expect(view.text).toBe("Not measured");
+    expect(view.note).toMatch(/too few findings at risk/);
+    expect(rmstView({ mean: null, meanUnmeasuredReason: "no-events" }).note)
+      .toMatch(/nothing has closed/);
   });
 });
 
@@ -866,6 +947,27 @@ describe("ai_verdict at zero percent", () => {
   });
 });
 
+// -------------------------------------------------------------- the awaiting-a-vendor meter
+
+describe("the awaiting-a-vendor meter", () => {
+  it("is a measurement when the payload names no hasFix fetch", () => {
+    const view = awaitingView(mttrPayload(kmCensored()));
+    expect(view.measurable).toBe(true);
+    expect(view.reason).toBeNull();
+    expect(view.overall).toBe(4);
+  });
+
+  it("is not measurable under the hasFix fetch — a near-zero there is not the vendors keeping up", () => {
+    const base = mttrPayload(kmCensored());
+    const view = awaitingView({
+      ...base, remediation: { ...base.remediation, fetchFilter: { scaHasFix: true } },
+    });
+    expect(view.show).toBe(true);
+    expect(view.measurable).toBe(false);
+    expect(view.reason).toBe(HAS_FIX_NOT_MEASURABLE);
+  });
+});
+
 // -------------------------------------------------------------------- the actionable clock
 
 describe("the actionable clock", () => {
@@ -893,6 +995,25 @@ describe("the actionable clock", () => {
   it("REFUSES a register-wide framing rather than obliging one", () => {
     expect(() => actionableClockView(mttr, { registerWide: true })).toThrow(/SCA-only/);
     expect(() => actionableClockView(mttr, { registerWide: true })).toThrow(/construction/);
+  });
+
+  it("prints the vendor wait as not measurable under the hasFix fetch, and says why", () => {
+    const measured = actionableClockView(mttr);
+    expect(measured.latencyMeasurable).toBe(true);
+    expect(measured.latency).not.toBeNull();
+
+    const hasFix = {
+      ...mttr,
+      remediation: { ...mttr.remediation, fetchFilter: { scaHasFix: true } },
+    };
+    const view = actionableClockView(hasFix);
+    expect(view.latencyMeasurable).toBe(false);
+    expect(view.latency).toBeNull();
+    expect(view.segments).toBeNull();
+    expect(view.latencyReason).toBe(HAS_FIX_NOT_MEASURABLE);
+    expect(view.latencyReason).toMatch(/only packages with a published fix/);
+    // The actionable half-life itself is still a measurement: the fix date is known.
+    expect(view.half.state).toBe(measured.half.state);
   });
 
   it("keeps its label even when the payload carries no actionable block", () => {

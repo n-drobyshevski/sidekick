@@ -15,11 +15,11 @@
 //      simply also now holds a production tenant's pagination token and a Drive file id. The
 //      assertion is over the full `JSON.stringify`, not `Object.keys`, because a raw
 //      `params_json` string would pass a key check while carrying the cursor inside its text.
-//   2. The post-sync warm's ORDERING. `warmReadModels` refuses while `activeJob()` is
-//      non-null, and it works today only because `finishSync` sets `phase: "DONE"` BEFORE
-//      calling `afterPersist`. Moving that update after `afterPersist` reads as a tidy-up and
-//      silently disables the warm forever — every page correct, every sync successful, and the
-//      first load after each sync paying a full recompute with nothing anywhere saying so.
+//   2. The post-sync warm. `afterPersist` ARMS it (`trigger_continueWarm`) rather than running
+//      it inside the sync's lock, and the armed hop refuses while `activeJob()` is non-null. A
+//      sync that stopped arming it — or a hop that never warmed — leaves every page correct,
+//      every sync successful, and the first load after each sync paying a full recompute with
+//      nothing anywhere saying so.
 //   3. The auto-compaction DEFAULT. S7 moved that gate from a Script Property (unset = off) to
 //      `Settings.autoCompact` (default false). The two agree only if the default did not move,
 //      and "the default is false" is a reading of a literal — so this asserts the BEHAVIOUR: a
@@ -30,7 +30,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SCOPES, SLA_TARGETS, type Scope } from "../src/domain/config";
 import { DEFAULT_SETTINGS } from "../src/domain/settingsLogic";
 import type { Rec } from "../src/domain/util";
-import type { WarmReport } from "../src/server/readModels";
 
 interface Row {
   [k: string]: unknown;
@@ -42,13 +41,17 @@ const tables: Record<string, Row[]> = {};
 const props: Record<string, string> = {};
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 
-/** Every warm report `scanJobs.afterPersist` produced, in order. Spec 2 reads this. */
-const warmReports: WarmReport[] = [];
 /** Every `ledgerStore.compactLedger` call. Spec 3 reads this. */
 const compactCalls: Array<{ retentionDays: number | null; dryRun: boolean }> = [];
 /** How many times a script lock was actually acquired. The write-RPC spec reads this. */
 let lockAcquisitions = 0;
+/** The wait the most recent `tryLock` was asked for. The view-switch spec reads this. */
+let lastLockWaitMs: number | undefined;
 let externalLockHold = false;
+/** Whether the caller is the owner or an admin. Only clearRecentErrors' gate reads it. */
+const accessState = { canEdit: true };
+/** Set to make the fake tenant's next page throw — a sync hop that fails mid-walk. */
+let fetchFails: Error | null = null;
 
 const drive = {
   pages: {} as Record<string, Record<number, unknown>>,
@@ -61,6 +64,13 @@ const drive = {
 };
 
 let projectTriggers: string[] = [];
+/** Every whole-tab `readAll`, by tab. The bootstrap-core scans spec reads this. */
+const tabReads: string[] = [];
+/** Every clock trigger built (the daily sync reinstall), and a fault to make create() throw. */
+const clockBuilds: Array<{ handler: string; hour?: number; tz?: string }> = [];
+let clockCreateFails: Error | null = null;
+/** Edits a fake-tenant node before the sync sees it. Reset per test; the CSV spec sets it. */
+let tamperNode: ((scope: Scope, n: Rec) => void) | null = null;
 
 vi.mock("../src/server/sheetsDb", async (importOriginal) => {
   // TABS and TAB_HEADERS come from the REAL module. A stubbed header list would compare the
@@ -77,7 +87,10 @@ vi.mock("../src/server/sheetsDb", async (importOriginal) => {
     TAB_HEADERS: real.TAB_HEADERS,
     SCHEMA_VERSION: real.SCHEMA_VERSION,
     ensureTab: () => null,
-    readAll: (tab: string) => tables[tab] ?? [],
+    readAll: (tab: string) => {
+      tabReads.push(tab);
+      return tables[tab] ?? [];
+    },
     readTail: (tab: string, n: number) => (tables[tab] ?? []).slice(-n),
     overwrite: (tab: string, rows: Row[]) => {
       tables[tab] = rows.map((r) => project(tab, r));
@@ -226,29 +239,10 @@ vi.mock("../src/server/readModelStore", () => ({
   durablyPeek: (name: string, params: unknown) =>
     cacheState.store.get(`${name}|${JSON.stringify(params ?? null)}|${cacheState.version}`),
   duringWarm: <T,>(fn: () => T): T => fn(),
+  warmTouched: () => [],
   sweepReadModels: () => 0,
   __resetMemosForTest: () => {},
 }));
-
-/**
- * The REAL warm, wrapped so the spec can read the report `afterPersist` got.
- *
- * `warmReadModels` returns `{blockedBy}` when `activeJob()` is non-null and `{warmed}` when it
- * ran, so the report IS the observation: `blockedBy === null` is the statement that no job was
- * active at the moment the warm was called, measured by the code that has to be right, not by
- * a second copy of the rule in this file.
- */
-vi.mock("../src/server/readModels", async (importOriginal) => {
-  const real = await importOriginal<typeof import("../src/server/readModels")>();
-  return {
-    ...real,
-    warmReadModels: (budgetMs?: number) => {
-      const report = real.warmReadModels(budgetMs);
-      warmReports.push(report);
-      return report;
-    },
-  };
-});
 
 /** The real ledgerStore, with `compactLedger` observed. */
 vi.mock("../src/server/ledgerStore", async (importOriginal) => {
@@ -264,7 +258,7 @@ vi.mock("../src/server/ledgerStore", async (importOriginal) => {
 
 /** Access is decided by `Session` in the real module; the RPC layer only asks one question. */
 vi.mock("../src/server/access", () => ({
-  canEditUsers: () => true,
+  canEditUsers: () => accessState.canEdit,
   // A full user: no viewer scope is forced, and nobody is on the scoped roster. The scoped
   // tier itself is exercised in test/scopedViewer.test.ts.
   enforcedScope: () => null,
@@ -364,7 +358,9 @@ vi.mock("../src/server/wizClient", async (importOriginal) => {
   return {
     ...real,
     fetchPage: (scope: Scope, _v: Rec, paging: { pageSize: number; pageNumber: number }) => {
+      if (fetchFails) throw fetchFails;
       const nodes = [0, 1, 2].map((i) => node(scope, i));
+      for (const n of nodes) tamperNode?.(scope, n);
       paging.pageNumber += 1;
       return {
         nodes,
@@ -380,7 +376,8 @@ vi.stubGlobal("LockService", {
   getScriptLock: () => {
     let mine = false;
     return {
-      tryLock: () => {
+      tryLock: (ms?: number) => {
+        lastLockWaitMs = ms;
         if (externalLockHold) return false;
         externalLockHold = true;
         mine = true;
@@ -400,15 +397,32 @@ vi.stubGlobal("ScriptApp", {
     const i = projectTriggers.indexOf(t.getHandlerFunction());
     if (i >= 0) projectTriggers.splice(i, 1);
   },
-  newTrigger: (handler: string) => ({
-    timeBased: () => ({
-      after: () => ({
-        create: () => {
-          projectTriggers.push(handler);
-        },
+  newTrigger: (handler: string) => {
+    // Two chains reach this stub: scanJobs' one-shots (`timeBased().after(ms)`) and the daily
+    // sync reinstall a moved sync hour causes (`timeBased().everyDays(1).atHour(h).inTimezone(tz)`).
+    // The clock chain records what reached it, and `clockCreateFails` makes its create() throw.
+    const rec: { handler: string; hour?: number; tz?: string } = { handler };
+    const clock = {
+      everyDays: () => clock,
+      atHour: (h: number) => { rec.hour = h; return clock; },
+      inTimezone: (tz: string) => { rec.tz = tz; return clock; },
+      create: () => {
+        if (clockCreateFails) throw clockCreateFails;
+        clockBuilds.push(rec);
+        projectTriggers.push(handler);
+      },
+    };
+    return {
+      timeBased: () => ({
+        after: () => ({
+          create: () => {
+            projectTriggers.push(handler);
+          },
+        }),
+        everyDays: clock.everyDays,
       }),
-    }),
-  }),
+    };
+  },
 });
 
 vi.stubGlobal("HtmlService", {
@@ -614,9 +628,14 @@ beforeEach(() => {
   for (const k of Object.keys(drive.named)) delete drive.named[k];
   drive.snapshot = null;
   projectTriggers = [];
+  tabReads.length = 0;
+  clockBuilds.length = 0;
+  clockCreateFails = null;
+  tamperNode = null;
   externalLockHold = false;
+  accessState.canEdit = true;
+  fetchFails = null;
   lockAcquisitions = 0;
-  warmReports.length = 0;
   compactCalls.length = 0;
   cacheState.version = 1;
   cacheState.store.clear();
@@ -902,17 +921,19 @@ describe("each read model reaches its slice", () => {
     const { api } = await syncedRegister();
     const d = (api.getExecutivePage({}) as unknown as Rec)["data"] as Rec;
     const mttr = d["mttr"] as Rec;
-    // execMttrSlice's exact shape: four numbers, and NOT the whole mttr model.
-    expect(Object.keys(mttr).sort()).toEqual(["overall", "remediation", "rowCount"]);
+    // execMttrSlice's exact shape: five numbers, and NOT the whole mttr model.
+    expect(Object.keys(mttr).sort()).toEqual(["leftCoverage", "overall", "remediation", "rowCount"]);
     expect(Object.keys(mttr["overall"] as Rec).sort()).toEqual(["open", "resolved"]);
     expect(mttr).not.toHaveProperty("sla");
     const byScope = d["byScope"] as Rec;
     expect(byScope["dimension"]).toBe("scope");
     const row = (byScope["rows"] as Rec[])[0]!;
-    // execGroupSlice keeps five keys (MTTR delayed-entry package added kmQ25/kmMedianLowerBound
-    // so the byScope table can run kmHalfLifeView) and drops `total` / `resolved` / `awaiting`.
-    expect(Object.keys(row).sort())
-      .toEqual(["group", "kmMedian", "kmMedianLowerBound", "kmQ25", "open"]);
+    // execGroupSlice keeps six keys (MTTR delayed-entry package added kmQ25/kmMedianLowerBound
+    // so the byScope table can run kmHalfLifeView; kmMedianBoundReason followed) and drops
+    // `total` / `resolved` / `awaiting`.
+    expect(Object.keys(row).sort()).toEqual(
+      ["group", "kmMedian", "kmMedianBoundReason", "kmMedianLowerBound", "kmQ25", "open"],
+    );
   });
 
   // THE GAP THIS CLOSES, AND IT IS ONE THIS CHANGE ACTUALLY FELL INTO. `getExecutivePage` and
@@ -982,11 +1003,12 @@ describe("each read model reaches its slice", () => {
     expect(cold["totals"]).toHaveProperty("teams_in_coldest_share");
   });
 
-  it("getMttrPage: historyModel -> mttrPageTrendSlice, keeping `history`", async () => {
+  it("getMttrPage: historyModel -> mttrPageTrendSlice, trend only", async () => {
     const { api } = await syncedRegister();
     const d = (api.getMttrPage({}) as unknown as Rec)["data"] as Rec;
     const trends = d["trends"] as Rec;
-    expect(trends).toHaveProperty("history"); // the young-ledger fallback lives here
+    // No page reads a `history` array; it cost one Drive read per recorded day.
+    expect(Object.keys(trends)).toEqual(["trend"]);
     expect(Array.isArray(trends["trend"])).toBe(true);
     // The summary DOES ship from this endpoint (divergence from gas/, which splits it).
     expect(d["mttr"]).toHaveProperty("remediation");
@@ -1058,14 +1080,27 @@ describe("getExportCsv", () => {
     expect(d["rowCount"]).toBe(3);
     expect(d["scope"]).toBe("sast");
   });
+
+  it("neutralises a formula-leading value from the register — it arrives from a scanned repo", async () => {
+    tamperNode = (scope, n) => {
+      if (scope !== "sca" || n["id"] !== "sca-0") return;
+      n["name"] = '=HYPERLINK("https://evil.example","open")';
+      n["detailedName"] = "@SUM(1)";
+    };
+    const { api } = await syncedRegister();
+    const content = String(((api.getExportCsv({}) as unknown as Rec)["data"] as Rec)["content"]);
+    expect(content).toContain('"\'=HYPERLINK(""https://evil.example"",""open"")"');
+    expect(content).toContain(",'@SUM(1),");
+    expect(content).not.toMatch(/(^|,)=HYPERLINK/m);
+  });
 });
 
 // --------------------------------------------------------------------------------------- //
-//  6. getRecentErrors — the jobs tab, and the honesty about what that omits
+//  6. getRecentErrors — the jobs tab and the server log, merged, and what that still omits
 // --------------------------------------------------------------------------------------- //
 
 describe("getRecentErrors", () => {
-  it("reads the jobs tab's error column and says so", async () => {
+  it("reads the jobs tab's error column and says what the panel covers", async () => {
     const { api } = await syncedRegister();
     tables["jobs"]!.push({
       job_id: "sync-broken", kind: "sync", phase: "FAILED", scan_id: null, scope: "sca",
@@ -1077,11 +1112,11 @@ describe("getRecentErrors", () => {
     const d = (api.getRecentErrors({}) as unknown as Rec)["data"] as Rec;
     const errors = d["errors"] as Rec[];
     expect(errors).toHaveLength(1);
-    expect(errors[0]!["job_id"]).toBe("sync-broken");
+    expect(errors[0]).toMatchObject({ source: "job", job_id: "sync-broken", scope: "sca" });
     expect(errors[0]!["error"]).toContain("died mid-sync");
-    // The panel must be able to state its own scope — this is not gas/'s error-log tab.
-    expect(d["covers"]).toBe("jobs");
-    expect(String(d["note"])).toContain("no error-log tab");
+    // The panel must be able to state its own scope, including what it still leaves out.
+    expect(d["covers"]).toBe("jobs+server");
+    expect(String(d["note"])).toContain("is not recorded");
   });
 
   it("is an allowlist, not a spread — no cursor, no journal_ref", async () => {
@@ -1102,7 +1137,89 @@ describe("getRecentErrors", () => {
     const { api } = await syncedRegister();
     const d = (api.getRecentErrors({}) as unknown as Rec)["data"] as Rec;
     expect(d["errors"]).toEqual([]);
-    expect(d["covers"]).toBe("jobs");
+    expect(d["covers"]).toBe("jobs+server");
+  });
+
+  it("lists a read RPC that threw — the failure the jobs tab never saw — newest first", async () => {
+    const { api } = await syncedRegister();
+    tables["jobs"]!.push({
+      job_id: "sync-old", kind: "sync", phase: "FAILED", scan_id: null, scope: "sast",
+      cursor: null, page: 0, findings_so_far: 0, page_size: 0, total_count: 0,
+      params_json: "{}", journal_ref: null, error: "old failure",
+      started_at: "2026-09-01T02:00:00Z", updated_at: "2026-09-01T02:01:00Z",
+    });
+    expect((api.getRegisterPage({ scope: "nope" }) as unknown as Rec)["ok"]).toBe(false);
+    const errors = ((api.getRecentErrors({}) as unknown as Rec)["data"] as Rec)["errors"] as Rec[];
+    expect(errors.map((e) => e["source"])).toEqual(["server", "job"]);
+    expect(errors[0]).toMatchObject({ kind: "api", level: "error", scope: null, phase: null, job_id: null });
+    expect(errors[1]).toMatchObject({ source: "job", level: "error" });
+    expect(String(errors[0]!["error"])).toMatch(/needs a scope/);
+  });
+
+  // The completeness gate's deferral is a sync that SUCCEEDED and still owes the operator a
+  // sentence — not a failure, and the Data page must be able to tell the two apart.
+  it("carries a server entry's warning level through, rather than listing it as an error", async () => {
+    const { api } = await syncedRegister();
+    const errorLog = await import("../src/server/errorLog");
+    errorLog.recordError("syncCompleteness", "sca scan looked incomplete", "warning");
+    const errors = ((api.getRecentErrors({}) as unknown as Rec)["data"] as Rec)["errors"] as Rec[];
+    expect(errors).toEqual([expect.objectContaining({
+      source: "server", level: "warning", kind: "syncCompleteness", error: "sca scan looked incomplete",
+    })]);
+  });
+
+  it("does not record a busy refusal — contention, not a fault", async () => {
+    const { api } = await syncedRegister();
+    externalLockHold = true;
+    try {
+      expect((api.deleteScans({ scanIds: ["nope"] }) as unknown as Rec)["errorKind"]).toBe("busy");
+    } finally {
+      externalLockHold = false;
+    }
+    const errors = ((api.getRecentErrors({}) as unknown as Rec)["data"] as Rec)["errors"] as Rec[];
+    expect(errors).toEqual([]);
+  });
+
+  it("lists a sync hop that failed ONCE — from its job row, not again from run()", async () => {
+    const { api } = await load();
+    fetchFails = new Error("tenant refused the page");
+    const out = api.runSync({}) as unknown as Rec;
+    expect(out["ok"]).toBe(false);
+    const errors = ((api.getRecentErrors({}) as unknown as Rec)["data"] as Rec)["errors"] as Rec[];
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({ source: "job", kind: "sync", phase: "FAILED" });
+    expect(String(errors[0]!["error"])).toContain("tenant refused the page");
+  });
+});
+
+describe("clearRecentErrors", () => {
+  it("drops the server log for the owner or an admin, and leaves job rows listed", async () => {
+    const { api } = await syncedRegister();
+    tables["jobs"]!.push({
+      job_id: "sync-broken", kind: "sync", phase: "FAILED", scan_id: null, scope: "sca",
+      cursor: null, page: 0, findings_so_far: 0, page_size: 0, total_count: 0,
+      params_json: "{}", journal_ref: null, error: "boom",
+      started_at: "2026-09-02T02:00:00Z", updated_at: "2026-09-02T02:31:00Z",
+    });
+    api.getRegisterPage({ scope: "nope" });
+    const before = ((api.getRecentErrors({}) as unknown as Rec)["data"] as Rec)["errors"] as Rec[];
+    expect(before.map((e) => e["source"]).sort()).toEqual(["job", "server"]);
+
+    const res = api.clearRecentErrors({}) as unknown as Rec;
+    expect(res).toMatchObject({ ok: true, data: { cleared: true } });
+    const after = ((api.getRecentErrors({}) as unknown as Rec)["data"] as Rec)["errors"] as Rec[];
+    expect(after.map((e) => e["source"])).toEqual(["job"]);
+  });
+
+  it("refuses anyone else and leaves the log alone", async () => {
+    const { api } = await syncedRegister();
+    api.getRegisterPage({ scope: "nope" });
+    accessState.canEdit = false;
+    const res = api.clearRecentErrors({}) as unknown as Rec;
+    expect(res["ok"]).toBe(false);
+    expect(String(res["error"])).toMatch(/owner or an admin/);
+    const errors = ((api.getRecentErrors({}) as unknown as Rec)["data"] as Rec)["errors"] as Rec[];
+    expect(errors.some((e) => String(e["error"]).includes("needs a scope"))).toBe(true);
   });
 });
 
@@ -1171,43 +1288,46 @@ describe("the write path", () => {
 //  8. The two inherited-TODO pins
 // --------------------------------------------------------------------------------------- //
 
-describe("the post-sync warm, and the ordering nothing else pins", () => {
+describe("the post-sync warm, armed off the sync's lock", () => {
   /**
-   * THE ONE THAT MATTERS.
-   *
-   * `warmReadModels` no-ops while `jobsStore.activeJob()` is non-null and returns
-   * `{blockedBy}` saying which job stopped it. It runs at all only because `finishSync` sets
-   * `phase: "DONE"` BEFORE calling `afterPersist`, and `activeJob()` returns null for any
-   * terminal phase. Move that update below `afterPersist` — which reads as a tidy-up, since
-   * "finish, then do the chores" is the more natural order — and the warm is disabled forever
-   * with NO symptom: the sync still commits, every figure is still right, and the only
-   * evidence is that the first load after every sync recomputes from cold.
-   *
-   * So both halves are asserted. `blockedBy === null` is the ordering. A non-zero `warmed` is
-   * the proof that the pass did work rather than merely being allowed to.
+   * THE ONE THAT MATTERS. The sync used to warm inline, inside its own script lock — and for a
+   * battery that fits its first hop, inside the "Run sync" RPC — so every write RPC waited out
+   * minutes of compute. It now arms a one-shot and returns. Nothing about the pages says which
+   * happened, so both halves are asserted: the sync computed no warm, and left exactly the one
+   * trigger that will.
    */
-  it("runs with no active job, and actually warms", async () => {
-    await syncedRegister();
-    expect(warmReports).toHaveLength(1);
-    expect(warmReports[0]!.blockedBy).toBeNull();
-    expect(warmReports[0]!.warmed).toBeGreaterThan(0);
-    expect(warmReports[0]!.skipped).toBe(0);
+  it("arms exactly one warm one-shot and warms nothing inline", async () => {
+    const { scanJobs } = await load();
+    expect(scanJobs.startSync().jobId).not.toBeNull();
+    expect(projectTriggers).toEqual(["trigger_continueWarm"]);
+    // The inline warm computed the bootstrap core first; the sync itself never reads it.
+    expect([...cacheState.store.keys()].filter((k) => k.startsWith("dsBootCore"))).toEqual([]);
   });
 
-  it("warms every target the warm list declares", async () => {
+  /**
+   * The armed hop runs once the job is terminal — `finishSync` writes DONE before
+   * `afterPersist`, and `continueWarm` refuses (and re-arms) while `activeJob()` returns a row.
+   * `blockedBy === null` is that ordering; a full `warmed` is the proof that the pass did work
+   * rather than merely being allowed to.
+   */
+  it("fires with no active job, warms every target, and deletes its own trigger", async () => {
     await syncedRegister();
+    const models = await import("../src/server/readModels");
+    const report = models.continueWarm();
+    expect(report.blockedBy).toBeNull();
     // 9 fixed (the bootstrap core + 8 read-models) + one per scope. Spelled as the arithmetic
     // rather than as a literal so adding a scope moves it on its own.
-    expect(warmReports[0]!.warmed).toBe(9 + SCOPES.length);
+    expect(report.warmed).toBe(9 + SCOPES.length);
+    expect(report.skipped).toBe(0);
+    expect(report.continued).toBe(false);
+    expect(projectTriggers).toEqual([]);
   });
 
   it("leaves the bootstrap core warm, so the next doGet inlines it", async () => {
-    // `syncedRegister` drops the cache the post-sync warm filled (every read is a fresh
-    // execution there), so the warm is run again here, as the 4-hourly trigger would.
     const { api } = await syncedRegister();
     expect(api.bootstrapIfWarm().ok).toBe(false);
     const models = await import("../src/server/readModels");
-    models.warmReadModels();
+    models.continueWarm();
     const inline = api.bootstrapIfWarm();
     expect(inline.ok, "the warm must cover the core doGet peeks at").toBe(true);
   });
@@ -1319,24 +1439,144 @@ describe("putSettings merges a patch over the currently-loaded settings", () => 
   });
 });
 
+describe("putSettings moves the daily sync trigger when the hour changes", () => {
+  // setup() installs the daily trigger at the saved hour; a save whose hour the recorded
+  // signature does not name reinstalls it on the spot (setup.reconcileDailySyncTrigger),
+  // best-effort — the save is the operator's intent and stands whatever the trigger service says.
+  it("reinstalls the trigger once, at the new hour, pinned to Europe/Paris", async () => {
+    projectTriggers = ["trigger_dailySync"];
+    props["DAILY_SYNC_SCHEDULE"] = "Europe/Paris|5";
+    const { api } = await load();
+    const res = api.putSettings({ settings: { syncSchedule: 14 } }) as unknown as Rec;
+    expect(res["ok"], String(res["error"])).toBe(true);
+    expect((res["data"] as Rec)["syncSchedule"]).toBe(14);
+    expect(clockBuilds).toEqual([{ handler: "trigger_dailySync", hour: 14, tz: "Europe/Paris" }]);
+    expect(projectTriggers.filter((h) => h === "trigger_dailySync")).toHaveLength(1);
+    expect(props["DAILY_SYNC_SCHEDULE"]).toBe("Europe/Paris|14");
+  });
+
+  it("leaves the trigger alone when a save does not move the hour", async () => {
+    projectTriggers = ["trigger_dailySync"];
+    props["DAILY_SYNC_SCHEDULE"] = "Europe/Paris|5";
+    const { api } = await load();
+    const res = api.putSettings({ settings: { autoCompact: true } }) as unknown as Rec;
+    expect(res["ok"]).toBe(true);
+    expect(clockBuilds).toEqual([]);
+    expect(projectTriggers).toEqual(["trigger_dailySync"]);
+  });
+
+  // A save that keeps the hour still repairs a trigger whose signature does not name it.
+  it("replaces a legacy unsigned trigger on a save that keeps the hour", async () => {
+    projectTriggers = ["trigger_dailySync"];
+    const { api } = await load();
+    const res = api.putSettings({ settings: { autoCompact: true } }) as unknown as Rec;
+    expect(res["ok"], String(res["error"])).toBe(true);
+    expect(clockBuilds).toEqual([{ handler: "trigger_dailySync", hour: 5, tz: "Europe/Paris" }]);
+    expect(projectTriggers.filter((h) => h === "trigger_dailySync")).toHaveLength(1);
+    expect(props["DAILY_SYNC_SCHEDULE"]).toBe("Europe/Paris|5");
+  });
+
+  it("retries a reinstall an earlier save failed, on a save that keeps the hour", async () => {
+    projectTriggers = ["trigger_dailySync"];
+    props["DAILY_SYNC_SCHEDULE"] = "Europe/Paris|5";
+    clockCreateFails = new Error("Too many triggers");
+    const { api } = await load();
+    expect((api.putSettings({ settings: { syncSchedule: 9 } }) as unknown as Rec)["ok"]).toBe(true);
+    expect(props["DAILY_SYNC_SCHEDULE"]).toBe("Europe/Paris|5");
+    clockCreateFails = null;
+    const res = api.putSettings({ settings: { autoCompact: true } }) as unknown as Rec;
+    expect(res["ok"], String(res["error"])).toBe(true);
+    expect(clockBuilds.at(-1)).toEqual({ handler: "trigger_dailySync", hour: 9, tz: "Europe/Paris" });
+    expect(projectTriggers.filter((h) => h === "trigger_dailySync")).toHaveLength(1);
+    expect(props["DAILY_SYNC_SCHEDULE"]).toBe("Europe/Paris|9");
+  });
+
+  it("keeps the save when the reinstall fails, and records the failure", async () => {
+    projectTriggers = ["trigger_dailySync"];
+    props["DAILY_SYNC_SCHEDULE"] = "Europe/Paris|5";
+    clockCreateFails = new Error("Too many triggers");
+    const { api } = await load();
+    const res = api.putSettings({ settings: { syncSchedule: 9 } }) as unknown as Rec;
+    expect(res["ok"], String(res["error"])).toBe(true);
+    expect((res["data"] as Rec)["syncSchedule"]).toBe(9);
+    const settings = await import("../src/server/settingsStore");
+    settings.resetSettingsMemo();
+    expect(settings.loadSettings().syncSchedule).toBe(9);
+    // The signature still names the OLD hour — what deploymentDiagnostic() compares against
+    // the saved setting to say the trigger did not follow.
+    expect(props["DAILY_SYNC_SCHEDULE"]).toBe("Europe/Paris|5");
+    // And the old trigger is still there: created-before-deleted, so a failed reinstall leaves
+    // the register syncing at the old hour rather than not syncing at all.
+    expect(projectTriggers).toEqual(["trigger_dailySync"]);
+    const { recentErrors } = await import("../src/server/errorLog");
+    expect(recentErrors()).toEqual([
+      expect.objectContaining({ op: "syncHourTrigger", message: "Too many triggers" }),
+    ]);
+  });
+});
+
 describe("setProjectView", () => {
-  it("sets the scope and bumps the data version", async () => {
+  // A VIEW SWITCH IS NOT A DATA CHANGE. It used to bump DATA_VERSION like any settings save,
+  // which cold-started every L1 and L2 entry — the inline boot included — for every user each
+  // time anyone moved the header picker. Every view-dependent payload now carries the view in
+  // its key, so the switch moves SETTINGS_GEN (the settings cache's own stamp) and nothing else.
+  it("sets the scope without bumping the data version, and moves the settings generation", async () => {
     const { api } = await load();
     const before = cacheState.version;
+    const genBefore = props["SETTINGS_GEN"];
     const res = api.setProjectView({ projectView: "value-chain" }) as unknown as Rec;
     expect(res["ok"], String(res["error"])).toBe(true);
     expect((res["data"] as Rec)["projectView"]).toBe("value-chain");
-    expect(cacheState.version).toBeGreaterThan(before);
+    expect(cacheState.version).toBe(before);
+    expect(props["SETTINGS_GEN"]).toBeDefined();
+    expect(props["SETTINGS_GEN"]).not.toBe(genBefore);
   });
 
-  it("clears the scope back to \"\", and that also bumps the data version", async () => {
+  it("clears the scope back to \"\", also without a data-version bump", async () => {
     const { api } = await load();
     api.setProjectView({ projectView: "value-chain" });
     const before = cacheState.version;
+    const genBefore = props["SETTINGS_GEN"];
     const res = api.setProjectView({ projectView: "" }) as unknown as Rec;
     expect(res["ok"], String(res["error"])).toBe(true);
     expect((res["data"] as Rec)["projectView"]).toBe("");
+    expect(cacheState.version).toBe(before);
+    expect(props["SETTINGS_GEN"]).not.toBe(genBefore);
+  });
+
+  it("setDomainView is a view switch too", async () => {
+    const { api } = await load();
+    const before = cacheState.version;
+    const res = api.setDomainView({ domainView: "Payments" }) as unknown as Rec;
+    expect(res["ok"], String(res["error"])).toBe(true);
+    expect((res["data"] as Rec)["domainView"]).toBe("Payments");
+    expect(cacheState.version).toBe(before);
+  });
+
+  it("an ordinary settings save still bumps the data version", async () => {
+    const { api } = await load();
+    const before = cacheState.version;
+    const genBefore = props["SETTINGS_GEN"];
+    const res = api.putSettings({ settings: { retentionDays: 91 } }) as unknown as Rec;
+    expect(res["ok"], String(res["error"])).toBe(true);
     expect(cacheState.version).toBeGreaterThan(before);
+    expect(props["SETTINGS_GEN"]).not.toBe(genBefore);
+  });
+
+  it("a viewOnly save that changes anything else is treated as a full save", async () => {
+    const { api } = await load();
+    const settings = await import("../src/server/settingsStore");
+    expect(api.setProjectView({ projectView: "leaf-a" }).ok).toBe(true);
+    const before = cacheState.version;
+    // Same view, so a claim of `viewOnly` alone would skip the bump — but the SLA window moved,
+    // and every cached SLA figure keyed to the old one must go.
+    const current = settings.loadSettings();
+    settings.saveSettings({ ...current, retentionDays: current.retentionDays + 1 }, { viewOnly: true });
+    expect(cacheState.version).toBeGreaterThan(before);
+    // And the honest case beside it, through the same door: only the view moves, no bump.
+    const mid = cacheState.version;
+    settings.saveSettings({ ...settings.loadSettings(), projectView: "leaf-b" }, { viewOnly: true });
+    expect(cacheState.version).toBe(mid);
   });
 
   it("leaves every other Settings field untouched", async () => {
@@ -1348,12 +1588,18 @@ describe("setProjectView", () => {
     expect(data["retentionDays"]).toBe(90);
   });
 
-  it("takes the script lock, same as every other mutating RPC", async () => {
+  it("takes the script lock, same as every other mutating RPC — with a shorter wait", async () => {
     const { api } = await load();
     const before = lockAcquisitions;
     const res = api.setProjectView({ projectView: "value-chain" }) as unknown as Rec;
     expect(res["ok"]).toBe(true);
     expect(lockAcquisitions).toBeGreaterThan(before);
+    expect(lastLockWaitMs).toBe(10_000);
+    expect(api.setDomainView({ domainView: "Payments" }).ok).toBe(true);
+    expect(lastLockWaitMs).toBe(10_000);
+    // An ordinary write keeps the full wait.
+    expect(api.putSettings({ settings: { retentionDays: 92 } }).ok).toBe(true);
+    expect(lastLockWaitMs).toBe(30_000);
   });
 });
 
@@ -1429,6 +1675,16 @@ describe("timing lines", () => {
       log.mockRestore();
     }
   });
+
+  // The core reads the `scans` tab through `ledgerStore.loadScanRows()`'s per-execution memo,
+  // so a cold bootstrap and the page models computed beside it in one execution share ONE read.
+  it("a cold core shares the scans read with the models beside it", async () => {
+    const { api } = await syncedRegister();
+    tabReads.length = 0;
+    expect(api.bootstrap({}).ok).toBe(true);
+    expect(api.getScanHistory({}).ok).toBe(true);
+    expect(tabReads.filter((t) => t === "scans")).toEqual(["scans"]);
+  });
 });
 
 // --------------------------------------------------------------------------------------- //
@@ -1438,7 +1694,7 @@ describe("timing lines", () => {
 // The first production log measured doGet spending 6.4 s (warm) to 7.1 s (cold) computing the
 // bootstrap inline on every page load. The core is cached now, and doGet only ever PEEKS at it.
 describe("bootstrapIfWarm", () => {
-  const coreKeys = () => [...cacheState.store.keys()].filter((k) => k.startsWith("dsBootCore2|"));
+  const coreKeys = () => [...cacheState.store.keys()].filter((k) => k.startsWith("dsBootCore3|"));
 
   it("answers {ok:false} on a cold core and computes nothing", async () => {
     const { api } = await syncedRegister();

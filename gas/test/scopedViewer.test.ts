@@ -471,3 +471,21 @@ describe("the summary's MTTR splits", () => {
     expect(dims(summary)).toContain("asset");
   });
 });
+
+// --------------------------------------------------------------------------------------- //
+//  the CSV export's cell encoding
+// --------------------------------------------------------------------------------------- //
+
+describe("getExportCsv — a formula-leading value arrives as text", () => {
+  it("prefixes it with an apostrophe (gas_shared/domain/csv.ts), inside the quoting", async () => {
+    // Field values in the frame come from Wiz, i.e. from whatever was scanned; a spreadsheet
+    // opening the export would otherwise run them.
+    H.frame!.records[0]!["sg"] = '=HYPERLINK("https://evil.example","open")';
+    H.frame!.records[0]!["dom"] = "@SUM(1)";
+    const { api } = await load();
+    const content = String((api.getExportCsv({}).data as Rec)["content"]);
+    expect(content).toContain('"\'=HYPERLINK(""https://evil.example"",""open"")"');
+    expect(content).toContain(",'@SUM(1)");
+    expect(content).not.toMatch(/(^|,)[=@]/m);
+  });
+});

@@ -5717,7 +5717,20 @@ var Server = (() => {
   var KEY = "RECENT_ERRORS";
   var MAX_ENTRIES = 25;
   var MAX_MESSAGE_LEN = 500;
-  var MAX_BLOB_CHARS = 8500;
+  var MAX_BLOB_BYTES = 8500;
+  function utf8ByteLength(s) {
+    let n = 0;
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      if (c < 128) n += 1;
+      else if (c < 2048) n += 2;
+      else if (c >= 55296 && c <= 56319 && (s.charCodeAt(i + 1) & 64512) === 56320) {
+        n += 4;
+        i++;
+      } else n += 3;
+    }
+    return n;
+  }
   function truncate(s) {
     return s.length > MAX_MESSAGE_LEN ? s.slice(0, MAX_MESSAGE_LEN) + "\u2026" : s;
   }
@@ -5746,7 +5759,7 @@ var Server = (() => {
       const entry = { ts: nowIso(now), op, kind, message: truncate(message) };
       const next = [entry, ...recentErrors()].slice(0, MAX_ENTRIES);
       let blob = JSON.stringify(next);
-      while (next.length > 1 && blob.length > MAX_BLOB_CHARS) {
+      while (next.length > 1 && utf8ByteLength(blob) > MAX_BLOB_BYTES) {
         next.pop();
         blob = JSON.stringify(next);
       }
@@ -6493,7 +6506,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "2a69742f1b34" : "dev";
+  var BUILD_ID = true ? "6a1abe025684" : "dev";
   var CACHE_EPOCH = "3";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
@@ -9727,6 +9740,15 @@ var Server = (() => {
     const groups = Array.from(byKey.values()).sort((x, y) => rank(x.worstSeverity) - rank(y.worstSeverity) || y.open - x.open || y.count - x.count || (x.value < y.value ? -1 : x.value > y.value ? 1 : 0));
     const cap = (_a = opts.cap) != null ? _a : 500;
     return { groups: groups.slice(0, cap), truncated: Math.max(0, groups.length - cap) };
+  }
+
+  // ../gas_shared/domain/csv.ts
+  var FORMULA_LEAD = /^[=+\-@\t\r]/;
+  function csvCell(v) {
+    if (v === null || v === void 0) return "";
+    let s = String(v);
+    if (typeof v !== "number" && FORMULA_LEAD.test(s)) s = `'${s}`;
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   }
 
   // src/server/hubUrl.ts
@@ -13131,11 +13153,6 @@ var Server = (() => {
       ].join("\n");
       return { content: md, filename: `wiz-report-${generated.slice(0, 10)}.md`, matrix };
     });
-  }
-  function csvCell(v) {
-    if (v === null || v === void 0) return "";
-    const s = String(v);
-    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   }
   function getExportCsv(p) {
     return run(() => {

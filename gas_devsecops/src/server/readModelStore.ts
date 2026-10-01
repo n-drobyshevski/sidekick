@@ -33,6 +33,7 @@
 
 import { listNames, readGzJsonNamed, trashNamed, writeGzJson, subfolder } from "./archiveStore";
 import { cached, currentStamp, paramsHash, peekCached, primeCached } from "./serverCache";
+import { recordError } from "./errorLog";
 
 const FOLDER = "readmodels" as const;
 const ENVELOPE_V = 1;
@@ -72,9 +73,15 @@ let warming = false;
 /** What the current warm has actually touched — the sweep's keep-list. See `sweepReadModels`. */
 let touched: Set<string> | null = null;
 
-export function duringWarm<T>(fn: () => T): T {
+/**
+ * Run `fn` as (one hop of) a warm. `carried` seeds the keep-list with what earlier hops of the
+ * same resumable pass touched (`readModels.continueWarm`): a hop that resumes part-way down the
+ * target list never calls the models before it, so without the seed its sweep would trash
+ * every one of their files.
+ */
+export function duringWarm<T>(fn: () => T, carried?: readonly string[]): T {
   warming = true;
-  touched = new Set<string>();
+  touched = new Set<string>(carried ?? []);
   try {
     return fn();
   } finally {
@@ -83,6 +90,11 @@ export function duringWarm<T>(fn: () => T): T {
     // stale keep-list from the last one.
     touched = null;
   }
+}
+
+/** The keep-list so far, for a hop that has to hand it to the next one; null outside a warm. */
+export function warmTouched(): string[] | null {
+  return touched ? [...touched] : null;
 }
 
 /**
@@ -109,6 +121,10 @@ export function readModelFileName(name: string, params: unknown): string {
   return `rm-${name}-${paramsHash(params)}.json.gz`;
 }
 
+function errText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
 function l2Read(
   name: string,
   params: unknown,
@@ -129,6 +145,8 @@ function l2Read(
   } catch (e) {
     disabled = true;
     console.warn(`Durable read-model read failed (${name}) — L2 disabled for this run: ${e}`);
+    // Once per execution at most — `disabled` stops every later attempt in this run.
+    recordError("readModelL2", `Read failed (${name}), L2 disabled for this run: ${errText(e)}`);
     return { hit: false, why: "absent" };
   }
 }
@@ -148,6 +166,7 @@ function l2Write(name: string, params: unknown, version: string | undefined, val
   } catch (e) {
     disabled = true;
     console.warn(`Durable read-model write failed (${name}) — L2 disabled for this run: ${e}`);
+    recordError("readModelL2", `Write failed (${name}), L2 disabled for this run: ${errText(e)}`);
   }
 }
 

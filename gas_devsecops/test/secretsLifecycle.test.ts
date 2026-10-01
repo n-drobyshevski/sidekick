@@ -112,10 +112,12 @@ describe("timeToRevoke", () => {
   // AT LEAST 50. None of this file's hand-built fixtures reach that (they are 1-5 rows, sized
   // for hand-arithmetic, not for register scale), so every one of them fails reliability at
   // the first event and reliableUntil is null — the curve ships empty and median/q25/q75 all
-  // read null, with medianLowerBound falling back to the (uncapped) max observed time. This is
-  // the CORRECT behavior of a tiny population, not a defect: test/kmDelayedEntry.test.ts pins
-  // the same "first event already fails" rule on a population sized to demonstrate it directly.
-  it("1 event, 1 censored, 2 excluded — reliability-cut median null, lower bound 31 d", () => {
+  // read null. medianLowerBound falls back to the (uncapped) max observed time ONLY where the
+  // uncut curve never reaches half either; otherwise it is null (`medianBoundReason`
+  // "cut-empty"). This is the CORRECT behavior of a tiny population, not a defect:
+  // test/kmDelayedEntry.test.ts pins the same "first event already fails" rule on a population
+  // sized to demonstrate it directly.
+  it("1 event, 1 censored, 2 excluded — reliability-cut median null, no false lower bound", () => {
     const out = timeToRevoke(FOUR, { now: NOW });
 
     // Events = [10] (JAN11 - JAN01). Censored = [31] (NOW - JAN01). Risk set = [10, 31].
@@ -125,9 +127,10 @@ describe("timeToRevoke", () => {
     // median: kmMedianFromCurve([]) -> null (not 10 — the un-cut curve HAD a clean median, but
     //     nothing here is reliable enough to publish it).
     expect(out.median).toBeNull();
-    // medianLowerBound, minRisk path: reliableUntil ?? maxObserved = null ?? 31 = 31 (the
-    // uncapped max observed time, since nothing at all was reliable).
-    expect(out.medianLowerBound).toBe(31);
+    // medianLowerBound: the cut left nothing, and the UNCUT curve reaches half at t=10, so the
+    // max observed time (31) is no floor on the median — it used to ship as "≥ 31 d".
+    expect(out.medianLowerBound).toBeNull();
+    expect(out.km.medianBoundReason).toBe("cut-empty");
 
     // p90 needs S(t) <= 1 - 0.9 = 0.10, off the (empty, post-cut) curve — null either way:
     // even the un-cut curve's only point sits at S = 0.50, so survival never falls that far.
@@ -152,12 +155,13 @@ describe("timeToRevoke", () => {
 
     // RMST horizon (365 d) does not bind here — τ = min(365, reliableUntil ?? maxObserved) =
     // min(365, 31) = 31, same number the uncapped restriction time used to be. But the curve
-    // it integrates is the EMPTY (cut) one, so RMST is just S=1 held flat to τ: 1 * 31 = 31,
-    // not the 20.5 a trusted 0.5-drop-at-10 curve would have given. S(τ) = 1 > 0 either way,
-    // so the mean is still reported as a lower bound.
+    // it would integrate is the EMPTY (cut) one — S=1 held flat to τ, 31, published as
+    // "≥ 31 d" where the uncut curve gives 20.5. The area under a curve nobody trusts is no
+    // floor on anything, so the mean is withdrawn and the reason ships beside it.
     expect(out.km.restrictionTime).toBe(31);
-    expect(out.km.mean).toBeCloseTo(31, 10);
-    expect(out.km.meanTruncated).toBe(true);
+    expect(out.km.mean).toBeNull();
+    expect(out.km.meanTruncated).toBe(false);
+    expect(out.km.meanUnmeasuredReason).toBe("cut-empty");
   });
 
   it("withinSlaPct with sla = 7 over events [3, 10] is 50%", () => {

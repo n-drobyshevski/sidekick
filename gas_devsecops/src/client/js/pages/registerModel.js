@@ -10,9 +10,33 @@
 // `resolution_src` is "disappeared", the date is THE SCAN THAT FIRST STOPPED SEEING IT — an
 // upper bound whose error is the scan interval, not an observed event. Both are printed in
 // the same column and would otherwise look identical, so the provenance travels with the
-// date rather than living in a footnote nobody reads.
+// date rather than living in a footnote nobody reads. A third provenance, "repo_dropout", is
+// not a fix at all: the finding's whole repository stopped being returned, and the ledger
+// closes the row without an MTTR clock (domain/config.ts's RESOLUTION_REPO_DROPOUT).
 
 import { fmtCount } from "../../../../../gas_shared/ui/figures.js";
+
+/* ------------------------------------------------------------------ the hasFix fetch */
+
+/**
+ * Why the vendor figures cannot be measured here: the SCA fetch carries Wiz's `hasFix: true`
+ * (server `wizQueries.ts` `SCA_FETCH_HAS_FIX`), so a finding still waiting on a vendor is
+ * never fetched at all. Here rather than on one page because two pages print it — the MTTR
+ * page's awaiting figure and vendor wait, and the Dependencies register's "Awaiting a vendor
+ * fix" card — and the reason must read the same on both.
+ */
+export const HAS_FIX_REASON = "this register fetches only packages with a published fix";
+export const HAS_FIX_NOT_MEASURABLE = "Not measurable — " + HAS_FIX_REASON;
+
+/**
+ * Whether a payload's `fetchFilter` block says the SCA fetch asked only for findings that
+ * already have a fix. The server publishes it as `remediation.fetchFilter` on the MTTR payload
+ * and as `fetchFilter` on the Dependencies register's. Absent (an older cached payload) reads
+ * as false, i.e. the figure is drawn as it always was.
+ */
+export function hasFixFetch(fetchFilter) {
+  return !!(fetchFilter && fetchFilter.scaHasFix === true);
+}
 
 /* ------------------------------------------------------------------ provenance */
 
@@ -27,6 +51,8 @@ export const PROVENANCE = {
   UNKNOWN: "unknown",
   /** Seen again after it had been resolved. Its clock restarted on this sighting. */
   RETURNED: "returned",
+  /** Its repository stopped being returned. Closed, but not a fix and not timed as one. */
+  LEFT: "left",
 };
 
 /**
@@ -53,6 +79,7 @@ export function provenance(row) {
   }
   if (row.resolution_src === "api") return PROVENANCE.OBSERVED;
   if (row.resolution_src === "disappeared") return PROVENANCE.BOUNDED;
+  if (row.resolution_src === "repo_dropout") return PROVENANCE.LEFT;
   return PROVENANCE.UNKNOWN;
 }
 
@@ -63,6 +90,7 @@ export const PROVENANCE_LABEL = {
   [PROVENANCE.BOUNDED]: "Gone by",
   [PROVENANCE.UNKNOWN]: "Resolved",
   [PROVENANCE.RETURNED]: "Returned",
+  [PROVENANCE.LEFT]: "Repo left",
 };
 
 export const PROVENANCE_HELP = {
@@ -77,6 +105,10 @@ export const PROVENANCE_HELP = {
   [PROVENANCE.RETURNED]:
     "Seen again after it had been resolved. Its clock restarted on this sighting; the "
     + "earlier episode is not in this figure.",
+  [PROVENANCE.LEFT]:
+    "Repository left the scan — not counted as a fix. Every open finding on it went missing "
+    + "at once, so no remediation time is measured; if the repository comes back, this "
+    + "finding reopens on its original clock.",
 };
 
 /**
@@ -91,6 +123,8 @@ export function boundedShare(rows) {
   let bounded = 0;
   for (const r of rows ?? []) {
     if (r.status !== "RESOLVED") continue;
+    // Not in the denominator: the aggregates this share qualifies leave drop-outs out too.
+    if (provenance(r) === PROVENANCE.LEFT) continue;
     resolved += 1;
     if (provenance(r) === PROVENANCE.BOUNDED) bounded += 1;
   }
@@ -317,7 +351,10 @@ export function executiveHeadline(km) {
   if (km.median !== null && km.median !== undefined) {
     return { value: km.median, bound: false, censored: km.censored ?? 0 };
   }
-  return { value: km.medianLowerBound ?? null, bound: true, censored: km.censored ?? 0 };
+  // No median AND no floor (a reliability cut that left nothing, or nothing observed) is not a
+  // bound on anything: `bound` says the value is a floor, so it cannot be true of a null.
+  const floor = km.medianLowerBound ?? null;
+  return { value: floor, bound: floor !== null, censored: km.censored ?? 0 };
 }
 
 /**

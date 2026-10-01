@@ -287,7 +287,12 @@ Then in the Apps Script editor:
 4. Deploy as a web app — **"Anyone within &lt;your domain&gt;"**, executing **as me**. Both
    halves are load-bearing; see *Who can open it* below. Verify dry-run first (no
    credentials), then set credentials and press "Sync now"; confirm the tabs populate and
-   the graph renders.
+   the graph renders. From the CLI that first deployment is `npm run deploy:new`.
+
+**Redeploying** goes in place: `DEPLOYMENT_ID=<id> npm run deploy` (the id is on Deploy →
+Manage deployments, or `npx clasp deployments`) pushes, cuts a version and repoints that
+deployment, so the `/exec` URL people and the hub hold keeps working. It refuses to run
+without the id; `npm run deploy:new` is the one that creates a new deployment, and a new URL.
 
 ## Who can open it
 

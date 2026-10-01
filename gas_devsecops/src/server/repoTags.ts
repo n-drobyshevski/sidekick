@@ -42,6 +42,7 @@ import { DOMAIN_FIELD } from "../domain/domainScope";
 import { LIFECYCLE_FIELD, lifecycleOfTags, resolveLifecycleTagKey } from "../domain/lifecycleTag";
 import { present, type Rec } from "../domain/util";
 import { getProp, PROP_KEYS, setProp } from "./props";
+import { recordError } from "./errorLog";
 import { bumpDataVersion, cacheGetJson, cachePutJson, dataVersion } from "./serverCache";
 import { ensureTab, overwrite, readAll, TABS } from "./sheetsDb";
 import { queryPage } from "./wizClient";
@@ -245,7 +246,13 @@ export function resetRepoTagMapMemo(): void {
  */
 export function getRepoTagMap(): RepoTagMap {
   if (mapMemo !== undefined) return mapMemo;
-  const hit = readMapCache();
+  // ONE KEY FOR THE READ AND THE WRITE-BACK, resolved before the tab is opened. Re-reading the
+  // generation for the write-back would race `setRepoTagMap`: a miss under the old generation,
+  // a 1.5 s tab read overlapping the save, then a write under the NEW key — the stale (or, read
+  // mid-`overwrite`, empty) map replacing the saved one there for six hours. Written under the
+  // key it was read under, a stale map lands where no reader asks any more.
+  const key = safeMapCacheKey();
+  const hit = readMapCache(key);
   if (hit) {
     mapMemo = hit;
     return hit;
@@ -262,9 +269,11 @@ export function getRepoTagMap(): RepoTagMap {
     }
     // Only a map actually read is cached: an unreadable tab is "no tags THIS execution", and
     // caching that `{}` would stretch one bad read across every execution for six hours.
-    writeMapCache(map);
+    writeMapCache(key, map);
   } catch (e) {
     console.warn(`Repository tag map unreadable — no tags attached this execution: ${String(e)}`);
+    // Once per execution: the empty map is memoised below, so this catch does not run again.
+    recordError("repoTagMap", e);
   }
   mapMemo = map;
   return map;
@@ -274,23 +283,44 @@ export function getRepoTagMap(): RepoTagMap {
 // is ~9,800 rows and cost 1.5–1.7 s in EVERY execution that attached tags — the bootstrap core
 // and every read-model compute — so a cold landing page paid it twice.
 //
-// KEYED ON THE DATA VERSION, the settings cache's argument: `setRepoTagMap` is the only writer
-// of the tab and it bumps the version, then writes the new map under the new key itself. The
-// six-hour TTL bounds only a hand edit of the tab in Sheets. Through serverCache's gzip +
-// chunked store, because a map this size is several times one 100 KB CacheService value.
-// Any cache failure reads the tab, exactly as before this cache existed.
+// KEYED ON THE MAP'S OWN GENERATION (`REPO_TAG_MAP_GEN`), NOT THE DATA VERSION. It used to be
+// the data version, the settings cache's argument — but every sync bumps that, and a sync never
+// touches this tab, so the 1.5 s read came back after every sync for nothing. `setRepoTagMap` is
+// the tab's only writer (`devSeed` goes through it too); it moves the generation and writes the
+// new map under the new key itself. The tag-key properties (WIZ_DOMAIN_TAG_KEY /
+// WIZ_LIFECYCLE_TAG_KEY) are not in the key on purpose: the tab holds both tag VALUES as
+// fetched, whatever the keys say now — a key change reaches the stored rows only through a
+// refresh, which is a `setRepoTagMap` — and `attachRepoTags` resolves against the configured
+// keys after the map is read. The six-hour TTL bounds only a hand edit of the tab in Sheets.
+// Through serverCache's gzip + chunked store, because a map this size is several times one
+// 100 KB CacheService value. Any cache failure reads the tab, exactly as before this cache
+// existed.
 const MAP_CACHE_TTL_SEC = 21_600;
+// "dsRepoTagMap1" -> "dsRepoTagMap2": the key's suffix changed from DATA_VERSION to the
+// generation; a "1" entry is never asked for again and ages out with its TTL.
+const MAP_CACHE_NAME = "dsRepoTagMap2";
 
 function mapCacheKey(): string {
-  return "dsRepoTagMap1:" + dataVersion();
+  return `${MAP_CACHE_NAME}:${getProp(PROP_KEYS.repoTagMapGen) ?? "0"}`;
 }
 
-function readMapCache(): RepoTagMap | undefined {
+/** The key, or null when the generation cannot be read — no cache this execution, the tab is. */
+function safeMapCacheKey(): string | null {
+  try {
+    return mapCacheKey();
+  } catch (e) {
+    console.warn(`Repository tag map cache key unreadable: ${String(e)}`);
+    return null;
+  }
+}
+
+function readMapCache(key: string | null): RepoTagMap | undefined {
+  if (key === null) return undefined;
   const t0 = Date.now();
   try {
-    const got = cacheGetJson(mapCacheKey());
+    const got = cacheGetJson(key);
     const hit = !!got && typeof got === "object" && !Array.isArray(got);
-    console.log(JSON.stringify({ stage: "cache", name: "dsRepoTagMap1", hit, getMs: Date.now() - t0 }));
+    console.log(JSON.stringify({ stage: "cache", name: MAP_CACHE_NAME, hit, getMs: Date.now() - t0 }));
     return hit ? (got as RepoTagMap) : undefined;
   } catch (e) {
     console.warn(`Repository tag map cache read failed: ${String(e)}`);
@@ -298,9 +328,10 @@ function readMapCache(): RepoTagMap | undefined {
   }
 }
 
-function writeMapCache(map: RepoTagMap): void {
+function writeMapCache(key: string | null, map: RepoTagMap): void {
+  if (key === null) return;
   try {
-    cachePutJson(mapCacheKey(), map, MAP_CACHE_TTL_SEC);
+    cachePutJson(key, map, MAP_CACHE_TTL_SEC);
   } catch (e) {
     console.warn(`Repository tag map cache write failed: ${String(e)}`);
   }
@@ -333,8 +364,12 @@ export function setRepoTagMap(map: RepoTagMap): void {
   setProp(PROP_KEYS.repoTagMapKeys, JSON.stringify(configuredTagKeys()));
   mapMemo = { ...map };
   bumpDataVersion();
-  // Under the NEW version's key, so the next execution reads the saved map from the cache.
-  writeMapCache(mapMemo);
+  // A new generation, named by the version just minted: unique and never reused, so a deleted
+  // property (which reads "0") cannot collide with a generation an older map was cached under
+  // for longer than that entry's TTL.
+  setProp(PROP_KEYS.repoTagMapGen, dataVersion());
+  // Under the NEW generation's key, so the next execution reads the saved map from the cache.
+  writeMapCache(safeMapCacheKey(), mapMemo);
 }
 
 /**

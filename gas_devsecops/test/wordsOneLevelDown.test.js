@@ -217,6 +217,22 @@ describe("twinFoldView — a fold nobody reported is not a fold of nothing", () 
       .toBe("1 twin folded · median gap 3.0 d");
   });
 
+  it("names keys that span more than one repository, only when there are any", () => {
+    expect(twinFoldView({ keys: 6, folded: 7, medianGapDays: 19.94, crossRepoKeys: 2 }, "2026-06-15").line)
+      .toBe("7 twins folded · median gap 19.9 d · 2 keys span more than one repository"
+        + " · measured 2026-06-15");
+    expect(twinFoldView({ keys: 6, folded: 7, medianGapDays: 19.94, crossRepoKeys: 1 }).line)
+      .toBe("7 twins folded · median gap 19.9 d · 1 key spans more than one repository");
+    // Zero adds nothing; a day written before the field existed is absent, not zero, and
+    // a malformed count is refused before any cast.
+    for (const crossRepoKeys of [0, undefined, null, "", []]) {
+      const view = twinFoldView({ keys: 6, folded: 7, medianGapDays: 19.94, crossRepoKeys });
+      expect(view.line).toBe("7 twins folded · median gap 19.9 d");
+    }
+    expect(twinFoldView({ keys: 6, folded: 7, medianGapDays: 1, crossRepoKeys: null }).crossRepoKeys)
+      .toBe(null);
+  });
+
   it("keeps a MEASURED zero, which is a different statement entirely", () => {
     // `TwinStats` is `{keys: 0, folded: 0, medianGapDays: null}` when a sync looked and found
     // no credential reported against both a repository and a branch. That IS a measurement,

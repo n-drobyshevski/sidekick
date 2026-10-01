@@ -10,9 +10,12 @@
 // fixture, on purpose: the view model must ignore them even if a future server bug ever let
 // them leak onto the wire, not merely because today's server never sends them.
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { resumePlan, shouldContinuePolling, syncViewModel, SYNC_SCOPES } from "../src/client/js/syncProgress.js";
+import {
+  createJobPoller, POLL_HIDDEN_MS, POLL_VISIBLE_MS, resumePlan, shouldContinuePolling, syncViewModel,
+  SYNC_SCOPES,
+} from "../src/client/js/syncProgress.js";
 
 const NOW = Date.parse("2026-09-03T12:00:00Z");
 
@@ -62,62 +65,188 @@ describe("shouldContinuePolling", () => {
   });
 });
 
-// A minimal stand-in for app.js's real poll loop (watchJob/applyJob/stopWatch), built ONLY
-// from the exported `shouldContinuePolling` — so this proves the predicate actually stops a
-// live timer, not just that a view object looks different. app.js's own loop cannot be
-// imported here (it is wired to module-scope DOM state), so this is the closest a
-// DOM-free test gets to the real thing: same gate, same clearInterval call, same shape.
-function pollUntilStopped(fetchJob) {
-  let timer = setInterval(() => {}, 3000);
-  const tick = () => {
-    const j = fetchJob();
-    if (!shouldContinuePolling(j)) {
-      clearInterval(timer);
-      timer = null;
-    }
+// The REAL poll loop app.js drives (`createJobPoller`), under fake timers, with a hand-held
+// fetch so each test decides when an answer lands. `doc` is a stand-in `document` whose
+// `hidden` flag and `visibilitychange` listeners the test controls.
+function harness({ onJob = null } = {}) {
+  const answers = []; // queued resolvers, oldest first
+  const fetched = [];
+  const seen = [];
+  const listeners = new Set();
+  const doc = {
+    hidden: false,
+    addEventListener: (type, fn) => { if (type === "visibilitychange") listeners.add(fn); },
+    removeEventListener: (type, fn) => { if (type === "visibilitychange") listeners.delete(fn); },
   };
-  tick();
-  return { tick, isRunning: () => timer !== null };
+  const poller = createJobPoller({
+    fetchJob: (jobId) => new Promise((resolve, reject) => {
+      fetched.push(jobId);
+      answers.push({ resolve, reject });
+    }),
+    onJob: (j) => { seen.push(j); if (onJob) onJob(j); },
+    doc,
+  });
+  /** Answer the oldest outstanding request and let its continuation run. */
+  const answer = async (value) => {
+    answers.shift().resolve(value);
+    await vi.advanceTimersByTimeAsync(0);
+  };
+  const fail = async () => {
+    answers.shift().reject(new Error("transient"));
+    await vi.advanceTimersByTimeAsync(0);
+  };
+  const setHidden = (h) => {
+    doc.hidden = h;
+    for (const fn of [...listeners]) fn();
+  };
+  return { poller, fetched, seen, answers, answer, fail, setHidden, listeners };
 }
 
-describe("the poll actually stops (not just the view)", () => {
-  it("clears the timer on a null job", () => {
-    vi.useFakeTimers();
-    const clearSpy = vi.spyOn(globalThis, "clearInterval");
-    try {
-      const poller = pollUntilStopped(() => null);
-      expect(poller.isRunning()).toBe(false);
-      expect(clearSpy).toHaveBeenCalledTimes(1);
-    } finally {
-      clearSpy.mockRestore();
-      vi.useRealTimers();
-    }
+describe("createJobPoller — the job poll app.js drives", () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("ticks at once, then every 3 s while the tab is in view", async () => {
+    const h = harness();
+    h.poller.watch("job-1");
+    expect(h.fetched).toEqual(["job-1"]); // the card paints now, not one interval from now
+    await h.answer(job());
+    await vi.advanceTimersByTimeAsync(POLL_VISIBLE_MS - 1);
+    expect(h.fetched).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(h.fetched).toHaveLength(2);
+    expect(h.seen).toHaveLength(1);
   });
 
-  it.each(["DONE", "FAILED", "CANCELLED"])("clears the timer on phase %s", (phase) => {
-    vi.useFakeTimers();
-    const clearSpy = vi.spyOn(globalThis, "clearInterval");
-    try {
-      const poller = pollUntilStopped(() => job({ phase }));
-      expect(poller.isRunning()).toBe(false);
-      expect(clearSpy).toHaveBeenCalledTimes(1);
-    } finally {
-      clearSpy.mockRestore();
-      vi.useRealTimers();
-    }
+  it("never has two requests out: the next tick waits for a slow answer", async () => {
+    const h = harness();
+    h.poller.watch("job-1");
+    await vi.advanceTimersByTimeAsync(10 * POLL_VISIBLE_MS); // a GAS execution that takes 30 s
+    expect(h.fetched).toHaveLength(1);
+    await h.answer(job());
+    await vi.advanceTimersByTimeAsync(POLL_VISIBLE_MS);
+    expect(h.fetched).toHaveLength(2);
   });
 
-  it("does NOT clear the timer while a job is still running", () => {
-    vi.useFakeTimers();
-    const clearSpy = vi.spyOn(globalThis, "clearInterval");
-    try {
-      const poller = pollUntilStopped(() => job({ phase: "FETCHING" }));
-      expect(poller.isRunning()).toBe(true);
-      expect(clearSpy).not.toHaveBeenCalled();
-    } finally {
-      clearSpy.mockRestore();
-      vi.useRealTimers();
-    }
+  it.each(["DONE", "FAILED", "CANCELLED"])("hands a %s job over exactly once and stops", async (phase) => {
+    const h = harness();
+    h.poller.watch("job-1");
+    await h.answer(job({ phase }));
+    expect(h.seen.map((j) => j.phase)).toEqual([phase]);
+    expect(h.poller.isRunning()).toBe(false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(h.fetched).toHaveLength(1);
+    expect(h.seen).toHaveLength(1); // one "Sync complete." toast, one refresh()
+    expect(h.listeners.size).toBe(0);
+  });
+
+  // `applyJob` repaints the card and the drawer; a throw there used to skip the reschedule,
+  // so the poll stopped for good while isRunning() still said true.
+  it("keeps polling when onJob throws on a running job, and logs it", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    let throws = true;
+    const h = harness({ onJob: () => { if (throws) throw new Error("paint failed"); } });
+    h.poller.watch("job-1");
+    await h.answer(job());
+    expect(err).toHaveBeenCalledTimes(1);
+    expect(h.poller.isRunning()).toBe(true);
+    await vi.advanceTimersByTimeAsync(POLL_VISIBLE_MS);
+    expect(h.fetched).toHaveLength(2);
+    throws = false;
+    await h.answer(job({ phase: "DONE" }));
+    expect(h.seen.map((j) => j.phase)).toEqual(["FETCHING", "DONE"]);
+    expect(h.poller.isRunning()).toBe(false);
+    err.mockRestore();
+  });
+
+  it("a terminal answer whose onJob throws still stops, without an unhandled rejection", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const h = harness({ onJob: () => { throw new Error("paint failed"); } });
+    h.poller.watch("job-1");
+    await h.answer(job({ phase: "DONE" }));
+    expect(err).toHaveBeenCalledTimes(1);
+    expect(h.poller.isRunning()).toBe(false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(h.fetched).toHaveLength(1);
+    err.mockRestore();
+  });
+
+  it("stops on a null job — nothing running, never started or already reclaimed", async () => {
+    const h = harness();
+    h.poller.watch("job-1");
+    await h.answer(null);
+    expect(h.seen).toEqual([null]);
+    expect(h.poller.isRunning()).toBe(false);
+  });
+
+  it("keeps polling through a failed fetch, and hands nothing over for it", async () => {
+    const h = harness();
+    h.poller.watch("job-1");
+    await h.fail();
+    expect(h.seen).toEqual([]);
+    await vi.advanceTimersByTimeAsync(POLL_VISIBLE_MS);
+    expect(h.fetched).toHaveLength(2);
+  });
+
+  it("slows to 15 s while hidden, and ticks at once when the tab comes back", async () => {
+    const h = harness();
+    h.poller.watch("job-1");
+    h.setHidden(true);
+    await h.answer(job());
+    await vi.advanceTimersByTimeAsync(POLL_HIDDEN_MS - 1);
+    expect(h.fetched).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(h.fetched).toHaveLength(2);
+    await h.answer(job());
+    await vi.advanceTimersByTimeAsync(1000);
+    h.setHidden(false);
+    expect(h.fetched).toHaveLength(3); // no wait for the 15 s timer
+    await h.answer(job());
+    await vi.advanceTimersByTimeAsync(POLL_VISIBLE_MS);
+    expect(h.fetched).toHaveLength(4);
+  });
+
+  it("coming back into view while a request is out does not send a second", async () => {
+    const h = harness();
+    h.poller.watch("job-1");
+    h.setHidden(true);
+    h.setHidden(false);
+    expect(h.fetched).toHaveLength(1);
+  });
+
+  it("drops the answer of a request a stop() overtook", async () => {
+    const h = harness();
+    h.poller.watch("job-1");
+    h.poller.stop();
+    await h.answer(job({ phase: "DONE" }));
+    expect(h.seen).toEqual([]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(h.fetched).toHaveLength(1);
+  });
+
+  it("re-pointed at a new job, ignores the old one's late answer and polls the new one", async () => {
+    const h = harness();
+    h.poller.watch("job-1");
+    h.poller.watch("job-2");
+    expect(h.fetched).toEqual(["job-1", "job-2"]);
+    await h.answer(job({ job_id: "job-1", phase: "DONE" }));
+    expect(h.seen).toEqual([]);
+    expect(h.poller.isRunning()).toBe(true);
+    await h.answer(job({ job_id: "job-2" }));
+    expect(h.seen.map((j) => j.job_id)).toEqual(["job-2"]);
+    await vi.advanceTimersByTimeAsync(POLL_VISIBLE_MS);
+    expect(h.fetched).toEqual(["job-1", "job-2", "job-2"]);
+  });
+});
+
+// app.js's half: the poll goes through a plain `call()`, never the session cache whose cached
+// and revalidated answers both reached `applyJob` (a FETCHING after the DONE).
+describe("app.js polls through createJobPoller and a plain call()", () => {
+  const src = readFileSync(new URL("../src/client/js/app.js", import.meta.url), "utf8");
+  it("builds its poll from createJobPoller, with no interval of its own", () => {
+    expect(src).toMatch(/createJobPoller\(\{\s*fetchJob: \(jobId\) => call\("api_getJobStatus", \{ jobId \}\)/);
+    expect(src).not.toMatch(/setInterval|clearInterval/);
+    expect(src).not.toMatch(/swrCall\("api_getJobStatus"/);
   });
 });
 

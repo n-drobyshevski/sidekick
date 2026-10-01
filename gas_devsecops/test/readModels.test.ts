@@ -81,6 +81,17 @@ const H = vi.hoisted(() => ({
   history: [] as { date: string; stats: unknown }[],
   /** Which historyStore reader each model reached for, in order — "list" or "latest". */
   historyReads: [] as string[],
+  /** Script Properties (`props.getProp`/`setProp`/`deleteProp`) — the warm chain's progress. */
+  props: {} as Record<string, string>,
+  /** Pending one-shot handler names (`ScriptApp`), and every `after(ms)` one was armed with. */
+  triggers: [] as string[],
+  triggerDelays: [] as number[],
+  /** The fake keep-list `duringWarm` seeds and `durablyCached` adds to; null outside a warm. */
+  touched: null as Set<string> | null,
+  /** The `carried` keep-list each `duringWarm` call was seeded with. */
+  carried: [] as string[][],
+  /** Advanced by this many ms whenever `storageModel` computes — a slow target, by hand. */
+  storageCostMs: 0,
 }));
 
 function memo(name: string, params: unknown, compute: () => unknown): unknown {
@@ -98,23 +109,49 @@ vi.mock("../src/server/serverCache", () => ({
     return memo(name, params, compute);
   },
   dataVersion: () => H.version,
+  currentStamp: () => `stamp:${H.version}`,
 }));
+
+vi.mock("../src/server/props", async (orig) => {
+  const actual = await orig<typeof import("../src/server/props")>();
+  return {
+    ...actual,
+    getProp: (k: string) => H.props[k] ?? null,
+    setProp: (k: string, v: string) => { H.props[k] = v; },
+    deleteProp: (k: string) => { delete H.props[k]; },
+  };
+});
+
+vi.stubGlobal("ScriptApp", {
+  newTrigger: (handler: string) => ({
+    timeBased: () => ({
+      after: (ms: number) => ({
+        create: () => { H.triggers.push(handler); H.triggerDelays.push(ms); },
+      }),
+    }),
+  }),
+});
 
 vi.mock("../src/server/readModelStore", () => ({
   durablyCached: (name: string, params: unknown, compute: () => unknown, ttl?: number) => {
     H.cacheCalls.push({
       name, layer: "durablyCached", params, ...(ttl === undefined ? {} : { ttl }),
     });
+    if (H.touched) H.touched.add(name);
     return memo(name, params, compute);
   },
-  duringWarm: <T,>(fn: () => T): T => {
+  duringWarm: <T,>(fn: () => T, carried?: readonly string[]): T => {
     H.warmDepth += 1;
+    H.carried.push([...(carried ?? [])]);
+    H.touched = new Set(carried ?? []);
     try {
       return fn();
     } finally {
       H.warmDepth -= 1;
+      H.touched = null;
     }
   },
+  warmTouched: () => (H.touched ? [...H.touched] : null),
   sweepReadModels: () => {
     H.swept += 1;
     return 3;
@@ -166,6 +203,9 @@ vi.mock("../src/server/historyStore", () => ({
 
 vi.mock("../src/server/jobsStore", () => ({
   activeJob: () => H.activeJobRow,
+  clearTriggers: (handler: string) => {
+    H.triggers = H.triggers.filter((h) => h !== handler);
+  },
 }));
 
 // `norm()` reads the view-project scope off `settingsStore.loadSettings()`. Mocked, rather
@@ -186,6 +226,7 @@ vi.mock("../src/server/sheetsDb", async (orig) => {
     ...actual,
     cellCount: () => {
       H.cellCountCalls += 1;
+      if (H.storageCostMs) vi.setSystemTime(Date.now() + H.storageCostMs);
       if (H.cellCountThrows) throw new Error("spreadsheet unavailable");
       return 400_000;
     },
@@ -203,9 +244,12 @@ import {
   reposModel,
   secretsModel,
   signalCoverage,
+  continueWarm,
+  scheduleWarm,
   storageModel,
   warmReadModels,
 } from "../src/server/readModels";
+import { SCA_FETCH_HAS_FIX } from "../src/server/wizQueries";
 
 // --------------------------------------------------------------------------------------- //
 //  A ledger, by hand
@@ -381,6 +425,12 @@ beforeEach(() => {
   H.excludeEndOfLifeFromMttr = undefined;
   H.history = [{ date: "2026-03-01", stats: { open: 5 } }];
   H.historyReads.length = 0;
+  for (const k of Object.keys(H.props)) delete H.props[k];
+  H.triggers = [];
+  H.triggerDelays.length = 0;
+  H.touched = null;
+  H.carried.length = 0;
+  H.storageCostMs = 0;
   seed();
   __resetModelMemosForTest();
   vi.stubGlobal("console", { ...console, warn: () => {}, log: () => {} });
@@ -424,14 +474,32 @@ describe("the caching audit is per model, and the header states it", () => {
     // "dsMttr3" -> "dsMttr4", "dsHistory3" -> "dsHistory4" (row-accounting package): every
     // `ShippedKM` gained `rowsIn`/`noClock`/`eventsPastCut`/`lateEntrants`/`lateEntryMedianAge`
     // — same reasoning, same unchanged layer claim.
-    expect(layerOf("dsExecutive2")).toEqual(["cached"]);
+    //
+    // "dsRegister2" -> "dsRegister3", "dsHistory4" -> "dsHistory5" (completeness gate): the scan
+    // rows both payloads carry gained the completeness record — same unchanged layer claim.
+    //
+    // "dsExecutive2" -> "dsExecutive3", "dsMttr4" -> "dsMttr5", "dsSecrets2" -> "dsSecrets3",
+    // "dsHistory5" -> "dsHistory7" (KM false lower bound): an empty reliability cut no longer
+    // ships a false floor or mean — same unchanged layer claim. "dsMttr5" -> "dsMttr6" (hasFix
+    // relabel): `remediation.fetchFilter` joined the payload — same claim again.
+    // "dsSecrets3" -> "dsSecrets4" (twin fold): `twins` can carry the cross-repository counts.
+    // "dsSecrets4" -> "dsSecrets5" (view switch keeps caches warm): the key gained the view.
+    // "dsRegister3" -> "dsRegister4" (hasFix relabel, register page): `fetchFilter` joined the
+    // payload — same claim.
+    // "dsMttr6" -> "dsMttr8", "dsMttrSplit2" -> "dsMttrSplit4", "dsMttrGroup3" ->
+    // "dsMttrGroup5", "dsExecutive3" -> "dsExecutive5", "dsSecrets5" -> "dsSecrets7",
+    // "dsRegister4" -> "dsRegister6", "dsRepos2" -> "dsRepos4", "dsHistory7" -> "dsHistory9",
+    // "dsScopeSummary4" -> "dsScopeSummary6" (drop-outs censored and counted apart): every KM
+    // keeps a repository drop-out as censored, and resolved counts ship it as `leftCoverage`
+    // — same unchanged layer claim.
+    expect(layerOf("dsExecutive5")).toEqual(["cached"]);
     // "dsMttr1" -> "dsMttr2": the namespace was bumped when `remediation` gained its
     // `slaConsumed` block. A warm entry from THAT old namespace carries no deciles, and a
     // section missing for a cache reason reads as a register with nothing inside its SLA
-    // windows — the same shape of risk the newer dsMttr2 -> dsMttr3 -> dsMttr4 bumps above
+    // windows — the same shape of risk the newer dsMttr2 -> ... -> dsMttr8 bumps above
     // guard against.
-    expect(layerOf("dsMttr4")).toEqual(["cached"]);
-    expect(layerOf("dsSecrets2")).toEqual(["cached"]);
+    expect(layerOf("dsMttr8")).toEqual(["cached"]);
+    expect(layerOf("dsSecrets7")).toEqual(["cached"]);
     // "dsRegister1" -> "dsRegister2": the namespace was bumped when the payload gained its
     // `population` block. The CLAIM these three lines encode is the LAYER each model caches
     // in, not the spelling of its namespace, and that is unchanged — a warm entry from the
@@ -439,7 +507,7 @@ describe("the caching audit is per model, and the header states it", () => {
     // over figures that have one is a silently missing caveat. (Unlike its three siblings
     // above, `registerModel`'s own build never calls `kaplanMeier`, so the delayed-entry
     // package left this namespace untouched.)
-    expect(layerOf("dsRegister2")).toEqual(["cached", "cached", "cached"]);
+    expect(layerOf("dsRegister6")).toEqual(["cached", "cached", "cached"]);
 
     // Time-invariant models: dated by the ledger's own clock, so a stored copy stays true.
     // "dsProgram1" -> "dsProgram2": the namespace was bumped when `capacity` gained
@@ -453,12 +521,12 @@ describe("the caching audit is per model, and the header states it", () => {
     // spelling of its namespace, and that is unchanged — a durable entry from the old
     // namespace carries no cold zone at all, and the page's first section would be missing
     // entirely, which reads as an estate where nothing has gone quiet.
-    expect(layerOf("dsRepos2")).toEqual(["durablyCached"]);
+    expect(layerOf("dsRepos4")).toEqual(["durablyCached"]);
     // "dsHistory1" -> "dsHistory2": the namespace was bumped when the payload gained its
     // per-register `movement` / `movementNote` blocks. A warm entry from THAT old namespace
     // carries no movement block, and the new section would draw "no movement decomposition in
     // this payload" over a window that is measurable.
-    expect(layerOf("dsHistory4")).toEqual(["durablyCached"]);
+    expect(layerOf("dsHistory9")).toEqual(["durablyCached"]);
     expect(layerOf("dsStorage1")).toEqual(["durablyCached"]);
 
     // And nothing reached both layers, which is the failure the spelling-out above exists to
@@ -513,7 +581,7 @@ describe("the caching audit is per model, and the header states it", () => {
     registerModel("sca", ALL);
     registerModel("sast", ALL);
     const keys = H.cacheCalls
-      .filter((c) => c.name === "dsRegister2")
+      .filter((c) => c.name === "dsRegister6")
       .map((c) => JSON.stringify(c.params));
     expect(new Set(keys).size).toBe(2);
   });
@@ -635,6 +703,20 @@ describe("mttrModel", () => {
     expect(m.remediation.actionable.vendorLatency.segments.total).toBe(3);
   });
 
+  // The SCA fetch asks Wiz for `hasFix: true`, so the vendor figures have no waiting population;
+  // the payload says so rather than leaving the page to read a near-zero as a measurement.
+  it("publishes the SCA hasFix fetch filter the vendor figures depend on", () => {
+    const m = mttrModel(ALL) as any;
+    expect(m.remediation.fetchFilter).toEqual({ scaHasFix: SCA_FETCH_HAS_FIX });
+    expect(SCA_FETCH_HAS_FIX).toBe(true);
+  });
+
+  it("publishes the same flag on the Dependencies register, and only there", () => {
+    // The register page's "Awaiting a vendor fix" card reads the same near-zero count.
+    expect((registerModel("sca", ALL) as any).fetchFilter).toEqual({ scaHasFix: SCA_FETCH_HAS_FIX });
+    expect((registerModel("sast", ALL) as any).fetchFilter).toBeNull();
+  });
+
   it("drops the no-fix population from the point-in-time blocks when the toggle is off", () => {
     const on = mttrModel({ ...ALL }) as any;
     const off = mttrModel({ ...ALL, showNoFix: false }) as any;
@@ -739,7 +821,7 @@ describe("effective SLA windows reach the models that publish them", () => {
     H.slaTargets = { CRITICAL: 90 };
     __resetModelMemosForTest();
     mttrModel(ALL);
-    const keys = H.cacheCalls.filter((c) => c.name === "dsMttr4").map((c) => JSON.stringify(c.params));
+    const keys = H.cacheCalls.filter((c) => c.name === "dsMttr8").map((c) => JSON.stringify(c.params));
     expect(new Set(keys).size).toBe(2);
   });
 });
@@ -796,7 +878,7 @@ describe("secretsModel has no severity axis", () => {
     secretsModel(ALL);
     secretsModel({ ...ALL, severities: ["CRITICAL"] });
     const keys = H.cacheCalls
-      .filter((c) => c.name === "dsSecrets2")
+      .filter((c) => c.name === "dsSecrets7")
       .map((c) => JSON.stringify(c.params));
     expect(new Set(keys).size).toBe(1);
   });
@@ -890,9 +972,9 @@ describe("secretsModel: the twin fold is read from the newest per-sync history b
   /**
    * THE DAY RIDES BESIDE THE BLOCK, and both halves of that matter.
    *
-   * BESIDE: `twins` has to stay exactly `{keys, folded, medianGapDays}`, because that is what
-   * the client's absent-vs-measured-zero decision reads and a fourth field in there is a
-   * fourth thing to interpret. So the date is its own payload key.
+   * BESIDE: `twins` has to stay a faithful `TwinStats`, because `{keys, folded, medianGapDays}`
+   * is what the client's absent-vs-measured-zero decision reads and a date in there is one
+   * more thing to interpret. So the date is its own payload key.
    *
    * AT ALL: the blob is one file per UTC day, latest write wins, so this can be Tuesday's
    * fold read on Friday. PRODUCT.md's seventh principle — a clock has to say where it started
@@ -904,7 +986,7 @@ describe("secretsModel: the twin fold is read from the newest per-sync history b
     ])];
     const m = freshSecrets();
     expect(m.twinsAsOf).toBe("2026-03-02");
-    // The block itself stays a faithful TwinStats — three fields, no fourth.
+    // The block itself stays a faithful TwinStats — no date in it.
     expect(Object.keys(m.twins).sort()).toEqual(["folded", "keys", "medianGapDays"]);
   });
 
@@ -923,6 +1005,26 @@ describe("secretsModel: the twin fold is read from the newest per-sync history b
     // The fold was measured; only its day is unknown. Both facts survive.
     expect(m.twins).toEqual({ keys: 6, folded: 7, medianGapDays: 19.94 });
     expect("twinsAsOf" in m).toBe(false);
+  });
+
+  it("ships the cross-repository counts when the day recorded them, and omits them when it did not", () => {
+    H.history = [historyDay("2026-03-02", [{
+      scope: "secrets",
+      twins: {
+        keys: 6, folded: 7, medianGapDays: 19.94, crossRepoKeys: 2, crossRepoNodes: 4, maxBucketSize: 3,
+      },
+    }])];
+    expect(freshSecrets().twins).toEqual({
+      keys: 6, folded: 7, medianGapDays: 19.94, crossRepoKeys: 2, crossRepoNodes: 4, maxBucketSize: 3,
+    });
+
+    // A day written before the fields existed — and one carrying a malformed count — still
+    // ships its three measured fields, and never a defaulted zero for what it did not count.
+    H.history = [historyDay("2026-03-03", [{
+      scope: "secrets",
+      twins: { keys: 6, folded: 7, medianGapDays: 19.94, crossRepoKeys: null, maxBucketSize: "3" },
+    }])];
+    expect(freshSecrets().twins).toEqual({ keys: 6, folded: 7, medianGapDays: 19.94 });
   });
 
   it("no fold means no date either — an absence dates nothing", () => {
@@ -1018,6 +1120,28 @@ describe("secretsModel: the twin fold is read from the newest per-sync history b
     ];
     freshSecrets();
     expect(H.historyReads).toEqual(["latest"]);
+    expect(H.historyReads).not.toContain("list");
+  });
+
+  // Once per EXECUTION, not once per param set: a warm or a page load resolving several
+  // `secretsModel` entries reads the newest day blob once. A new data version reads again.
+  it("reads the newest day once per data version, however many param sets ask", () => {
+    H.history = [historyDay("2026-03-02", [{ scope: "secrets", twins: { keys: 6, folded: 7, medianGapDays: 2 } }])];
+    freshSecrets();
+    secretsModel({ ...ALL, severities: ["HIGH"] });
+    secretsModel({ ...ALL, showNoFix: false });
+    expect(H.historyReads).toEqual(["latest"]);
+    H.version = "v2";
+    secretsModel(ALL);
+    expect(H.historyReads).toEqual(["latest", "latest"]);
+  });
+});
+
+describe("historyModel ships no day-blob array", () => {
+  // `listHistory()` was one Drive read per recorded day, for a `history` key no page reads.
+  it("never lists the history folder, and publishes no `history`", () => {
+    const m = historyModel(ALL);
+    expect(m).not.toHaveProperty("history");
     expect(H.historyReads).not.toContain("list");
   });
 });
@@ -1220,7 +1344,7 @@ describe("reposModel", () => {
 
     // ...and it is a DIFFERENT cache entry that answered, not the same one re-computed: the
     // durable layer has no TTL, so a key without the threshold would have kept the old file.
-    const keys = H.cacheCalls.filter((c) => c.name === "dsRepos2").map((c) => JSON.stringify(c.params));
+    const keys = H.cacheCalls.filter((c) => c.name === "dsRepos4").map((c) => JSON.stringify(c.params));
     expect(new Set(keys).size).toBe(2);
   });
 
@@ -1304,7 +1428,7 @@ describe("reposModel", () => {
     H.coldZoneMode = "relative";
     __resetModelMemosForTest();
     expect((reposModel(ALL) as any).coldZone.cold_after_days).toBe(52);
-    const afterMode = H.cacheCalls.filter((c) => c.name === "dsRepos2").map((c) => JSON.stringify(c.params));
+    const afterMode = H.cacheCalls.filter((c) => c.name === "dsRepos4").map((c) => JSON.stringify(c.params));
     expect(new Set(afterMode).size).toBe(2);
 
     // ...and so are the two numbers only relative mode reads: changing the target moves the
@@ -1315,7 +1439,7 @@ describe("reposModel", () => {
     H.coldFloorDays = 30;
     __resetModelMemosForTest();
     expect((reposModel(ALL) as any).coldZone.cold_after_days).toBe(30);
-    const allKeys = H.cacheCalls.filter((c) => c.name === "dsRepos2").map((c) => JSON.stringify(c.params));
+    const allKeys = H.cacheCalls.filter((c) => c.name === "dsRepos4").map((c) => JSON.stringify(c.params));
     expect(new Set(allKeys).size).toBe(4);
   });
 
@@ -1339,7 +1463,7 @@ describe("historyModel", () => {
   it("is shaped for the three pagePayload slices that read it", () => {
     const m = historyModel(ALL) as any;
     expect(Array.isArray(m.scans)).toBe(true);
-    expect(Array.isArray(m.history)).toBe(true); // mttrPageTrendSlice reads this
+    expect(m).not.toHaveProperty("history"); // no slice reads it any more
     expect(Array.isArray(m.trend)).toBe(true); // both trend slices read this
     expect(m.scans[0].scan_id).toBe("sync-2"); // newest first, as the table draws it
   });
@@ -1597,7 +1721,7 @@ describe("executiveModel", () => {
     const after = executiveModel(ALL) as any;
     expect(after.coldZone.cold_after_days).toBe(7);
     const keys = H.cacheCalls
-      .filter((c) => c.name === "dsExecutive2")
+      .filter((c) => c.name === "dsExecutive5")
       .map((c) => JSON.stringify(c.params));
     expect(new Set(keys).size).toBe(2);
   });
@@ -1623,7 +1747,7 @@ describe("executiveModel", () => {
     expect(after.coldZone.target_share_pct).toBe(20);
 
     const keys = H.cacheCalls
-      .filter((c) => c.name === "dsExecutive2")
+      .filter((c) => c.name === "dsExecutive5")
       .map((c) => JSON.stringify(c.params));
     expect(new Set(keys).size).toBe(2);
   });
@@ -1656,8 +1780,8 @@ describe("warmReadModels", () => {
     expect(H.swept).toBe(1);
     expect(new Set(H.cacheCalls.map((c) => c.name))).toEqual(new Set([
       "dsBootCore1",
-      "dsHistory4", "dsProgram2", "dsRepos2", "dsStorage1",
-      "dsExecutive2", "dsMttr4", "dsMttrSplit1", "dsSecrets2", "dsRegister2",
+      "dsHistory9", "dsProgram2", "dsRepos4", "dsStorage1",
+      "dsExecutive5", "dsMttr8", "dsMttrSplit4", "dsSecrets7", "dsRegister6",
     ]));
     // FIRST, because doGet only inlines a bootstrap core that is already stored: a budget
     // cut-out must never be what leaves every page load paying the second round trip.
@@ -1706,6 +1830,141 @@ describe("warmReadModels", () => {
     expect(report.warmed).toBe(11); // storage failed; the other eleven landed
     expect(report.skipped).toBe(0);
     expect(H.swept).toBe(1);
+  });
+
+  // The landing page and the page opened next come straight after the core: the post-sync warm
+  // runs while analysts may already be loading pages, so order is who gets a warm page first.
+  it("warms the core, then Executive, then MTTR, before the durable four", () => {
+    warmReadModels();
+    const first = (name: string) => H.cacheCalls.findIndex((c) => c.name === name);
+    expect(first("dsBootCore1")).toBe(0);
+    expect(first("dsBootCore1")).toBeLessThan(first("dsExecutive5"));
+    expect(first("dsExecutive5")).toBeLessThan(first("dsMttr8"));
+    expect(first("dsMttr8")).toBeLessThan(first("dsHistory9"));
+    expect(first("dsStorage1")).toBeLessThan(first("dsMttrSplit4"));
+  });
+
+  it("logs one {stage:\"warm\"} line per target it ran", () => {
+    const lines: string[] = [];
+    vi.stubGlobal("console", { ...console, warn: () => {}, log: (m: unknown) => lines.push(String(m)) });
+    H.cellCountThrows = true;
+    warmReadModels();
+    const warm = lines.filter((l) => l.startsWith("{")).map((l) => JSON.parse(l) as Record<string, unknown>)
+      .filter((l) => l["stage"] === "warm");
+    expect(warm).toHaveLength(12);
+    expect(warm[0]).toMatchObject({ stage: "warm", label: "bootCore", ok: true });
+    expect(warm.find((l) => l["label"] === "storage")).toMatchObject({ ok: false });
+    for (const l of warm) expect(typeof l["ms"]).toBe("number");
+  });
+});
+
+// --------------------------------------------------------------------------------------- //
+//  The warm chain — a pass out of budget carries on in a one-shot, from where it stopped
+// --------------------------------------------------------------------------------------- //
+
+describe("the resumable warm chain", () => {
+  const PROGRESS = "WARM_PROGRESS";
+  const progress = () => JSON.parse(H.props[PROGRESS]!) as Record<string, unknown>;
+
+  /** A pass that spends its budget on `storage` (the 7th target) and leaves the last five. */
+  function cutAtStorage(): ReturnType<typeof warmReadModels> {
+    H.store.clear(); // cold, so `storage` computes (and costs) every time
+    H.storageCostMs = 10_000;
+    const report = warmReadModels(1_000);
+    H.storageCostMs = 0;
+    return report;
+  }
+
+  it("records where it stopped and arms ONE continuation, without sweeping", () => {
+    const report = cutAtStorage();
+    expect(report).toMatchObject({ warmed: 7, skipped: 5, swept: 0, resumedAt: 0, continued: true });
+    expect(H.swept).toBe(0);
+    expect(H.triggers).toEqual(["trigger_continueWarm"]);
+    expect(progress()).toMatchObject({ stamp: "stamp:v1", next: 7, label: "mttrSplit", hops: 1 });
+    // The keep-list so far travels with it: the durable entries this hop touched.
+    expect(progress()["touched"]).toEqual(expect.arrayContaining(["dsBootCore1", "dsStorage1"]));
+  });
+
+  it("resumes at the first target it did not reach, carries the keep-list, and sweeps at the end", () => {
+    cutAtStorage();
+    const callsBefore = H.cacheCalls.length;
+    const report = continueWarm();
+    expect(report).toMatchObject({ warmed: 5, skipped: 0, resumedAt: 7, continued: false });
+    // Nothing before the resume point was asked for again.
+    const second = H.cacheCalls.slice(callsBefore).map((c) => c.name);
+    expect(second).not.toContain("dsBootCore1");
+    expect(second).not.toContain("dsStorage1");
+    // The sweep ran with the FIRST hop's keep-list seeded in — a sweep over this hop's touches
+    // alone would trash the core and the durable four.
+    expect(H.swept).toBe(1);
+    expect(H.carried.at(-1)).toEqual(expect.arrayContaining(["dsBootCore1", "dsHistory9", "dsStorage1"]));
+    // Its own fired trigger is gone, no new one armed, and the record cleared.
+    expect(H.triggers).toEqual([]);
+    expect(H.props[PROGRESS]).toBeUndefined();
+  });
+
+  it("starts from the top when the record is under another data version", () => {
+    cutAtStorage();
+    H.version = "v2"; // a commit landed between hops
+    const report = continueWarm();
+    expect(report.resumedAt).toBe(0);
+    expect(report.warmed).toBe(12);
+    expect(H.carried.at(-1)).toEqual([]);
+  });
+
+  it("starts from the top when the target list moved under the record", () => {
+    cutAtStorage();
+    H.props[PROGRESS] = JSON.stringify({ ...progress(), label: "scoped:someone-removed" });
+    expect(continueWarm().resumedAt).toBe(0);
+  });
+
+  it("re-arms a minute later when a job is in flight, and computes nothing", () => {
+    H.activeJobRow = { job_id: "job-1", kind: "sync", phase: "FETCHING" };
+    const report = continueWarm();
+    expect(report.blockedBy).toContain("job-1");
+    expect(report.continued).toBe(true);
+    expect(H.cacheCalls).toEqual([]);
+    expect(H.triggers).toEqual(["trigger_continueWarm"]);
+    expect(H.triggerDelays.at(-1)).toBe(60_000);
+  });
+
+  it("a STANDING pass blocked by a job does not re-arm — the job's commit arms its own warm", () => {
+    H.activeJobRow = { job_id: "job-1", kind: "sync", phase: "FETCHING" };
+    expect(warmReadModels().continued).toBe(false);
+    expect(H.triggers).toEqual([]);
+  });
+
+  it("gives up after six continuation hops under one data version", () => {
+    for (let hop = 1; hop <= 6; hop++) {
+      expect(cutAtStorage().continued, `hop ${hop}`).toBe(true);
+    }
+    H.triggers = [];
+    expect(cutAtStorage().continued).toBe(false);
+    expect(H.triggers).toEqual([]);
+    // A completed pass resets the count.
+    warmReadModels();
+    expect(H.props[PROGRESS]).toBeUndefined();
+    expect(cutAtStorage().continued).toBe(true);
+  });
+
+  // The recent-errors ring holds 25 entries. A budgeted hand-off is routine — every cold warm
+  // makes one — so recording it as a warning filled the ring and evicted real failures.
+  it("records nothing for a hand-off to an armed hop, and records the give-up", () => {
+    const logged = () => JSON.parse(H.props["RECENT_ERRORS"] ?? "[]") as Array<Record<string, unknown>>;
+    for (let hop = 1; hop <= 6; hop++) cutAtStorage();
+    expect(logged()).toEqual([]);
+    expect(cutAtStorage().continued).toBe(false);
+    expect(logged().map((e) => [e["op"], e["kind"], e["message"]])).toEqual([
+      ["cacheWarm", "error", "Out of budget after 7 entries, 5 left cold."],
+      ["cacheWarm", "error", "Gave up after 6 continuation hops under one data version."],
+    ]);
+  });
+
+  it("scheduleWarm keeps at most one pending one-shot", () => {
+    expect(scheduleWarm()).toBe(true);
+    expect(scheduleWarm()).toBe(true);
+    expect(H.triggers).toEqual(["trigger_continueWarm"]);
+    expect(H.triggerDelays).toEqual([1_000, 1_000]);
   });
 });
 
@@ -1897,13 +2156,58 @@ describe("the remediation-speed end-of-life exclusion", () => {
     estate();
     mttrModel(ALL);
     reposModel(ALL);
-    const mttrKey = H.cacheCalls.find((c) => c.name === "dsMttr4")!.params as Record<string, any>;
-    const reposKey = H.cacheCalls.find((c) => c.name === "dsRepos2")!.params as Record<string, any>;
+    const mttrKey = H.cacheCalls.find((c) => c.name === "dsMttr8")!.params as Record<string, any>;
+    const reposKey = H.cacheCalls.find((c) => c.name === "dsRepos4")!.params as Record<string, any>;
     expect(mttrKey.mttrExcludeEndOfLife).toBe(false);
     // The Repositories page draws no remediation-speed aggregate, so the flag is deliberately
     // absent from its key — a param the compute does not read never joins one either.
     expect("mttrExcludeEndOfLife" in reposKey).toBe(false);
     // And the cold-zone flag, which belonged in that key from the day it shipped.
     expect(reposKey.coldExcludeEndOfLife).toBe(false);
+  });
+});
+
+describe("a repository drop-out is counted apart from resolved work, and censored in KM", () => {
+  // Three sca findings on a repository that left the scan on 2026-02-01, as ledgerCore's
+  // `withDerived` derives them: closed, no fix clock, no open age — censored at 31 days.
+  function addDropouts(): void {
+    for (const id of ["d1", "d2", "d3"]) {
+      H.rows.push(coincident(row({
+        finding_key: `sca:${id}`, scope: "sca", severity: "HIGH", identifier: id,
+        first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-02-01T00:00:00Z",
+        resolution_src: "repo_dropout", repo_id: "r9", repo_name: "repo-gone",
+        mttr_days: null, censor_days: 31, censor_actionable_days: 31,
+      })));
+    }
+  }
+
+  it("register, history and executive split open / resolved / leftCoverage, summing to the total", () => {
+    const before = registerModel("sca", ALL) as Record<string, any>;
+    addDropouts();
+    __resetModelMemosForTest();
+    H.store.clear();
+    const reg = registerModel("sca", ALL) as Record<string, any>;
+    expect(reg.resolved).toBe(before.resolved); // not three fixes
+    expect(reg.leftCoverage).toBe(3);
+    expect(reg.open + reg.resolved + reg.leftCoverage).toBe(reg.rowCount);
+
+    const k = (historyModel(ALL) as Record<string, any>).kpis;
+    expect(k.leftCoverage).toBe(3);
+    expect(k.tracked).toBe(k.open + k.resolvedAllTime); // the sparkline's own sum
+    expect(k.resolvedAllTime).toBe(H.rows.filter((r) => r.status === "RESOLVED").length - 3);
+
+    const sca = (executiveModel(ALL) as Record<string, any>).byScope.rows
+      .find((r: Record<string, any>) => r.group === "sca");
+    expect(sca).toMatchObject({ total: 6, open: 2, resolved: 1, leftCoverage: 3 });
+  });
+
+  it("the MTTR payload names them beside rowCount and inside the estimator's censored count", () => {
+    addDropouts();
+    const m = mttrModel(ALL) as Record<string, any>;
+    expect(m.leftCoverage).toBe(3);
+    expect(m.rowCount).toBe(m.overall.open + m.overall.resolved + m.leftCoverage);
+    expect(m.remediation.km.censoredLeftCoverage).toBe(3);
+    expect(m.remediation.km.rowsIn).toBe(m.remediation.km.events + m.remediation.km.censored
+      + m.remediation.km.excludedPreEntry + m.remediation.km.noClock);
   });
 });

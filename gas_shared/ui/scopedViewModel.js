@@ -243,7 +243,12 @@ export function mttrHeroView(summary) {
     ? "Half of all findings in your scope are fixed within this time."
     : bound !== null
       ? "Fewer than half have been fixed yet, so the median is still a lower bound."
-      : "Nothing in your scope has been fixed yet, so there is no time to report.";
+      // Neither a median nor a floor while fixes DO exist: the estimator refused to read a
+      // curve too few findings were at risk on (gas_devsecops' reliability cut), which is not
+      // the same as nothing having closed.
+      : resolved > 0
+        ? "Too few findings in your scope to estimate it yet."
+        : "Nothing in your scope has been fixed yet, so there is no time to report.";
   const detail = [
     p90 !== null ? `90% fixed within ${fmtDays(p90)}` : "90th percentile not observable yet",
     `${resolved.toLocaleString()} fixed · ${open.toLocaleString()} still open`,

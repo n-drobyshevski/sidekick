@@ -17,7 +17,7 @@
 // that the setting genuinely reaches every endpoint that is supposed to obey it, through the
 // real `api.ts` surface a client actually calls.
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bootServer, resetServerMemos, teardownServer } from "./gasEnv";
 import type { Rec } from "../src/domain/util";
 
@@ -323,3 +323,168 @@ describe("failure of absence: the project view survives a new execution (a tab r
     });
   });
 });
+
+// --------------------------------------------------------------------------------------- //
+//  5. A view switch keeps every cache warm
+// --------------------------------------------------------------------------------------- //
+//
+// `setProjectView` / `setDomainView` save the settings WITHOUT bumping DATA_VERSION, which used
+// to cold-start every L1 and L2 entry — the inline boot included — for every user on every pick.
+// What makes that safe is that nothing cached keyed on the data version may depend on the view:
+// the settings cache moves on SETTINGS_GEN, the boot core is view-independent with the view's
+// fields read live, and every view-dependent read model carries the view in its key. Each case
+// below crosses a new execution (`resetServerMemos`), so it is the cross-request cache that
+// answers, never a per-execution memo.
+
+const prop = (k: string): string | null => PropertiesService.getScriptProperties().getProperty(k);
+
+function bootCoreComputes(fn: () => void): number {
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    fn();
+    return log.mock.calls.filter((c) => String(c[0]).includes('"stage":"bootCore"')).length;
+  } finally {
+    log.mockRestore();
+  }
+}
+
+describe("a view switch keeps every cache warm", () => {
+  it("leaves DATA_VERSION alone and moves SETTINGS_GEN", () => {
+    const version = prop("DATA_VERSION");
+    const gen = prop("SETTINGS_GEN");
+    setProjectView("leaf-a");
+    expect(prop("DATA_VERSION")).toBe(version);
+    expect(prop("SETTINGS_GEN")).not.toBe(gen);
+    const gen2 = prop("SETTINGS_GEN");
+    ok(server.api.setDomainView({ domainView: "Payments" }));
+    expect(prop("DATA_VERSION")).toBe(version);
+    expect(prop("SETTINGS_GEN")).not.toBe(gen2);
+  });
+
+  it("the next execution reads the new view, not the settings cache's old one", async () => {
+    // Warm the cross-execution settings cache under the current stamps first, so a key that
+    // did not move would be a HIT on the old view rather than a miss that reads the tab.
+    expect(ok(server.api.getSettings({}))["projectView"]).toBe("");
+    await resetServerMemos();
+    expect(ok(server.api.getSettings({}))["projectView"]).toBe("");
+
+    setProjectView("leaf-a");
+    await resetServerMemos();
+    expect(ok(server.api.getSettings({}))["projectView"]).toBe("leaf-a");
+  });
+
+  it("the boot core stays a cache hit, and the bootstrap shows the new view and count", async () => {
+    expect(bootCoreComputes(() => ok(server.api.bootstrap({}))), "the first boot computes").toBe(1);
+    setProjectView("leaf-a");
+    await resetServerMemos();
+    let data: Rec = {};
+    expect(bootCoreComputes(() => { data = ok(server.api.bootstrap({})); }), "a switch must not recompute")
+      .toBe(0);
+    expect(data["scope"]).toMatchObject({ projectView: "leaf-a", domainView: "", shown: 3, register: 7 });
+    expect((data["settings"] as Rec)["projectView"]).toBe("leaf-a");
+
+    setProjectView("value-chain");
+    await resetServerMemos();
+    expect(bootCoreComputes(() => { data = ok(server.api.bootstrap({})); })).toBe(0);
+    expect(data["scope"]).toMatchObject({ projectView: "value-chain", shown: 6 });
+  });
+
+  it("the inline boot stays warm too, and answers for the view in force", async () => {
+    ok(server.api.bootstrap({}));
+    setProjectView("leaf-b");
+    await resetServerMemos();
+    const inline = server.api.bootstrapIfWarm();
+    expect(inline.ok, "doGet must still inline the core after a switch").toBe(true);
+    expect(inline.data!.scope).toMatchObject({ projectView: "leaf-b", shown: 3, register: 7 });
+    expect(inline.data!.settings.projectView).toBe("leaf-b");
+    expect(inline.data).toEqual(ok(server.api.bootstrap({})));
+  });
+
+  it("two views do not share a secrets entry", async () => {
+    // value-chain holds both secrets rows and leaf-a one: a key without the view would hand
+    // whichever view asked second the first one's count.
+    setProjectView("value-chain");
+    expect((ok(server.api.getSecretsPage({}))["secrets"] as Rec)["rowCount"]).toBe(2);
+    setProjectView("leaf-a");
+    await resetServerMemos();
+    expect((ok(server.api.getSecretsPage({}))["secrets"] as Rec)["rowCount"]).toBe(1);
+    setProjectView("value-chain");
+    await resetServerMemos();
+    expect((ok(server.api.getSecretsPage({}))["secrets"] as Rec)["rowCount"]).toBe(2);
+  });
+
+  it("an ordinary settings save still bumps DATA_VERSION, and the core goes cold", async () => {
+    ok(server.api.bootstrap({}));
+    const version = prop("DATA_VERSION");
+    ok(server.api.putSettings({ settings: { retentionDays: 91 } }));
+    expect(prop("DATA_VERSION")).not.toBe(version);
+    await resetServerMemos();
+    expect(server.api.bootstrapIfWarm().ok).toBe(false);
+    expect((ok(server.api.bootstrap({}))["settings"] as Rec)["retentionDays"]).toBe(91);
+  });
+});
+
+// --------------------------------------------------------------------------------------- //
+//  6. The live `shown` is the figure the row pass gave
+// --------------------------------------------------------------------------------------- //
+//
+// `scope.shown` used to be a pass over the ledger inside the cached core (`inProject` /
+// `inDomain` per row); it is now read off the core's catalogues (`bootCore.viewShown`) so it can
+// be live. Compared over the dev harness's sample battery — the real slimRecord -> reconcile
+// pipeline, so `projects_json` is what a sync writes — for every project and every domain the
+// catalogues hold, a view naming neither, and no view.
+
+describe("viewShown agrees with the row pass it replaced", () => {
+  it("over the dev sample battery, every project and domain", async () => {
+    const { SAMPLE_RAW_NODES } = await import("../dev/sampleData.dev");
+    const { SCOPES } = await import("../src/domain/config");
+    const { slimRecord } = await import("../src/server/scanJobs");
+    const { reconcile } = await import("../src/domain/reconcile");
+    const { inProject, parseProjects, projectCatalogue } = await import("../src/domain/projectScope");
+    const { domainCatalogue, inDomain } = await import("../src/domain/domainScope");
+    const { viewShown } = await import("../src/server/bootCore");
+
+    const scanId = "2026-06-01T08:00:00.000Z";
+    const rows: Rec[] = [];
+    for (const scope of SCOPES) {
+      const slim = SAMPLE_RAW_NODES[scope].map((n) => slimRecord(scope, n));
+      rows.push(...(Object.values(reconcile(slim, {}, scanId, scanId, null, { scope }).ledger) as unknown as Rec[]));
+    }
+    // `_domain` is attached on read, never stored; give the rows a spread of them, including
+    // one with stray whitespace (domainOfRow trims it) and rows carrying none.
+    const DOMAINS = ["Payments", "Identity ", "", "SAP"];
+    rows.forEach((r, i) => { r["_domain"] = DOMAINS[i % DOMAINS.length]; });
+    // And one hand-edited cell repeating a slug — counted once, as `inProject` counts it.
+    const withProjects = rows.find((r) => parseProjects(r["projects_json"] as string).length)!;
+    const dup = JSON.parse(withProjects["projects_json"] as string) as Rec[];
+    rows.push({ ...withProjects, finding_key: "hand-edited", projects_json: JSON.stringify([...dup, dup[0]]) });
+
+    const core = {
+      scope: { register: rows.length, unattributed: 0, noDomain: 0, syncProjectId: null },
+      filterOptions: {
+        projectList: projectCatalogue(rows),
+        domainList: domainCatalogue(rows),
+        supportGroups: [],
+        assignableDomains: [],
+      },
+    };
+    expect(core.filterOptions.projectList.length).toBeGreaterThan(3);
+    expect(core.filterOptions.domainList.length).toBe(3);
+
+    const byProject = (slug: string) =>
+      rows.filter((r) => inProject(parseProjects(r["projects_json"] as string), slug)).length;
+    const byDomain = (name: string) => rows.filter((r) => inDomain(r, name)).length;
+
+    for (const p of core.filterOptions.projectList) {
+      expect(viewShown(core, p.slug, ""), p.slug).toBe(byProject(p.slug));
+    }
+    for (const d of core.filterOptions.domainList) {
+      expect(viewShown(core, "", d.name), d.name).toBe(byDomain(d.name));
+    }
+    expect(viewShown(core, "no-such-project", "")).toBe(0);
+    expect(viewShown(core, "", "Identity ")).toBe(byDomain("Identity "));
+    expect(viewShown(core, "", "no-such-domain")).toBe(0);
+    expect(viewShown(core, "", "")).toBe(rows.length);
+  });
+});
+

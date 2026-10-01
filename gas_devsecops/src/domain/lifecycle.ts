@@ -21,7 +21,7 @@
 // the full argument and the ledger population this hash is read back against.
 
 import { sha1Hex } from "../../../gas_shared/domain/sha1";
-import type { Scope } from "./config";
+import { isRepoDropout, type Scope } from "./config";
 import { summarize, type MttrSummary } from "./metrics";
 import { normalizeSeverity } from "./severity";
 import { clean, parseTs, pyStr, type Rec } from "./util";
@@ -89,7 +89,12 @@ export function mttrFromLedger(
    *  `summarize` unchanged — see that function's matching parameter. */
   opts: { now?: number; scope?: Scope; slaTargets?: Record<string, number> } = {},
 ): MttrSummary {
-  const rows = [...ledgerRows];
+  // A repository drop-out is neither open nor fixed — the register lost sight of it
+  // (config.ts's RESOLUTION_REPO_DROPOUT) — so it leaves this summary entirely: counted as
+  // resolved it would put a lost-sight date into every MTTR and In-SLA figure here, counted as
+  // open it would age forever. Nothing here is a survival estimate; the Kaplan–Meier figures
+  // keep it as a censored observation instead (`BaseRow.censor_days`).
+  const rows = [...ledgerRows].filter((r) => !isRepoDropout(r));
   if (!rows.length) return { perSev: {}, overall: {} };
   const work = rows.map((r) => ({
     sev: "severity" in r ? normalizeSeverity(r["severity"]) : "UNKNOWN",

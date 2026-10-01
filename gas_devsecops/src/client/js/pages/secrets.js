@@ -69,7 +69,8 @@ import {
   uiIcon,
 } from "../ui.js";
 import {
-  boundedDays, chartCard, concentrationModel, figureCard, missingColumnsNote, movementCard,
+  boundedDays, chartCard, concentrationModel, figureCard, leftCoverageStats, missingColumnsNote,
+  movementCard,
   movementModel, oldestReposModel, pagedTable, pillFilterRow, registerFirstRunView,
   registerRowsTable, renderRegisterPage, sectionCard, statusSegment, textCell,
 } from "./sca.js";
@@ -133,8 +134,8 @@ export const TWIN_NOTE =
  * (PRODUCT.md's seventh principle). The figure comes off the newest per-UTC-day history blob
  * — one file per day, latest write wins — so on a register nobody has synced since Tuesday
  * this is Tuesday's fold read on Friday. `asOf` is the day that file names, and it arrives as
- * its own payload field (`twinsAsOf`) rather than inside the stats, so the three fields the
- * absent-vs-measured decision keys on stay exactly the three fields of a `TwinStats`.
+ * its own payload field (`twinsAsOf`) rather than inside the stats, so the block stays a
+ * `TwinStats` and the three fields the absent-vs-measured decision keys on stay its own.
  *
  * A DATE THAT DID NOT ARRIVE IS NOT TODAY. Refused before any cast, like the counts: a
  * missing or unparseable day prints the fold WITHOUT one rather than dating it now, which
@@ -143,19 +144,28 @@ export const TWIN_NOTE =
  * THE UNMEASURED LINE TAKES NO DATE, whatever is passed beside it — it makes no claim about
  * a measurement, so there is nothing to date.
  *
+ * KEYS THAT SPAN REPOSITORIES ARE NAMED, ONLY WHEN THERE ARE ANY. The fold keys on
+ * (secret, path, line), with no repository in it, so one credential committed at the same
+ * path and line in two repositories folds into one row (`reconcile.ts`'s
+ * `TwinStats.crossRepoKeys`). A positive count adds one clause to the line; zero adds nothing
+ * (the twins themselves never span repositories), and a count from a history day written
+ * before the field existed is absent, not zero — refused before the cast like the others.
+ *
  * `fmtDate` IS THE APP'S OWN FORMATTER, not a hand-rolled slice. It renders in the display
  * zone, which is ahead of UTC, so a UTC day never reads back as the day before.
  *
  * @param {{keys?: *, folded?: *, medianGapDays?: *}|null|undefined} twins
  * @param {*} [asOf]  the blob's UTC day, `YYYY-MM-DD` — anything else is no date at all
  * @returns {{measured: boolean, keys: (number|null), folded: (number|null),
- *            medianGapDays: (number|null), asOf: (string|null), line: string}}
+ *            medianGapDays: (number|null), crossRepoKeys: (number|null), asOf: (string|null),
+ *            line: string}}
  */
 export function twinFoldView(twins, asOf) {
   const t = twins && typeof twins === "object" && !Array.isArray(twins) ? twins : null;
   const keys = t ? num(t.keys) : null;
   const folded = t ? num(t.folded) : null;
   const gap = t ? num(t.medianGapDays) : null;
+  const crossRepo = t ? num(t.crossRepoKeys) : null;
   const day = typeof asOf === "string" && asOf !== "" && !Number.isNaN(Date.parse(asOf))
     ? asOf
     : null;
@@ -165,19 +175,25 @@ export function twinFoldView(twins, asOf) {
       keys: null,
       folded: null,
       medianGapDays: null,
+      crossRepoKeys: null,
       asOf: null,
       line: "Twin fold: not measured on this sync",
     };
   }
   const gapText = gap === null ? "no birth-date gap recorded" : `median gap ${days1(gap)}`;
   const when = day === null ? "" : ` · measured ${fmtDate(day)}`;
+  const spans = crossRepo !== null && crossRepo > 0
+    ? ` · ${fmtCount(crossRepo)} ${pluralize(crossRepo, "key")} `
+      + `${crossRepo === 1 ? "spans" : "span"} more than one repository`
+    : "";
   return {
     measured: true,
     keys,
     folded,
     medianGapDays: gap,
+    crossRepoKeys: crossRepo,
     asOf: day,
-    line: `${fmtCount(folded)} ${pluralize(folded, "twin")} folded · ${gapText}${when}`,
+    line: `${fmtCount(folded)} ${pluralize(folded, "twin")} folded · ${gapText}${spans}${when}`,
   };
 }
 
@@ -344,6 +360,10 @@ export function secretsModel(payload, opts) {
 
   const total = num(cov.total, num(sec.rowCount, num(reg.rowCount)));
   const median = boundedDays(ttr.median, ttr.medianLowerBound);
+  // `censored` holds the repository drop-outs too (secretsLifecycle.ts decision 5): only the
+  // rest are still live.
+  const leftCoverage = Math.min(num(ttr.censored), num(ttr.leftCoverage));
+  const stillLive = num(ttr.censored) - leftCoverage;
   const firstRun = registerFirstRunView(
     sec.rowCount !== undefined ? sec.rowCount : reg.rowCount,
     opts && opts.synced,
@@ -359,6 +379,9 @@ export function secretsModel(payload, opts) {
     asOf: reg.asOf ?? sec.asOf ?? null,
     rowCount: num(sec.rowCount, num(reg.rowCount)),
     open: num(sec.open, num(reg.open)),
+    // Repository drop-outs (the register model's `stateCounts`): in `rowCount`, neither open
+    // nor closed by the string leaving HEAD — named in the stat strip when there are any.
+    leftCoverage: num(reg.leftCoverage, 0),
 
     // WHAT THE FIGURES ABOVE WERE MEASURED OVER — the in-scope count, the gate the last scan
     // of THIS scope applied, and the base filters the secrets query carries. Passed straight through:
@@ -454,6 +477,14 @@ export function secretsModel(payload, opts) {
       medianDays: median.bounded || ttr.median === null || ttr.median === undefined
         ? null
         : num(ttr.median, null),
+      // Why there is neither a median nor a floor — the sub-line the card prints instead of a
+      // claim about a half that was never measured. "cut-empty" is the reliability cut leaving
+      // nothing while the uncut curve does reach half (remediation.ts `medianBoundReason`).
+      medianNote: ttr.km && ttr.km.medianBoundReason === "cut-empty"
+        ? "too few credentials at risk to estimate it yet"
+        : num(ttr.events, 0) > 0
+          ? "no median to report yet"
+          : "no rotation observed yet",
       p90Text: days1(ttr.p90),
       withinSlaPct: ttr.withinSlaPct === null || ttr.withinSlaPct === undefined
         ? null
@@ -461,6 +492,9 @@ export function secretsModel(payload, opts) {
       sla: num(ttr.sla, null),
       events: num(ttr.events),
       censored: num(ttr.censored),
+      // Of `censored`, the credentials whose repository left the scan: censored where the
+      // register lost sight of them, so neither still live nor dead — named apart.
+      leftCoverage,
       // PRINTED, ALWAYS. Never-validated rows are EXCLUDED, not censored — censoring
       // asserts "still alive at time c", which an unvalidated row cannot support.
       excludedUnmeasured: num(ttr.excludedUnmeasured),
@@ -469,8 +503,12 @@ export function secretsModel(payload, opts) {
       curve: (ttr.km && Array.isArray(ttr.km.curve)) ? ttr.km.curve : [],
       glossary: "time-to-revoke",
       denominator:
-        `${fmtCount(ttr.events)} observed rotations and ${fmtCount(ttr.censored)} still-live `
-        + `credentials right-censored at today build this estimate, out of ${fmtCount(ttr.total)} `
+        `${fmtCount(ttr.events)} observed rotations and ${fmtCount(stillLive)} still-live `
+        + "credentials right-censored at today"
+        + (leftCoverage > 0
+          ? `, plus ${fmtCount(leftCoverage)} censored where their repository left the scan,`
+          : "")
+        + ` build this estimate, out of ${fmtCount(ttr.total)} `
         + `rows. ${fmtCount(ttr.excludedUnmeasured)} were EXCLUDED, not censored, because `
         + "nobody ever validated them; a further " + fmtCount(ttr.excludedNoClock)
         + " were measured but carry no usable duration.",
@@ -524,7 +562,7 @@ export function secretsModel(payload, opts) {
     //
     // `twinsAsOf` IS A SIBLING FIELD, NOT PART OF THE BLOCK. The blob is per-UTC-day and
     // latest-write-wins, so a fold can be days old; the day it names rides beside the stats
-    // so `twins` stays exactly the three fields of a `TwinStats`. A missing date prints the
+    // so `twins` stays a `TwinStats` and nothing else. A missing date prints the
     // fold undated rather than as of today.
     twinFold: twinFoldView(sec.twins, sec.twinsAsOf),
     resolvedNote:
@@ -953,6 +991,7 @@ function paintSecrets(host, vm, filters) {
     stats: vm.firstRun.show ? [] : [
       statRow("In register", fmtCount(vm.rowCount), "findings, open and resolved"),
       statRow("Open", fmtCount(vm.open), "string still in HEAD"),
+      ...leftCoverageStats(vm.leftCoverage),
       statRow(
         "Ever validated",
         fmtCount(vm.validationCoverage.measured),
@@ -1144,7 +1183,9 @@ function paintSecrets(host, vm, filters) {
         value: vm.timeToRevoke.medianText,
         sub: vm.timeToRevoke.medianIsLowerBound
           ? "a lower bound: the curve never reaches half"
-          : "half of rotations happened within this",
+          : vm.timeToRevoke.medianDays !== null
+            ? "half of rotations happened within this"
+            : vm.timeToRevoke.medianNote,
         help: { term: "censoring" },
         denominator: vm.timeToRevoke.denominator,
       }),

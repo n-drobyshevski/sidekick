@@ -165,6 +165,10 @@ export const TAB_HEADERS: Record<string, string[]> = {
     "compaction_id", "superseded_by_scan",
     "fix_date", "fix_observed_at", "has_kev", "has_exploit", "epss",
     "cwe", "language", "owner_project",
+    // Appended last so `ensureHeaders` adds it without moving a column: a sealed repository
+    // drop-out is censored where it was last SEEN (ledgerCore.withDerived), not where the
+    // register noticed it gone.
+    "last_seen",
   ],
   [TABS.scans]: [
     // `raw_ref` addresses the scan's archived pages; `obs_ref` addresses its OBSERVATION SET
@@ -175,6 +179,12 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // addresses, never client-facing.
     "scan_id", "ts", "scope", "mode", "severities", "total",
     "new_count", "resolved_count", "reopened_count", "raw_ref", "obs_ref", "sealed",
+    // THE COMPLETENESS RECORD (domain/scanCompleteness.ts), appended last so `ensureHeaders`
+    // adds them to an existing tab without moving a column. `disappearance` is the verdict a
+    // replay reads back — "complete", "deferred:<reason>", or blank on a row written before
+    // the gate, which replays under the old rules. `dropout_count` is the rows closed as
+    // repository drop-outs, which `resolved_count` deliberately does not include.
+    "reported_total", "partial_pages", "duplicates", "disappearance", "dropout_count",
   ],
   [TABS.repos]: [
     "repo_id", "repo_name", "branch", "platform", "default_branch",
@@ -603,11 +613,22 @@ export function trimSurplusRows(tab: string, bufferRows: number = TRIM_BUFFER_RO
   return surplus;
 }
 
+/** How many trailing rows `updateWhere` reads before it falls back to the rest of the tab. */
+const UPDATE_TAIL_ROWS = 50;
+
 /**
- * Update the first row where keyColumn === keyValue (returns false when absent).
+ * Update the row where keyColumn === keyValue (returns false when absent). THE KEY MUST BE
+ * UNIQUE on the tab — its one caller is `jobsStore.updateJob`, keyed on `job_id`.
  *
  * `patch` is partial: a key the patch omits keeps whatever the row already held, which is
  * what lets the sync checkpoint only the fields a hop actually advanced.
+ *
+ * TAIL FIRST. `updateJob` writes once per fetched page, always to the job it appended
+ * moments ago, and the `jobs` tab gains a row per sync and is never trimmed — so a whole-tab
+ * read per write got more expensive for the life of the deployment while the row it wanted
+ * was nearly always the last one (`readTail`'s argument, on the write path). The last
+ * `UPDATE_TAIL_ROWS` rows are read first; only a key not among them costs the rest of the
+ * tab, through `readGrid` like every whole-tab read.
  *
  * Goes through `ensureHeaders` like every other write. It used to read the header row
  * directly and skip any patch key whose column was missing — the exact failure that
@@ -620,23 +641,30 @@ export function updateWhere(tab: string, keyColumn: string, keyValue: unknown, p
   const headers = ensureHeaders(sh, tab);
   const lastRow = sh.getLastRow();
   const lastCol = headers.length;
-  // Through readGrid like readAll, not because `jobs` and `scans` are large today
-  // but because this is the same whole-tab range asked the same way: leaving one of the two
-  // call sites on a single unbounded read is how the fix comes undone the first time a tab
-  // this touches grows.
-  const values = readGrid(sh, tab, lastRow, lastCol);
   const keyIdx = headers.indexOf(keyColumn);
   if (keyIdx < 0) return false;
-  for (let i = 1; i < values.length; i++) {
-    if (fromCell(values[i][keyIdx]) === keyValue) {
-      const rowVals = values[i].slice();
-      for (const [k, v] of Object.entries(patch)) {
-        const idx = headers.indexOf(k);
-        if (idx >= 0) rowVals[idx] = toCell(v);
-      }
-      sh.getRange(i + 1, 1, 1, lastCol).setValues([rowVals]);
-      return true;
+
+  const write = (sheetRow: number, values: unknown[]): boolean => {
+    const rowVals = values.slice();
+    for (const [k, v] of Object.entries(patch)) {
+      const idx = headers.indexOf(k);
+      if (idx >= 0) rowVals[idx] = toCell(v);
     }
+    sh.getRange(sheetRow, 1, 1, lastCol).setValues([rowVals]);
+    return true;
+  };
+
+  const tailFirst = Math.max(2, lastRow - UPDATE_TAIL_ROWS + 1);
+  const tail = sh.getRange(tailFirst, 1, lastRow - tailFirst + 1, lastCol).getValues();
+  for (let i = tail.length - 1; i >= 0; i--) {
+    if (fromCell(tail[i]![keyIdx]) === keyValue) return write(tailFirst + i, tail[i]!);
+  }
+  if (tailFirst <= 2) return false; // the tail was the whole tab
+
+  // Rows 1..tailFirst-1 — the header and everything above the tail.
+  const head = readGrid(sh, tab, tailFirst - 1, lastCol);
+  for (let i = head.length - 1; i >= 1; i--) {
+    if (fromCell(head[i]![keyIdx]) === keyValue) return write(i + 1, head[i]!);
   }
   return false;
 }

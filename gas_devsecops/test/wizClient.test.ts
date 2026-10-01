@@ -44,6 +44,7 @@ interface Reply {
 interface GqlCall {
   first: unknown;
   after: unknown;
+  includeTotalCount: unknown;
   authorization: unknown;
 }
 
@@ -122,6 +123,7 @@ beforeEach(() => {
       gqlCalls.push({
         first: sent.variables["first"],
         after: sent.variables["after"],
+        includeTotalCount: sent.variables["includeTotalCount"],
         authorization: headers["Authorization"],
       });
       return respond(replyFor(replies, gqlCalls.length - 1));
@@ -662,11 +664,14 @@ describe("testConnection", () => {
     expect(authCalls).toBe(1);
   });
 
-  it("asks for one row, not a page", async () => {
+  it("asks for one row, not a page — and for the count it reports as `rows`", async () => {
     replies = [{ status: 200, body: okBody() }];
     const { testConnection } = await load();
     testConnection();
     expect(gqlCalls[0]!.first).toBe(1);
+    // The documents select totalCount only when asked (wizQueries.buildVariables); without the
+    // flag `rows` would read null against a tenant that answered.
+    expect(gqlCalls[0]!.includeTotalCount).toBe(true);
   });
 });
 

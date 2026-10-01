@@ -519,7 +519,9 @@ export function fetchPage(
  */
 export function testConnection(scope: Scope = "sast"): { ok: true; rows: number | null } {
   forgetToken();
-  const page = fetchPage(scope, {}, { pageSize: 1, pageNumber: 0 });
+  // `includeTotalCount` explicitly: the documents select the count only when asked
+  // (wizQueries.buildVariables), and `rows` is the figure this check reports.
+  const page = fetchPage(scope, { includeTotalCount: true }, { pageSize: 1, pageNumber: 0 });
   return { ok: true, rows: page.totalCount };
 }
 

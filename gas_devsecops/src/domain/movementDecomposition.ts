@@ -60,8 +60,8 @@
 //   - a `new_count` / `reopened_count` that is not a finite number contributes NOTHING and is
 //     counted, so a half-measured window cannot print a confident total -> `partialCounts`
 //   - a row whose `first_seen` will not parse cannot be replayed    -> `unplacedRows`
-//   - a resolved row whose `resolution_src` is neither "api" nor "disappeared" is neither
-//     measured nor administrative                                   -> `unattributed`
+//   - a resolved row whose `resolution_src` is none of "api", "disappeared" and
+//     "repo_dropout" is neither measured nor administrative          -> `unattributed`
 // Every one of those also widens `identityGap`, which is the point: the gap is where the
 // unmeasurable part of the window shows up.
 //
@@ -73,7 +73,13 @@
 // the tab. `compaction.ts`'s `selectSealCandidates` drops the same filter for the same reason,
 // and says so in its own header.
 
-import { RESOLUTION_API, RESOLUTION_DISAPPEARED, RESOLVED_STATUSES, type Scope } from "./config";
+import {
+  RESOLUTION_API,
+  RESOLUTION_DISAPPEARED,
+  RESOLUTION_REPO_DROPOUT,
+  RESOLVED_STATUSES,
+  type Scope,
+} from "./config";
 import { parseSeverities } from "./compaction";
 import type { BaseRow } from "./ledgerTypes";
 import { normalizeSeverity } from "./severity";
@@ -93,7 +99,10 @@ export interface Movement {
   arrivals: number;
   /** Resolutions the API itself reported, dated in the window. Measured remediation. */
   observed: number;
-  /** Resolutions dated by disappearance. An upper bound on the date; administrative. */
+  /**
+   * Resolutions dated by disappearance — and repository drop-outs, which are the same kind of
+   * fact about a whole repository. An upper bound on the date; administrative.
+   */
   bounded: number;
   /** Sum of `reopened_count` over the same scans — risk that came back. */
   reopened: number;
@@ -251,7 +260,10 @@ export function movementDecomposition(
     if (inWindow(resolved, sinceMs, untilMs)) {
       const src = String(row.resolution_src ?? "").trim().toLowerCase();
       if (src === RESOLUTION_API) observed += 1;
-      else if (src === RESOLUTION_DISAPPEARED) bounded += 1;
+      // A repository drop-out is administrative by definition — the register stopped seeing
+      // the repository — so it lands in `bounded` beside the disappearances. It is never
+      // `measured`, and it is not `unattributed`: its provenance is exactly known.
+      else if (src === RESOLUTION_DISAPPEARED || src === RESOLUTION_REPO_DROPOUT) bounded += 1;
       else unattributed += 1;
     }
 

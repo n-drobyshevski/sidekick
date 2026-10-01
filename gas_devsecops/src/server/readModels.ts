@@ -11,7 +11,7 @@
 // `historyTrendSlice`, `scanRowsSlice`, `jobSummarySlice`, …). S5 builds models; S7 assembles
 // and slices. Where a model's natural output feeds an existing slice, the field names below
 // are chosen to match that slice's reads exactly — `programModel().trend` for
-// `programTrendSlice`, `historyModel().{history,trend,scans}` for the two trend slices and
+// `programTrendSlice`, `historyModel().{trend,scans}` for the two trend slices and
 // `scanRowsSlice`, `executiveModel().byScope` for `execGroupSlice` / `mttrGroupTableSlice`.
 //
 // ONE IMPORT RUNS THE OTHER WAY AND IT IS NOT A SLICE. `registerRowsModel` takes the ORDERING
@@ -141,6 +141,7 @@ import {
   RMST_HORIZON_DAYS,
   SCOPES,
   SEVERITY_ORDER,
+  isRepoDropout,
   ruleForScope,
   type ColdZoneMode,
   type Scope,
@@ -152,6 +153,7 @@ import {
 } from "../domain/settingsLogic";
 import { coldZoneHeadline, coldZoneProfile, type NewestScan } from "../domain/coldZone";
 import type { BaseRow, ScanRow } from "../domain/ledgerTypes";
+import { disappearanceWindow } from "../domain/ledgerCore";
 import { normalizeSeverity } from "../domain/severity";
 import { parseSeverities } from "../domain/compaction";
 import { attachProjectGrain, inProject, parseProjects } from "../domain/projectScope";
@@ -183,6 +185,7 @@ import {
   openPastSla,
   resolutionBuckets,
   type KMResult,
+  type MedianBoundReason,
 } from "../domain/remediation";
 import {
   capacityByMonth,
@@ -221,13 +224,15 @@ import {
   loadTrend,
   previousSeverityCounts,
 } from "./ledgerStore";
-import { latestHistory, listHistory } from "./historyStore";
-import { activeJob } from "./jobsStore";
+import { latestHistory } from "./historyStore";
+import { activeJob, clearTriggers } from "./jobsStore";
+import * as errorLog from "./errorLog";
 import { cellCount, gridSize, TAB_HEADERS, TABS } from "./sheetsDb";
-import { BASE_FILTER_WORDS } from "./wizQueries";
+import { BASE_FILTER_WORDS, SCA_FETCH_HAS_FIX } from "./wizQueries";
 import { loadSettings } from "./settingsStore";
-import { cached, dataVersion } from "./serverCache";
-import { durablyCached, duringWarm, sweepReadModels } from "./readModelStore";
+import { cached, currentStamp, dataVersion } from "./serverCache";
+import { deleteProp, getProp, setProp } from "./props";
+import { durablyCached, duringWarm, sweepReadModels, warmTouched } from "./readModelStore";
 import { distinctScopes } from "../../../gas_shared/domain/scopedAccess";
 import {
   buildSplit, informativeSplits, scopeSummaryOf, type ScopeSplitRow,
@@ -554,6 +559,7 @@ export function __resetModelMemosForTest(): void {
   baseMemo = undefined;
   clockMemo = undefined;
   newestScanMemo = undefined;
+  latestHistoryMemo = undefined;
 }
 
 interface LedgerClock {
@@ -681,6 +687,14 @@ function newestScanByScope(): Partial<Record<Scope, NewestScan>> {
       newestMs[scope] = ms;
       byScope[scope] = { scan_id: s.scan_id, ts: s.ts };
     }
+    // The window back to the newest COMPLETE scan, so a deferred newest scan — one that came
+    // back short or empty — does not read every repository it missed as unobserved. Identical
+    // to `scan_id` alone whenever the newest scan is complete (`coldZone.NewestScan`).
+    const scans = loadScanRows();
+    for (const scope of Object.keys(byScope) as Scope[]) {
+      const window = disappearanceWindow(scans, scope);
+      if (window) byScope[scope] = { ...byScope[scope]!, window_ids: window.fallback };
+    }
     newestScanMemo = { version, byScope };
   }
   return newestScanMemo.byScope;
@@ -692,6 +706,26 @@ function newestScanByScope(): Partial<Record<Scope, NewestScan>> {
 
 function isOpen(status: unknown): boolean {
   return !RESOLVED_STATUSES.has(String(status ?? "").toUpperCase());
+}
+
+/**
+ * THE THREE STATES A ROW CAN BE IN, counted once so every payload splits them the same way:
+ * open, resolved (closed as work — by the API or by disappearance), and LEFT COVERAGE (a
+ * repository drop-out, config.ts's RESOLUTION_REPO_DROPOUT: closed, but nobody fixed it). A
+ * "resolved" figure that swallowed the third would publish a repository leaving the scan as a
+ * mass remediation, so it never does; where a payload states a total beside them, the total is
+ * the sum of all three and `leftCoverage` ships beside it.
+ */
+function stateCounts(rows: readonly BaseRow[]): { open: number; resolved: number; leftCoverage: number } {
+  let open = 0;
+  let resolved = 0;
+  let leftCoverage = 0;
+  for (const r of rows) {
+    if (isOpen(r.status)) open += 1;
+    else if (isRepoDropout(r)) leftCoverage += 1;
+    else resolved += 1;
+  }
+  return { open, resolved, leftCoverage };
 }
 
 /**
@@ -955,15 +989,24 @@ export interface ShippedKM {
   /** Published INSTEAD of a median where the curve never reaches half. Never collapsed into
    *  `median` — "> 41 d" and "41 d" are different claims. */
   medianLowerBound: number | null;
+  /** Why `medianLowerBound` is that figure — or, as "cut-empty", why it is null although the
+   *  median is too: the reliability cut left nothing while the uncut curve does reach half.
+   *  `remediation.ts`'s `KMResult.medianBoundReason` has all four. */
+  medianBoundReason: MedianBoundReason | null;
   /** Computed off the SAME (already-cut) `km.curve` `median` reads — see this interface's own
    *  `curve` note. Was already true before this package; stated explicitly now that "the curve"
    *  is no longer simply "every observed event". */
   p90: number | null;
   mean: number | null;
   meanTruncated: boolean;
+  /** Why `mean` is null: "no-events", or "cut-empty" (no reliable curve to integrate). */
+  meanUnmeasuredReason: "no-events" | "cut-empty" | null;
   restrictionTime: number | null;
   events: number;
   censored: number;
+  /** Of `censored`, the repository drop-outs — censored where their repository left the scan,
+   *  not still open. The page prints them apart so "still open" stays a true count. */
+  censoredLeftCoverage: number;
   total: number;
   /** The time by which 25% of findings were remediated, off the cut curve. Null under heavy
    *  censoring/truncation, same as `median`/`p90`. */
@@ -1013,12 +1056,15 @@ function shipKM(km: KMResult): ShippedKM {
     curve: km.curve.map((p) => ({ t: p.t, s: p.s })),
     median: km.median,
     medianLowerBound: km.medianLowerBound,
+    medianBoundReason: km.medianBoundReason ?? null,
     p90: kmQuantileFromCurve(km.curve, 0.9),
     mean: km.mean,
     meanTruncated: km.meanTruncated,
+    meanUnmeasuredReason: km.meanUnmeasuredReason ?? null,
     restrictionTime: km.restrictionTime,
     events: km.events,
     censored: km.censored,
+    censoredLeftCoverage: km.censoredLeftCoverage ?? 0,
     total: km.total,
     q25: km.q25 ?? null,
     q75: km.q75 ?? null,
@@ -1040,8 +1086,10 @@ function latencySummary(rows: BaseRow[], now: number, scope: Scope | undefined):
   return {
     median: km.median,
     medianLowerBound: km.medianLowerBound,
+    medianBoundReason: km.medianBoundReason ?? null,
     mean: km.mean,
     meanTruncated: km.meanTruncated,
+    meanUnmeasuredReason: km.meanUnmeasuredReason ?? null,
     restrictionTime: km.restrictionTime,
     events: km.events,
     censored: km.censored,
@@ -1138,6 +1186,9 @@ function buildMttr(n: NormParams): Rec {
     severities: n.severities,
     showNoFix: n.showNoFix,
     rowCount: rows.length,
+    // `rowCount` = `overall.open` + `overall.resolved` + this: the repository drop-outs, which
+    // `mttrFromLedger` counts as neither (`stateCounts`).
+    leftCoverage: stateCounts(rows).leftCoverage,
     // WHO THIS PAGE MEASURED OVER, published whether or not anybody was removed — the figure
     // that makes the setting discoverable rather than hidden, and the only way a reader can
     // check a denominator that quietly shrank.
@@ -1186,6 +1237,13 @@ function buildMttr(n: NormParams): Rec {
        * the client never receives the table.
        */
       slaConsumed: slaConsumedDeciles(rows, n.slaTargets),
+      /**
+       * What the SCA fetch asked Wiz for, as far as the vendor figures below depend on it.
+       * `scaHasFix` true means only findings that already have a published fix were fetched
+       * (`wizQueries.ts`'s `SCA_FETCH_HAS_FIX`), so `awaiting` and `actionable.vendorLatency`
+       * still ship but measure nothing — the page prints them as not measurable.
+       */
+      fetchFilter: { scaHasFix: SCA_FETCH_HAS_FIX },
       awaiting: awaitingVendorFix(rows),
       /**
        * The second clock, scoped and labelled. `notMeasured` is every scoped row this block
@@ -1200,7 +1258,9 @@ function buildMttr(n: NormParams): Rec {
         openPastSla: openPastSla(scaActionable, { slaTargets: n.slaTargets }),
         km: shipKM(kaplanMeier(scaActionable, KM_OPTS)),
         /** How long we waited for a fix to EXIST, over the pre-toggle sca population. Pairs
-         *  additively with the clock above: exposure = latency + actionable. */
+         *  additively with the clock above: exposure = latency + actionable. Under
+         *  `fetchFilter.scaHasFix` every fetched finding already had its fix, and the ones
+         *  still waiting were never fetched, so this has no waiting population to measure. */
         vendorLatency: latencySummary(scaScoped, snap.now, "sca"),
       },
     },
@@ -1232,6 +1292,24 @@ export function mttrModel(p?: ModelParams): Rec {
   // being missing outright — the same "silently wrong beats silently missing" reasoning as
   // the bump above, which is exactly why this is a new key rather than a lazy backfill.
   //
+  // "dsMttr4" -> "dsMttr5" (KM false lower bound): where the reliability cut leaves nothing,
+  // every `ShippedKM` now ships `medianLowerBound` null (unless even the uncut curve stays
+  // above half), `mean` null, and the new `medianBoundReason`/`meanUnmeasuredReason`. A warm
+  // dsMttr4 entry carries the false "at least N days" floor under the same field names.
+  //
+  // "dsMttr5" -> "dsMttr6" (hasFix relabel): `remediation.fetchFilter.scaHasFix` joined the
+  // payload; a warm dsMttr5 entry lacks it and the page would draw the awaiting meter and the
+  // vendor wait as measurements again.
+  //
+  // "dsMttr6" -> "dsMttr7" (drop-outs censored): a repository drop-out now enters every KM
+  // figure here — the curves, the trend's `km_median_days` — as censored where it left, and
+  // the payload gained `leftCoverage` and each `km.censoredLeftCoverage`. A warm dsMttr6
+  // entry would serve the half-life computed with those rows deleted from the risk set.
+  //
+  // "dsMttr7" -> "dsMttr8" (drop-out censoring point): a drop-out is censored at its last
+  // sighting (`last_seen`), not at the later scan that noticed it gone (ledgerCore.withDerived),
+  // so every KM figure that holds one moves.
+  //
   // `slaTargets` JOINS THE KEY (not just `keyOf`'s base four) because this compute reads it —
   // `openPastSla`, `agingDistribution` and `mttrFromLedger`'s `sla_target`/`sla_pct` all take
   // it as an argument below. Without it in the key, an operator saving a new Deadlines window
@@ -1243,7 +1321,7 @@ export function mttrModel(p?: ModelParams): Rec {
   // which repositories every figure below is measured over, so an operator flipping it and
   // reloading would otherwise read the OLD half-life off an entry whose params look the same.
   return cached(
-    "dsMttr4",
+    "dsMttr8",
     { ...keyOf(n), slaTargets: n.slaTargets, mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
     () => buildMttr(n),
     CLOCK_TTL_SEC,
@@ -1299,18 +1377,21 @@ function remediationSplitRow(group: string, rs: BaseRow[], n: NormParams, now: n
   const k = kaplanMeier(rs, KM_OPTS);
   const shipped = shipKM(k);
   const { perSev, overall } = mttrFromLedger(rs as unknown as Rec[], { now, slaTargets: n.slaTargets });
+  // Per register, the rows the row's own `open` + `resolved` count — a repository drop-out is
+  // neither (`stateCounts`), so it does not make a register the sheet offers for this row.
   const openByScope: Record<string, number> = {};
   const totalByScope: Record<string, number> = {};
   for (const r of rs) {
+    const open = isOpen(r.status);
+    if (!open && isRepoDropout(r)) continue;
     totalByScope[r.scope] = (totalByScope[r.scope] ?? 0) + 1;
-    if (!RESOLVED_STATUSES.has(String(r.status ?? "").toUpperCase())) {
-      openByScope[r.scope] = (openByScope[r.scope] ?? 0) + 1;
-    }
+    if (open) openByScope[r.scope] = (openByScope[r.scope] ?? 0) + 1;
   }
   return {
     group,
     km: {
       median: shipped.median, q25: shipped.q25, medianLowerBound: shipped.medianLowerBound,
+      medianBoundReason: shipped.medianBoundReason,
       reliableUntil: shipped.reliableUntil, events: shipped.events,
     },
     p90: kmQuantileFromCurve(k.curve, 0.9),
@@ -1335,25 +1416,31 @@ function buildMttrSplit(n: NormParams): Rec {
     if (!list) buckets.set(g, (list = []));
     list.push(r);
   }
-  const isOpen = (r: BaseRow) => !RESOLVED_STATUSES.has(String(r.status ?? "").toUpperCase());
-  const openOf = (rs: BaseRow[]) => rs.filter(isOpen).length;
+  // Open / resolved / left coverage per bucket, once (`stateCounts`): a repository drop-out is
+  // neither open nor resolved, so it ranks a repository by neither and the cut counts it apart.
+  const counts = new Map([...buckets].map(([g, rs]) => [g, stateCounts(rs)] as const));
   const byName = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
   const names = [...buckets.keys()].sort((a, b) => {
     if (a === SPLIT_NONE) return 1;
     if (b === SPLIT_NONE) return -1;
-    const ra = buckets.get(a)!, rb = buckets.get(b)!;
     if (dimension === "repo") {
-      return (openOf(rb) - openOf(ra)) || ((rb.length - openOf(rb)) - (ra.length - openOf(ra))) || byName(a, b);
+      const ca = counts.get(a)!, cb = counts.get(b)!;
+      return (cb.open - ca.open) || (cb.resolved - ca.resolved) || byName(a, b);
     }
-    return (rb.length - ra.length) || byName(a, b);
+    return (buckets.get(b)!.length - buckets.get(a)!.length) || byName(a, b);
   });
   const kept = dimension === "repo" ? names.slice(0, REPO_TOP_N) : names;
   const dropped = dimension === "repo" ? names.slice(REPO_TOP_N) : [];
-  const cut = dropped.length ? {
-    groups: dropped.length,
-    open: dropped.reduce((a, g) => a + openOf(buckets.get(g)!), 0),
-    resolved: dropped.reduce((a, g) => a + buckets.get(g)!.length - openOf(buckets.get(g)!), 0),
-  } : null;
+  let cut: { groups: number; open: number; resolved: number; leftCoverage: number } | null = null;
+  if (dropped.length) {
+    cut = { groups: dropped.length, open: 0, resolved: 0, leftCoverage: 0 };
+    for (const g of dropped) {
+      const c = counts.get(g)!;
+      cut.open += c.open;
+      cut.resolved += c.resolved;
+      cut.leftCoverage += c.leftCoverage;
+    }
+  }
   // The support group the rows share, when they share one — a repository row under it carries
   // that group's override marker in the sheet.
   const groups = new Set(rows.map((r) => splitBucketOf("supportGroup", r)));
@@ -1370,12 +1457,17 @@ function buildMttrSplit(n: NormParams): Rec {
   };
 }
 
-/** The split, cached. A new namespace: nothing ever served this shape. Keyed like `dsMttr4`
- *  on the two settings the compute reads. */
+/** The split, cached. Keyed like `dsMttr8` on the two settings the compute reads.
+ *  "dsMttrSplit1" -> "dsMttrSplit2": each row's `km` gained `medianBoundReason`, and its
+ *  `medianLowerBound` is null where the reliability cut left nothing to bound (`dsMttr5`).
+ *  "dsMttrSplit2" -> "dsMttrSplit3": drop-outs censored, as `dsMttr7`.
+ *  "dsMttrSplit3" -> "dsMttrSplit4": the repository cap ranks and cuts on `stateCounts` — a
+ *  drop-out is no longer `cut.resolved` (it is `cut.leftCoverage`) nor in a row's
+ *  `totalByScope` — and drop-outs censor at their last sighting (`dsMttr8`). */
 export function mttrSplitModel(p?: ModelParams): Rec {
   const n = norm({ ...p, split: null });
   return cached(
-    "dsMttrSplit1",
+    "dsMttrSplit4",
     { ...keyOf(n), slaTargets: n.slaTargets, mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
     () => buildMttrSplit(n),
     CLOCK_TTL_SEC,
@@ -1392,8 +1484,11 @@ export function mttrSplitModel(p?: ModelParams): Rec {
 export function mttrGroupModel(p: ModelParams): Rec {
   const n = norm(p);
   if (!n.split) throw new Error("mttrGroupModel: a split { by, value } is required.");
+  // "dsMttrGroup1" -> "dsMttrGroup2": `buildMttr`'s payload changed under it (`dsMttr5`), and
+  // "dsMttrGroup2" -> "dsMttrGroup3" again (`dsMttr6`), "dsMttrGroup3" -> "dsMttrGroup4"
+  // again (`dsMttr7`), "dsMttrGroup4" -> "dsMttrGroup5" again (`dsMttr8`).
   return cached(
-    "dsMttrGroup1",
+    "dsMttrGroup5",
     { ...keyOf(n), slaTargets: n.slaTargets, mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
     () => {
       const snap = baseSnapshot();
@@ -1456,10 +1551,11 @@ function buildExecutive(n: NormParams): Rec {
       group: scope,
       dimension: "scope",
       total: sub.length,
-      open: sub.filter((r) => isOpen(r.status)).length,
-      resolved: sub.filter((r) => !isOpen(r.status)).length,
+      // open + resolved + leftCoverage = total (`stateCounts`).
+      ...stateCounts(sub),
       kmMedian: km.median,
       kmMedianLowerBound: km.medianLowerBound,
+      kmMedianBoundReason: km.medianBoundReason ?? null,
       // MTTR delayed-entry package: the "25% fixed within" figure — the honest thing to show
       // beside a null `kmMedian` under the reliability cut, same reasoning as `mttrModel`'s
       // per-severity `kmPerSev`.
@@ -1678,6 +1774,17 @@ export function executiveModel(p?: ModelParams): Rec {
   // payload gained `trackingSince`. Same "silently wrong beats silently missing" reasoning as
   // `mttrModel`'s own bump.
   //
+  // "dsExecutive2" -> "dsExecutive3" (KM false lower bound): `byScope` rows gained
+  // `kmMedianBoundReason`, and `kmMedianLowerBound` is null where the reliability cut left
+  // nothing to bound — see `mttrModel`'s `dsMttr5` note.
+  //
+  // "dsExecutive3" -> "dsExecutive4" (drop-outs censored): the `byScope` half-lives and the
+  // week-over-week delta keep repository drop-outs as censored (`mttrModel`'s `dsMttr7`), and
+  // `byScope` rows count them apart (`leftCoverage`) instead of as `resolved`.
+  //
+  // "dsExecutive4" -> "dsExecutive5": those half-lives censor a drop-out at its last sighting
+  // (`dsMttr8`).
+  //
   // `coldAfterDays` joins it beside them on the identical argument, one block later: the
   // cold-zone headline is computed from it, so an operator saving a new window and reloading
   // would otherwise keep reading the OLD cold count for up to `CLOCK_TTL_SEC` off an entry
@@ -1691,7 +1798,7 @@ export function executiveModel(p?: ModelParams): Rec {
   // never changes SHAPE with the mode — a key that sometimes carries three fewer fields makes
   // "same params" mean two different things.
   return cached(
-    "dsExecutive2",
+    "dsExecutive5",
     {
       ...keyOf(n),
       slaTargets: n.slaTargets,
@@ -1792,8 +1899,8 @@ function buildRegister(scope: Scope, n: NormParams): Rec {
     severities: isSecrets ? null : n.severities,
     showNoFix: n.showNoFix,
     rowCount: rows.length,
-    open: rows.filter((r) => isOpen(r.status)).length,
-    resolved: rows.filter((r) => !isOpen(r.status)).length,
+    // open + resolved + leftCoverage = rowCount (`stateCounts`).
+    ...stateCounts(rows),
 
     // The severity axis, or the reason there is not one.
     severityAxis: isSecrets ? { supported: false, reason: SEVERITY_AXIS_REFUSAL } : { supported: true },
@@ -1819,6 +1926,11 @@ function buildRegister(scope: Scope, n: NormParams): Rec {
     tiers: riskTierStats(scopedTierRows(rows), undefined, scope),
     funnel: triageFunnel(rows as never, undefined, new Set<string>(), false, scope, n.slaTargets),
     awaiting: awaitingVendorFix(rows, { scope }),
+    // The MTTR payload's `remediation.fetchFilter`, for the same card on this page: under
+    // `SCA_FETCH_HAS_FIX` the `awaiting` count above has no population (the findings it counts
+    // are never fetched), and the Dependencies page prints it as not measurable. sca only —
+    // the other two registers have no vendor clock to qualify.
+    fetchFilter: scope === "sca" ? { scaHasFix: SCA_FETCH_HAS_FIX } : null,
     latestScan: latest,
     signalCoverage: signalCoverage(rows),
 
@@ -1866,7 +1978,17 @@ export function registerModel(scope: Scope, p?: ModelParams): Rec {
     // one — worse than a stale number, because it is a silently missing caveat.
     // `slaTargets` joins the key because `triageFunnel`'s `overdue` step (inside
     // `buildRegister`) reads it — see `mttrModel`'s matching comment.
-    "dsRegister2",
+    // "dsRegister2" -> "dsRegister3" (completeness gate): `latestScan` gained the scan row's
+    // completeness record (`disappearance`, `dropout_count`, …), and a row's `resolution_src`
+    // can now read "repo_dropout" — a warm dsRegister2 entry would draw neither.
+    // "dsRegister3" -> "dsRegister4" (hasFix relabel): the payload gained `fetchFilter`; a warm
+    // dsRegister3 entry lacks it and the Dependencies page would draw the awaiting-a-vendor
+    // count as a measurement again.
+    // "dsRegister4" -> "dsRegister5" (drop-outs counted apart): `resolved` no longer counts
+    // repository drop-outs, which ship as `leftCoverage`.
+    // "dsRegister5" -> "dsRegister6": `sevStats` stops counting them as `resolved` too — each
+    // severity gained `leftCoverage`.
+    "dsRegister6",
     { ...keyOf(n), scope, slaTargets: n.slaTargets },
     () => buildRegister(scope, n),
     CLOCK_TTL_SEC,
@@ -2159,9 +2281,15 @@ export function registerRowsModel(scope: Scope, p?: RowPageParams): Rec {
  * (PRODUCT.md's seventh principle). The blob is one file per UTC day, latest write wins, so
  * this is the last sync recorded on the last day anything was recorded — which can be
  * Tuesday's fold read on Friday. `twinsAsOf` is the day that file names, shipped as a SIBLING
- * rather than folded into the block: `twins` has to stay a faithful `TwinStats` of exactly
- * `{keys, folded, medianGapDays}`, because the client's absent-vs-measured-zero decision keys
- * on those three fields and a fourth one in there would be a fourth thing to interpret.
+ * rather than folded into the block: `twins` has to stay a faithful `TwinStats`, because the
+ * client's absent-vs-measured-zero decision keys on `{keys, folded, medianGapDays}`, and a
+ * date in there would be one more thing to interpret.
+ *
+ * THE CROSS-REPOSITORY COUNTS ARE OPTIONAL ON THE WAY OUT. `crossRepoKeys`/`crossRepoNodes`/
+ * `maxBucketSize` joined `TwinStats` after days of history were already written without
+ * them, so an older blob still ships its three fields and simply omits the rest — each is
+ * refused by type on its own, never defaulted to 0, because a 0 there would claim a sync
+ * looked for cross-repository keys that it never counted.
  *
  * THE DAY, NOT THE INSTANT. `dailyStats` also writes an `at` timestamp, and it is tempting to
  * prefer it — but the FILE's grain is the day (a second sync the same day overwrites the
@@ -2174,8 +2302,25 @@ export function registerRowsModel(scope: Scope, p?: RowPageParams): Rec {
  */
 const HISTORY_DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+let latestHistoryMemo: { version: string; entry: ReturnType<typeof latestHistory> } | undefined;
+
+/**
+ * `historyStore.latestHistory()` once per execution — a folder listing plus one Drive read,
+ * asked for by every `secretsModel` param set a warm or a page load resolves. Keyed on
+ * `dataVersion()` like the memos above. The sync's own `recordDaily` writes the day AFTER the
+ * commit's bump, inside the sync's execution; nothing there reads this (the post-sync warm runs
+ * in its own execution, `readModels.continueWarm`), so the memo cannot hold the pre-write day.
+ */
+function latestHistoryOnce(): ReturnType<typeof latestHistory> {
+  const version = dataVersion();
+  if (!latestHistoryMemo || latestHistoryMemo.version !== version) {
+    latestHistoryMemo = { version, entry: latestHistory() };
+  }
+  return latestHistoryMemo.entry;
+}
+
 function latestSecretsTwins(): { twins: Rec; asOf: string | null } | null {
-  const entry = latestHistory();
+  const entry = latestHistoryOnce();
   const stats = entry && entry.stats;
   if (!stats || typeof stats !== "object" || Array.isArray(stats)) return null;
   const scopes = (stats as Rec)["scopes"];
@@ -2192,13 +2337,18 @@ function latestSecretsTwins(): { twins: Rec; asOf: string | null } | null {
   if (!("medianGapDays" in t)) return null;
   const gap = t["medianGapDays"];
   if (gap !== null && (typeof gap !== "number" || !Number.isFinite(gap))) return null;
-  // Refused by type before any cast, like the three above. `listHistory`/`latestHistory`
+  // Refused by type before any cast, like the three above. `historyStore`'s readers
   // derive the date from the file NAME through the same regex, so a bad one here means the
   // store's own naming contract broke — which is a reason to say nothing about the day, not
   // a reason to invent one.
   const date = entry.date;
   const asOf = typeof date === "string" && HISTORY_DAY_RE.test(date) ? date : null;
-  return { twins: { keys, folded, medianGapDays: gap }, asOf };
+  const out: Rec = { keys, folded, medianGapDays: gap };
+  for (const k of ["crossRepoKeys", "crossRepoNodes", "maxBucketSize"]) {
+    const v = t[k];
+    if (typeof v === "number" && Number.isFinite(v)) out[k] = v;
+  }
+  return { twins: out, asOf };
 }
 
 function buildSecrets(n: NormParams): Rec {
@@ -2263,11 +2413,35 @@ export function secretsModel(p?: ModelParams): Rec {
   // `mean`/`restrictionTime` read a reliability-cut, horizon-capped curve — this register's
   // own coverage numbers (mostly UNKNOWN validation state) make the cut bite harder here than
   // anywhere else in the product, so a warm dsSecrets1 entry would be the most misleading one.
+  //
+  // "dsSecrets2" -> "dsSecrets3" (KM false lower bound): `timeToRevoke.km`/`.medianLowerBound`
+  // stop publishing the max observed time as a floor where the reliability cut left nothing
+  // and the uncut curve does reach half; `km` gained `medianBoundReason`/`meanUnmeasuredReason`.
+  //
+  // "dsSecrets3" -> "dsSecrets4" (twin fold): `twins` can carry `crossRepoKeys`/
+  // `crossRepoNodes`/`maxBucketSize` (see `latestSecretsTwins`).
+  //
+  // "dsSecrets4" -> "dsSecrets5" (view switch keeps caches warm): the key gained the view —
+  // `project`, `domain`, and the viewer scope and split when present — through `keyOf`, pinned
+  // to the scope and severities `buildSecrets` pins. `visibleRows` has always narrowed this
+  // model by them, and the key carried none: harmless only while every view switch bumped the
+  // data version. It no longer does, and two views would have shared one entry.
+  //
+  // "dsSecrets5" -> "dsSecrets6": `timeToRevoke.km` gained `censoredLeftCoverage` (the shared
+  // estimator's new count). The note said time-to-revoke "already censored a drop-out's
+  // credential"; it did, but at `now`, as a still-live one — the defect the next bump fixes.
+  //
+  // "dsSecrets6" -> "dsSecrets7": a drop-out's credential is censored where its repository left
+  // the scan (or at its last validation, if earlier) and counted apart as
+  // `timeToRevoke.leftCoverage` — secretsLifecycle.ts's decision 5.
   return cached(
-    "dsSecrets2",
-    // `mttrExcludeEndOfLife` is here because `timeToRevoke` reads it; `severities` is not
-    // because nothing does. One rule, both directions.
-    { scope: "secrets", showNoFix: n.showNoFix, mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
+    "dsSecrets7",
+    // `mttrExcludeEndOfLife` is here because `timeToRevoke` reads it; `severities` is pinned to
+    // null because nothing reads it. One rule, both directions.
+    {
+      ...keyOf({ ...n, scope: "secrets", severities: null }),
+      mttrExcludeEndOfLife: n.mttrExcludeEndOfLife,
+    },
     () => buildSecrets(n),
     CLOCK_TTL_SEC,
   );
@@ -2482,8 +2656,14 @@ export function reposModel(p?: ModelParams): Rec {
   // NO NAMESPACE BUMP ("dsRepos2" STAYS) — see this file's caching-audit header for the full
   // argument: new params fields change the sha1 the filename is built from, so no old file is
   // addressable by the new key in the first place.
+  //
+  // "dsRepos2" -> "dsRepos3" (drop-outs censored) IS a bump, the payload-under-an-unchanged-key
+  // shape: each asset's half-life now keeps its repository drop-outs as censored, and a warm
+  // Drive file would serve the median computed with them deleted.
+  //
+  // "dsRepos3" -> "dsRepos4": those drop-outs censor at their last sighting (`dsMttr8`).
   return durablyCached(
-    "dsRepos2",
+    "dsRepos4",
     {
       ...keyOf(n),
       coldAfterDays: n.coldAfterDays,
@@ -2507,9 +2687,15 @@ export function reposModel(p?: ModelParams): Rec {
 /**
  * What was actually measured and when, plus the trend backbone three pages draw from.
  *
- * SHAPED FOR THE EXISTING SLICES. `scans` feeds `pagePayload.scanRowsSlice`; `{history, trend}`
- * feeds `mttrPageTrendSlice` (MTTR page, which reads `history` for its change chips and as the
- * young-ledger fallback) and `historyTrendSlice` (Scan History, which drops `history` whole).
+ * SHAPED FOR THE EXISTING SLICES. `scans` feeds `pagePayload.scanRowsSlice`; `trend` feeds
+ * `mttrPageTrendSlice` (MTTR page) and `historyTrendSlice` (Scan History).
+ *
+ * NO `history` ARRAY. This payload used to carry `historyStore.listHistory()` — every
+ * `mttr_history` day blob, one Drive read per recorded day — for an MTTR-page "change chips and
+ * young-ledger fallback" that this register's client never drew: no page reads `trends.history`.
+ * The secrets twin fold, the one thing that reads a day blob, takes the newest alone
+ * (`latestHistoryOnce`).
+ *
  * One cached backbone, three views of it — which is why the trend lives here rather than
  * inside `mttrModel`: `mttrModel` is a clock model on a 1 h TTL, and the trend is not.
  *
@@ -2522,10 +2708,8 @@ export function reposModel(p?: ModelParams): Rec {
  * through `scopedRows` and DO narrow to `n.project`. `scans` and `perScope`, though, come off
  * `loadScanRows()` directly — a `ScanRow` is a per-scan BATTERY record (`scan_id, ts, scope,
  * severities, total, ...`) with no project dimension at all, so there is no subtree of it to
- * select. `history` (`listHistory()`) is the same shape of fact: a whole-register snapshot
- * per UTC day, recorded before this package's project scope existed. `scanScopeApplies:
- * false` names exactly which three keys that covers, so a client cannot draw them as if they
- * had narrowed alongside the rest of this payload.
+ * select. `scanScopeApplies: false` names exactly which two keys that covers, so a client
+ * cannot draw them as if they had narrowed alongside the rest of this payload.
  *
  * `movement` / `movementNote` ARE PER SCOPE AND ALWAYS COVER ALL THREE. See
  * `domain/movementDecomposition.ts` for the arithmetic and `movementPopulation` below for the
@@ -2612,9 +2796,19 @@ function buildHistory(n: NormParams): Rec {
     movement,
     movementNote,
     kpis: {
-      tracked: rows.length,
-      open: rows.filter((r) => isOpen(r.status)).length,
-      resolvedAllTime: rows.filter((r) => !isOpen(r.status)).length,
+      // TRACKED IS OPEN + RESOLVED, the same sum each trend point's `open` + `resolved` makes
+      // (the page's sparkline under this card is exactly that), so a repository drop-out is in
+      // neither: it ships apart as `leftCoverage` (`stateCounts`) rather than inflating the
+      // all-time resolved count with findings nobody fixed.
+      ...(() => {
+        const c = stateCounts(rows);
+        return {
+          tracked: c.open + c.resolved,
+          open: c.open,
+          resolvedAllTime: c.resolved,
+          leftCoverage: c.leftCoverage,
+        };
+      })(),
       // THE KM MEDIAN, AND NOTHING BESIDE IT — the comment above this block used to say
       // exactly that while the field below it shipped `medianMttr: overall.mttr_median`, the
       // plain median over resolved rows. The page drew THAT one, captioned with the
@@ -2633,18 +2827,15 @@ function buildHistory(n: NormParams): Rec {
       km: shipKM(kaplanMeier(historyCut.rows, KM_OPTS)),
     },
     endOfLife: endOfLifeBlock(historyCut, n.mttrExcludeEndOfLife),
-    // `mttrPageTrendSlice` reads both of these keys.
-    history: listHistory(),
     trend: trendFor(n, snap.rows),
-    // See the block comment above: `scans`, `perScope` and `history` are per-scan/per-day
-    // facts with no project OR domain dimension and do NOT narrow with either view scope;
+    // See the block comment above: `scans` and `perScope` are per-scan facts with no project
+    // OR domain dimension and do NOT narrow with either view scope;
     // everything else in this payload does. The note names whichever scope is actually live,
     // because "scoped to the selected project" over a domain scope would be a wrong answer to
     // the only question the note exists to answer.
     scanScopeApplies: false,
     scanScopeNote: n.project || n.domain
-      ? "scans, perScope and history describe the whole register — a sync and a "
-        + "daily snapshot carry no "
+      ? "scans and perScope describe the whole register — a sync carries no "
         + (n.project ? "project" : "domain")
         + " dimension to narrow by. Only rows/kpis/trend above are scoped to the selected "
         + (n.project ? "project" : "domain") + "."
@@ -2709,8 +2900,23 @@ export function historyModel(p?: ModelParams): Rec {
   // `eventsPastCut`/`lateEntrants`/`lateEntryMedianAge` too — `shipKM` is the one function
   // behind both `kpis.km` here and `remediation.km` in `mttrModel`, so the shape change (and
   // the bump it forces) is identical, even though this page draws no accounting block itself.
+  //
+  // "dsHistory4" -> "dsHistory5" (completeness gate): every `scans` row gained the completeness
+  // record the Saved scans table marks a deferred scan from, and the movement decomposition
+  // now files repository drop-outs under `bounded`.
+  //
+  // "dsHistory5" -> "dsHistory6" (KM false lower bound): `kpis.km` changed as `dsMttr5` did.
+  //
+  // "dsHistory6" -> "dsHistory7": the `history` array is gone (see `buildHistory`'s comment),
+  // and `scanScopeNote` no longer names it. A warm dsHistory6 entry still ships the array.
+  //
+  // "dsHistory7" -> "dsHistory8" (drop-outs censored and counted apart): `kpis.km` and the
+  // trend's `km_median_days` censor repository drop-outs (`dsMttr7`), and `kpis.tracked` /
+  // `kpis.resolvedAllTime` no longer count them — `kpis.leftCoverage` does.
+  //
+  // "dsHistory8" -> "dsHistory9": those drop-outs censor at their last sighting (`dsMttr8`).
   return durablyCached(
-    "dsHistory4",
+    "dsHistory9",
     { ...keyOf(n), mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
     () => buildHistory(n),
   );
@@ -2818,6 +3024,10 @@ export interface WarmReport {
   /** Set when the pass did not run at all. */
   blockedBy: string | null;
   elapsedMs: number;
+  /** Index into the target list this hop started at — 0 for a fresh pass. */
+  resumedAt: number;
+  /** Whether a `trigger_continueWarm` hop was armed to carry on from here. */
+  continued: boolean;
 }
 
 /**
@@ -2852,7 +3062,12 @@ export function scopeSummaryModel(viewer: ViewerScope): Rec {
   return durablyCached(
     // "dsScopeSummary2" -> "dsScopeSummary3": the payload gained `splits` (MTTR by team /
     // domain / repository); a warm "2" entry would draw the summary with no split at all.
-    "dsScopeSummary3",
+    // "dsScopeSummary3" -> "dsScopeSummary4" (KM false lower bound): the hero's and every
+    // split row's lower bound is null where the reliability cut left nothing to bound.
+    // "dsScopeSummary4" -> "dsScopeSummary5" (drop-outs censored): every half-life it reads
+    // changed as `dsMttr7` did, and the history counts under it as `dsHistory8` did.
+    // "dsScopeSummary5" -> "dsScopeSummary6": and again as `dsMttr8` / `dsHistory9` did.
+    "dsScopeSummary6",
     { ...keyOf(n), slaTargets: n.slaTargets, mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
     () => {
       const latest = latestScanRowOf(loadScanRows());
@@ -2916,14 +3131,17 @@ function warmTargets(): { label: string; run: () => unknown }[] {
     // (`api.bootstrapIfWarm`), so it is the one entry every page load reads, and a cold one
     // costs every open a second round trip plus the 6–7 s compute.
     { label: "bootCore", run: () => bootCoreModel() },
-    // The durable four next: they are what the Drive layer exists for, and a budget cut-out
-    // that never reached them would leave the expensive answers cold overnight.
+    // Then the landing page and the page opened next. ORDER IS WHO GETS A WARM PAGE FIRST, not
+    // what survives: the post-sync warm now runs in its own trigger execution after the commit,
+    // so an analyst opening the app while it runs reads whatever it has reached, and a budget
+    // cut-out no longer leaves the tail cold overnight — `continueWarm` resumes it.
+    { label: "executive", run: () => executiveModel(all) },
+    { label: "mttr", run: () => mttrModel(all) },
+    // The durable four: what the Drive layer exists for.
     { label: "history", run: () => historyModel(all) },
     { label: "program", run: () => programModel(all) },
     { label: "repos", run: () => reposModel(all) },
     { label: "storage", run: () => storageModel() },
-    { label: "executive", run: () => executiveModel(all) },
-    { label: "mttr", run: () => mttrModel(all) },
     { label: "mttrSplit", run: () => mttrSplitModel(all) },
     { label: "secrets", run: () => secretsModel(all) },
   ];
@@ -2947,7 +3165,9 @@ function warmTargets(): { label: string; run: () => unknown }[] {
 }
 
 /**
- * Precompute the read-models the landing pages open with.
+ * Precompute the read-models the landing pages open with — `trigger_warmReadModels`, the three
+ * standing passes a day. A FRESH PASS from the top of the list; one that runs out of budget
+ * hands the rest to `continueWarm` (see `warmPass`).
  *
  * SKIPPED ENTIRELY WHILE A JOB IS IN FLIGHT, and the reason is correctness rather than
  * politeness. `activeJob()` is single-flight across kinds, so one check covers scan, compact
@@ -2955,45 +3175,271 @@ function warmTargets(): { label: string; run: () => unknown }[] {
  * unreachable — waste — but worse, a PERSISTING job is part-way through a wholesale
  * `overwrite`, so a warm reading the ledger then would cache a TORN read under the pre-bump
  * version and serve it for the rest of that window. A caller that wants a post-scan warm must
- * therefore run it once the job row has reached a terminal phase, not from inside the job.
+ * therefore run it once the job row has reached a terminal phase, not from inside the job —
+ * which is what `scheduleWarm` is for.
  *
  * BUDGETED, because a killed execution warms nothing and reports nothing: every entry it had
  * already computed is still cached, the ones it never reached stay cold, and there is no line
  * anywhere saying which. Stopping at the budget and returning "warmed N, N left cold" degrades
  * instead of failing. Every entry is guarded so one failure never aborts the rest.
  *
- * THE SWEEP IS SKIPPED AFTER A BUDGET CUT-OUT. The keep-list is what the warm actually
+ * THE SWEEP RUNS ONLY AT THE END OF A COMPLETE PASS. The keep-list is what the warm actually
  * touched; short by whatever never ran, it would trash live entries and rewrite them next pass.
+ * A pass spread over several hops carries its keep-list from hop to hop (`WarmProgress`).
  */
 export function warmReadModels(budgetMs: number = WARM_BUDGET_MS): WarmReport {
+  return warmPass(budgetMs, false);
+}
+
+// --------------------------------------------------------------------------------------- //
+//  The warm chain: off the sync's lock, resumable across executions
+// --------------------------------------------------------------------------------------- //
+//
+// THE POST-SYNC WARM USED TO RUN INLINE at the tail of `scanJobs.afterPersist` — inside the
+// sync's script lock and, for a battery that fits its first hop, inside the "Run sync" RPC. A
+// cold warm is minutes of compute, so every write RPC waited behind it and the job card sat on
+// DONE while the request was still open. `afterPersist` now only arms a one-shot
+// (`scheduleWarm`) and returns; the warm runs in that trigger's own execution, unlocked, like
+// the standing passes always have. THE TRADE IS UNCHANGED, merely moved: an analyst who opens a
+// page in the second or so before the trigger fires computes it cold, exactly as one who opened
+// it while the inline warm held the lock did.
+//
+// Ported from gas/'s `continueWarm` (api.ts), with one difference: gas/ re-runs the list from
+// the top on every hop and relies on L1 hits to make the warmed prefix cheap; this RESUMES from
+// the first target the last hop did not reach, recorded in `WARM_PROGRESS`, because the clock
+// models here carry a one-hour TTL and the prefix is not always still in L1 to be cheap.
+
+/**
+ * The one-shot handler — ITS OWN NAME, never the standing `setup.WARM_HANDLER`. setup()
+ * reconciles the standing set by counting triggers under that name against
+ * `WARM_TRIGGER_COUNT`; a one-shot sharing it would make a correct install read as four and be
+ * torn down and rebuilt, and `clearTriggers` here would delete the three standing passes.
+ * dist/entry.js's `trigger_continueWarm` delegates to `continueWarm`.
+ */
+export const WARM_CONTINUE_HANDLER = "trigger_continueWarm";
+/** Script Property holding the in-flight pass's `WarmProgress`. */
+const WARM_PROGRESS_PROP = "WARM_PROGRESS";
+/** After the commit — the sync's execution only needs to have returned its lock. */
+export const WARM_START_DELAY_MS = 1_000;
+/** A job in flight blocks the warm; a hop that finds one waits this long and tries again. */
+const WARM_BUSY_DELAY_MS = 60_000;
+/**
+ * Every hop warms at least the first target it reaches, so a chain always makes progress — but
+ * a target that alone outlasts the execution cap would kill every hop at the same place. This
+ * bounds that, per cache stamp; a completed pass resets it.
+ */
+const WARM_MAX_HOPS = 6;
+/** Under the 9 KB Script Property cap, with room for the rest of the record. */
+const WARM_KEEP_LIST_MAX_CHARS = 8_000;
+
+/**
+ * Where a pass spread over several hops stands. KEYED BY THE CACHE STAMP (`currentStamp()` —
+ * DATA_VERSION plus the config stamp, what every cache key carries): a commit between hops
+ * makes every entry the earlier hops warmed unreachable, so a record under another stamp is
+ * ignored and the pass starts again from the top.
+ */
+interface WarmProgress {
+  stamp: string;
+  /** Index of the first target the last hop did not reach. */
+  next: number;
+  /**
+   * That target's label. The list is not fixed — the scoped roster can change between hops —
+   * and a label that no longer sits at `next` restarts the pass rather than skipping a target.
+   */
+  label: string | null;
+  /** Continuation hops armed under this stamp. */
+  hops: number;
+  /** The keep-list so far; null when it outgrew the property, which forfeits this pass's sweep. */
+  touched: string[] | null;
+}
+
+function readProgress(): WarmProgress | null {
+  try {
+    const raw = getProp(WARM_PROGRESS_PROP);
+    if (!raw) return null;
+    const p = JSON.parse(raw) as Partial<WarmProgress>;
+    if (!p || p.stamp !== currentStamp()) return null;
+    return {
+      stamp: p.stamp,
+      next: Number(p.next) || 0,
+      label: typeof p.label === "string" ? p.label : null,
+      hops: Number(p.hops) || 0,
+      touched: Array.isArray(p.touched) ? p.touched.map(String) : null,
+    };
+  } catch (e) {
+    console.warn(`Read-model warm: progress unreadable, starting from the top: ${e}`);
+    return null;
+  }
+}
+
+function writeProgress(p: WarmProgress): void {
+  let json = JSON.stringify(p);
+  if (json.length > WARM_KEEP_LIST_MAX_CHARS) json = JSON.stringify({ ...p, touched: null });
+  setProp(WARM_PROGRESS_PROP, json);
+}
+
+function clearProgress(): void {
+  try {
+    deleteProp(WARM_PROGRESS_PROP);
+  } catch (e) {
+    // Only bounds a chain; a stale record is ignored the moment the stamp moves.
+    console.warn(`Read-model warm: could not clear the progress record: ${e}`);
+  }
+}
+
+/**
+ * Arm the one-shot that runs `continueWarm` in `delayMs`. At most one is ever pending — any
+ * earlier one is cleared first, so a second sync committing before the first's warm fired
+ * leaves one trigger, not two, against the 20-trigger quota. Best effort: a failed schedule
+ * costs a cold first load, never the commit that asked for it. Returns whether it armed.
+ */
+export function scheduleWarm(delayMs: number = WARM_START_DELAY_MS): boolean {
+  try {
+    clearTriggers(WARM_CONTINUE_HANDLER);
+    ScriptApp.newTrigger(WARM_CONTINUE_HANDLER).timeBased().after(delayMs).create();
+    return true;
+  } catch (e) {
+    console.warn(`Read-model warm: could not schedule a warm: ${e}`);
+    errorLog.recordError("cacheWarm", `Could not schedule a warm: ${e instanceof Error ? e.message : String(e)}`);
+    return false;
+  }
+}
+
+/**
+ * Trigger target (`trigger_continueWarm`): the post-sync warm, and every continuation of a pass
+ * that ran out of budget. Resumes the pass recorded under the current stamp, or starts one.
+ *
+ * DELETES ITS OWN FIRED TRIGGER FIRST, as `scanJobs.continueJob` does: a one-shot that has
+ * fired still counts against the 20-trigger quota until it is deleted.
+ */
+export function continueWarm(_e?: unknown): WarmReport {
+  try {
+    clearTriggers(WARM_CONTINUE_HANDLER);
+  } catch (e) {
+    console.warn(`Read-model warm: could not clear the fired trigger: ${e}`);
+  }
+  return warmPass(WARM_BUDGET_MS, true);
+}
+
+/**
+ * One hop. `resume` is the difference between the two entry points: a continuation picks up at
+ * the recorded target and re-arms when a job blocks it; a standing pass starts at the top and
+ * simply skips (the job it found will arm its own warm when it commits).
+ */
+function warmPass(budgetMs: number, resume: boolean): WarmReport {
   const job = activeJob();
+  const prior = readProgress();
   if (job) {
     const reason = `${job.kind} job ${job.job_id} is ${job.phase}`;
     console.log(`Read-model warm: skipped, ${reason}`);
-    return { warmed: 0, skipped: 0, swept: 0, blockedBy: reason, elapsedMs: 0 };
+    const continued = resume && chain(prior ?? freshProgress(), prior, WARM_BUSY_DELAY_MS);
+    return { warmed: 0, skipped: 0, swept: 0, blockedBy: reason, elapsedMs: 0, resumedAt: 0, continued };
   }
-  return duringWarm(() => warmInner(budgetMs));
+  const targets = warmTargets();
+  let start = 0;
+  if (resume && prior && prior.next > 0 && targets[prior.next]?.label === prior.label) {
+    start = prior.next;
+  }
+  // A resumed hop whose earlier hops' keep-list was dropped cannot sweep safely.
+  const carried = start > 0 ? prior!.touched : [];
+  const hop = duringWarm(() => warmInner(budgetMs, targets, start, carried !== null), carried ?? []);
+  let continued = false;
+  if (hop.firstSkipped === null) {
+    clearProgress();
+  } else {
+    continued = chain({
+      stamp: currentStamp(),
+      next: hop.firstSkipped,
+      label: targets[hop.firstSkipped]?.label ?? null,
+      hops: prior?.hops ?? 0,
+      touched: carried === null ? null : hop.touched,
+    }, prior, WARM_START_DELAY_MS);
+  }
+  if (hop.skipped) {
+    const msg = `Out of budget after ${hop.warmed} entries, ${hop.skipped} left cold`;
+    console.warn(`Read-model warm: ${msg}${continued ? "; continuing in the next hop" : ""}`);
+    // A hand-off to an armed hop is the warm WORKING — every budgeted pass makes one — so it
+    // stays out of the 25-slot recent-errors ring, where it used to evict real failures. Only
+    // a pass that ends with targets cold is recorded: the hop cap, or a hop that could not be
+    // armed (`chain` and `scheduleWarm` record their own cause beside this).
+    if (!continued) errorLog.recordError("cacheWarm", `${msg}.`);
+  }
+  return {
+    warmed: hop.warmed, skipped: hop.skipped, swept: hop.swept, blockedBy: null,
+    elapsedMs: hop.elapsedMs, resumedAt: start, continued,
+  };
 }
 
-function warmInner(budgetMs: number): WarmReport {
+function freshProgress(): WarmProgress {
+  return { stamp: currentStamp(), next: 0, label: null, hops: 0, touched: [] };
+}
+
+/**
+ * Record `next` and arm its hop, unless this stamp has used its `WARM_MAX_HOPS`. The hop count
+ * is the PRIOR record's under the same stamp, so a standing pass that runs out of budget does
+ * not reset a chain that already gave up. Returns whether a hop was armed.
+ */
+function chain(next: WarmProgress, prior: WarmProgress | null, delayMs: number): boolean {
+  const hops = (prior?.hops ?? 0) + 1;
+  try {
+    if (hops > WARM_MAX_HOPS) {
+      console.warn(`Read-model warm: gave up after ${WARM_MAX_HOPS} continuation hops`);
+      errorLog.recordError("cacheWarm", `Gave up after ${WARM_MAX_HOPS} continuation hops under one data version.`);
+      writeProgress({ ...next, hops: prior?.hops ?? 0 });
+      return false;
+    }
+    writeProgress({ ...next, hops });
+  } catch (e) {
+    console.warn(`Read-model warm: could not record progress: ${e}`);
+    errorLog.recordError("cacheWarm", `Could not record warm progress: ${e instanceof Error ? e.message : String(e)}`);
+    return false;
+  }
+  return scheduleWarm(delayMs);
+}
+
+interface HopResult {
+  warmed: number;
+  skipped: number;
+  swept: number;
+  /** Index of the first target this hop did not reach; null when it reached the end. */
+  firstSkipped: number | null;
+  /** The keep-list after this hop, carried to the next one. */
+  touched: string[];
+  elapsedMs: number;
+}
+
+function warmInner(
+  budgetMs: number,
+  targets: { label: string; run: () => unknown }[],
+  start: number,
+  sweepable: boolean,
+): HopResult {
   const t0 = Date.now();
   let warmed = 0;
   let skipped = 0;
-  for (const target of warmTargets()) {
+  let firstSkipped: number | null = null;
+  for (let i = start; i < targets.length; i++) {
+    const target = targets[i]!;
     if (Date.now() - t0 >= budgetMs) {
       skipped += 1;
+      if (firstSkipped === null) firstSkipped = i;
       continue;
     }
+    const ts = Date.now();
+    let ok = true;
     try {
       target.run();
       warmed += 1;
     } catch (e) {
+      ok = false;
       console.warn(`Read-model warm (${target.label}) failed: ${e}`);
+      errorLog.recordError("cacheWarm", `${target.label}: ${e instanceof Error ? e.message : String(e)}`);
     }
+    // One line per target: what a cold post-sync warm actually spends, entry by entry.
+    console.log(JSON.stringify({ stage: "warm", label: target.label, ms: Date.now() - ts, ok }));
   }
-  if (skipped) {
-    console.warn(`Read-model warm: out of budget after ${warmed} entries, ${skipped} left cold`);
-  }
-  const swept = skipped ? 0 : sweepReadModels();
-  return { warmed, skipped, swept, blockedBy: null, elapsedMs: Date.now() - t0 };
+  const swept = skipped || !sweepable ? 0 : sweepReadModels();
+  return {
+    warmed, skipped, swept, firstSkipped, touched: warmTouched() ?? [], elapsedMs: Date.now() - t0,
+  };
 }

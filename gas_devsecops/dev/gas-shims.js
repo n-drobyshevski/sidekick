@@ -478,6 +478,19 @@
               catch (e) { console.error("continueJob failed:", e); }
             }, 100);
           }
+          // The post-sync warm runs on its own one-shot (readModels.WARM_CONTINUE_HANDLER) since
+          // it left the sync's lock; unfired, the dev harness would never warm after a sync.
+          if (handler === "trigger_continueWarm") {
+            setTimeout(() => {
+              const models = window.Server && window.Server.readModels;
+              if (!models || typeof models.continueWarm !== "function") {
+                console.error("[shim] trigger_continueWarm fired but Server.readModels.continueWarm is missing.");
+                return;
+              }
+              try { models.continueWarm(); }
+              catch (e) { console.error("continueWarm failed:", e); }
+            }, 100);
+          }
           return trigger;
         },
       };

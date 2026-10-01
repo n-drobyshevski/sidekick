@@ -40,11 +40,11 @@ import {
 } from "../src/client/js/pages/repos.js";
 import {
   groupBySync, isAllSeverities, kmMedianPoints, kpiView, openResolvedPoints, perScopeView,
-  scanRowsView, scanScopeNoteShown, severitiesLabel,
+  deferralOf, scanRowsView, scanScopeNoteShown, severitiesLabel,
 } from "../src/client/js/pages/history.js";
 import {
   cellsSummary, compactionView, confirmedAction, currentlyScoped, deletableScans, ledgerSummary,
-  recentErrorsView, tabCellsView,
+  errorLevel, errorSourceLabel, recentErrorsView, tabCellsView,
 } from "../src/client/js/pages/data.js";
 
 const REPOS_SRC = readFileSync(new URL("../src/client/js/pages/repos.js", import.meta.url), "utf8");
@@ -1469,6 +1469,40 @@ describe("history: a null severities means ALL severities, never none", () => {
   });
 });
 
+describe("history: a deferred scan is marked, and drop-outs are counted apart", () => {
+  const base = { scan_id: "sync-2", ts: "2026-03-02T00:00:00Z", scope: "sca", mode: "live", total: 4, new_count: 0, resolved_count: 0, reopened_count: 0, severities: null, sealed: 0 };
+
+  it("reads the stored verdict: deferred with its reason, and nothing for complete or legacy", () => {
+    const [deferred, complete, legacy] = scanRowsView([
+      { ...base, disappearance: "deferred:short", dropout_count: null },
+      { ...base, disappearance: "complete", dropout_count: 3, resolved_count: 2 },
+      { ...base },
+    ]);
+    expect(deferred.deferral.reason).toBe("short");
+    expect(deferred.deferral.help[0]).toMatch(/fewer findings than Wiz reported/);
+    expect(deferred.deferral.help[0]).toMatch(/next complete scan resolves those findings/);
+    expect(deferred.dropoutCount).toBeNull(); // not measured — never drawn as a zero
+    expect(complete.deferral).toBeNull();
+    expect(complete.dropoutCount).toBe(3);
+    expect(complete.resolvedCount).toBe(2); // the drop-outs are not in it
+    expect(legacy.deferral).toBeNull();
+    expect(legacy.dropoutCount).toBeNull();
+  });
+
+  it("a reason this client was never taught still reads as deferred", () => {
+    expect(deferralOf("deferred:something-new").help[0]).toMatch(/looked incomplete/);
+    for (const v of ["complete", "", null, undefined, 3]) expect(deferralOf(v)).toBeNull();
+  });
+
+  it("uses the vocabulary: a scan is saved, it does not run", () => {
+    for (const reason of ["empty", "short", "duplicates"]) {
+      const help = deferralOf(`deferred:${reason}`).help.join(" ");
+      expect(help).toMatch(/This scan was saved/);
+      expect(help).not.toMatch(/\brun\b|\bscanned\b/);
+    }
+  });
+});
+
 describe("history: three rows per sync, one per register", () => {
   const SYNC = [
     { scan_id: "sync-1", ts: "2026-03-01T00:00:00Z", scope: "sca", mode: "full", total: 10, new_count: 10, resolved_count: 0, reopened_count: 0, severities: '["CRITICAL","HIGH"]', sealed: 0 },
@@ -1503,6 +1537,14 @@ describe("history: KPIs, KM points and the SLA-trend gap", () => {
     });
     expect(v.resolvedSharePct).toBeCloseTo(60, 5);
     expect(v.tracked).toBe(100);
+  });
+
+  it("kpiView carries the drop-outs apart from tracked and resolved", () => {
+    const v = kpiView({ tracked: 100, open: 40, resolvedAllTime: 60, leftCoverage: 12 });
+    expect(v.leftCoverage).toBe(12);
+    expect(v.tracked).toBe(v.open + v.resolvedAllTime);
+    expect(v.resolvedSharePct).toBeCloseTo(60, 5);
+    expect(kpiView({ tracked: 1, open: 1, resolvedAllTime: 0 }).leftCoverage).toBe(0);
   });
 
   it("kpiView never divides by zero into a fake rate", () => {
@@ -1812,13 +1854,56 @@ describe("data: compaction — the dry run's numbers, and archive_bytes_freed as
 describe("data: getRecentErrors' scope note is surfaced, not implied", () => {
   it("recentErrorsView carries covers and note through unchanged", () => {
     const v = recentErrorsView({
-      errors: [{ job_id: "j1", kind: "scan", phase: "FAILED", scope: "sca", at: "2026-01-01T00:00:00Z", error: "boom" }],
-      covers: "jobs",
-      note: "Job failures only — this register has no error-log tab.",
+      errors: [{ source: "job", job_id: "j1", kind: "sync", phase: "FAILED", scope: "sca", at: "2026-01-01T00:00:00Z", error: "boom" }],
+      covers: "jobs+server",
+      note: "Failed sync jobs, and the last 25 failures recorded on the server.",
     });
-    expect(v.covers).toBe("jobs");
-    expect(v.note).toMatch(/jobs|error-log/);
+    expect(v.covers).toBe("jobs+server");
+    expect(v.note).toMatch(/server/);
     expect(v.errors).toHaveLength(1);
+  });
+
+  it("serverCount counts only what Clear can remove — job rows stay listed", () => {
+    const v = recentErrorsView({
+      errors: [
+        { source: "job", kind: "sync", at: "T1", error: "a" },
+        { source: "server", kind: "cacheWarm", at: "T2", error: "b" },
+        { source: "server", kind: "api", at: "T3", error: "c" },
+      ],
+    });
+    expect(v.serverCount).toBe(2);
+    expect(recentErrorsView({ errors: [{ source: "job" }] }).serverCount).toBe(0);
+    expect(recentErrorsView(null).serverCount).toBe(0);
+  });
+
+  it("errorLevel reads only an explicit warning as one — every other row is an error", () => {
+    expect(errorLevel({ source: "server", level: "warning" })).toBe("warning");
+    expect(errorLevel({ source: "server", level: "error" })).toBe("error");
+    expect(errorLevel({ source: "job", level: "error" })).toBe("error");
+    expect(errorLevel({ source: "server" })).toBe("error"); // a server predating `level`
+    expect(errorLevel(null)).toBe("error");
+  });
+
+  it("the render path draws a warning as a warn pill, apart from an error", () => {
+    const fn = DATA_SRC.slice(DATA_SRC.indexOf("function renderErrors"));
+    const body = fn.slice(0, fn.indexOf("\n  }\n"));
+    expect(body).toMatch(/errorLevel\(r\) === "warning"[\s\S]*class: "pill warn"[\s\S]*class: "pill bad"/);
+  });
+
+  it("errorSourceLabel names both sources, and reads a source-less row as a job", () => {
+    expect(errorSourceLabel("server")).toBe("Server");
+    expect(errorSourceLabel("job")).toBe("Sync job");
+    expect(errorSourceLabel(undefined)).toBe("Sync job");
+  });
+
+  it("offers Clear only to the owner or an admin, and through the confirm chokepoint", () => {
+    const fn = DATA_SRC.slice(DATA_SRC.indexOf("function renderErrors"));
+    const body = fn.slice(0, fn.indexOf("\n  }\n"));
+    expect(body).toMatch(/boot\.canEditAccess/);
+    const clearFn = DATA_SRC.slice(DATA_SRC.indexOf("async function onClearErrors"));
+    expect(clearFn.slice(0, clearFn.indexOf("\n  }\n"))).toMatch(
+      /confirmedAction\([\s\S]*api_clearRecentErrors/,
+    );
   });
 
   it("the render path prints the note (or, absent one, the covers field) rather than staying silent", () => {

@@ -11,9 +11,26 @@
 //   * Persisting (OPEN)   -> advance last_seen; keep first_seen earliest-known.
 //   * API-resolved        -> resolvedAt present or status in RESOLVED_STATUSES.
 //   * Disappearance       -> was OPEN and present in the immediately previous scan covering
-//                            its severity, absent now -> resolved at the current scan ts.
+//                            its severity (or, after deferred scans, anywhere in the window
+//                            since the last complete one), absent now -> resolved at the
+//                            current scan ts.
 //   * Reopen              -> a RESOLVED finding reappears active -> OPEN again,
 //                            reopened_count++, first_seen reset (a new episode).
+//
+// AND TWO THIS REGISTER ADDS, both about absence that is not remediation:
+//   * Deferral            -> a scan that failed the completeness gate (scanCompleteness.ts)
+//                            lands what it saw and resolves NOTHING by absence; the next
+//                            complete scan adjudicates the whole window since the last
+//                            complete one (`disappearanceWindow`).
+//   * Repository drop-out -> a repository with no node at all in a complete scan, whose
+//                            absent open rows number at least DROPOUT_MIN_OPEN, lost
+//                            coverage rather than its findings: those rows close as
+//                            `repo_dropout` (no fix clock — censored at the drop-out in every
+//                            Kaplan–Meier figure — no resolved_count, no removed_at) and
+//                            RESUME their episode if the repository comes back. Only on a
+//                            scope whose fetch returns resolved findings (sca, secrets —
+//                            config.ts's FETCH_RETURNS_RESOLVED): SAST's does not, so a fixed
+//                            repository is silent there too and closes by disappearance.
 //
 // WHAT THIS PORT CHANGES, and why each change is here rather than in gas/:
 //
@@ -66,9 +83,11 @@
 // columns and for validation_state alike.
 
 import {
+  DROPOUT_MIN_OPEN,
   isOrgWideProject,
   RESOLUTION_API,
   RESOLUTION_DISAPPEARED,
+  RESOLUTION_REPO_DROPOUT,
   RESOLVED_STATUSES,
   STATUS_OPEN,
   STATUS_RESOLVED,
@@ -655,10 +674,55 @@ export interface TwinStats {
   folded: number;
   /** Median |max firstSeenAt - min firstSeenAt| in days over the folded keys; null when none. */
   medianGapDays: number | null;
+  /**
+   * Of `keys`, how many folded nodes from MORE THAN ONE repository (`splitRepoBranch`'s repo,
+   * the identity `repo_name` carries). The key is (secretDataId, path, lineNumber) — it has no
+   * repository in it — so the same credential committed at the same path and line in two
+   * repositories folds into one row. The repository/branch twins this fold exists for never
+   * do that; a non-zero here is the measurement that says whether the key needs a repository.
+   */
+  crossRepoKeys: number;
+  /** The nodes those `crossRepoKeys` carried, before the fold — the rows a re-key would add. */
+  crossRepoNodes: number;
+  /** The most nodes any one key carried; 0 when no key carried more than one. */
+  maxBucketSize: number;
 }
 
 export function emptyTwinStats(): TwinStats {
-  return { keys: 0, folded: 0, medianGapDays: null };
+  return {
+    keys: 0, folded: 0, medianGapDays: null, crossRepoKeys: 0, crossRepoNodes: 0, maxBucketSize: 0,
+  };
+}
+
+/**
+ * The twin whose validation reading the fold keeps: a MEASURED state (VALID/INVALID) beats an
+ * unmeasured one (UNKNOWN, ERROR, blank) — the same rule `applyValidation` applies across
+ * scans, applied here across twins, because the fresher twin by `lastSeenAt` is often the one
+ * nobody checked. Among measured twins the LATEST `lastValidatedAt` wins (a missing date is
+ * the oldest); an exact tie prefers VALID, the reading that keeps the credential counted as
+ * live exposure rather than closing it on a coin toss. Null when no twin is measured.
+ */
+function measuredValidationTwin(bucket: Rec[]): Rec | null {
+  let best: Rec | null = null;
+  let bestAt: number | null = null;
+  for (const n of bucket) {
+    const state = (str(n, "validationStatus") ?? "").trim().toUpperCase();
+    if (!MEASURED_VALIDATION.has(state)) continue;
+    const at = parseTs(n["lastValidatedAt"]);
+    if (best === null) {
+      best = n;
+      bestAt = at;
+      continue;
+    }
+    const later = at !== null && (bestAt === null || at > bestAt);
+    const tie = at === bestAt;
+    const bestState = (str(best, "validationStatus") ?? "").trim().toUpperCase();
+    if (later || (tie && state === "VALID" && bestState !== "VALID")) {
+      best = n;
+      bestAt = at;
+    }
+  }
+  return best;
 }
 
 /**
@@ -680,12 +744,20 @@ export function emptyTwinStats(): TwinStats {
  *   resource (and so repo_*,   the REPOSITORY_BRANCH twin when one is present. The branch
  *   branch, platform)          form is strictly more specific: it names the branch the string
  *                              is actually on, which the repository form cannot.
- *   status / validationStatus  the twin with the LATER lastSeenAt — the freshest observation
+ *   status                     the twin with the LATER lastSeenAt — the freshest observation
  *   (and everything else)      of the two, since a stale twin's OPEN says nothing about a
  *                              removal the fresher one already recorded.
+ *   validationStatus /         a MEASURED twin (VALID/INVALID) over an unmeasured one, then
+ *   lastValidatedAt            the latest lastValidatedAt, then VALID on a tie — see
+ *                              `measuredValidationTwin`. Falls back to the fresher twin's
+ *                              reading when none is measured.
  *
  * Ties on lastSeenAt keep input order (first wins), so the fold is deterministic on a payload
  * whose twins carry the same timestamp.
+ *
+ * It also MEASURES the key it folds on (`TwinStats.crossRepoKeys`): a bucket whose nodes name
+ * more than one repository is not a twin pair but two copies of one credential, and the
+ * fold collapses them all the same.
  */
 export function foldSecretTwins(nodes: Rec[]): { nodes: Rec[]; stats: TwinStats } {
   const groups = new Map<string, Rec[]>();
@@ -704,6 +776,9 @@ export function foldSecretTwins(nodes: Rec[]): { nodes: Rec[]; stats: TwinStats 
   const gaps: number[] = [];
   let keys = 0;
   let folded = 0;
+  let crossRepoKeys = 0;
+  let crossRepoNodes = 0;
+  let maxBucketSize = 0;
 
   for (const key of order) {
     const bucket = groups.get(key)!;
@@ -713,6 +788,16 @@ export function foldSecretTwins(nodes: Rec[]): { nodes: Rec[]; stats: TwinStats 
     }
     keys += 1;
     folded += bucket.length - 1;
+    if (bucket.length > maxBucketSize) maxBucketSize = bucket.length;
+    const repos = new Set<string>();
+    for (const n of bucket) {
+      const repo = splitRepoBranch(str(n, "resource.name"), str(n, "resource.type")).repo;
+      if (repo !== null) repos.add(repo);
+    }
+    if (repos.size > 1) {
+      crossRepoKeys += 1;
+      crossRepoNodes += bucket.length;
+    }
 
     const births: number[] = [];
     for (const n of bucket) {
@@ -736,6 +821,11 @@ export function foldSecretTwins(nodes: Rec[]): { nodes: Rec[]; stats: TwinStats 
 
     const merged: Rec = { ...base };
     if (births.length) merged["firstSeenAt"] = toIso(minNum(births));
+    const validated = measuredValidationTwin(bucket);
+    if (validated !== null && validated !== base) {
+      merged["validationStatus"] = validated["validationStatus"];
+      merged["lastValidatedAt"] = validated["lastValidatedAt"] ?? null;
+    }
 
     const branchTwin = bucket.find(
       (n) => (str(n, "resource.type") ?? "").toUpperCase() === RESOURCE_BRANCH,
@@ -756,7 +846,14 @@ export function foldSecretTwins(nodes: Rec[]): { nodes: Rec[]; stats: TwinStats 
 
   return {
     nodes: out,
-    stats: { keys, folded, medianGapDays: gaps.length ? median(gaps) : null },
+    stats: {
+      keys,
+      folded,
+      medianGapDays: gaps.length ? median(gaps) : null,
+      crossRepoKeys,
+      crossRepoNodes,
+      maxBucketSize,
+    },
   };
 }
 
@@ -770,6 +867,39 @@ export interface ReconcileResult {
   deltas: Deltas;
   /** Always present; zeroed for sca/sast, which have no twins to fold. */
   twinStats: TwinStats;
+  /** What the absence side of this scan did — see `AbsenceStats`. */
+  absence: AbsenceStats;
+}
+
+/**
+ * The absence side of one scan, counted apart from `Deltas` because none of it is remediation
+ * a scan row's `resolved_count` should carry.
+ */
+export interface AbsenceStats {
+  /**
+   * OPEN rows this scan WOULD close by absence — in its severity scope, last seen inside the
+   * disappearance window, not returned now. Counted whether or not the scan was deferred, so a
+   * deferral can say how much it held back. Drop-outs are included: they are absent too.
+   */
+  absent: number;
+  /** Of `absent`, the rows closed as repository drop-outs (0 when deferred). */
+  dropouts: number;
+  /** How many repositories those drop-outs came from. */
+  dropoutRepos: number;
+  /** Rows a returning repository brought back from a drop-out, episode resumed. */
+  resumed: number;
+}
+
+/**
+ * The repository a raw node belongs to — the same `repo_id` `attributes` writes, read without
+ * projecting the rest of the node, because the drop-out pass needs it for EVERY node of the
+ * scan (twins included: a credential's REPOSITORY twin names its repository too, and the fold
+ * would otherwise hide it).
+ */
+function repoIdOf(rec: Rec, scope: Scope): string | null {
+  const id = scope === "sca" ? str(rec, "vulnerableAsset.id") : str(rec, "resource.id");
+  const trimmed = id === null ? "" : id.trim();
+  return trimmed === "" ? null : trimmed;
 }
 
 function makeRow(
@@ -893,6 +1023,9 @@ export function reconcile(
     prevScanTs = null,
     scannedSeverities = null,
     prevScanIdBySeverity = null,
+    disappearanceWindow = null,
+    deferDisappearance = false,
+    detectDropouts = false,
   } = options;
 
   // Rows are flat scalar records, so a shallow per-row copy preserves the input.
@@ -904,6 +1037,7 @@ export function reconcile(
   let newCount = 0;
   let resolvedCount = 0;
   let reopenedCount = 0;
+  let resumedCount = 0;
 
   const scanTsIso = toIso(parseTs(scanTs)) ?? String(scanTs);
 
@@ -972,6 +1106,21 @@ export function reconcile(
       );
       updated[key] = row;
       newCount += 1;
+    } else if (row.status === STATUS_RESOLVED && row.resolution_src === RESOLUTION_REPO_DROPOUT) {
+      // The repository came back. Its findings were never fixed — the register lost sight of
+      // them — so this RESUMES the episode the drop-out interrupted rather than starting a new
+      // one: first_seen stays the earliest known, reopened_count does not move, and nothing a
+      // drop-out never set (removed_at, rotated_at, the fix clock) is reset. Not counted as a
+      // reopen in the deltas either; `absence.resumed` carries it. An API resolution on this
+      // very node still closes it below, as an observed event.
+      row.status = STATUS_OPEN;
+      row.resolved_at = null;
+      row.resolution_src = null;
+      row.first_seen = minIso(row.first_seen, apiFirst) ?? row.first_seen;
+      row.last_seen = scanTsIso;
+      row.last_scan_id = scanId;
+      seedFix(row);
+      resumedCount += 1;
     } else if (row.status === STATUS_RESOLVED && !apiSaysResolved) {
       // Genuine reopen: start a new episode so the next resolution measures THIS episode, not
       // the original. The per-episode clocks reset — the prior episode's vendor fix is
@@ -1067,10 +1216,21 @@ export function reconcile(
     });
   }
 
-  // Disappearance: OPEN findings present in the immediately-previous covering scan but absent
-  // now. Three conditions, each load-bearing — see the severity-scope guard below.
+  // Disappearance: OPEN findings last seen inside the disappearance window and absent now.
+  // Three conditions, each load-bearing — see the severity-scope guard below.
+  let absentCount = 0;
+  let dropoutCount = 0;
+  let dropoutRepos = 0;
   if (prevScanId !== null) {
     const inScope = scannedSeverities !== null ? new Set(scannedSeverities) : null;
+    const windowBySev = new Map<string, Set<string>>();
+    const windowFallback = disappearanceWindow ? new Set(disappearanceWindow.fallback) : null;
+    if (disappearanceWindow) {
+      for (const [sev, ids] of Object.entries(disappearanceWindow.bySeverity)) {
+        windowBySev.set(sev, new Set(ids));
+      }
+    }
+    const absentKeys: string[] = [];
     for (const [key, row] of Object.entries(updated)) {
       if (seen.has(key) || row.status === STATUS_RESOLVED) continue;
       const sevRow = row.severity;
@@ -1081,30 +1241,88 @@ export function reconcile(
         // mass-resolve. Absence of something nobody looked for is not evidence.
         continue;
       }
-      const expectedPrev = (prevScanIdBySeverity ?? {})[sevRow ?? ""] ?? prevScanId;
-      // Only a finding that was in the IMMEDIATELY previous covering scan can be said to have
-      // disappeared from it. A row last seen three scans ago already had its disappearance
-      // adjudicated then; re-resolving it now would push resolved_at forward every run.
-      if (row.last_scan_id !== expectedPrev) continue;
-      if (disappearanceMode === "midpoint" && prevScanTs) {
-        row.resolved_at = midpointIso(prevScanTs, scanTsIso);
+      // Only a finding last seen INSIDE THE WINDOW can be said to have disappeared now. A row
+      // last seen before it already had its disappearance adjudicated; re-resolving it would
+      // push resolved_at forward every run. Without deferred scans the window is exactly the
+      // immediately previous covering scan — gas/'s `expectedPrev`, which is what a caller
+      // that passes no window still gets.
+      if (windowFallback !== null) {
+        const ids = windowBySev.get(sevRow ?? "") ?? windowFallback;
+        if (row.last_scan_id === null || !ids.has(row.last_scan_id)) continue;
       } else {
-        row.resolved_at = scanTsIso;
+        const expectedPrev = (prevScanIdBySeverity ?? {})[sevRow ?? ""] ?? prevScanId;
+        if (row.last_scan_id !== expectedPrev) continue;
       }
-      row.status = STATUS_RESOLVED;
-      row.resolution_src = RESOLUTION_DISAPPEARED;
-      // REMOVED IS NOT ROTATED. A secret leaving the register means the string left HEAD;
-      // the credential is live until validation_state/rotated_at says otherwise, and nothing
-      // here touches either.
-      if (scope === "secrets" && row.removed_at == null) row.removed_at = row.resolved_at;
-      resolvedCount += 1;
-      observations.push({
-        scan_id: scanId,
-        finding_key: key,
-        present: 0,
-        severity: row.severity,
-        status: STATUS_RESOLVED,
-      });
+      absentKeys.push(key);
+    }
+    absentCount = absentKeys.length;
+
+    // REPOSITORY DROP-OUT, decided before anything is resolved. A repository this complete
+    // scan returned NO node for, whose absent open rows number at least DROPOUT_MIN_OPEN, did
+    // not fix them all between two scans — it left coverage (archived, renamed, moved out of
+    // the project scope, a connector that stopped reporting it). Closing those rows as fixes
+    // would publish a mass remediation with an MTTR clock on every one. Below the threshold
+    // the ordinary reading — the last finding or two on a repository got fixed — wins.
+    // A row with no `repo_id` cannot be attributed to a repository and is never a drop-out.
+    //
+    // "No node" is evidence only because the fetch returns RESOLVED findings too: a repository
+    // whose findings were all fixed still answers, with resolved nodes. The caller turns this
+    // pass off where that is not true (`detectDropouts`, ledgerCore.persistFlatScan).
+    const dropouts = new Set<string>();
+    if (detectDropouts && !deferDisappearance && absentKeys.length) {
+      const present = new Set<string>();
+      for (const rec of currentRecords) {
+        const id = repoIdOf(rec, scope);
+        if (id !== null) present.add(id);
+      }
+      const byRepo = new Map<string, string[]>();
+      for (const key of absentKeys) {
+        const repo = (updated[key]!.repo_id ?? "").trim();
+        if (repo === "" || present.has(repo)) continue;
+        const list = byRepo.get(repo);
+        if (list) list.push(key);
+        else byRepo.set(repo, [key]);
+      }
+      for (const keys of byRepo.values()) {
+        if (keys.length < DROPOUT_MIN_OPEN) continue;
+        dropoutRepos += 1;
+        for (const k of keys) dropouts.add(k);
+      }
+    }
+
+    // A DEFERRED scan resolves nothing by absence: it could not prove its absences are real.
+    // The rows stay OPEN with their old last_scan_id, which is still inside the next complete
+    // scan's window, so they are adjudicated there.
+    if (!deferDisappearance) {
+      for (const key of absentKeys) {
+        const row = updated[key]!;
+        if (disappearanceMode === "midpoint" && prevScanTs) {
+          row.resolved_at = midpointIso(prevScanTs, scanTsIso);
+        } else {
+          row.resolved_at = scanTsIso;
+        }
+        row.status = STATUS_RESOLVED;
+        if (dropouts.has(key)) {
+          // Lost sight, not removed: `removed_at` would claim the secret left HEAD, which
+          // nobody observed. Counted apart from resolved_count for the same reason.
+          row.resolution_src = RESOLUTION_REPO_DROPOUT;
+          dropoutCount += 1;
+        } else {
+          row.resolution_src = RESOLUTION_DISAPPEARED;
+          // REMOVED IS NOT ROTATED. A secret leaving the register means the string left
+          // HEAD; the credential is live until validation_state/rotated_at says otherwise,
+          // and nothing here touches either.
+          if (scope === "secrets" && row.removed_at == null) row.removed_at = row.resolved_at;
+          resolvedCount += 1;
+        }
+        observations.push({
+          scan_id: scanId,
+          finding_key: key,
+          present: 0,
+          severity: row.severity,
+          status: STATUS_RESOLVED,
+        });
+      }
     }
   }
 
@@ -1117,5 +1335,11 @@ export function reconcile(
       reopened_count: reopenedCount,
     },
     twinStats: folded.stats,
+    absence: {
+      absent: absentCount,
+      dropouts: dropoutCount,
+      dropoutRepos,
+      resumed: resumedCount,
+    },
   };
 }

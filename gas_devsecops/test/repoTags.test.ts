@@ -80,10 +80,12 @@ vi.mock("../src/server/props", () => ({
     wizDomainTagKey: "WIZ_DOMAIN_TAG_KEY",
     wizLifecycleTagKey: "WIZ_LIFECYCLE_TAG_KEY",
     repoTagMapKeys: "REPO_TAG_MAP_KEYS",
+    repoTagMapGen: "REPO_TAG_MAP_GEN",
   },
   getProp: (key: string) => {
     if (key === "WIZ_LIFECYCLE_TAG_KEY") return H.lifecycleProp;
     if (key === "REPO_TAG_MAP_KEYS") return H.stamp;
+    if (key === "REPO_TAG_MAP_GEN") return null;
     return H.prop;
   },
   setProp: (key: string, value: string) => {

@@ -49,7 +49,8 @@ import {
 // `fmtCount`/`fmtDays` themselves come from `../ui.js` now, not from `./mttr.js` — see
 // `ui/figures.js`'s module header.
 import {
-  endOfLifeExclusionNote, kmHalfLifeView, rateView, trackingSinceView, WINDOW_LINE_HELP,
+  endOfLifeExclusionNote, kmHalfLifeView, rateView, TOO_FEW_LINES, TOO_FEW_TO_ESTIMATE,
+  trackingSinceView, WINDOW_LINE_HELP,
   windowLineView,
 } from "./mttr.js";
 
@@ -76,7 +77,8 @@ import {
  * @param {object|null|undefined} payload  `api_getExecutivePage`'s reply
  * @returns {{measured: boolean, value: string, isLowerBound: boolean, days: number|null,
  *            q25Days: number|null, state: string, secondary: string|null,
- *            tracked: number, resolved: number, open: number, qualifier: string,
+ *            tracked: number, resolved: number, open: number, leftCoverage: number,
+ *            qualifier: string,
  *            censoredKnown: boolean}}
  */
 export function executiveHeroView(payload) {
@@ -86,6 +88,9 @@ export function executiveHeroView(payload) {
   const overall = (mttr && mttr.overall) || {};
   const resolved = Number(overall.resolved || 0);
   const open = Number(overall.open || 0);
+  // Repository drop-outs: tracked, but neither fixed nor still open — the third part of
+  // `tracked`, named so the ring's remainder is not read as all open.
+  const leftCoverage = Number((mttr && mttr.leftCoverage) || 0);
 
   const half = kmHalfLifeView(km);
 
@@ -96,6 +101,7 @@ export function executiveHeroView(payload) {
   const qualifier = tracked
     ? fmtCount(tracked) + " tracked " + pluralize(tracked, "lifecycle")
       + " · " + fmtCount(resolved) + " resolved · " + fmtCount(open) + " still open"
+      + (leftCoverage > 0 ? " · " + fmtCount(leftCoverage) + " left coverage" : "")
     : "No lifecycles tracked yet.";
 
   return {
@@ -103,6 +109,7 @@ export function executiveHeroView(payload) {
     tracked,
     resolved,
     open,
+    leftCoverage,
     qualifier,
     // The estimator's censored count is on MTTR & SLA, not here — see the module header.
     censoredKnown: false,
@@ -164,6 +171,7 @@ export function executiveRegisterView(byScope) {
       const open = Number(r.open || 0);
       const half = kmHalfLifeView({
         median: r.kmMedian, q25: r.kmQ25, medianLowerBound: r.kmMedianLowerBound,
+        medianBoundReason: r.kmMedianBoundReason,
       });
       return {
         scope,
@@ -870,7 +878,10 @@ export async function renderExecutive(host, params, _ctx) {
           }),
           el("p", { class: "brief-caption" },
             el("strong", {}, fmtCount(view.resolved)), " fixed", el("br"),
-            el("strong", {}, fmtCount(view.open)), " still open"),
+            el("strong", {}, fmtCount(view.open)), " still open",
+            ...(view.leftCoverage > 0
+              ? [el("br"), el("strong", {}, fmtCount(view.leftCoverage)), " left coverage"]
+              : [])),
         ]
         : null,
       caption: view.secondary ? sentenceStart(view.secondary) + "." : null,
@@ -887,10 +898,16 @@ export async function renderExecutive(host, params, _ctx) {
           + " median to publish.",
           view.state === "quartile"
             ? "A quarter of what is tracked has already closed — " + view.secondary + "."
-            : "Too few findings have closed within the reliable window to say even that much —"
-              + " " + view.secondary + ".",
+            : view.state === "half-bound"
+              ? "Too few findings are at risk to trust any of the curve, and even the whole of"
+                + " it stays above half — " + view.secondary + "."
+              : "Too few findings have closed within the reliable window to say even that much —"
+                + " " + view.secondary + ".",
         ],
       };
+    }
+    if (!view.measured && view.secondary === TOO_FEW_TO_ESTIMATE) {
+      return { term: "half-life", lines: TOO_FEW_LINES };
     }
     if (!view.measured) {
       return {

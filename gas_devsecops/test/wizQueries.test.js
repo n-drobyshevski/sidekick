@@ -19,7 +19,7 @@ import {
   buildFilter, buildVariables, severityFilter,
   OBJECT_FILTERS as OBJECT_FILTERS_FOR_TEST,
 } from "../src/server/wizQueries";
-import { SCOPES } from "../src/domain/config";
+import { FETCH_RETURNS_RESOLVED, SCOPES } from "../src/domain/config";
 import { TABS, TAB_HEADERS } from "../src/server/sheetsDb";
 
 const SEV = ["CRITICAL", "HIGH"];
@@ -96,6 +96,17 @@ describe("the SAST timestamp decision", () => {
     // half-life to the floor. Flip this only once probe.mjs finds a field to date them from.
     expect(SAST_FETCH_RESOLVED).toBe(false);
     expect(buildFilter("sast", { severities: SEV })).not.toHaveProperty("status");
+  });
+
+  it("FETCH_RETURNS_RESOLVED says what every scope's filter actually asks for", () => {
+    // The ledger runs its repository drop-out pass only where a resolved node can come back
+    // (domain/config.ts), so the flag must be the query's own fact, not a second opinion.
+    for (const scope of SCOPES) {
+      const status = buildFilter(scope, { severities: SEV }).status;
+      const values = status == null ? [] : Array.isArray(status) ? status : status.equals;
+      expect([scope, values.includes("RESOLVED")]).toEqual([scope, FETCH_RETURNS_RESOLVED[scope]]);
+    }
+    expect(SAST_FETCH_RESOLVED).toBe(FETCH_RETURNS_RESOLVED.sast);
   });
 
   it("selects createdAt, which is the birth date the ledger dates the clock from", () => {
@@ -216,10 +227,19 @@ describe("the documents are valid GraphQL, and lean", () => {
     }
   });
 
-  it("asks for a total count on every connection, so a sync can report progress", () => {
+  it("can ask for a total count on every connection, so a sync can report progress", () => {
     for (const [scope, doc] of Object.entries(QUERIES)) {
       if (!doc) continue;
       expect(doc, `${scope} selects no totalCount`).toContain("totalCount");
+      // Selected only when asked: the tenant recounts the whole population on every page that
+      // selects it, and only page 0's figure is kept.
+      expect(doc, `${scope} selects totalCount unconditionally`)
+        .toMatch(/\btotalCount @include\(if: \$includeTotalCount\)/);
+      expect(doc.match(/totalCount/g), `${scope} selects totalCount twice`).toHaveLength(1);
+      // DEFAULT FALSE, declared in the document — so a caller that sends no flag at all (an
+      // old variables object, a hand-written probe) costs nothing rather than failing.
+      expect(doc, `${scope} has no includeTotalCount variable defaulting to false`)
+        .toMatch(/\$includeTotalCount: Boolean = false/);
     }
   });
 });
@@ -383,6 +403,15 @@ describe("scope coverage", () => {
     // must fail loudly at the call rather than send `undefined` and read as an empty
     // register. Asserted against a scope that does not exist, since all three now have one.
     expect(() => buildVariables("iac")).toThrow(/no query document/);
+  });
+
+  it("asks for the total count only when the caller says so", () => {
+    for (const scope of ["sca", "sast", "secrets"]) {
+      expect(buildVariables(scope).includeTotalCount).toBe(false);
+      expect(buildVariables(scope, { includeTotalCount: true }).includeTotalCount).toBe(true);
+      // Strictly true — a truthy non-boolean is not a request.
+      expect(buildVariables(scope, { includeTotalCount: 1 }).includeTotalCount).toBe(false);
+    }
   });
 
   it("pages at a size the estate needs", () => {

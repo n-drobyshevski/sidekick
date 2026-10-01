@@ -59,8 +59,11 @@
 //     grounds that its shape was never checked against any of the three schemas — see that
 //     file's note. A second unverified filter shape is exactly the failure that cost this
 //     register its whole SAST population once.
-//   * NO `errorLog`. This project has no error-log tab; failures land in the job row's
-//     `error` column and in `console`.
+//   * THE ERROR LOG IS SPLIT IN TWO. A failed hop's message lands in the job row's `error`
+//     column, as before, and is MARKED recorded so the callers it rethrows to do not log it a
+//     second time; the post-commit chores, which never fail the sync, record into
+//     `errorLog`'s Script-Property buffer instead (gas/ records both there). The Data page
+//     lists the two merged — `api.getRecentErrors`.
 //
 // NOTHING MAY IMPORT THIS MODULE. `locks` imports `ledgerStore`, and this file imports both;
 // the graph stays acyclic only while scanJobs is a leaf (S7 wires it into `api.ts`, which
@@ -70,7 +73,9 @@ import { SCOPES, type Scope } from "../domain/config";
 import { mttrFromLedger } from "../domain/lifecycle";
 import { effectiveSlaTargets } from "../domain/settingsLogic";
 import { nowIso, pushAll, type Rec } from "../domain/util";
+import { readDisappearance } from "../domain/scanCompleteness";
 import * as archive from "./archiveStore";
+import * as errorLog from "./errorLog";
 import * as history from "./historyStore";
 import {
   activeJob,
@@ -160,6 +165,14 @@ export interface ScopeProgress {
   rawRef: string | null;
   /** What the tenant said this scope's query totals. 0 = not reported yet. */
   totalCount: number;
+  /**
+   * Whether `totalCount` is the tenant's answer rather than the placeholder — the one bit
+   * `totalCount` alone cannot carry, since a register the tenant reports EMPTY reads 0 too, and
+   * the completeness gate treats "reported 0" (everything is gone) and "reported nothing" very
+   * differently. Absent on a job started before the field existed; `reportedTotalOf` reads that
+   * as "reported" only when the count is non-zero.
+   */
+  totalReported?: boolean;
   /** How many pages came back PARTIAL (nodes AND errors). Never capped. */
   partialPages: number;
   /** A capped sample of those errors — see MAX_PARTIAL_ERRORS. */
@@ -539,6 +552,9 @@ function step(job: JobRow, budgetMs = BUDGET_MS): void {
           severities: params.severitiesByScope[scope] ?? [],
           projectId,
           after: cursor,
+          // Page 0 only — the one page whose count is kept (`progress.totalCount` below).
+          // Every later page would make the tenant recount the whole population for nothing.
+          includeTotalCount: paging.pageNumber === 0,
         });
         // 1-based archive page name, computed BEFORE the fetch: `fetchPage` advances
         // `paging.pageNumber` itself (and owns the 500 -> 250 size probe).
@@ -555,7 +571,10 @@ function step(job: JobRow, budgetMs = BUDGET_MS): void {
         cursor = page.pageInfo.endCursor;
         progress.pages = paging.pageNumber;
         progress.rows = slim.length;
-        if (page.totalCount !== null) progress.totalCount = page.totalCount;
+        if (page.totalCount !== null) {
+          progress.totalCount = page.totalCount;
+          progress.totalReported = true;
+        }
         if (page.partialErrors.length) {
           // Recorded beside the rows, never fatal — the nodes are good and the count is
           // suspect (wizClient.ts). Discarding either half would be the lie.
@@ -635,11 +654,22 @@ function step(job: JobRow, budgetMs = BUDGET_MS): void {
       phase: "FAILED",
       error: e == null ? "Sync failed." : String(e).slice(0, 1000),
     });
+    // The job row IS this failure's record; `getRecentErrors` lists it from there. Marked so
+    // `api.run()` (first hop) and `continueJob` (later hops) do not add a second copy.
+    errorLog.markRecorded(e);
     throw e;
   }
 }
 
 /* ------------------------------------------------------------------ finish/persist */
+
+/** The tenant's reported total for a scope, or null when it never reported one. */
+function reportedTotalOf(progress: ScopeProgress | undefined): number | null {
+  if (!progress) return null;
+  const n = Number(progress.totalCount);
+  if (!Number.isFinite(n)) return null;
+  return progress.totalReported === true || n > 0 ? n : null;
+}
 
 /**
  * Reconcile and commit the whole battery — ONE call, every scope.
@@ -663,6 +693,11 @@ function finishSync(jobId: string, params: SyncParams): void {
     mode: "live",
     scannedSeverities: params.severitiesByScope[scope] ?? [],
     rawRef: params.perScope[scope]?.rawRef ?? null,
+    // What the completeness gate weighs the records against — see domain/scanCompleteness.ts.
+    completeness: {
+      reportedTotal: reportedTotalOf(params.perScope[scope]),
+      partialPages: Number(params.perScope[scope]?.partialPages ?? 0) || 0,
+    },
   }));
 
   scheduleWatchdog();
@@ -681,46 +716,72 @@ function finishSync(jobId: string, params: SyncParams): void {
  * is independently guarded.
  */
 function afterPersist(params: SyncParams, outcome: ledgerStore.PersistOutcome): void {
+  recordDeferrals(outcome);
   try {
     history.recordDaily(dailyStats(params, outcome));
   } catch (e) {
     console.warn(`Failed to record the daily history entry: ${e}`);
+    errorLog.recordError("dailyHistory", e);
   }
   autoCompactIfDue();
   warmAfterSync();
 }
 
 /**
- * The post-sync read-model warm — LAST, and the position is load-bearing twice over.
+ * A deferred scope is a sync that SUCCEEDED and still owes the operator a sentence: its
+ * absences were held back, so the register's open count is carrying findings this sync could
+ * not confirm. That goes in the error log (Data → Recent errors), because the job row records
+ * DONE and nothing else on the server would say it. Best effort, like every chore here.
+ */
+function recordDeferrals(outcome: ledgerStore.PersistOutcome): void {
+  for (const s of outcome.scopes) {
+    const c = s.completeness;
+    const verdict = readDisappearance(c?.disappearance ?? null);
+    if (!c || !verdict.deferred) continue;
+    const total = c.reported_total === null ? "no total reported" : `${c.reported_total} reported`;
+    errorLog.recordError(
+      "syncCompleteness",
+      `${s.scope} scan of sync ${s.scan_id} looked incomplete (${verdict.reason ?? "unknown"}: `
+        + `${s.total} received, ${total}, ${c.duplicates ?? 0} duplicate(s), `
+        + `${c.partial_pages ?? 0} partial page(s)). ${c.absent} open finding(s) it did not `
+        + "return were left open; the next complete scan will resolve them.",
+      "warning",
+    );
+  }
+}
+
+/**
+ * The post-sync read-model warm — ARMED HERE, RUN ELSEWHERE, and LAST.
+ *
+ * NOT INLINE. A cold warm is minutes of compute, and this runs inside the sync's script lock —
+ * for a battery that fits its first hop, inside the "Run sync" RPC itself — so every write RPC
+ * waited behind it. `readModels.scheduleWarm` arms a one-shot (`trigger_continueWarm`) and
+ * returns; the warm runs in that trigger's own execution, resumable across hops
+ * (`readModels.continueWarm`).
  *
  * AFTER `autoCompactIfDue`, because a compaction bumps DATA_VERSION again and every cache key
- * is built from it: warming first would compute the whole set under a version nothing can
- * reach a moment later, paying for it and warming nothing.
+ * is built from it. The trigger's execution reads the version afresh, so this is now about the
+ * trigger seeing the final version rather than about wasted compute — but arming it before a
+ * chore that can still move the version is the wrong order whichever way it runs.
  *
- * AFTER `updateJob(jobId, {phase: "DONE"})` IN `finishSync`, WHICH IS WHY THIS IS CALLED FROM
- * `afterPersist` AND NOT FROM INSIDE THE COMMIT. `warmReadModels` refuses outright while
+ * THE DONE ORDERING STILL MATTERS. `warmReadModels`/`continueWarm` refuse while
  * `jobsStore.activeJob()` returns a row — a PERSISTING job is part-way through a wholesale
- * `overwrite`, so a warm reading the ledger then would cache a TORN read under the pre-bump
- * version and serve it for the rest of the window. `activeJob()` returns null for any terminal
- * phase, so the DONE update above is the only thing that lets this run at all. MOVING THAT
- * UPDATE BELOW `afterPersist` LOOKS TIDIER AND SILENTLY DISABLES THE WARM FOREVER — the sync
- * still succeeds, the pages are still correct, and the only symptom is that the first analyst
- * load after every sync pays the full recompute. `test/api.test.ts`'s "the post-sync warm runs
- * with no active job" case is what stands between that edit and production.
+ * `overwrite`, and a warm reading the ledger then would cache a TORN read. `finishSync` writes
+ * DONE before calling `afterPersist`, so by the time the one-shot fires the job is terminal. A
+ * hop that does find a job in flight re-arms a minute later rather than giving up.
  *
  * BEST EFFORT, like every other chore here: the sync is already committed and a cold cache is
- * not a reason to report a successful commit as a failure.
+ * not a reason to report a successful commit as a failure. `scheduleWarm` records its own
+ * failure in the error log.
  */
 function warmAfterSync(): void {
   try {
-    const report = readModels.warmReadModels();
-    if (report.blockedBy) {
-      console.warn(`Post-sync read-model warm did not run: ${report.blockedBy}`);
-    } else {
-      console.log(`Post-sync read-model warm: ${report.warmed} warmed, ${report.skipped} cold.`);
+    if (readModels.scheduleWarm(readModels.WARM_START_DELAY_MS)) {
+      console.log("Post-sync read-model warm: scheduled.");
     }
   } catch (e) {
-    console.warn(`Post-sync read-model warm failed: ${e}`);
+    console.warn(`Post-sync read-model warm could not be scheduled: ${e}`);
+    errorLog.recordError("cacheWarm", e);
   }
 }
 
@@ -737,10 +798,9 @@ function warmAfterSync(): void {
  * constant — the same `settingsLogic.effectiveSlaTargets` every live read model measures
  * against. This entry is a durable, once-written fact (`historyStore.recordDaily` never
  * rewrites a past day), so it is dated by the settings in force when the sync committed, the
- * same way `outcome`/`params` already are. It matters beyond symmetry with the live figure:
- * `readModels.ts`'s `mttrPageTrendSlice` ships this array's `history` WHOLE as the MTTR page's
- * fallback chart on a young ledger, so a day recorded here with a stale constant-based SLA
- * would visibly disagree with the live page the moment an operator saved a custom window.
+ * same way `outcome`/`params` already are. No page draws the day blobs today (the secrets
+ * twin fold reads the newest one's `scopes`), but a day recorded here against a stale
+ * constant-based SLA would disagree with the live page the moment anything did.
  */
 function dailyStats(params: SyncParams, outcome: ledgerStore.PersistOutcome): Rec {
   const ledger = ledgerStore.loadState().ledger;
@@ -759,6 +819,10 @@ function dailyStats(params: SyncParams, outcome: ledgerStore.PersistOutcome): Re
       // The caveat travels with the figure: a scope whose pages came back PARTIAL has good
       // rows and a suspect count, and a history entry that hid that would be the lie.
       partial_pages: params.perScope[s.scope]?.partialPages ?? 0,
+      // Whether this scope's absences were adjudicated, and what they amounted to — the absent
+      // share is recorded here and never gated on (domain/scanCompleteness.ts). Null on an
+      // idempotent replay, which assessed nothing.
+      completeness: s.completeness,
     })),
     mttr: mttrFromLedger(
       Object.values(ledger) as unknown as Rec[],
@@ -791,6 +855,7 @@ function autoCompactIfDue(): void {
     ledgerStore.compactLedger(Math.floor(days));
   } catch (e) {
     console.warn(`Auto-compaction after the sync failed: ${e}`);
+    errorLog.recordError("autoCompact", e);
   }
 }
 
@@ -939,6 +1004,10 @@ export function continueJob(_e?: unknown): void {
     // already spent and no successor scheduled — the job would sit in FETCHING with nothing
     // alive to move it. Re-arm before rethrowing.
     if (e instanceof LedgerBusyError) scheduleContinuation(CONTINUE_RETRY_MS);
+    // A trigger's throw reaches only its execution log. Busy is the retry above, not a fault;
+    // a failed `step` already marked its error recorded on the job row, so this adds the rest
+    // (a persist or parse failure that never reached a FAILED transition).
+    else errorLog.recordError("continueSync", e);
     throw e;
   }
 }
@@ -963,14 +1032,32 @@ export function watchdogSync(_e?: unknown): void {
     // The lock being held means the persist is STILL RUNNING. Re-arm rather than disarming
     // the only thing that would notice it dying a minute later.
     if (e instanceof LedgerBusyError) scheduleWatchdog(CONTINUE_RETRY_MS);
+    else errorLog.recordError("watchdogSync", e);
     throw e;
   }
 }
 
-/** Trigger target (`trigger_dailySync`): the scheduled full battery. */
+/**
+ * Trigger target (`trigger_dailySync`): the scheduled full battery.
+ *
+ * Every way this can do nothing is RECORDED, because nobody is watching a trigger: without the
+ * log, a deployment whose credentials were never set (or whose register list is empty) simply
+ * never syncs, and the only symptom is a "last sync" date that stops moving. A sync already in
+ * progress is not a failure (startSync reports it with that job's id); a busy lock is left to
+ * the execution log, as it is everywhere this log is written.
+ */
 export function dailySync(): void {
-  if (!hasWizCredentials()) return;
-  startSync();
+  if (!hasWizCredentials()) {
+    errorLog.recordError("dailySync", "Scheduled sync skipped: no Wiz credentials are configured.");
+    return;
+  }
+  try {
+    const res = startSync();
+    if (res.jobId === null) errorLog.recordError("dailySync", `Scheduled sync skipped: ${res.message}`);
+  } catch (e) {
+    if (!(e instanceof LedgerBusyError)) errorLog.recordError("dailySync", e);
+    throw e;
+  }
 }
 
 /** Job status for the UI poller. */

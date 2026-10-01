@@ -56,10 +56,28 @@ describe("the web-app entry", () => {
     expect(ENTRY).toMatch(/function include\(filename\)[\s\S]*denyResult\("include"\)/);
   });
 
+  // Scraped from entry.js rather than listed here. A hand-kept list is exactly how
+  // `Server.wizDiagnostic` shipped unexported: entry.js grew the call, the list did not, and
+  // the editor answered "not a function" to the one operator already debugging an outage.
+  const reached = [...new Set([...ENTRY.matchAll(/\bServer\.(\w+)/g)].map((m) => m[1]))];
+
   it("exposes every global entry.js reaches for on the Server namespace", () => {
-    for (const name of ["doGet", "include", "access", "welcome", "setup", "api"]) {
+    expect(reached).toEqual(expect.arrayContaining(["doGet", "api", "wizDiagnostic"]));
+    for (const name of reached) {
       expect(INDEX, `Server.${name} is not exported`).toMatch(
-        new RegExp(`export (\\* as ${name}|\\{[^}]*\\b${name}\\b)`),
+        new RegExp(`export (\\* as ${name}\\b|\\{[^}]*\\b${name}\\b)`),
+      );
+    }
+  });
+
+  it("finds every Server.<namespace>.<method> entry.js calls exported by that module", () => {
+    // `api` is excluded: it is reached as `Server.api[name]` and has its own parity block.
+    const calls = [...ENTRY.matchAll(/\bServer\.(\w+)\.(\w+)/g)].filter(([, ns]) => ns !== "api");
+    expect(calls.length).toBeGreaterThan(0);
+    for (const [, ns, method] of calls) {
+      const src = readFileSync(new URL(`../src/server/${ns}.ts`, import.meta.url), "utf8");
+      expect(src, `Server.${ns}.${method} is not exported by ${ns}.ts`).toMatch(
+        new RegExp(`^export (function|const) ${method}\\b`, "m"),
       );
     }
   });
@@ -67,8 +85,8 @@ describe("the web-app entry", () => {
 
 // The old two-trigger contract (`trigger_continueScan` / `trigger_dailyScan`) was superseded
 // when the battery grew a watchdog and a warm-cache trigger of its own — see the richer
-// "trigger handlers" block below, which asserts against `TRIGGERS` (the four names this
-// register's `jobsStore.ts` / `setup.ts` actually install) rather than a hardcoded pair.
+// "trigger handlers" block below, which asserts against `TRIGGERS` (the five names this
+// register's `jobsStore.ts` / `setup.ts` / `readModels.ts` actually install) rather than a hardcoded pair.
 
 describe("editor-run entry points", () => {
   it("are gated — the editor runs as whoever opened it", () => {
@@ -94,6 +112,7 @@ const TRIGGERS = {
   trigger_watchdogSync: "Server.scanJobs.watchdogSync",
   trigger_dailySync: "Server.scanJobs.dailySync",
   trigger_warmReadModels: "Server.readModels.warmReadModels",
+  trigger_continueWarm: "Server.readModels.continueWarm",
 };
 
 /** One handler's body — from its `function` keyword to the closing brace on the same line. */
@@ -161,5 +180,15 @@ describe("trigger handlers", () => {
     expect(JOBS).toContain('sync: "trigger_watchdogSync"');
     expect(SETUP).toContain('const DAILY_SYNC_HANDLER = "trigger_dailySync"');
     expect(SETUP).toContain('const WARM_HANDLER = "trigger_warmReadModels"');
+    const MODELS = readFileSync(new URL("../src/server/readModels.ts", import.meta.url), "utf8");
+    expect(MODELS).toContain('const WARM_CONTINUE_HANDLER = "trigger_continueWarm"');
+  });
+
+  // setup() reconciles the standing warm set by COUNTING triggers under its handler name, so a
+  // one-shot sharing that name would read as a fourth standing pass and get the set rebuilt —
+  // and the one-shot's own clearTriggers would delete all three standing passes.
+  it("give the warm's one-shot a name of its own, never the standing warm's", () => {
+    const MODELS = readFileSync(new URL("../src/server/readModels.ts", import.meta.url), "utf8");
+    expect(MODELS).not.toMatch(/newTrigger\(WARM_HANDLER\)|clearTriggers\(WARM_HANDLER\)/);
   });
 });

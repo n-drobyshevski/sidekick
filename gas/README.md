@@ -943,7 +943,11 @@ and the result reports the true zero rather than claiming a reclaim.
      means owner-only**, like its sibling. Being an admin also admits you to the app.
      Admins deliberately **cannot** edit this property — see **Access control** below.
 6. Deploy: **Deploy → New deployment → Web app** (execute as you, access: domain), or
-   `npm run deploy`. `ALLOWED_USERS` narrows that domain fence further, in code — see
+   `npm run deploy:new` for that first deployment. Every later deploy goes **in place** —
+   `DEPLOYMENT_ID=<id> npm run deploy` (the id is on Deploy → Manage deployments, or
+   `npx clasp deployments`) pushes, cuts a version and repoints that deployment, so the `/exec`
+   URL people and the hub hold keeps working; it refuses to run without the id rather than
+   minting a new URL. `ALLOWED_USERS` narrows that domain fence further, in code — see
    **Access control** below; it does not replace it. **The first deploy after adding it
    requires re-authorizing the script**: `Session.getActiveUser()` (used to identify the
    caller) pulls in the `https://www.googleapis.com/auth/userinfo.email` scope, which is new

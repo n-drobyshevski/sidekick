@@ -183,6 +183,28 @@ export interface ReconcileOptions {
   prevScanTs?: string | null;
   scannedSeverities?: string[] | null;
   prevScanIdBySeverity?: Record<string, string> | null;
+  /**
+   * Which prior scans a row may have last been seen in for its absence now to resolve it —
+   * per severity, plus a fallback for a severity the map does not name. Built by
+   * `ledgerCore.disappearanceWindow`: the newest COMPLETE scan covering the severity and every
+   * DEFERRED scan after it. Takes precedence over `prevScanIdBySeverity`, which is the
+   * one-scan special case of the same idea (and what the gas/ fixture pins).
+   */
+  disappearanceWindow?: DisappearanceWindow | null;
+  /** The scan failed the completeness gate: land what it saw, resolve nothing by absence. */
+  deferDisappearance?: boolean;
+  /**
+   * Run the repository drop-out pass (`reconcile.ts`). On for every complete live scan and its
+   * replay on a scope whose fetch returns resolved findings (config.ts's
+   * FETCH_RETURNS_RESOLVED — never SAST); off for a legacy row's replay, which must reproduce
+   * what it reproduced before.
+   */
+  detectDropouts?: boolean;
+}
+
+export interface DisappearanceWindow {
+  bySeverity: Record<string, string[]>;
+  fallback: string[];
 }
 
 // --------------------------------------------------------------------------- #
@@ -210,6 +232,21 @@ export interface ScanRow {
   // is to re-read every raw page.
   obs_ref: string | null;
   sealed: 0 | 1;
+
+  // THE COMPLETENESS RECORD (domain/scanCompleteness.ts). Optional because a row written before
+  // these columns existed carries none of them, and that absence is meaningful rather than a
+  // gap: a blank `disappearance` is a LEGACY scan — complete, and replayed under the rules it
+  // was written under. Every live scan written since carries all five.
+  /** The tenant's own total for the query; null when it reported none. */
+  reported_total?: number | null;
+  /** Pages that came back with GraphQL errors beside their nodes. */
+  partial_pages?: number | null;
+  /** Nodes the cursor returned more than once (by Wiz `id`). */
+  duplicates?: number | null;
+  /** "complete", "deferred:<reason>", or blank for a legacy row. Replay reads it back. */
+  disappearance?: string | null;
+  /** Rows this scan closed as repository drop-outs — counted apart from `resolved_count`. */
+  dropout_count?: number | null;
 }
 
 export interface EpisodeRow {
@@ -233,6 +270,14 @@ export interface EpisodeRow {
   cwe: string | null;
   language: string | null;
   owner_project: string | null;
+  /**
+   * The last scan that SAW the finding, carried so a sealed repository drop-out keeps its
+   * censoring point (`BaseRow.censor_days` is measured to it, not to `resolved_at`). Read back
+   * only on a drop-out (ledgerCore's `rowFromEpisode`); every other episode still reads
+   * `last_seen` as `resolved_at`. Appended last on the tab; blank on an episode sealed before
+   * the column existed, which falls back to `resolved_at` — the point it was sealed under.
+   */
+  last_seen: string | null;
 }
 
 export interface LedgerState {
@@ -269,6 +314,18 @@ export type BaseRow = LedgerRow & {
   actionable_from: string | null;
   mttr_actionable_days: number | null;
   actionable_age_days: number | null;
+  /**
+   * A REPOSITORY DROP-OUT's age when the register lost sight of it (`last_seen −
+   * first_seen` — the last scan that saw it, not the later one that noticed it gone), and its
+   * actionable-clock twin (`last_seen − actionable_from`); null on
+   * every other row. Read ONLY by the Kaplan–Meier inputs (`remediation.kaplanMeier` and the
+   * as-of replays in `trend.ts`), which right-censor the row there — it was observed open that
+   * long and then not observed at all. Kept apart from `age_days` because that one is the
+   * open-backlog clock every aging figure reads. OPTIONAL so hand-built test rows compile;
+   * absent means null.
+   */
+  censor_days?: number | null;
+  censor_actionable_days?: number | null;
   awaiting_vendor_fix: boolean;
   /**
    * The business domain that owns this finding's repository — ATTACHED IN MEMORY, NEVER A

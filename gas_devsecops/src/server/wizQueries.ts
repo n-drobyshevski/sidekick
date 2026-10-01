@@ -14,7 +14,7 @@
 // INLINE LITERALS DO NOT SURVIVE THIS GATEWAY. Filters go through $filterBy as variables,
 // never interpolated into the document. gas_ai learned that twice.
 
-import type { Scope } from "../domain/config";
+import { FETCH_RETURNS_RESOLVED, type Scope } from "../domain/config";
 
 /* ------------------------------------------------------------------ page sizes */
 
@@ -67,6 +67,7 @@ export const Q_SAST = `query DevSecOpsSastFindings(
   $filterBy: SASTFindingFilters
   $first: Int
   $after: String
+  $includeTotalCount: Boolean = false
 ) {
   sastFindings(filterBy: $filterBy, first: $first, after: $after) {
     nodes {
@@ -89,7 +90,7 @@ export const Q_SAST = `query DevSecOpsSastFindings(
       vcsDetails { commitHash }
       aiAnalysis { verdict }
     }
-    totalCount
+    totalCount @include(if: $includeTotalCount)
     pageInfo { hasNextPage endCursor }
   }
 }`;
@@ -121,6 +122,7 @@ export const Q_SCA = `query DevSecOpsVulnerabilityFindings(
   $filterBy: VulnerabilityFindingFilters
   $first: Int
   $after: String
+  $includeTotalCount: Boolean = false
 ) {
   vulnerabilityFindings(filterBy: $filterBy, first: $first, after: $after) {
     nodes {
@@ -157,7 +159,7 @@ export const Q_SCA = `query DevSecOpsVulnerabilityFindings(
       artifactType { codeLibraryLanguage }
       projects { id name isFolder slug }
     }
-    totalCount
+    totalCount @include(if: $includeTotalCount)
     pageInfo { hasNextPage endCursor }
   }
 }`;
@@ -201,6 +203,7 @@ export const Q_SECRETS = `query DevSecOpsSecretInstances(
   $filterBy: SecretInstanceFilters
   $first: Int
   $after: String
+  $includeTotalCount: Boolean = false
 ) {
   secretInstances(filterBy: $filterBy, first: $first, after: $after) {
     nodes {
@@ -225,7 +228,7 @@ export const Q_SECRETS = `query DevSecOpsSecretInstances(
       resource { id name type externalId nativeType cloudPlatform }
       projects { id name isFolder slug }
     }
-    totalCount
+    totalCount @include(if: $includeTotalCount)
     pageInfo { hasNextPage endCursor }
   }
 }`;
@@ -286,6 +289,19 @@ export const API_SEVERITY: Record<string, string> = {
 };
 
 /**
+ * THE SCA FETCH ASKS FOR `hasFix: true`, AND HAS FROM THIS REGISTER'S FIRST SCAN. Only a
+ * dependency finding whose package already has a published fixed version is ever fetched, so
+ * the two figures built to measure the vendor — how many open findings are still waiting on a
+ * fix, and how long detection-to-fix takes — have no population to measure: a finding still
+ * waiting is never in the register, and one whose fix is withdrawn drops out of the fetch and
+ * reads as `resolution_src: "disappeared"`. Kept (a population change belongs in its own
+ * measured round, against a tenant probe), and PUBLISHED instead: `buildMttr` ships it as
+ * `remediation.fetchFilter.scaHasFix`, and the MTTR page reads that flag to print those two
+ * figures as not measurable rather than as a zero.
+ */
+export const SCA_FETCH_HAS_FIX = true;
+
+/**
  * The base scope of each register — the population before severity or project narrowing.
  *
  * `codeToCloudPipelineStage: ["CODE"]` is what keeps the SCA register on repository
@@ -298,7 +314,7 @@ export const API_SEVERITY: Record<string, string> = {
 const BASE: Record<string, Record<string, unknown>> = {
   sca: {
     status: ["OPEN", "RESOLVED"],
-    hasFix: true,
+    hasFix: SCA_FETCH_HAS_FIX,
     codeToCloudPipelineStage: ["CODE"],
     isDefaultBranch: { equals: true },
   },
@@ -353,8 +369,11 @@ const BASE: Record<string, Record<string, unknown>> = {
 export const BASE_FILTER_WORDS: Record<Scope, string[]> = {
   // hasFix: true                     — and note what this one costs: a WITHDRAWN fix drops a
   //                                    finding out of the population and reads as a
-  //                                    remediation (sync.ts records the gap). A reader owed
-  //                                    the count is owed the reason it can move.
+  //                                    remediation (reconcile closes it as "disappeared";
+  //                                    nothing tells it apart from a fix). A reader owed the
+  //                                    count is owed the reason it can move. It also leaves
+  //                                    the awaiting-a-vendor count and the vendor wait with
+  //                                    nothing to measure — see SCA_FETCH_HAS_FIX.
   // codeToCloudPipelineStage: [CODE] — keeps the OS sidekick's container images out.
   // isDefaultBranch: {equals: true}  — a branch nobody merged is not remediation debt.
   sca: [
@@ -438,9 +457,12 @@ function shapeBase(scope: Scope, base: Record<string, unknown>): Record<string, 
  * test_mttr_is_measured_from_the_ledgers_own_dates). So SAST gets a genuine MTTR from
  * `createdAt` + disappearance — not merely an age metric — once two scans exist.
  *
- * Flip this ONLY if a resolution date appears on the type.
+ * Flip this ONLY if a resolution date appears on the type — and flip it where it lives,
+ * `domain/config.ts`'s `FETCH_RETURNS_RESOLVED.sast`, because the same fact decides something
+ * the ledger does: with no resolved nodes coming back, a repository that returns nothing may
+ * simply have been fixed, so the repository drop-out pass does not run on SAST.
  */
-export const SAST_FETCH_RESOLVED = false;
+export const SAST_FETCH_RESOLVED: boolean = FETCH_RETURNS_RESOLVED.sast;
 
 /**
  * WHICH FILTER KEYS THIS SCOPE'S FILTER TYPE TAKES AS AN OBJECT rather than a bare list.
@@ -550,14 +572,25 @@ export function buildFilter(scope: Scope, opts: FilterOptions = {}): Record<stri
   return filterBy;
 }
 
-/** The full variables object one page of a scope is fetched with. */
+/**
+ * The full variables object one page of a scope is fetched with.
+ *
+ * `includeTotalCount` IS OFF UNLESS ASKED FOR, the same `@include` pattern gas/'s generated
+ * query uses. A count is an aggregate over the WHOLE filtered population, re-run by the tenant
+ * on every page that selects it, and nothing reads it past page 0: the sync stores the first
+ * page's figure as the scope's total (`scanJobs.step`), and the connection checks
+ * (`wizClient.testConnection`, `diagnostics.wizDiagnostic`) and `probe.mjs` fetch one page
+ * and ask for it explicitly. A caller that wants the figure and forgets the flag gets
+ * `totalCount: null` — "not measured" — never a wrong number.
+ */
 export function buildVariables(
   scope: Scope,
-  opts: FilterOptions & { first?: number; after?: string | null } = {},
+  opts: FilterOptions & { first?: number; after?: string | null; includeTotalCount?: boolean } = {},
 ): Record<string, unknown> {
   return {
     filterBy: buildFilter(scope, opts),
     first: opts.first ?? PAGE_SIZE,
     after: opts.after ?? null,
+    includeTotalCount: opts.includeTotalCount === true,
   };
 }

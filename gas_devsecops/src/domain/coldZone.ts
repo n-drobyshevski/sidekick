@@ -32,6 +32,9 @@
 //               page could do. So an unobserved repository is never warm, never cold, sits
 //               in no idle bucket, and publishes `disappeared_at` and how many findings
 //               closed at that instant so the reader can see the shape of the drop-out.
+//               Since `reconcile`'s drop-out rule, most such closes arrive as
+//               `RESOLUTION_REPO_DROPOUT` rather than `disappeared`; both are counted in that
+//               fingerprint, and a drop-out is never read as movement.
 //
 // WHAT THE COLUMNS REFUSE TO SAY:
 //   * `observedFrom === null` ⇒ `repos`, `teams`, `totals`, `bucket_edges` and
@@ -145,6 +148,7 @@ import {
   DEFAULT_COLD_ZONE_MODE,
   RESOLUTION_DISAPPEARED,
   RESOLVED_STATUSES,
+  isRepoDropout,
   type ColdZoneMode,
   type Scope,
 } from "./config";
@@ -203,6 +207,14 @@ export type ColdRow = RiskRow &
 export interface NewestScan {
   scan_id: string | null;
   ts: string | number | Date | null;
+  /**
+   * The scope's current disappearance window (`ledgerCore.disappearanceWindow`'s `fallback`):
+   * the newest scan back to the newest COMPLETE one. When given, a row last seen in ANY of
+   * them is observed. A deferred scan — one that came back short or empty — proved nothing
+   * about what it missed, so a repository it did not return is not yet unobserved. Omitted, the
+   * test is `scan_id` alone, which is the same thing whenever the newest scan is complete.
+   */
+  window_ids?: readonly string[] | null;
 }
 
 export interface ColdZoneOptions {
@@ -698,8 +710,11 @@ function foldRow(acc: RepoAcc, row: ColdRow, risk: RiskClass): void {
     }
   }
 
+  // A repository drop-out's resolved_at is when the scanner lost the repository, which is
+  // the opposite of movement — it is read below as the drop-out's fingerprint instead.
+  const dropout = isRepoDropout(row);
   const moves: [MovementKind, unknown][] = [
-    ["resolved", row.resolved_at],
+    ["resolved", dropout ? null : row.resolved_at],
     ["removed", row.removed_at],
     ["rotated", row.rotated_at],
   ];
@@ -716,7 +731,7 @@ function foldRow(acc: RepoAcc, row: ColdRow, risk: RiskClass): void {
     }
   }
 
-  if (String(row.resolution_src ?? "") === RESOLUTION_DISAPPEARED) {
+  if (dropout || String(row.resolution_src ?? "") === RESOLUTION_DISAPPEARED) {
     const at = parseTs(row.resolved_at);
     if (at !== null) acc.disappeared.set(at, (acc.disappeared.get(at) ?? 0) + 1);
   }
@@ -727,8 +742,10 @@ function foldRow(acc: RepoAcc, row: ColdRow, risk: RiskClass): void {
  *
  * PER SCOPE, and observed if ANY scope reaches its own newest scan — an sca-only sweep must
  * not mark every sast row of a perfectly healthy repository as vanished. The primary test is
- * `last_scan_id === newestScanByScope[scope].scan_id`; a blank `last_scan_id` falls back to
- * `last_seen >= newest.ts`, because an older ledger row can carry the sighting without the
+ * `last_scan_id === newestScanByScope[scope].scan_id` — or membership of the scope's
+ * disappearance window when the caller supplies one (`NewestScan.window_ids`), so a deferred
+ * newest scan does not read every repository it missed as gone. A blank `last_scan_id` falls
+ * back to `last_seen >= newest.ts`, because an older ledger row can carry the sighting without the
  * scan id. A scope with rows but NO scan on record is undecidable and resolves to observed —
  * and is named in `scopes_without_scan`, so the reader knows which way the doubt fell.
  */
@@ -747,9 +764,16 @@ function isObserved(
     }
     const rows = acc.rowsByScope.get(scope) ?? [];
     const newestTs = parseTs(newest.ts);
+    const windowIds =
+      newest.window_ids && newest.window_ids.length ? new Set(newest.window_ids.map(String)) : null;
     for (const row of rows) {
       if (!blank(row.last_scan_id)) {
-        if (!blank(newest.scan_id) && String(row.last_scan_id) === String(newest.scan_id)) {
+        const lastScan = String(row.last_scan_id);
+        if (
+          windowIds !== null
+            ? windowIds.has(lastScan)
+            : !blank(newest.scan_id) && lastScan === String(newest.scan_id)
+        ) {
           observed = true;
           break;
         }

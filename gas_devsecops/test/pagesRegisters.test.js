@@ -35,6 +35,8 @@ import {
 } from "../src/client/js/pages/sast.js";
 import { REMOVAL_CELLS, TWIN_NOTE, bucketTotals, secretsModel } from "../src/client/js/pages/secrets.js";
 import { code } from "../../gas_shared/test/contracts/emptyStates.js";
+import { HAS_FIX_NOT_MEASURABLE } from "../src/client/js/pages/registerModel.js";
+import { HAS_FIX_NOT_MEASURABLE as MTTR_HAS_FIX_NOT_MEASURABLE } from "../src/client/js/pages/mttr.js";
 
 const SRC = (name) =>
   readFileSync(new URL(`../src/client/js/pages/${name}.js`, import.meta.url), "utf8");
@@ -365,6 +367,31 @@ describe("the three register pages are wired, not stubbed", () => {
 
 // ========================================================== sca: the clock splits in two
 
+describe("the register headlines add up when a repository left coverage", () => {
+  // `rowCount` counts repository drop-outs; `open` and `resolved` do not (stateCounts). The
+  // headline used to read "of 120 in the register — 30 resolved" over 90 open: 117 of 120.
+  it("sca names the drop-outs beside the resolved count, only when there are any", () => {
+    expect(SCA.hero.sub).toBe("open findings of 120 in the register — 30 resolved.");
+    const left = scaModel(scaPayload({ rowCount: 123, leftCoverage: 3 }));
+    expect(left.hero.sub)
+      .toBe("open findings of 123 in the register — 30 resolved, 3 left coverage with their repository.");
+    expect(left.open + left.resolved + left.leftCoverage).toBe(left.rowCount);
+  });
+
+  it("sast does the same, and its closing-date sentence says the drop-outs are not fixes", () => {
+    expect(SAST.clock.denominator).not.toMatch(/repository left/);
+    const left = sastModel(sastPayload({ rowCount: 344, leftCoverage: 4 }));
+    expect(left.hero.sub).toMatch(/— 40 resolved, 4 left coverage with their repository\.$/);
+    expect(left.clock.denominator).toMatch(/A further 4 closed only because their repository left the scan/);
+  });
+
+  it("each page puts them in its stat strip too", () => {
+    for (const src of [SCA_SRC, SAST_SRC, SECRETS_SRC]) {
+      expect(src).toMatch(/\.\.\.leftCoverageStats\(vm\.leftCoverage\)/);
+    }
+  });
+});
+
 describe("sca — two clocks, never one blended number", () => {
   it("renders awaiting-vendor and actionable as two independent figures", () => {
     const clocks = SCA.clocks;
@@ -391,6 +418,31 @@ describe("sca — two clocks, never one blended number", () => {
     expect(SCA.clocks.awaitingVendor.denominator).toMatch(/no published fixed version/);
     expect(SCA.clocks.actionable.denominator).toMatch(/78 of 90/);
     expect(SCA.clocks.actionable.denominator).toMatch(/measures us rather than upstream/);
+  });
+
+  it("draws the awaiting count as a measurement when the payload carries no hasFix filter", () => {
+    // scaPayload() has no `fetchFilter` — an older cached payload, or a fetch without hasFix.
+    expect(SCA.clocks.awaitingVendor.measurable).toBe(true);
+    expect(SCA.clocks.awaitingVendor.reason).toBe(null);
+  });
+
+  it("marks the awaiting count not measurable under the hasFix fetch, in the MTTR page's words", () => {
+    // The fetch asks only for findings that already have a fix, so the ones this card counts
+    // are never fetched; the near-zero is structural, not the vendors keeping up.
+    const vm = scaModel({ ...scaPayload(), fetchFilter: { scaHasFix: true } });
+    expect(vm.clocks.awaitingVendor.measurable).toBe(false);
+    expect(vm.clocks.awaitingVendor.reason).toBe(HAS_FIX_NOT_MEASURABLE);
+    // The same constant the MTTR page prints, not a second spelling of it.
+    expect(MTTR_HAS_FIX_NOT_MEASURABLE).toBe(HAS_FIX_NOT_MEASURABLE);
+    expect(scaModel({ ...scaPayload(), fetchFilter: { scaHasFix: false } })
+      .clocks.awaitingVendor.measurable).toBe(true);
+  });
+
+  it("renders the not-measurable card with the reason and without the count's denominator", () => {
+    const sca = code(SCA_SRC);
+    expect(sca).toMatch(/vm\.clocks\.awaitingVendor\.measurable\s*\?/);
+    expect(sca).toMatch(/value: "Not measurable"/);
+    expect(sca).toMatch(/sentenceStart\(HAS_FIX_REASON\) \+ ", so a finding still waiting is never seen\."/);
   });
 
   it("counts rows with a fixed version without claiming the AGGREGATE endpoint has the versions", () => {
@@ -704,6 +756,18 @@ describe("secrets — the denominators are sentences and the exclusions are prin
     expect(SECRETS_SRC).toMatch(/vm\.timeToRevoke\.excludedUnmeasured/);
   });
 
+  it("names the credentials whose repository left the scan apart from the still-live ones", () => {
+    // Before: "3 still-live credentials" counted the drop-outs too, censored at today.
+    expect(SECRETS.timeToRevoke.denominator).toMatch(/3 still-live credentials right-censored at today build/);
+    expect(SECRETS.timeToRevoke.denominator).not.toMatch(/repository left/);
+    const base = secretsPayload().secrets.timeToRevoke;
+    const left = secretsModel(secretsPayload({
+      secrets: { ...secretsPayload().secrets, timeToRevoke: { ...base, leftCoverage: 2 } },
+    })).timeToRevoke;
+    expect(left.leftCoverage).toBe(2);
+    expect(left.denominator).toMatch(/1 still-live credentials right-censored at today, plus 2 censored where their repository left the scan,/);
+  });
+
   it("keeps the four revocation populations summing to the register", () => {
     const t = SECRETS.timeToRevoke;
     expect(t.events + t.censored + t.excludedUnmeasured + t.excludedNoClock).toBe(t.total);
@@ -738,6 +802,23 @@ describe("secrets — the denominators are sentences and the exclusions are prin
     expect(unreachable.timeToRevoke.medianIsLowerBound).toBe(true);
     // A bound is not a marker: nothing gets plotted at a number the curve never reached.
     expect(unreachable.timeToRevoke.medianDays).toBe(null);
+  });
+
+  it("says why there is no median when a reliability cut left nothing to bound", () => {
+    const base = secretsPayload().secrets.timeToRevoke;
+    const cutEmpty = secretsModel(secretsPayload({
+      secrets: {
+        ...secretsPayload().secrets,
+        timeToRevoke: {
+          ...base, median: null, medianLowerBound: null,
+          km: { ...(base.km || {}), medianBoundReason: "cut-empty" },
+        },
+      },
+    }));
+    expect(cutEmpty.timeToRevoke.medianText).toBe("—");
+    expect(cutEmpty.timeToRevoke.medianIsLowerBound).toBe(false);
+    expect(cutEmpty.timeToRevoke.medianDays).toBe(null);
+    expect(cutEmpty.timeToRevoke.medianNote).toMatch(/too few credentials/);
   });
 
   it("carries the twin fold as a measurement note", () => {

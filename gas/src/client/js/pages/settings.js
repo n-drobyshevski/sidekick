@@ -984,9 +984,9 @@ export async function renderSettings(main, params, ctx) {
     clear(body).append(...errorLogBody({
       items: log.items, covers: log.covers, note: log.note, fmtDateTime,
       onRefresh: () => renderRecentErrors(body),
-      // Clear is a CAPABILITY: this app has api_clearRecentErrors, so the control exists.
-      // gas_devsecops has no clear RPC, passes no onClear, and draws no button at all rather
-      // than a disabled one offering an operation that does not exist.
+      // Clear is a CAPABILITY: this app has api_clearRecentErrors, so the control exists. A
+      // caller with no clear RPC passes no onClear and gets no button at all rather than a
+      // disabled one offering an operation that does not exist (errorLogBody's rule).
       onClear: async () => {
         const ok = await confirmDialog({
           title: "Clear the error log?",

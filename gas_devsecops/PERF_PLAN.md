@@ -14,8 +14,9 @@ step numbers as the source of their measurements.
 | Page-load RPCs | bootstrap + executive + id-less job status | executive only; the running-sync check reads the bootstrap (`syncProgress.resumePlan`, #330) |
 
 Dropped by the numbers: the active-job display cache (34 ms) and base rows once per execution
-(one derivation per execution). Warm continuation: port it from `gas/` only if a
-`trigger_warmReadModels` log shows `Read-model warm: out of budget`.
+(one derivation per execution). Warm continuation: landed with the post-sync warm moving off
+the sync's lock — `afterPersist` arms `trigger_continueWarm`, which resumes a pass out of budget
+from its first un-warmed target (`readModels.continueWarm`).
 
 ## What `gas/` taught us (read this first)
 
@@ -49,7 +50,7 @@ idea, not the file: `gas_devsecops` has its own `readModels.ts`, `readModelStore
 | Namespaces | `readModels.ts`: `dsMttr4`, `dsExecutive2`, `dsRegister2`, `dsSecrets2`, `dsProgram2`, `dsRepos2`, `dsHistory4`, `dsStorage1`; `api.ts`: `settingsImpact1` | All versioned, pinned by `test/cacheNamespaces.test.ts` (step 2d). |
 | Base rows | `src/server/ledgerStore.ts:691` `loadBaseRows(options)` | Re-derived per call; options vary by `now` / `scope` / `trackingStartByScope`. 13 call sites. |
 | Snapshot | `src/server/archiveStore.ts` `writeLedgerSnapshot`/`readLedgerSnapshot` | **v2 in step 2c** (shared codec, `gas_shared/domain/snapshotCodec.ts`, keyed by `finding_key`; v1 still read; `scans` no longer written). Was: v1, 1.96 MB gz, 2.4–2.8 s per cold read. |
-| Warm | `src/server/readModels.ts:2598` `warmReadModels`, `WARM_BUDGET_MS` `:245` | Budgeted, logs a cut-out, **no continuation**. |
+| Warm | `src/server/readModels.ts:2598` `warmReadModels`, `WARM_BUDGET_MS` `:245` | Budgeted, logs a cut-out; **continues on `trigger_continueWarm`** (resumable, 6-hop cap per stamp). |
 | `parseTs` | `src/domain/util.ts:107` | **Fast path added in step 1** (`test/parseTs.test.ts`). |
 | Timing logs | sheetsDb, archiveStore, serverCache, readModelStore, ledgerStore, api (`bootstrap`, `getExecutivePage`) | **Added in step 1.** Awaiting the first production logs. |
 

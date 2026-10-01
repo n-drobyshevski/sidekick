@@ -30,7 +30,8 @@ var Server = (() => {
     readModels: () => readModels_exports,
     scanJobs: () => scanJobs_exports,
     setup: () => setup,
-    welcome: () => welcome_exports
+    welcome: () => welcome_exports,
+    wizDiagnostic: () => wizDiagnostic
   });
 
   // src/server/api.ts
@@ -39,6 +40,7 @@ var Server = (() => {
     bootstrap: () => bootstrap,
     bootstrapIfWarm: () => bootstrapIfWarm,
     cancelSync: () => cancelSync2,
+    clearRecentErrors: () => clearRecentErrors,
     compact: () => compact,
     deleteScans: () => deleteScans2,
     domainMapHealth: () => domainMapHealth,
@@ -130,6 +132,16 @@ var Server = (() => {
   var STATUS_RESOLVED = "RESOLVED";
   var RESOLUTION_API = "api";
   var RESOLUTION_DISAPPEARED = "disappeared";
+  var RESOLUTION_REPO_DROPOUT = "repo_dropout";
+  var DROPOUT_MIN_OPEN = 3;
+  var FETCH_RETURNS_RESOLVED = {
+    sca: true,
+    sast: false,
+    secrets: true
+  };
+  function isRepoDropout(row) {
+    return row != null && row.resolution_src === RESOLUTION_REPO_DROPOUT;
+  }
   var EPSS_PRIORITY_THRESHOLD = 0.1;
   var DEFAULT_RISK_RULE = {
     kev: true,
@@ -544,7 +556,7 @@ var Server = (() => {
     return `${scope}:id:${id}`;
   }
   function mttrFromLedger(ledgerRows, opts = {}) {
-    const rows = [...ledgerRows];
+    const rows = [...ledgerRows].filter((r) => !isRepoDropout(r));
     if (!rows.length) return { perSev: {}, overall: {} };
     const work = rows.map((r) => ({
       sev: "severity" in r ? normalizeSeverity(r["severity"]) : "UNKNOWN",
@@ -883,9 +895,40 @@ var Server = (() => {
     }
   }
   function emptyTwinStats() {
-    return { keys: 0, folded: 0, medianGapDays: null };
+    return {
+      keys: 0,
+      folded: 0,
+      medianGapDays: null,
+      crossRepoKeys: 0,
+      crossRepoNodes: 0,
+      maxBucketSize: 0
+    };
+  }
+  function measuredValidationTwin(bucket) {
+    var _a, _b;
+    let best = null;
+    let bestAt = null;
+    for (const n2 of bucket) {
+      const state = ((_a = str(n2, "validationStatus")) != null ? _a : "").trim().toUpperCase();
+      if (!MEASURED_VALIDATION.has(state)) continue;
+      const at = parseTs(n2["lastValidatedAt"]);
+      if (best === null) {
+        best = n2;
+        bestAt = at;
+        continue;
+      }
+      const later2 = at !== null && (bestAt === null || at > bestAt);
+      const tie = at === bestAt;
+      const bestState = ((_b = str(best, "validationStatus")) != null ? _b : "").trim().toUpperCase();
+      if (later2 || tie && state === "VALID" && bestState !== "VALID") {
+        best = n2;
+        bestAt = at;
+      }
+    }
+    return best;
   }
   function foldSecretTwins(nodes) {
+    var _a;
     const groups = /* @__PURE__ */ new Map();
     const order = [];
     for (const n2 of nodes) {
@@ -901,6 +944,9 @@ var Server = (() => {
     const gaps = [];
     let keys = 0;
     let folded = 0;
+    let crossRepoKeys = 0;
+    let crossRepoNodes = 0;
+    let maxBucketSize = 0;
     for (const key of order) {
       const bucket = groups.get(key);
       if (bucket.length === 1) {
@@ -909,6 +955,16 @@ var Server = (() => {
       }
       keys += 1;
       folded += bucket.length - 1;
+      if (bucket.length > maxBucketSize) maxBucketSize = bucket.length;
+      const repos = /* @__PURE__ */ new Set();
+      for (const n2 of bucket) {
+        const repo = splitRepoBranch(str(n2, "resource.name"), str(n2, "resource.type")).repo;
+        if (repo !== null) repos.add(repo);
+      }
+      if (repos.size > 1) {
+        crossRepoKeys += 1;
+        crossRepoNodes += bucket.length;
+      }
       const births = [];
       for (const n2 of bucket) {
         const t = parseTs(n2["firstSeenAt"]);
@@ -927,10 +983,15 @@ var Server = (() => {
       }
       const merged = { ...base };
       if (births.length) merged["firstSeenAt"] = toIso(minNum(births));
+      const validated = measuredValidationTwin(bucket);
+      if (validated !== null && validated !== base) {
+        merged["validationStatus"] = validated["validationStatus"];
+        merged["lastValidatedAt"] = (_a = validated["lastValidatedAt"]) != null ? _a : null;
+      }
       const branchTwin = bucket.find(
         (n2) => {
-          var _a;
-          return ((_a = str(n2, "resource.type")) != null ? _a : "").toUpperCase() === RESOURCE_BRANCH;
+          var _a2;
+          return ((_a2 = str(n2, "resource.type")) != null ? _a2 : "").toUpperCase() === RESOURCE_BRANCH;
         }
       );
       if (branchTwin !== void 0 && branchTwin !== base) {
@@ -945,8 +1006,20 @@ var Server = (() => {
     }
     return {
       nodes: out,
-      stats: { keys, folded, medianGapDays: gaps.length ? median(gaps) : null }
+      stats: {
+        keys,
+        folded,
+        medianGapDays: gaps.length ? median(gaps) : null,
+        crossRepoKeys,
+        crossRepoNodes,
+        maxBucketSize
+      }
     };
+  }
+  function repoIdOf(rec, scope) {
+    const id = scope === "sca" ? str(rec, "vulnerableAsset.id") : str(rec, "resource.id");
+    const trimmed = id === null ? "" : id.trim();
+    return trimmed === "" ? null : trimmed;
   }
   function makeRow(key, scope, attrs, sev2, firstSeen, scanId, scanTs, fixDate, fixObservedAt) {
     return {
@@ -1010,13 +1083,16 @@ var Server = (() => {
     }
   }
   function reconcile(currentRecords, existingLedger, scanId, scanTs, prevScanId, options) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G, _H;
     const {
       scope,
       disappearanceMode = "scan_ts",
       prevScanTs = null,
       scannedSeverities = null,
-      prevScanIdBySeverity: prevScanIdBySeverity2 = null
+      prevScanIdBySeverity = null,
+      disappearanceWindow: disappearanceWindow2 = null,
+      deferDisappearance = false,
+      detectDropouts = false
     } = options;
     const updated = {};
     for (const [key, row] of Object.entries(existingLedger)) updated[key] = { ...row };
@@ -1025,6 +1101,7 @@ var Server = (() => {
     let newCount = 0;
     let resolvedCount = 0;
     let reopenedCount = 0;
+    let resumedCount = 0;
     const scanTsIso = (_a = toIso(parseTs(scanTs))) != null ? _a : String(scanTs);
     const folded = scope === "secrets" ? foldSecretTwins(currentRecords) : { nodes: currentRecords, stats: emptyTwinStats() };
     for (const rec of folded.nodes) {
@@ -1061,12 +1138,21 @@ var Server = (() => {
         );
         updated[key] = row;
         newCount += 1;
+      } else if (row.status === STATUS_RESOLVED && row.resolution_src === RESOLUTION_REPO_DROPOUT) {
+        row.status = STATUS_OPEN;
+        row.resolved_at = null;
+        row.resolution_src = null;
+        row.first_seen = (_i = minIso(row.first_seen, apiFirst)) != null ? _i : row.first_seen;
+        row.last_seen = scanTsIso;
+        row.last_scan_id = scanId;
+        seedFix(row);
+        resumedCount += 1;
       } else if (row.status === STATUS_RESOLVED && !apiSaysResolved) {
         row.status = STATUS_OPEN;
         row.resolved_at = null;
         row.resolution_src = null;
-        row.reopened_count = Number((_i = row.reopened_count) != null ? _i : 0) + 1;
-        row.first_seen = (_j = minIso(apiFirst, scanTsIso)) != null ? _j : scanTsIso;
+        row.reopened_count = Number((_j = row.reopened_count) != null ? _j : 0) + 1;
+        row.first_seen = (_k = minIso(apiFirst, scanTsIso)) != null ? _k : scanTsIso;
         row.last_seen = scanTsIso;
         row.last_scan_id = scanId;
         row.fix_date = null;
@@ -1077,7 +1163,7 @@ var Server = (() => {
         reopenedCount += 1;
       } else {
         if (row.status === STATUS_OPEN) {
-          row.first_seen = (_k = minIso(row.first_seen, apiFirst)) != null ? _k : row.first_seen;
+          row.first_seen = (_l = minIso(row.first_seen, apiFirst)) != null ? _l : row.first_seen;
         }
         row.last_seen = scanTsIso;
         row.last_scan_id = scanId;
@@ -1089,24 +1175,24 @@ var Server = (() => {
       row.severity = sev2;
       row.identifier = attrs.identifier;
       row.component = attrs.component;
-      row.repo_id = (_l = attrs.repo_id) != null ? _l : row.repo_id;
-      row.repo_name = (_m = attrs.repo_name) != null ? _m : row.repo_name;
-      row.branch = (_n = attrs.branch) != null ? _n : row.branch;
-      row.platform = (_o = attrs.platform) != null ? _o : row.platform;
-      row.fixed_version = (_p = attrs.fixed_version) != null ? _p : row.fixed_version;
-      row.cwe = (_q = attrs.cwe) != null ? _q : row.cwe;
-      row.ai_verdict = (_r = attrs.ai_verdict) != null ? _r : row.ai_verdict;
-      row.language = (_s = attrs.language) != null ? _s : row.language;
-      row.file_path = (_t = attrs.file_path) != null ? _t : row.file_path;
-      row.start_line = (_u = attrs.start_line) != null ? _u : row.start_line;
-      row.origin = (_v = attrs.origin) != null ? _v : row.origin;
-      row.secret_kind = (_w = attrs.secret_kind) != null ? _w : row.secret_kind;
-      row.confidence = (_x = attrs.confidence) != null ? _x : row.confidence;
-      row.owner_project = (_y = attrs.owner_project) != null ? _y : row.owner_project;
-      row.owner_path = (_z = attrs.owner_path) != null ? _z : row.owner_path;
-      row.tags_json = (_A = attrs.tags_json) != null ? _A : row.tags_json;
-      row.projects_json = (_B = attrs.projects_json) != null ? _B : row.projects_json;
-      row.portal_url = (_D = (_C = attrs.portal_url) != null ? _C : row.portal_url) != null ? _D : null;
+      row.repo_id = (_m = attrs.repo_id) != null ? _m : row.repo_id;
+      row.repo_name = (_n = attrs.repo_name) != null ? _n : row.repo_name;
+      row.branch = (_o = attrs.branch) != null ? _o : row.branch;
+      row.platform = (_p = attrs.platform) != null ? _p : row.platform;
+      row.fixed_version = (_q = attrs.fixed_version) != null ? _q : row.fixed_version;
+      row.cwe = (_r = attrs.cwe) != null ? _r : row.cwe;
+      row.ai_verdict = (_s = attrs.ai_verdict) != null ? _s : row.ai_verdict;
+      row.language = (_t = attrs.language) != null ? _t : row.language;
+      row.file_path = (_u = attrs.file_path) != null ? _u : row.file_path;
+      row.start_line = (_v = attrs.start_line) != null ? _v : row.start_line;
+      row.origin = (_w = attrs.origin) != null ? _w : row.origin;
+      row.secret_kind = (_x = attrs.secret_kind) != null ? _x : row.secret_kind;
+      row.confidence = (_y = attrs.confidence) != null ? _y : row.confidence;
+      row.owner_project = (_z = attrs.owner_project) != null ? _z : row.owner_project;
+      row.owner_path = (_A = attrs.owner_path) != null ? _A : row.owner_path;
+      row.tags_json = (_B = attrs.tags_json) != null ? _B : row.tags_json;
+      row.projects_json = (_C = attrs.projects_json) != null ? _C : row.projects_json;
+      row.portal_url = (_E = (_D = attrs.portal_url) != null ? _D : row.portal_url) != null ? _E : null;
       if (apiSaysResolved && row.status === STATUS_OPEN) {
         row.status = STATUS_RESOLVED;
         row.resolved_at = present(apiResolved) ? toIso(parseTs(apiResolved)) : scanTsIso;
@@ -1122,32 +1208,81 @@ var Server = (() => {
         status: row.status
       });
     }
+    let absentCount = 0;
+    let dropoutCount = 0;
+    let dropoutRepos = 0;
     if (prevScanId !== null) {
       const inScope = scannedSeverities !== null ? new Set(scannedSeverities) : null;
+      const windowBySev = /* @__PURE__ */ new Map();
+      const windowFallback = disappearanceWindow2 ? new Set(disappearanceWindow2.fallback) : null;
+      if (disappearanceWindow2) {
+        for (const [sev2, ids] of Object.entries(disappearanceWindow2.bySeverity)) {
+          windowBySev.set(sev2, new Set(ids));
+        }
+      }
+      const absentKeys = [];
       for (const [key, row] of Object.entries(updated)) {
         if (seen.has(key) || row.status === STATUS_RESOLVED) continue;
         const sevRow = row.severity;
         if (inScope !== null && (sevRow === null || !inScope.has(sevRow))) {
           continue;
         }
-        const expectedPrev = (_E = (prevScanIdBySeverity2 != null ? prevScanIdBySeverity2 : {})[sevRow != null ? sevRow : ""]) != null ? _E : prevScanId;
-        if (row.last_scan_id !== expectedPrev) continue;
-        if (disappearanceMode === "midpoint" && prevScanTs) {
-          row.resolved_at = midpointIso(prevScanTs, scanTsIso);
+        if (windowFallback !== null) {
+          const ids = (_F = windowBySev.get(sevRow != null ? sevRow : "")) != null ? _F : windowFallback;
+          if (row.last_scan_id === null || !ids.has(row.last_scan_id)) continue;
         } else {
-          row.resolved_at = scanTsIso;
+          const expectedPrev = (_G = (prevScanIdBySeverity != null ? prevScanIdBySeverity : {})[sevRow != null ? sevRow : ""]) != null ? _G : prevScanId;
+          if (row.last_scan_id !== expectedPrev) continue;
         }
-        row.status = STATUS_RESOLVED;
-        row.resolution_src = RESOLUTION_DISAPPEARED;
-        if (scope === "secrets" && row.removed_at == null) row.removed_at = row.resolved_at;
-        resolvedCount += 1;
-        observations.push({
-          scan_id: scanId,
-          finding_key: key,
-          present: 0,
-          severity: row.severity,
-          status: STATUS_RESOLVED
-        });
+        absentKeys.push(key);
+      }
+      absentCount = absentKeys.length;
+      const dropouts = /* @__PURE__ */ new Set();
+      if (detectDropouts && !deferDisappearance && absentKeys.length) {
+        const present2 = /* @__PURE__ */ new Set();
+        for (const rec of currentRecords) {
+          const id = repoIdOf(rec, scope);
+          if (id !== null) present2.add(id);
+        }
+        const byRepo = /* @__PURE__ */ new Map();
+        for (const key of absentKeys) {
+          const repo = ((_H = updated[key].repo_id) != null ? _H : "").trim();
+          if (repo === "" || present2.has(repo)) continue;
+          const list = byRepo.get(repo);
+          if (list) list.push(key);
+          else byRepo.set(repo, [key]);
+        }
+        for (const keys of byRepo.values()) {
+          if (keys.length < DROPOUT_MIN_OPEN) continue;
+          dropoutRepos += 1;
+          for (const k of keys) dropouts.add(k);
+        }
+      }
+      if (!deferDisappearance) {
+        for (const key of absentKeys) {
+          const row = updated[key];
+          if (disappearanceMode === "midpoint" && prevScanTs) {
+            row.resolved_at = midpointIso(prevScanTs, scanTsIso);
+          } else {
+            row.resolved_at = scanTsIso;
+          }
+          row.status = STATUS_RESOLVED;
+          if (dropouts.has(key)) {
+            row.resolution_src = RESOLUTION_REPO_DROPOUT;
+            dropoutCount += 1;
+          } else {
+            row.resolution_src = RESOLUTION_DISAPPEARED;
+            if (scope === "secrets" && row.removed_at == null) row.removed_at = row.resolved_at;
+            resolvedCount += 1;
+          }
+          observations.push({
+            scan_id: scanId,
+            finding_key: key,
+            present: 0,
+            severity: row.severity,
+            status: STATUS_RESOLVED
+          });
+        }
       }
     }
     return {
@@ -1158,8 +1293,59 @@ var Server = (() => {
         resolved_count: resolvedCount,
         reopened_count: reopenedCount
       },
-      twinStats: folded.stats
+      twinStats: folded.stats,
+      absence: {
+        absent: absentCount,
+        dropouts: dropoutCount,
+        dropoutRepos,
+        resumed: resumedCount
+      }
     };
+  }
+
+  // src/domain/scanCompleteness.ts
+  var DISAPPEARANCE_COMPLETE = "complete";
+  var DEFERRED_PREFIX = "deferred:";
+  function completenessTolerance(n2) {
+    return Math.max(5, Math.ceil(Math.max(0, n2) * 0.01));
+  }
+  function distinctNodes(records) {
+    const ids = /* @__PURE__ */ new Set();
+    let anonymous = 0;
+    for (const r of records) {
+      const raw = r ? r["id"] : null;
+      const id = raw === null || raw === void 0 ? "" : String(raw).trim();
+      if (id === "") anonymous += 1;
+      else ids.add(id);
+    }
+    const distinct = ids.size + anonymous;
+    return { distinct, duplicates: records.length - distinct };
+  }
+  function assessCompleteness(input) {
+    const { distinct, duplicates } = distinctNodes(input.records);
+    const total = input.reportedTotal;
+    const verdict = (reason) => ({
+      reason,
+      distinct,
+      duplicates
+    });
+    if (input.records.length === 0 && input.priorOpen > 0 && total !== 0) return verdict("empty");
+    if (total !== null && total > 0 && input.partialPages === 0 && distinct < total - completenessTolerance(total)) {
+      return verdict("short");
+    }
+    if (duplicates > completenessTolerance(input.records.length)) return verdict("duplicates");
+    return verdict(null);
+  }
+  function disappearanceValue(reason) {
+    return reason === null ? DISAPPEARANCE_COMPLETE : `${DEFERRED_PREFIX}${reason}`;
+  }
+  function readDisappearance(v) {
+    const s2 = v === null || v === void 0 ? "" : String(v).trim();
+    if (s2 === "") return { legacy: true, deferred: false, reason: null };
+    if (s2.startsWith(DEFERRED_PREFIX)) {
+      return { legacy: false, deferred: true, reason: s2.slice(DEFERRED_PREFIX.length) || null };
+    }
+    return { legacy: false, deferred: false, reason: null };
   }
 
   // src/domain/ledgerCore.ts
@@ -1182,18 +1368,29 @@ var Server = (() => {
     const asc = scansAsc(scans, scope);
     return asc.length ? asc[asc.length - 1] : null;
   }
-  function prevScanIdBySeverity(scans, scope) {
-    const remaining = new Set(SEVERITY_ORDER);
-    const mapping = {};
+  function disappearanceWindow(scans, scope) {
     const desc = scansAsc(scans, scope).reverse();
+    if (!desc.length) return null;
+    const remaining = new Set(SEVERITY_ORDER);
+    const bySeverity2 = {};
     for (const r of desc) {
       const sevScope = parseSeverities(r.severities);
+      const deferred = readDisappearance(r.disappearance).deferred;
       const covered = sevScope === null ? [...remaining] : [...remaining].filter((s2) => sevScope.includes(s2));
-      for (const sev2 of covered) mapping[sev2] = r.scan_id;
-      covered.forEach((s2) => remaining.delete(s2));
+      for (const sev2 of covered) {
+        const ids = bySeverity2[sev2];
+        if (ids) ids.push(r.scan_id);
+        else bySeverity2[sev2] = [r.scan_id];
+      }
+      if (!deferred) covered.forEach((s2) => remaining.delete(s2));
       if (!remaining.size) break;
     }
-    return Object.keys(mapping).length ? mapping : null;
+    const fallback = [];
+    for (const r of desc) {
+      fallback.push(r.scan_id);
+      if (!readDisappearance(r.disappearance).deferred) break;
+    }
+    return { bySeverity: bySeverity2, fallback };
   }
   function existingScanDeltas(scans, scanId, scope) {
     const row = scans.find(
@@ -1206,8 +1403,8 @@ var Server = (() => {
       reopened_count: row.reopened_count
     };
   }
-  function reconcileEpisodeCollisions(state, updated, existingLedger, deltas, scanId) {
-    var _a;
+  function reconcileEpisodeCollisions(state, updated, existingLedger, deltas, scanId, absence) {
+    var _a, _b;
     const newKeys = Object.keys(updated).filter((k) => !(k in existingLedger));
     if (!newKeys.length) return;
     const newKeySet = new Set(newKeys);
@@ -1219,8 +1416,18 @@ var Server = (() => {
     }
     for (const [key, episode] of episodeReopens) {
       const row = updated[key];
-      if (row.status === "OPEN") {
-        row.reopened_count = Number((_a = episode.reopened_count) != null ? _a : 0) + 1;
+      if (episode.resolution_src === RESOLUTION_REPO_DROPOUT) {
+        row.reopened_count = Number((_a = episode.reopened_count) != null ? _a : 0);
+        if (episode.first_seen !== null && (row.first_seen === null || episode.first_seen < row.first_seen)) {
+          row.first_seen = episode.first_seen;
+        }
+        if (episode.fix_date != null) row.fix_date = episode.fix_date;
+        if (episode.fix_observed_at != null) row.fix_observed_at = episode.fix_observed_at;
+        deltas.new_count -= 1;
+        absence.resumed += 1;
+        episode.superseded_by_scan = scanId;
+      } else if (row.status === "OPEN") {
+        row.reopened_count = Number((_b = episode.reopened_count) != null ? _b : 0) + 1;
         deltas.new_count -= 1;
         deltas.reopened_count += 1;
         episode.superseded_by_scan = scanId;
@@ -1232,8 +1439,11 @@ var Server = (() => {
       }
     }
   }
+  function emptyAbsence() {
+    return { absent: 0, dropouts: 0, dropoutRepos: 0, resumed: 0 };
+  }
   function persistFlatScan(state, records, options) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e, _f, _g;
     const scope = options.scope;
     const scanId = options.scanId || nowIso(options.now);
     const scanTs = scanId;
@@ -1242,12 +1452,18 @@ var Server = (() => {
     const sevScope = parseSeverities(severitiesText);
     const existing = existingScanDeltas(state.scans, scanId, scope);
     if (existing !== null) {
-      return { deltas: existing, observations: [], scanRow: null, twinStats: emptyTwinStats() };
+      return {
+        deltas: existing,
+        observations: [],
+        scanRow: null,
+        twinStats: emptyTwinStats(),
+        absence: emptyAbsence()
+      };
     }
     const prev = latestScan(state.scans, scope);
     const prevScanId = prev ? prev.scan_id : null;
     const prevScanTs = prev ? prev.ts : null;
-    const prevBySev = prevScanId !== null ? prevScanIdBySeverity(state.scans, scope) : null;
+    const window = prevScanId !== null ? disappearanceWindow(state.scans, scope) : null;
     const prefix = `${scope}:`;
     const existingLedger = {};
     const otherScopes = {};
@@ -1255,7 +1471,38 @@ var Server = (() => {
       if (key.startsWith(prefix)) existingLedger[key] = row;
       else otherScopes[key] = row;
     }
-    const { ledger: updated, observations, deltas, twinStats } = reconcile(
+    const dropoutEvidence = FETCH_RETURNS_RESOLVED[scope];
+    let reportedTotal = null;
+    let partialPages = null;
+    let duplicates = null;
+    let disappearance = null;
+    let deferDisappearance = false;
+    let detectDropouts = false;
+    if (options.stored) {
+      const verdict = readDisappearance(options.stored.disappearance);
+      reportedTotal = (_c = options.stored.reported_total) != null ? _c : null;
+      partialPages = (_d = options.stored.partial_pages) != null ? _d : null;
+      duplicates = (_e = options.stored.duplicates) != null ? _e : null;
+      disappearance = verdict.legacy ? null : String(options.stored.disappearance).trim();
+      deferDisappearance = verdict.deferred;
+      detectDropouts = dropoutEvidence && !verdict.legacy && !verdict.deferred;
+    } else if (options.completeness) {
+      const inScope = sevScope === null ? null : new Set(sevScope);
+      let priorOpen = 0;
+      for (const row of Object.values(existingLedger)) {
+        if (row.status !== "OPEN") continue;
+        if (inScope !== null && (row.severity === null || !inScope.has(row.severity))) continue;
+        priorOpen += 1;
+      }
+      reportedTotal = options.completeness.reportedTotal;
+      partialPages = options.completeness.partialPages;
+      const verdict = assessCompleteness({ records, reportedTotal, partialPages, priorOpen });
+      duplicates = verdict.duplicates;
+      disappearance = disappearanceValue(verdict.reason);
+      deferDisappearance = verdict.reason !== null;
+      detectDropouts = dropoutEvidence && verdict.reason === null;
+    }
+    const { ledger: updated, observations, deltas, twinStats, absence } = reconcile(
       records,
       existingLedger,
       scanId,
@@ -1266,10 +1513,12 @@ var Server = (() => {
         disappearanceMode,
         prevScanTs,
         scannedSeverities: sevScope,
-        prevScanIdBySeverity: prevBySev
+        disappearanceWindow: window,
+        deferDisappearance,
+        detectDropouts
       }
     );
-    reconcileEpisodeCollisions(state, updated, existingLedger, deltas, scanId);
+    reconcileEpisodeCollisions(state, updated, existingLedger, deltas, scanId, absence);
     const scanRow = {
       scan_id: scanId,
       ts: scanTs,
@@ -1280,28 +1529,38 @@ var Server = (() => {
       new_count: deltas.new_count,
       resolved_count: deltas.resolved_count,
       reopened_count: deltas.reopened_count,
-      raw_ref: (_c = options.rawRef) != null ? _c : null,
-      obs_ref: (_d = options.obsRef) != null ? _d : null,
-      sealed: 0
+      raw_ref: (_f = options.rawRef) != null ? _f : null,
+      obs_ref: (_g = options.obsRef) != null ? _g : null,
+      sealed: 0,
+      reported_total: reportedTotal,
+      partial_pages: partialPages,
+      duplicates,
+      disappearance,
+      // Null where it was not measured: a legacy row never ran the pass, a deferred one ran no
+      // absence at all, and a SAST scan cannot run it. A complete scan with no drop-out records
+      // a measured 0.
+      dropout_count: detectDropouts ? absence.dropouts : null
     };
     state.scans.push(scanRow);
     state.ledger = { ...otherScopes, ...updated };
-    return { deltas, observations, scanRow, twinStats };
+    return { deltas, observations, scanRow, twinStats, absence };
   }
   function withDerived(row, nowMs, trackingStart) {
-    var _a, _b;
+    var _a, _b, _c;
     const first = parseTs(row.first_seen);
-    const resolved = parseTs(row.resolved_at);
+    const dropout = isRepoDropout(row);
+    const lostSight = dropout ? (_a = parseTs(row.last_seen)) != null ? _a : parseTs(row.resolved_at) : null;
+    const resolved = dropout ? null : parseTs(row.resolved_at);
     const open = row.status === "OPEN";
     const isSca = row.scope === "sca";
-    const fixAvailableAt = isSca ? (_b = (_a = row.fix_date) != null ? _a : row.fix_observed_at) != null ? _b : null : row.first_seen;
+    const fixAvailableAt = isSca ? (_c = (_b = row.fix_date) != null ? _b : row.fix_observed_at) != null ? _c : null : row.first_seen;
     const fixAvailMs = parseTs(fixAvailableAt);
     const actionableMs = fixAvailMs === null ? null : first === null ? fixAvailMs : Math.max(first, fixAvailMs);
     const actionableFrom = actionableMs === null ? null : toIso(actionableMs);
     return {
       ...row,
       mttr_days: first !== null && resolved !== null ? (resolved - first) / DAY_MS3 : null,
-      age_days: resolved === null && first !== null ? (nowMs - first) / DAY_MS3 : null,
+      age_days: !dropout && resolved === null && first !== null ? (nowMs - first) / DAY_MS3 : null,
       // MTTR delayed-entry package (BaseRowsOptions.trackingStartByScope's own comment): the
       // DETECTION clock's entry age, relative to `first_seen` — the same origin `mttr_days` /
       // `age_days` above measure from, so `entryDaysFrom`'s one formula applies unchanged.
@@ -1310,6 +1569,10 @@ var Server = (() => {
       actionable_from: actionableFrom,
       mttr_actionable_days: resolved !== null && actionableMs !== null ? (resolved - actionableMs) / DAY_MS3 : null,
       actionable_age_days: open && actionableMs !== null ? (nowMs - actionableMs) / DAY_MS3 : null,
+      censor_days: lostSight !== null && first !== null ? (lostSight - first) / DAY_MS3 : null,
+      // Null, not negative, for a drop-out whose fix only became available after it was last
+      // seen: it was never on the actionable clock while the register could see it.
+      censor_actionable_days: lostSight !== null && actionableMs !== null && actionableMs <= lostSight ? (lostSight - actionableMs) / DAY_MS3 : null,
       // `isSca &&` is the flag's DEFINITION, not a shortcut: "awaiting a vendor fix" names a
       // state only a dependency finding can be in. On sast/secrets it is false even for the
       // degenerate row whose first_seen is missing — that row cannot be measured (its actionable
@@ -1318,6 +1581,7 @@ var Server = (() => {
     };
   }
   function rowFromEpisode(e) {
+    var _a;
     return {
       finding_key: e.finding_key,
       scope: e.scope,
@@ -1330,7 +1594,10 @@ var Server = (() => {
       branch: null,
       platform: null,
       first_seen: e.first_seen,
-      last_seen: e.resolved_at,
+      // `resolved_at`, as every episode always read — except a repository drop-out's, whose last
+      // sighting is its censoring point (`withDerived`) and is read back when the episode carries
+      // one (an episode sealed before the column existed does not, and falls back too).
+      last_seen: (_a = isRepoDropout(e) ? e.last_seen : null) != null ? _a : e.resolved_at,
       status: "RESOLVED",
       resolved_at: e.resolved_at,
       resolution_src: e.resolution_src,
@@ -1570,6 +1837,7 @@ var Server = (() => {
     return m;
   }
   function tallyRow(m, row, rule) {
+    if (isRepoDropout(row)) return;
     const open = isOpen(row.status);
     switch (classifyRisk(row, rule)) {
       case "high":
@@ -1704,7 +1972,7 @@ var Server = (() => {
       if (options.highRiskOnly && classifyRisk(row, options.rule) !== "high") continue;
       const first = parseTs(row.first_seen);
       if (first === null) continue;
-      parsed.push({ first, resolved: parseTs(row.resolved_at) });
+      parsed.push({ first, resolved: parseTs(row.resolved_at), dropout: isRepoDropout(row) });
     }
     const scanMs = scans.filter((s2) => s2["shape"] !== "grouped").map((s2) => parseTs(s2["ts"])).filter((t) => t !== null);
     const firstScanMs = scanMs.length ? minNum(scanMs) : null;
@@ -1750,7 +2018,9 @@ var Server = (() => {
       for (const p of parsed) {
         if (p.first < start && (p.resolved === null || p.resolved >= start)) openAtStart += 1;
         if (p.first >= start && p.first < end) opened += 1;
-        if (p.resolved !== null && p.resolved >= start && p.resolved < end) closed += 1;
+        if (!p.dropout && p.resolved !== null && p.resolved >= start && p.resolved < end) {
+          closed += 1;
+        }
       }
       const netPct = openAtStart > 0 ? (closed - opened) / openAtStart * 100 : null;
       months.push({
@@ -1813,9 +2083,10 @@ var Server = (() => {
     const out = {};
     for (const r of rows) {
       const s2 = sev(r);
-      const stat = (_a = out[s2]) != null ? _a : out[s2] = { total: 0, open: 0, resolved: 0 };
+      const stat = (_a = out[s2]) != null ? _a : out[s2] = { total: 0, open: 0, resolved: 0, leftCoverage: 0 };
       stat.total += 1;
       if (isOpen2(r["status"])) stat.open += 1;
+      else if (isRepoDropout(r)) stat.leftCoverage += 1;
       else stat.resolved += 1;
     }
     return out;
@@ -2093,6 +2364,15 @@ var Server = (() => {
     const a = row.age_days;
     return typeof a === "number" && Number.isFinite(a) ? a : null;
   }
+  function leftCoverageAge(row) {
+    if (isOpen3(row.status)) return null;
+    const c = row.censor_days;
+    return typeof c === "number" && Number.isFinite(c) ? c : null;
+  }
+  function censoredAge(row) {
+    var _a;
+    return (_a = openAge2(row)) != null ? _a : leftCoverageAge(row);
+  }
   function kmCurve(events, times) {
     const ev = events.filter((x) => !Number.isNaN(x)).sort((a, b) => a - b);
     const ts = times.filter((x) => !Number.isNaN(x)).sort((a, b) => a - b);
@@ -2156,7 +2436,7 @@ var Server = (() => {
         events.push(m);
         continue;
       }
-      const c = openAge2(row);
+      const c = censoredAge(row);
       if (c !== null) censored.push(c);
     }
     const times = events.concat(censored);
@@ -2239,6 +2519,7 @@ var Server = (() => {
     const censored = [];
     let excludedPreEntry = 0;
     let noClock = 0;
+    let censoredLeftCoverage = 0;
     const lateEntryAges = [];
     for (const row of rows) {
       const entry = normalizedEntry(row);
@@ -2252,12 +2533,13 @@ var Server = (() => {
         }
         continue;
       }
-      const c = openAge2(row);
+      const c = censoredAge(row);
       if (c !== null) {
         if (c <= entry) {
           excludedPreEntry += 1;
         } else {
           censored.push({ t: c, entry });
+          if (openAge2(row) === null) censoredLeftCoverage += 1;
           if (entry > 0) lateEntryAges.push(entry);
         }
       } else {
@@ -2294,8 +2576,13 @@ var Server = (() => {
         noClock,
         eventsPastCut: 0,
         // no events at all -> nothing to have been cut past
+        // Nothing closed: survival never left 1, so "median > maxObserved" holds whenever there
+        // was anything to observe.
+        medianBoundReason: maxObserved === null ? null : "not-reached",
+        meanUnmeasuredReason: "no-events",
         lateEntrants,
-        lateEntryMedianAge
+        lateEntryMedianAge,
+        censoredLeftCoverage
       };
     }
     const fullCurve = kmCurveEntry(events, events.concat(censored));
@@ -2310,15 +2597,19 @@ var Server = (() => {
     const q25 = kmQuantileFromCurve(curve, 0.25);
     const q75 = kmQuantileFromCurve(curve, 0.75);
     const tau = (opts == null ? void 0 : opts.horizonDays) !== void 0 ? Math.min(opts.horizonDays, reliableUntil != null ? reliableUntil : maxObserved) : maxObserved;
+    const cutEmpty = !!(opts == null ? void 0 : opts.minRisk) && reliableUntil === null;
+    const uncutMedian = cutEmpty ? kmMedianFromCurve(fullCurve) : null;
     const { rmst, sAtTau } = rmstToTau(curve, tau);
-    const medianLowerBound = median_ !== null ? null : (opts == null ? void 0 : opts.minRisk) ? reliableUntil != null ? reliableUntil : maxObserved : maxObserved;
+    const medianBoundReason = median_ !== null ? null : cutEmpty ? uncutMedian === null ? "cut-empty-not-reached" : "cut-empty" : (opts == null ? void 0 : opts.minRisk) ? "past-cut" : "not-reached";
+    const medianLowerBound = medianBoundReason === "past-cut" ? reliableUntil : medianBoundReason === "not-reached" || medianBoundReason === "cut-empty-not-reached" ? maxObserved : null;
     return {
       curve,
       median: median_,
       medianLowerBound,
-      mean: rmst,
+      mean: cutEmpty ? null : rmst,
       restrictionTime: tau,
-      meanTruncated: sAtTau > 0,
+      meanTruncated: cutEmpty ? false : sAtTau > 0,
+      meanUnmeasuredReason: cutEmpty ? "cut-empty" : null,
       naiveMean,
       naiveMedian,
       events: events.length,
@@ -2332,8 +2623,10 @@ var Server = (() => {
       rowsIn,
       noClock,
       eventsPastCut,
+      medianBoundReason,
       lateEntrants,
-      lateEntryMedianAge
+      lateEntryMedianAge,
+      censoredLeftCoverage
     };
   }
   function filterScope(rows, scope) {
@@ -2420,6 +2713,8 @@ var Server = (() => {
         status: r.status,
         mttr_days: r.mttr_actionable_days,
         age_days: r.actionable_age_days,
+        // A drop-out is censored where it left coverage on this clock too.
+        censor_days: r.censor_actionable_days,
         entry_days: hasTrackingStart ? entryDaysFrom(opts.trackingStart, (_a = r.actionable_from) != null ? _a : null) : void 0
       };
     });
@@ -2452,6 +2747,7 @@ var Server = (() => {
     };
   }
   function latencyObservation(row, nowMs) {
+    var _a;
     const first = parseTs(row.first_seen);
     if (first === null) return null;
     const fixAvail = parseTs(row.fix_available_at);
@@ -2459,7 +2755,7 @@ var Server = (() => {
       const raw = fixAvail - first;
       return { t: Math.max(0, raw) / DAY_MS5, event: true, closedBeforeFix: false };
     }
-    const resolved = parseTs(row.resolved_at);
+    const resolved = isRepoDropout(row) ? (_a = parseTs(row.last_seen)) != null ? _a : parseTs(row.resolved_at) : parseTs(row.resolved_at);
     if (resolved !== null) {
       return { t: Math.max(0, resolved - first) / DAY_MS5, event: false, closedBeforeFix: true };
     }
@@ -2554,11 +2850,16 @@ var Server = (() => {
       resolvedAt: parseTs(r["resolved_at"]),
       mttr: mttrOf(r),
       sev: normalizeSeverity(r["severity"]),
-      fixAvail: parseTs(r["fix_available_at"])
+      fixAvail: parseTs(r["fix_available_at"]),
+      // A repository drop-out is open until the register lost sight of it and in NEITHER count
+      // after: closed, but not resolved work (config.ts's RESOLUTION_REPO_DROPOUT).
+      dropout: isRepoDropout(r)
     }));
     const out = [];
     for (const ts of times) {
-      const resolvedMask = parsed.map((r) => r.resolvedAt !== null && r.resolvedAt <= ts.ms);
+      const resolvedMask = parsed.map(
+        (r) => !r.dropout && r.resolvedAt !== null && r.resolvedAt <= ts.ms
+      );
       const openMask = parsed.map(
         (r) => r.first !== null && r.first <= ts.ms && (r.resolvedAt === null || r.resolvedAt > ts.ms) && !(hideNoFix && awaitingFixAsOf(r.first, r.resolvedAt, r.fixAvail, ts.ms))
       );
@@ -2594,6 +2895,18 @@ var Server = (() => {
     if (!opts.minRisk) return kmMedianFromCurve(curve);
     const cutAt = reliableUntilFromCurve(curve);
     return kmMedianFromCurve(cutAt === null ? [] : curve.filter((p) => p.t <= cutAt));
+  }
+  function resolvedObservation(first, lostSight, mttr, dropout, entry) {
+    if (dropout) {
+      if (first === null) return null;
+      const t = (lostSight - first) / DAY_MS6;
+      return t > entry ? { obs: { t, entry }, event: false } : null;
+    }
+    return mttr !== null && mttr > entry ? { obs: { t: mttr, entry }, event: true } : null;
+  }
+  function lostSightOf(r, resolvedAt) {
+    var _a;
+    return (_a = parseTs(r["last_seen"])) != null ? _a : resolvedAt;
   }
   function trendFromBase(scans, base, severities = null, opts = {}) {
     var _a;
@@ -2650,8 +2963,10 @@ var Server = (() => {
       return {
         first: parseTs(r["first_seen"]),
         resolvedAt: parseTs(r["resolved_at"]),
+        lostSight: isRepoDropout(r) ? lostSightOf(r, parseTs(r["resolved_at"])) : null,
         mttr: mttrOf(r),
         fixAvail: parseTs(r["fix_available_at"]),
+        dropout: isRepoDropout(r),
         // MTTR delayed-entry package: relative to the TRACKING START, never to `d` below —
         // TrendKmOptions's own note.
         entry: entryDaysFrom((_a2 = opts.trackingStartByScope) == null ? void 0 : _a2[r["scope"]], r["first_seen"])
@@ -2659,6 +2974,7 @@ var Server = (() => {
     });
     const skip = kmSkipMask(points, opts.maxReconstructed);
     return points.map((p, i) => {
+      var _a2;
       if (skip !== null && skip[i]) return { ...p, km_median_days: null };
       const d = parseTs(p.date);
       let med = null;
@@ -2667,9 +2983,10 @@ var Server = (() => {
         const risk = [];
         for (const r of parsed) {
           if (r.resolvedAt !== null && r.resolvedAt <= d) {
-            if (r.mttr !== null && r.mttr > r.entry) {
-              events.push({ t: r.mttr, entry: r.entry });
-              risk.push({ t: r.mttr, entry: r.entry });
+            const o = resolvedObservation(r.first, (_a2 = r.lostSight) != null ? _a2 : r.resolvedAt, r.mttr, r.dropout, r.entry);
+            if (o !== null) {
+              if (o.event) events.push(o.obs);
+              risk.push(o.obs);
             }
           } else if (r.first !== null && r.first <= d) {
             if (hideNoFix && awaitingFixAsOf(r.first, r.resolvedAt, r.fixAvail, d)) continue;
@@ -2683,7 +3000,7 @@ var Server = (() => {
     });
   }
   function kmMedianAsOf(base, severities, d, opts = {}) {
-    var _a, _b;
+    var _a, _b, _c;
     if (d === null || !base.length) return null;
     const hideNoFix = (_a = opts.hideNoFix) != null ? _a : false;
     const rows = scopeRows(base, severities, opts.scope);
@@ -2692,15 +3009,17 @@ var Server = (() => {
     for (const r of rows) {
       const entry = entryDaysFrom((_b = opts.trackingStartByScope) == null ? void 0 : _b[r["scope"]], r["first_seen"]);
       const resolvedAt = parseTs(r["resolved_at"]);
+      const first = parseTs(r["first_seen"]);
       if (resolvedAt !== null && resolvedAt <= d) {
-        const mttr = mttrOf(r);
-        if (mttr !== null && mttr > entry) {
-          events.push({ t: mttr, entry });
-          risk.push({ t: mttr, entry });
+        const dropout = isRepoDropout(r);
+        const lostSight = dropout ? (_c = lostSightOf(r, resolvedAt)) != null ? _c : resolvedAt : resolvedAt;
+        const o = resolvedObservation(first, lostSight, mttrOf(r), dropout, entry);
+        if (o !== null) {
+          if (o.event) events.push(o.obs);
+          risk.push(o.obs);
         }
         continue;
       }
-      const first = parseTs(r["first_seen"]);
       if (first !== null && first <= d) {
         if (hideNoFix && awaitingFixAsOf(first, resolvedAt, parseTs(r["fix_available_at"]), d)) {
           continue;
@@ -2735,6 +3054,7 @@ var Server = (() => {
   function slaDeadlineRows(base, severities, scope) {
     const out = [];
     for (const r of scopeRows(base, severities, scope)) {
+      if (isRepoDropout(r)) continue;
       const actionable = parseTs(r["actionable_from"]);
       const target = SLA_TARGETS[normalizeSeverity(r["severity"])];
       if (actionable === null || target === void 0) continue;
@@ -2793,6 +3113,7 @@ var Server = (() => {
     const parsed = classifiable.map((r) => ({
       first: parseTs(r["first_seen"]),
       resolvedAt: parseTs(r["resolved_at"]),
+      dropout: isRepoDropout(r),
       cls: classifyRisk(r, rule)
     }));
     const secretFirst = secrets.map((r) => parseTs(r["first_seen"]));
@@ -2808,6 +3129,7 @@ var Server = (() => {
         for (const r of parsed) {
           if (r.first === null || r.first > d) continue;
           const remediated = r.resolvedAt !== null && r.resolvedAt <= d;
+          if (remediated && r.dropout) continue;
           counted += 1;
           if (r.cls === "unknown") {
             unknown += 1;
@@ -2910,7 +3232,12 @@ var Server = (() => {
         scanId: row.scan_id,
         scannedSeverities: parseSeverities(row.severities),
         rawRef: row.raw_ref,
-        obsRef: row.obs_ref
+        obsRef: row.obs_ref,
+        // The completeness verdict the LIVE persist reached, re-applied — never re-assessed. The
+        // tenant's total and the partial-page count are not in the archived records, so a replay
+        // that re-ran the gate would have to guess them; reading the stored row is what makes a
+        // delete-and-replay land on the ledger the live sequence wrote.
+        stored: row
       });
       observationsByScan[row.scan_id] = observations;
     }
@@ -2930,7 +3257,7 @@ var Server = (() => {
     return episodes;
   }
   function toEpisodeRow(live, compactionId) {
-    var _a, _b, _c, _d, _e, _f, _g;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     return {
       finding_key: live.finding_key,
       scope: live.scope,
@@ -2950,7 +3277,8 @@ var Server = (() => {
       epss: (_d = live.epss) != null ? _d : null,
       cwe: (_e = live.cwe) != null ? _e : null,
       language: (_f = live.language) != null ? _f : null,
-      owner_project: (_g = live.owner_project) != null ? _g : null
+      owner_project: (_g = live.owner_project) != null ? _g : null,
+      last_seen: (_h = live.last_seen) != null ? _h : null
     };
   }
   function deleteScansCore(state, scanIds, readPayload, checkpoint, now) {
@@ -2977,13 +3305,21 @@ var Server = (() => {
       readPayload,
       (scanId) => `Cannot delete: the archived payload for surviving scan ${scanId} is missing, so the ledger can't be rebuilt.`
     );
+    const sealedScans = new Set(
+      survivors.filter((r) => r.sealed).map((r) => `${r.scope}|${r.scan_id}`)
+    );
     const rebuilt = {
       scans: survivors.filter((r) => r.sealed).map((r) => ({ ...r })),
       ledger: {},
-      episodes: state.episodes.map((e) => ({ ...e, superseded_by_scan: null }))
+      episodes: state.episodes.map((e) => ({
+        ...e,
+        superseded_by_scan: e.superseded_by_scan !== null && sealedScans.has(`${e.scope}|${e.superseded_by_scan}`) ? e.superseded_by_scan : null
+      }))
     };
     if (checkpoint !== null) {
-      const episodeKeys = new Set(state.episodes.map((e) => e.finding_key));
+      const episodeKeys = new Set(
+        rebuilt.episodes.filter((e) => e.superseded_by_scan === null).map((e) => e.finding_key)
+      );
       for (const row of (_a = checkpoint.ledger) != null ? _a : []) {
         if (!episodeKeys.has(row.finding_key)) rebuilt.ledger[row.finding_key] = { ...row };
       }
@@ -3019,7 +3355,10 @@ var Server = (() => {
         scope: r.scope,
         mode: r.mode,
         scanId: r.scan_id,
-        scannedSeverities: parseSeverities(r.severities)
+        scannedSeverities: parseSeverities(r.severities),
+        // Same rule as `replayScans`: the stored verdict, so the checkpoint is the ledger the
+        // live sequence actually reached at the floor.
+        stored: r
       });
     }
     return {
@@ -3038,7 +3377,10 @@ var Server = (() => {
         severity: row.severity,
         first_seen: row.first_seen,
         status: row.status,
-        resolved_at: row.resolved_at
+        resolved_at: row.resolved_at,
+        // `mttrFromLedger` leaves repository drop-outs out of the MTTR figures, so the gate has
+        // to hand it the provenance on both sides or a sealed drop-out would read as a fix.
+        resolution_src: row.resolution_src
       });
     }
     for (const e of state.episodes) {
@@ -3049,7 +3391,8 @@ var Server = (() => {
         severity: e.severity,
         first_seen: e.first_seen,
         status: "RESOLVED",
-        resolved_at: e.resolved_at
+        resolved_at: e.resolved_at,
+        resolution_src: e.resolution_src
       });
     }
     return out;
@@ -3066,6 +3409,7 @@ var Server = (() => {
           scope: r.scope,
           severity: r.severity,
           status: r.status,
+          resolution_src: r.resolution_src,
           has_kev: r.has_kev,
           has_exploit: r.has_exploit,
           epss: r.epss,
@@ -3084,6 +3428,7 @@ var Server = (() => {
         severity: r.severity,
         first_seen: r.first_seen,
         resolved_at: r.resolved_at,
+        resolution_src: r.resolution_src,
         mttr_days: r.mttr_days,
         fix_available_at: r.fix_available_at
       }))
@@ -3420,6 +3765,7 @@ var Server = (() => {
     for (const row of rows) {
       const projects = parseProjects(row.projects_json);
       const groups = projects.filter((p) => isSupportGroup(p.name)).map((p) => p.name);
+      const counted = /* @__PURE__ */ new Set();
       for (const p of projects) {
         if (groups.length && isProduct(p.name)) {
           let parents = parentsOf.get(p.slug);
@@ -3439,9 +3785,13 @@ var Server = (() => {
             supportGroup: null,
             supportGroupCount: 0
           });
+          counted.add(p.slug);
           continue;
         }
-        seen.findings += 1;
+        if (!counted.has(p.slug)) {
+          seen.findings += 1;
+          counted.add(p.slug);
+        }
         if (seen.isFolder === void 0 && p.isFolder !== void 0) seen.isFolder = p.isFolder;
       }
     }
@@ -3640,6 +3990,11 @@ var Server = (() => {
     // `settings.js`'s domainMapCard exists to prevent, so the card compares the two and says so.
     // Not a column on the tab: this is one fact about the whole map, not a fact per token.
     repoTagMapKeys: "REPO_TAG_MAP_KEYS",
+    // The generation of the persisted repository-tag map — the cross-execution cache key
+    // `repoTags.getRepoTagMap` reads it under. Written by repoTags.setRepoTagMap, the tab's only
+    // writer, and by nothing else, so a sync (which bumps DATA_VERSION but never touches the tab)
+    // no longer throws the cached map away.
+    repoTagMapGen: "REPO_TAG_MAP_GEN",
     ledgerSpreadsheetId: "LEDGER_SPREADSHEET_ID",
     archiveFolderId: "ARCHIVE_FOLDER_ID",
     // Who may open the web app, on top of the deployment's own "anyone within <domain>" fence.
@@ -3665,8 +4020,14 @@ var Server = (() => {
     urlHub: "URL_HUB",
     // The warm schedule setup() last installed, as a signature string. A ClockTrigger exposes
     // its handler and nothing else, so this is the ONLY way to tell a correctly-scheduled set
-    // from one an older deployment left behind. Written by setup(), read by setup().
+    // from one an older deployment left behind. Written by setup(), read by setup() and by
+    // deploymentDiagnostic().
     warmTriggerSchedule: "WARM_TRIGGER_SCHEDULE",
+    // The daily sync trigger's counterpart: `${tz}|${hour}` as setup.dailySyncSchedule() builds
+    // it, for the hour `Settings.syncSchedule` asked for. Written by setup.reconcileDailySyncTrigger
+    // (from setup() and from a Settings save that moves the hour), read by it and by
+    // deploymentDiagnostic(), which flags a recorded hour that is not the saved one.
+    dailySyncSchedule: "DAILY_SYNC_SCHEDULE",
     /**
      * When a real token exchange plus a real query last succeeded.
      *
@@ -3709,6 +4070,75 @@ var Server = (() => {
       getProp(PROP_KEYS.wizClientId),
       getProp(PROP_KEYS.wizClientSecret)
     ) !== null;
+  }
+
+  // src/server/errorLog.ts
+  var KEY = "RECENT_ERRORS";
+  var MAX_ENTRIES = 25;
+  var MAX_MESSAGE_LEN = 500;
+  var MAX_BLOB_BYTES = 8500;
+  var alreadyRecorded = /* @__PURE__ */ new WeakSet();
+  function utf8ByteLength(s2) {
+    let n2 = 0;
+    for (let i = 0; i < s2.length; i++) {
+      const c = s2.charCodeAt(i);
+      if (c < 128) n2 += 1;
+      else if (c < 2048) n2 += 2;
+      else if (c >= 55296 && c <= 56319 && (s2.charCodeAt(i + 1) & 64512) === 56320) {
+        n2 += 4;
+        i++;
+      } else n2 += 3;
+    }
+    return n2;
+  }
+  function truncate(s2) {
+    return s2.length > MAX_MESSAGE_LEN ? s2.slice(0, MAX_MESSAGE_LEN) + "\u2026" : s2;
+  }
+  function recentErrors() {
+    const raw = getProp(KEY);
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter((e) => Boolean(e) && typeof e === "object" && !Array.isArray(e)).map((e) => {
+        var _a, _b, _c, _d;
+        return {
+          ts: String((_a = e["ts"]) != null ? _a : ""),
+          op: String((_b = e["op"]) != null ? _b : "api"),
+          kind: String((_c = e["kind"]) != null ? _c : "error"),
+          message: String((_d = e["message"]) != null ? _d : "")
+        };
+      });
+    } catch {
+      return [];
+    }
+  }
+  function markRecorded(err) {
+    try {
+      if (err !== null && typeof err === "object") alreadyRecorded.add(err);
+    } catch {
+    }
+  }
+  function recordError(op, err, kind = "error", now) {
+    try {
+      if (err !== null && typeof err === "object") {
+        if (alreadyRecorded.has(err)) return;
+        alreadyRecorded.add(err);
+      }
+      const message = err instanceof Error ? err.message : typeof err === "string" ? err : String(err);
+      const entry = { ts: nowIso(now), op, kind, message: truncate(message) };
+      const next = [entry, ...recentErrors()].slice(0, MAX_ENTRIES);
+      let blob = JSON.stringify(next);
+      while (next.length > 1 && utf8ByteLength(blob) > MAX_BLOB_BYTES) {
+        next.pop();
+        blob = JSON.stringify(next);
+      }
+      setProp(KEY, blob);
+    } catch {
+    }
+  }
+  function clearErrors() {
+    deleteProp(KEY);
   }
 
   // src/server/serverCache.ts
@@ -4053,7 +4483,11 @@ var Server = (() => {
       "epss",
       "cwe",
       "language",
-      "owner_project"
+      "owner_project",
+      // Appended last so `ensureHeaders` adds it without moving a column: a sealed repository
+      // drop-out is censored where it was last SEEN (ledgerCore.withDerived), not where the
+      // register noticed it gone.
+      "last_seen"
     ],
     [TABS.scans]: [
       // `raw_ref` addresses the scan's archived pages; `obs_ref` addresses its OBSERVATION SET
@@ -4073,7 +4507,17 @@ var Server = (() => {
       "reopened_count",
       "raw_ref",
       "obs_ref",
-      "sealed"
+      "sealed",
+      // THE COMPLETENESS RECORD (domain/scanCompleteness.ts), appended last so `ensureHeaders`
+      // adds them to an existing tab without moving a column. `disappearance` is the verdict a
+      // replay reads back — "complete", "deferred:<reason>", or blank on a row written before
+      // the gate, which replays under the old rules. `dropout_count` is the rows closed as
+      // repository drop-outs, which `resolved_count` deliberately does not include.
+      "reported_total",
+      "partial_pages",
+      "duplicates",
+      "disappearance",
+      "dropout_count"
     ],
     [TABS.repos]: [
       "repo_id",
@@ -4290,25 +4734,33 @@ var Server = (() => {
     sh.deleteRows(keep + 1, surplus);
     return surplus;
   }
+  var UPDATE_TAIL_ROWS = 50;
   function updateWhere(tab, keyColumn, keyValue, patch) {
     const sh = sheet(tab);
     if (sh.getLastRow() < 2) return false;
     const headers = ensureHeaders(sh, tab);
     const lastRow = sh.getLastRow();
     const lastCol = headers.length;
-    const values = readGrid(sh, tab, lastRow, lastCol);
     const keyIdx = headers.indexOf(keyColumn);
     if (keyIdx < 0) return false;
-    for (let i = 1; i < values.length; i++) {
-      if (fromCell(values[i][keyIdx]) === keyValue) {
-        const rowVals = values[i].slice();
-        for (const [k, v] of Object.entries(patch)) {
-          const idx = headers.indexOf(k);
-          if (idx >= 0) rowVals[idx] = toCell(v);
-        }
-        sh.getRange(i + 1, 1, 1, lastCol).setValues([rowVals]);
-        return true;
+    const write2 = (sheetRow, values) => {
+      const rowVals = values.slice();
+      for (const [k, v] of Object.entries(patch)) {
+        const idx = headers.indexOf(k);
+        if (idx >= 0) rowVals[idx] = toCell(v);
       }
+      sh.getRange(sheetRow, 1, 1, lastCol).setValues([rowVals]);
+      return true;
+    };
+    const tailFirst = Math.max(2, lastRow - UPDATE_TAIL_ROWS + 1);
+    const tail = sh.getRange(tailFirst, 1, lastRow - tailFirst + 1, lastCol).getValues();
+    for (let i = tail.length - 1; i >= 0; i--) {
+      if (fromCell(tail[i][keyIdx]) === keyValue) return write2(tailFirst + i, tail[i]);
+    }
+    if (tailFirst <= 2) return false;
+    const head = readGrid(sh, tab, tailFirst - 1, lastCol);
+    for (let i = head.length - 1; i >= 1; i--) {
+      if (fromCell(head[i][keyIdx]) === keyValue) return write2(i + 1, head[i]);
     }
     return false;
   }
@@ -4328,6 +4780,7 @@ var Server = (() => {
   $filterBy: SASTFindingFilters
   $first: Int
   $after: String
+  $includeTotalCount: Boolean = false
 ) {
   sastFindings(filterBy: $filterBy, first: $first, after: $after) {
     nodes {
@@ -4350,7 +4803,7 @@ var Server = (() => {
       vcsDetails { commitHash }
       aiAnalysis { verdict }
     }
-    totalCount
+    totalCount @include(if: $includeTotalCount)
     pageInfo { hasNextPage endCursor }
   }
 }`;
@@ -4358,6 +4811,7 @@ var Server = (() => {
   $filterBy: VulnerabilityFindingFilters
   $first: Int
   $after: String
+  $includeTotalCount: Boolean = false
 ) {
   vulnerabilityFindings(filterBy: $filterBy, first: $first, after: $after) {
     nodes {
@@ -4394,7 +4848,7 @@ var Server = (() => {
       artifactType { codeLibraryLanguage }
       projects { id name isFolder slug }
     }
-    totalCount
+    totalCount @include(if: $includeTotalCount)
     pageInfo { hasNextPage endCursor }
   }
 }`;
@@ -4402,6 +4856,7 @@ var Server = (() => {
   $filterBy: SecretInstanceFilters
   $first: Int
   $after: String
+  $includeTotalCount: Boolean = false
 ) {
   secretInstances(filterBy: $filterBy, first: $first, after: $after) {
     nodes {
@@ -4426,7 +4881,7 @@ var Server = (() => {
       resource { id name type externalId nativeType cloudPlatform }
       projects { id name isFolder slug }
     }
-    totalCount
+    totalCount @include(if: $includeTotalCount)
     pageInfo { hasNextPage endCursor }
   }
 }`;
@@ -4442,10 +4897,11 @@ var Server = (() => {
     LOW: "LOW",
     INFO: "INFORMATIONAL"
   };
+  var SCA_FETCH_HAS_FIX = true;
   var BASE = {
     sca: {
       status: ["OPEN", "RESOLVED"],
-      hasFix: true,
+      hasFix: SCA_FETCH_HAS_FIX,
       codeToCloudPipelineStage: ["CODE"],
       isDefaultBranch: { equals: true }
     },
@@ -4469,8 +4925,11 @@ var Server = (() => {
   var BASE_FILTER_WORDS = {
     // hasFix: true                     — and note what this one costs: a WITHDRAWN fix drops a
     //                                    finding out of the population and reads as a
-    //                                    remediation (sync.ts records the gap). A reader owed
-    //                                    the count is owed the reason it can move.
+    //                                    remediation (reconcile closes it as "disappeared";
+    //                                    nothing tells it apart from a fix). A reader owed the
+    //                                    count is owed the reason it can move. It also leaves
+    //                                    the awaiting-a-vendor count and the vendor wait with
+    //                                    nothing to measure — see SCA_FETCH_HAS_FIX.
     // codeToCloudPipelineStage: [CODE] — keeps the OS sidekick's container images out.
     // isDefaultBranch: {equals: true}  — a branch nobody merged is not remediation debt.
     sca: [
@@ -4495,7 +4954,7 @@ var Server = (() => {
     }
     return out;
   }
-  var SAST_FETCH_RESOLVED = false;
+  var SAST_FETCH_RESOLVED = FETCH_RETURNS_RESOLVED.sast;
   var OBJECT_FILTERS = {
     // VulnerabilityFindingFilters takes every LIST bare — severity, status,
     // codeToCloudPipelineStage — and wraps only the project restriction.
@@ -4555,7 +5014,8 @@ var Server = (() => {
     return {
       filterBy: buildFilter(scope, opts),
       first: (_a = opts.first) != null ? _a : PAGE_SIZE,
-      after: (_b = opts.after) != null ? _b : null
+      after: (_b = opts.after) != null ? _b : null,
+      includeTotalCount: opts.includeTotalCount === true
     };
   }
 
@@ -4770,7 +5230,7 @@ var Server = (() => {
   }
   function testConnection(scope = "sast") {
     forgetToken();
-    const page = fetchPage(scope, {}, { pageSize: 1, pageNumber: 0 });
+    const page = fetchPage(scope, { includeTotalCount: true }, { pageSize: 1, pageNumber: 0 });
     return { ok: true, rows: page.totalCount };
   }
 
@@ -4860,7 +5320,8 @@ var Server = (() => {
   function getRepoTagMap() {
     var _a, _b, _c;
     if (mapMemo !== void 0) return mapMemo;
-    const hit = readMapCache();
+    const key = safeMapCacheKey();
+    const hit = readMapCache(key);
     if (hit) {
       mapMemo = hit;
       return hit;
@@ -4875,32 +5336,45 @@ var Server = (() => {
         if (!token || !domain && !lifecycle) continue;
         map[token] = { domain: domain || null, lifecycle: lifecycle || null };
       }
-      writeMapCache(map);
+      writeMapCache(key, map);
     } catch (e) {
       console.warn(`Repository tag map unreadable \u2014 no tags attached this execution: ${String(e)}`);
+      recordError("repoTagMap", e);
     }
     mapMemo = map;
     return map;
   }
   var MAP_CACHE_TTL_SEC = 21600;
+  var MAP_CACHE_NAME = "dsRepoTagMap2";
   function mapCacheKey() {
-    return "dsRepoTagMap1:" + dataVersion();
+    var _a;
+    return `${MAP_CACHE_NAME}:${(_a = getProp(PROP_KEYS.repoTagMapGen)) != null ? _a : "0"}`;
   }
-  function readMapCache() {
+  function safeMapCacheKey() {
+    try {
+      return mapCacheKey();
+    } catch (e) {
+      console.warn(`Repository tag map cache key unreadable: ${String(e)}`);
+      return null;
+    }
+  }
+  function readMapCache(key) {
+    if (key === null) return void 0;
     const t0 = Date.now();
     try {
-      const got = cacheGetJson(mapCacheKey());
+      const got = cacheGetJson(key);
       const hit = !!got && typeof got === "object" && !Array.isArray(got);
-      console.log(JSON.stringify({ stage: "cache", name: "dsRepoTagMap1", hit, getMs: Date.now() - t0 }));
+      console.log(JSON.stringify({ stage: "cache", name: MAP_CACHE_NAME, hit, getMs: Date.now() - t0 }));
       return hit ? got : void 0;
     } catch (e) {
       console.warn(`Repository tag map cache read failed: ${String(e)}`);
       return void 0;
     }
   }
-  function writeMapCache(map) {
+  function writeMapCache(key, map) {
+    if (key === null) return;
     try {
-      cachePutJson(mapCacheKey(), map, MAP_CACHE_TTL_SEC);
+      cachePutJson(key, map, MAP_CACHE_TTL_SEC);
     } catch (e) {
       console.warn(`Repository tag map cache write failed: ${String(e)}`);
     }
@@ -4919,7 +5393,8 @@ var Server = (() => {
     setProp(PROP_KEYS.repoTagMapKeys, JSON.stringify(configuredTagKeys()));
     mapMemo = { ...map };
     bumpDataVersion();
-    writeMapCache(mapMemo);
+    setProp(PROP_KEYS.repoTagMapGen, dataVersion());
+    writeMapCache(safeMapCacheKey(), mapMemo);
   }
   function builtUnderKeys() {
     const raw = getProp(PROP_KEYS.repoTagMapKeys);
@@ -5161,11 +5636,15 @@ var Server = (() => {
     const km = ((_b = m["remediation"]) != null ? _b : {})["km"];
     return {
       rowCount: m["rowCount"],
+      // The third state beside open/resolved: rowCount is their sum with it (repository
+      // drop-outs, which the hero's ring must not read as fixed or as still open).
+      leftCoverage: m["leftCoverage"],
       overall: { resolved: overall["resolved"], open: overall["open"] },
       remediation: km ? {
         km: {
           median: km["median"],
           medianLowerBound: km["medianLowerBound"],
+          medianBoundReason: km["medianBoundReason"],
           q25: km["q25"],
           reliableUntil: km["reliableUntil"],
           events: km["events"],
@@ -5188,6 +5667,7 @@ var Server = (() => {
           kmMedian: r["kmMedian"],
           kmQ25: r["kmQ25"],
           kmMedianLowerBound: r["kmMedianLowerBound"],
+          kmMedianBoundReason: r["kmMedianBoundReason"],
           open: r["open"]
         };
       })
@@ -5215,10 +5695,8 @@ var Server = (() => {
   var HISTORY_TREND_KEYS = ["date", "reconstructed", "open", "resolved", "km_median_days"];
   var PROGRAM_TREND_KEYS = ["date", "reconstructed", "coverage_pct", "efficiency_pct"];
   function mttrPageTrendSlice(trends) {
-    var _a;
     if (!trends || typeof trends !== "object") return null;
-    const t = trends;
-    return { history: (_a = t["history"]) != null ? _a : [], trend: pickRows(t["trend"], MTTR_TREND_KEYS) };
+    return { trend: pickRows(trends["trend"], MTTR_TREND_KEYS) };
   }
   function historyTrendSlice(trends) {
     if (!trends || typeof trends !== "object") return null;
@@ -5238,7 +5716,13 @@ var Server = (() => {
     "resolved_count",
     "reopened_count",
     "severities",
-    "sealed"
+    "sealed",
+    // The completeness verdict and the drop-outs it closed — what the table marks a deferred
+    // scan by, and the count `resolved_count` deliberately leaves out (domain/scanCompleteness.ts).
+    // The other three record columns (reported_total, partial_pages, duplicates) are operator
+    // diagnostics that reach the Data page's error log instead.
+    "disappearance",
+    "dropout_count"
   ];
   function scanRowsSlice(scans) {
     return pickRows(scans, SCAN_ROW_KEYS);
@@ -5476,7 +5960,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "765e81948eaa" : "dev";
+  var BUILD_ID = true ? "4e0a138caa53" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
@@ -5510,12 +5994,22 @@ var Server = (() => {
   var settingsMemo;
   var SETTINGS_CACHE_TTL_SEC = 21600;
   var SETTINGS_CACHE_MAX_CHARS = 9e4;
-  function settingsCacheKey() {
-    return "dsSettings1:" + dataVersion();
+  var SETTINGS_GEN_PROP = "SETTINGS_GEN";
+  function settingsGen() {
+    var _a;
+    return (_a = getProp(SETTINGS_GEN_PROP)) != null ? _a : "0";
   }
-  function readSettingsCache() {
+  function bumpSettingsGen() {
+    const now = String(Date.now());
+    const [prevMs, prevN] = settingsGen().split(".");
+    setProp(SETTINGS_GEN_PROP, prevMs === now ? `${now}.${(Number(prevN) || 0) + 1}` : `${now}.0`);
+  }
+  function settingsCacheKey() {
+    return "dsSettings2:" + dataVersion() + ":" + settingsGen();
+  }
+  function readSettingsCache(key) {
     try {
-      const raw = CacheService.getScriptCache().get(settingsCacheKey());
+      const raw = CacheService.getScriptCache().get(key);
       const parsed = raw ? JSON.parse(raw) : void 0;
       return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : void 0;
     } catch (e) {
@@ -5523,11 +6017,11 @@ var Server = (() => {
       return void 0;
     }
   }
-  function writeSettingsCache(raw) {
+  function writeSettingsCache(key, raw) {
     try {
       const json = JSON.stringify(raw);
       if (json.length > SETTINGS_CACHE_MAX_CHARS) return;
-      CacheService.getScriptCache().put(settingsCacheKey(), json, SETTINGS_CACHE_TTL_SEC);
+      CacheService.getScriptCache().put(key, json, SETTINGS_CACHE_TTL_SEC);
     } catch (e) {
       console.warn(`Settings cache write failed: ${e}`);
     }
@@ -5535,35 +6029,52 @@ var Server = (() => {
   function loadSettings() {
     var _a, _b;
     if (settingsMemo) return settingsMemo;
-    const cachedRaw = readSettingsCache();
+    const key = settingsCacheKey();
+    const cachedRaw = readSettingsCache(key);
     if (cachedRaw) {
       settingsMemo = cleanSettings(cachedRaw);
       return settingsMemo;
     }
     const raw = {};
     for (const row of readAll(TABS.settings)) {
-      const key = String((_a = row.key) != null ? _a : "");
-      if (!key) continue;
+      const key2 = String((_a = row.key) != null ? _a : "");
+      if (!key2) continue;
       try {
-        raw[key] = JSON.parse(String((_b = row.value_json) != null ? _b : "null"));
+        raw[key2] = JSON.parse(String((_b = row.value_json) != null ? _b : "null"));
       } catch {
-        raw[key] = null;
+        raw[key2] = null;
       }
     }
     settingsMemo = cleanSettings(raw);
-    writeSettingsCache(raw);
+    writeSettingsCache(key, raw);
     return settingsMemo;
   }
-  function saveSettings(next) {
+  var VIEW_KEYS = /* @__PURE__ */ new Set(["projectView", "domainView"]);
+  function canonical(v) {
+    var _a;
+    if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+    if (v && typeof v === "object") {
+      const r = v;
+      return `{${Object.keys(r).sort().map((k) => `${JSON.stringify(k)}:${canonical(r[k])}`).join(",")}}`;
+    }
+    return (_a = JSON.stringify(v)) != null ? _a : "null";
+  }
+  function sameOutsideView(a, b) {
+    const strip = (s2) => Object.fromEntries(Object.entries(s2).filter(([k]) => !VIEW_KEYS.has(k)));
+    return canonical(strip(a)) === canonical(strip(b));
+  }
+  function saveSettings(next, opts = {}) {
     const cleaned = cleanSettings(next);
+    const viewOnly = opts.viewOnly === true && sameOutsideView(loadSettings(), cleaned);
     const rows = Object.entries(cleaned).map(([key, value]) => ({
       key,
       value_json: JSON.stringify(value)
     }));
     overwrite(TABS.settings, rows);
     settingsMemo = cleaned;
-    bumpDataVersion();
-    writeSettingsCache(JSON.parse(JSON.stringify(cleaned)));
+    bumpSettingsGen();
+    if (!viewOnly) bumpDataVersion();
+    writeSettingsCache(settingsCacheKey(), JSON.parse(JSON.stringify(cleaned)));
     return cleaned;
   }
   function getSupportGroupDomains2() {
@@ -6042,7 +6553,15 @@ var Server = (() => {
       reopened_count: Number((_g = r["reopened_count"]) != null ? _g : 0),
       raw_ref: s(r, "raw_ref"),
       obs_ref: s(r, "obs_ref"),
-      sealed: r["sealed"] === 1 || r["sealed"] === "1" || r["sealed"] === true ? 1 : 0
+      sealed: r["sealed"] === 1 || r["sealed"] === "1" || r["sealed"] === true ? 1 : 0,
+      // The completeness record. Blank cells stay null — on a row written before these columns
+      // existed that is the LEGACY marker the replay reads (`scanCompleteness.readDisappearance`),
+      // so it must not be coerced to 0 or to "complete" on the way in.
+      reported_total: n(r, "reported_total"),
+      partial_pages: n(r, "partial_pages"),
+      duplicates: n(r, "duplicates"),
+      disappearance: s(r, "disappearance"),
+      dropout_count: n(r, "dropout_count")
     };
   }
   function rowToLedger(r) {
@@ -6118,7 +6637,8 @@ var Server = (() => {
       epss: risk.epss,
       cwe: s(r, "cwe"),
       language: s(r, "language"),
-      owner_project: ownerOf(r)
+      owner_project: ownerOf(r),
+      last_seen: s(r, "last_seen")
     };
   }
   var scanRowsMemo;
@@ -6232,7 +6752,7 @@ var Server = (() => {
     return tb > ta ? b : a;
   }
   function persistSync(jobId, syncId, perScope) {
-    var _a, _b;
+    var _a, _b, _c, _d, _e, _f, _g;
     const state = loadState();
     const outcomes = [];
     const todo = [];
@@ -6245,7 +6765,8 @@ var Server = (() => {
           deltas: stored,
           total: 0,
           twins: null,
-          written: false
+          written: false,
+          completeness: null
         });
         continue;
       }
@@ -6265,7 +6786,8 @@ var Server = (() => {
         // The syncId, which is also the scan's `ts`. See scanIdFor.
         scanId: syncId,
         scannedSeverities: (_a = entry.scannedSeverities) != null ? _a : null,
-        rawRef: (_b = entry.rawRef) != null ? _b : null
+        rawRef: (_b = entry.rawRef) != null ? _b : null,
+        completeness: (_c = entry.completeness) != null ? _c : null
       });
       outcomes.push({
         scope: entry.scope,
@@ -6273,7 +6795,17 @@ var Server = (() => {
         deltas: out.deltas,
         total: entry.records.length,
         twins: out.twinStats,
-        written: out.scanRow !== null
+        written: out.scanRow !== null,
+        completeness: out.scanRow ? {
+          disappearance: (_d = out.scanRow.disappearance) != null ? _d : null,
+          reported_total: (_e = out.scanRow.reported_total) != null ? _e : null,
+          partial_pages: (_f = out.scanRow.partial_pages) != null ? _f : null,
+          duplicates: (_g = out.scanRow.duplicates) != null ? _g : null,
+          absent: out.absence.absent,
+          dropouts: out.absence.dropouts,
+          dropout_repos: out.absence.dropoutRepos,
+          resumed: out.absence.resumed
+        } : null
       });
       if (out.scanRow) {
         newRows.push(out.scanRow);
@@ -6335,6 +6867,9 @@ var Server = (() => {
       severity: r.severity,
       first_seen: r.first_seen,
       resolved_at: r.resolved_at,
+      // Read by `trend.ts` to keep a repository drop-out out of the resolved count and the SLA
+      // cohort: its resolved_at is lost sight, not a fix.
+      resolution_src: r.resolution_src,
       mttr_days: r.mttr_days,
       actionable_from: r.actionable_from,
       fix_available_at: r.fix_available_at
@@ -6367,6 +6902,7 @@ var Server = (() => {
       status: r.status,
       first_seen: r.first_seen,
       resolved_at: r.resolved_at,
+      resolution_src: r.resolution_src,
       mttr_days: r.mttr_days,
       has_kev: r.has_kev,
       has_exploit: r.has_exploit,
@@ -6558,9 +7094,9 @@ var Server = (() => {
   var MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
   var warming = false;
   var touched = null;
-  function duringWarm(fn) {
+  function duringWarm(fn, carried) {
     warming = true;
-    touched = /* @__PURE__ */ new Set();
+    touched = new Set(carried != null ? carried : []);
     try {
       return fn();
     } finally {
@@ -6568,9 +7104,15 @@ var Server = (() => {
       touched = null;
     }
   }
+  function warmTouched() {
+    return touched ? [...touched] : null;
+  }
   var disabled = false;
   function readModelFileName(name, params) {
     return `rm-${name}-${paramsHash(params)}.json.gz`;
+  }
+  function errText(e) {
+    return e instanceof Error ? e.message : String(e);
   }
   function l2Read(name, params, version) {
     if (disabled) return { hit: false, why: "absent" };
@@ -6586,6 +7128,7 @@ var Server = (() => {
     } catch (e) {
       disabled = true;
       console.warn(`Durable read-model read failed (${name}) \u2014 L2 disabled for this run: ${e}`);
+      recordError("readModelL2", `Read failed (${name}), L2 disabled for this run: ${errText(e)}`);
       return { hit: false, why: "absent" };
     }
   }
@@ -6604,6 +7147,7 @@ var Server = (() => {
     } catch (e) {
       disabled = true;
       console.warn(`Durable read-model write failed (${name}) \u2014 L2 disabled for this run: ${e}`);
+      recordError("readModelL2", `Write failed (${name}), L2 disabled for this run: ${errText(e)}`);
     }
   }
   function durablyCached(name, params, compute, ttlSec, version) {
@@ -6854,7 +7398,7 @@ var Server = (() => {
   }
 
   // src/server/bootCore.ts
-  var BOOT_CORE = "dsBootCore2";
+  var BOOT_CORE = "dsBootCore3";
   var BOOT_CORE_PARAMS = {};
   function bootCoreModel() {
     return durablyCached(BOOT_CORE, BOOT_CORE_PARAMS, buildBootCore);
@@ -6864,22 +7408,22 @@ var Server = (() => {
     return core && typeof core === "object" && !Array.isArray(core) ? core : null;
   }
   function buildBootCore() {
-    var _a, _b, _c, _d, _e, _f;
+    var _a, _b;
     const laps = stageLaps("bootCore");
-    const scans = readAll(TABS.scans);
+    const scans = loadScanRows();
     let newestTs = "";
     let newestSyncId = "";
     const lastScanByScope = {};
     for (const scope of SCOPES) lastScanByScope[scope] = null;
     for (const row of scans) {
-      const ts = String((_a = row.ts) != null ? _a : "");
+      const ts = row.ts;
       if (!ts || ts <= newestTs) continue;
       newestTs = ts;
-      newestSyncId = String((_b = row.scan_id) != null ? _b : "");
+      newestSyncId = row.scan_id;
     }
     for (const row of scans) {
-      const ts = String((_c = row.ts) != null ? _c : "");
-      const scope = String((_d = row.scope) != null ? _d : "");
+      const ts = row.ts;
+      const scope = String(row.scope);
       if (!ts || !(scope in lastScanByScope)) continue;
       if (lastScanByScope[scope] === null || ts > lastScanByScope[scope]) {
         lastScanByScope[scope] = ts;
@@ -6887,20 +7431,9 @@ var Server = (() => {
     }
     let latestSync = null;
     if (newestSyncId) {
-      const members = scans.filter((r) => {
-        var _a2;
-        return String((_a2 = r.scan_id) != null ? _a2 : "") === newestSyncId;
-      });
+      const members = scans.filter((r) => r.scan_id === newestSyncId);
       const order = new Map(SCOPES.map((sc, i) => [String(sc), i]));
-      const rows = members.map((r) => {
-        var _a2, _b2, _c2;
-        return {
-          scope: String((_a2 = r.scope) != null ? _a2 : ""),
-          total: Number((_b2 = r.total) != null ? _b2 : 0),
-          severities: r.severities == null ? null : String(r.severities),
-          ts: String((_c2 = r.ts) != null ? _c2 : "")
-        };
-      }).sort((a, b) => {
+      const rows = members.map((r) => ({ scope: String(r.scope), total: r.total, severities: r.severities, ts: r.ts })).sort((a, b) => {
         var _a2, _b2;
         return ((_a2 = order.get(a.scope)) != null ? _a2 : 99) - ((_b2 = order.get(b.scope)) != null ? _b2 : 99);
       });
@@ -6926,9 +7459,6 @@ var Server = (() => {
     attachRepoTags(allRows, { domain: false });
     attachCurrentDomains(allRows);
     laps.lap("repoTags");
-    const projectView = settings.projectView || null;
-    const domainView = settings.domainView || null;
-    const shown = projectView ? allRows.filter((r) => inProject(parseProjects(r.projects_json), projectView)).length : domainView ? allRows.filter((r) => inDomain(r, domainView)).length : allRows.length;
     const core = {
       product: "Wiz Sidekick DevSecOps",
       scopes: SCOPES,
@@ -6938,17 +7468,13 @@ var Server = (() => {
       effectiveSlaTargets: effectiveSlaTargets(settings),
       latestSync,
       lastScanByScope,
-      settings,
       scope: {
-        projectView: settings.projectView,
-        domainView: settings.domainView,
-        shown,
         register: allRows.length,
         unattributed: unattributedCount(allRows),
         noDomain: noDomainCount(allRows),
         // The FETCH scope, reported only — see `settingsLogic.ts`'s "TWO PROJECT SCOPES, TWO
         // HOMES". `projectScope()` is `[id] | null`; only the first element is ever set today.
-        syncProjectId: (_f = (_e = projectScope()) == null ? void 0 : _e[0]) != null ? _f : null
+        syncProjectId: (_b = (_a = projectScope()) == null ? void 0 : _a[0]) != null ? _b : null
       },
       filterOptions: {
         projectList: projectCatalogue(allRows),
@@ -6965,6 +7491,16 @@ var Server = (() => {
     laps.lap("catalogues");
     laps.log();
     return core;
+  }
+  function viewShown(core, projectView, domainView) {
+    var _a, _b, _c, _d;
+    if (projectView) {
+      return (_b = (_a = core.filterOptions.projectList.find((p) => p.slug === projectView)) == null ? void 0 : _a.findings) != null ? _b : 0;
+    }
+    if (domainView) {
+      return (_d = (_c = core.filterOptions.domainList.find((d) => d.name === domainView)) == null ? void 0 : _c.findings) != null ? _d : 0;
+    }
+    return core.scope.register;
   }
 
   // src/server/access.ts
@@ -7363,6 +7899,15 @@ var Server = (() => {
     return at >= 0 ? ownerEmail().slice(at + 1).toLowerCase() : "";
   }
 
+  // ../gas_shared/domain/csv.ts
+  var FORMULA_LEAD = /^[=+\-@\t\r]/;
+  function csvCell(v) {
+    if (v === null || v === void 0) return "";
+    let s2 = String(v);
+    if (typeof v !== "number" && FORMULA_LEAD.test(s2)) s2 = `'${s2}`;
+    return /[",\r\n]/.test(s2) ? `"${s2.replace(/"/g, '""')}"` : s2;
+  }
+
   // src/server/locks.ts
   var LedgerBusyError = class extends Error {
   };
@@ -7432,7 +7977,10 @@ var Server = (() => {
     REPO_TOP_N: () => REPO_TOP_N,
     SPLIT_NONE: () => SPLIT_NONE2,
     WARM_BUDGET_MS: () => WARM_BUDGET_MS,
+    WARM_CONTINUE_HANDLER: () => WARM_CONTINUE_HANDLER,
+    WARM_START_DELAY_MS: () => WARM_START_DELAY_MS,
     __resetModelMemosForTest: () => __resetModelMemosForTest,
+    continueWarm: () => continueWarm,
     executiveModel: () => executiveModel,
     historyModel: () => historyModel,
     mttrGroupModel: () => mttrGroupModel,
@@ -7442,6 +7990,7 @@ var Server = (() => {
     registerModel: () => registerModel,
     registerRowsModel: () => registerRowsModel,
     reposModel: () => reposModel,
+    scheduleWarm: () => scheduleWarm,
     scopeSummaryModel: () => scopeSummaryModel,
     secretsModel: () => secretsModel,
     signalCoverage: () => signalCoverage,
@@ -7525,8 +8074,9 @@ var Server = (() => {
         acc.oldestOpenFirstSeen = firstSeen;
       }
     }
+    const dropout = isRepoDropout(row);
     const moves = [
-      ["resolved", row.resolved_at],
+      ["resolved", dropout ? null : row.resolved_at],
       ["removed", row.removed_at],
       ["rotated", row.rotated_at]
     ];
@@ -7538,7 +8088,7 @@ var Server = (() => {
         acc.movementKind = kind;
       }
     }
-    if (String((_a = row.resolution_src) != null ? _a : "") === RESOLUTION_DISAPPEARED) {
+    if (dropout || String((_a = row.resolution_src) != null ? _a : "") === RESOLUTION_DISAPPEARED) {
       const at = parseTs(row.resolved_at);
       if (at !== null) acc.disappeared.set(at, ((_b = acc.disappeared.get(at)) != null ? _b : 0) + 1);
     }
@@ -7555,9 +8105,11 @@ var Server = (() => {
       }
       const rows = (_a = acc.rowsByScope.get(scope)) != null ? _a : [];
       const newestTs = parseTs(newest.ts);
+      const windowIds = newest.window_ids && newest.window_ids.length ? new Set(newest.window_ids.map(String)) : null;
       for (const row of rows) {
         if (!blank(row.last_scan_id)) {
-          if (!blank(newest.scan_id) && String(row.last_scan_id) === String(newest.scan_id)) {
+          const lastScan = String(row.last_scan_id);
+          if (windowIds !== null ? windowIds.has(lastScan) : !blank(newest.scan_id) && lastScan === String(newest.scan_id)) {
             observed = true;
             break;
           }
@@ -8090,7 +8642,7 @@ var Server = (() => {
       if (inWindow(resolved, sinceMs, untilMs)) {
         const src = String((_a = row.resolution_src) != null ? _a : "").trim().toLowerCase();
         if (src === RESOLUTION_API) observed += 1;
-        else if (src === RESOLUTION_DISAPPEARED) bounded += 1;
+        else if (src === RESOLUTION_DISAPPEARED || src === RESOLUTION_REPO_DROPOUT) bounded += 1;
         else unattributed += 1;
       }
       if (gateSet && isOpen5(row.status) && !gateSet.has(normalizeSeverity(row.severity))) {
@@ -8205,12 +8757,13 @@ var Server = (() => {
         a.hasFoothold = true;
         a.fn += 1;
       }
-      if (high && !open) a.tp += 1;
+      const dropout = isRepoDropout(row);
+      if (high && !open && !dropout) a.tp += 1;
       if (windowStart !== null) {
         const firstMs = parseTs(row.first_seen);
         const resolvedMs = parseTs(row.resolved_at);
         if (firstMs !== null && firstMs >= windowStart) a.opened += 1;
-        if (resolvedMs !== null && resolvedMs >= windowStart) a.closed += 1;
+        if (!dropout && resolvedMs !== null && resolvedMs >= windowStart) a.closed += 1;
         if (firstMs !== null && firstMs < windowStart && (resolvedMs === null || resolvedMs >= windowStart)) {
           a.openAtStart += 1;
         }
@@ -8275,7 +8828,9 @@ var Server = (() => {
       severity: group,
       status: r.status,
       mttr_days: r.mttr_days,
-      age_days: r.age_days
+      age_days: r.age_days,
+      // A repository drop-out is censored where it left, as on every other KM in the product.
+      censor_days: r.censor_days
     }));
     const km = kaplanMeier(projection);
     return { median: km.median, medianLowerBound: km.medianLowerBound };
@@ -8413,7 +8968,7 @@ var Server = (() => {
     return { valid, invalid, measured, ratePct: pct2(valid, measured) };
   }
   function timeToRevoke(rows, opts) {
-    var _a;
+    var _a, _b, _c;
     const { rows: secrets, ignoredOtherScopes } = secretsOnly(rows);
     const sla = (_a = opts.sla) != null ? _a : DEFAULT_REVOKE_SLA_DAYS;
     const projected = [];
@@ -8453,6 +9008,25 @@ var Server = (() => {
         excludedNoClock += 1;
         continue;
       }
+      if (isRepoDropout(row)) {
+        const lost = (_b = parseTs(row.last_seen)) != null ? _b : parseTs(row.resolved_at);
+        const checked = parseTs(row.validated_at);
+        const at = lost === null ? checked : checked === null ? lost : Math.min(lost, checked);
+        const censorDays = at === null ? null : (at - born) / DAY_MS10;
+        if (censorDays === null || !Number.isFinite(censorDays) || censorDays <= 0) {
+          excludedNoClock += 1;
+          continue;
+        }
+        projected.push({
+          severity: null,
+          status: STATUS_RESOLVED,
+          mttr_days: null,
+          age_days: null,
+          censor_days: censorDays,
+          entry_days: entryDays
+        });
+        continue;
+      }
       const age = (opts.now - born) / DAY_MS10;
       if (!Number.isFinite(age) || age < 0) {
         excludedNoClock += 1;
@@ -8476,6 +9050,7 @@ var Server = (() => {
       medianLowerBound: km.medianLowerBound,
       events: km.events,
       censored: km.censored,
+      leftCoverage: (_c = km.censoredLeftCoverage) != null ? _c : 0,
       excludedUnmeasured,
       excludedNoClock,
       total: secrets.length,
@@ -8691,9 +9266,6 @@ var Server = (() => {
       var _a;
       return (_a = NAME_RE.exec(n2)) == null ? void 0 : _a[1];
     }).filter((d) => Boolean(d)).sort();
-  }
-  function listHistory() {
-    return recordedDays().map((date) => ({ date, stats: readGzJson(subfolder(FOLDER2), fileName(date)) }));
   }
   function latestHistory() {
     const days = recordedDays();
@@ -8965,6 +9537,7 @@ var Server = (() => {
     baseMemo = void 0;
     clockMemo = void 0;
     newestScanMemo = void 0;
+    latestHistoryMemo = void 0;
   }
   var clockMemo;
   function ledgerClock(scope) {
@@ -9025,12 +9598,28 @@ var Server = (() => {
         newestMs[scope] = ms;
         byScope3[scope] = { scan_id: s2.scan_id, ts: s2.ts };
       }
+      const scans = loadScanRows();
+      for (const scope of Object.keys(byScope3)) {
+        const window = disappearanceWindow(scans, scope);
+        if (window) byScope3[scope] = { ...byScope3[scope], window_ids: window.fallback };
+      }
       newestScanMemo = { version, byScope: byScope3 };
     }
     return newestScanMemo.byScope;
   }
   function isOpen8(status) {
     return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
+  }
+  function stateCounts(rows) {
+    let open = 0;
+    let resolved = 0;
+    let leftCoverage = 0;
+    for (const r of rows) {
+      if (isOpen8(r.status)) open += 1;
+      else if (isRepoDropout(r)) leftCoverage += 1;
+      else resolved += 1;
+    }
+    return { open, resolved, leftCoverage };
   }
   function scopedRows(rows, n2) {
     let out = rows;
@@ -9140,37 +9729,43 @@ var Server = (() => {
     };
   }
   function shipKM(km) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
     return {
       curve: km.curve.map((p) => ({ t: p.t, s: p.s })),
       median: km.median,
       medianLowerBound: km.medianLowerBound,
+      medianBoundReason: (_a = km.medianBoundReason) != null ? _a : null,
       p90: kmQuantileFromCurve(km.curve, 0.9),
       mean: km.mean,
       meanTruncated: km.meanTruncated,
+      meanUnmeasuredReason: (_b = km.meanUnmeasuredReason) != null ? _b : null,
       restrictionTime: km.restrictionTime,
       events: km.events,
       censored: km.censored,
+      censoredLeftCoverage: (_c = km.censoredLeftCoverage) != null ? _c : 0,
       total: km.total,
-      q25: (_a = km.q25) != null ? _a : null,
-      q75: (_b = km.q75) != null ? _b : null,
-      reliableUntil: (_c = km.reliableUntil) != null ? _c : null,
-      excludedPreEntry: (_d = km.excludedPreEntry) != null ? _d : 0,
-      maxObserved: (_e = km.maxObserved) != null ? _e : null,
-      rowsIn: (_f = km.rowsIn) != null ? _f : 0,
-      noClock: (_g = km.noClock) != null ? _g : 0,
-      eventsPastCut: (_h = km.eventsPastCut) != null ? _h : 0,
-      lateEntrants: (_i = km.lateEntrants) != null ? _i : 0,
-      lateEntryMedianAge: (_j = km.lateEntryMedianAge) != null ? _j : null
+      q25: (_d = km.q25) != null ? _d : null,
+      q75: (_e = km.q75) != null ? _e : null,
+      reliableUntil: (_f = km.reliableUntil) != null ? _f : null,
+      excludedPreEntry: (_g = km.excludedPreEntry) != null ? _g : 0,
+      maxObserved: (_h = km.maxObserved) != null ? _h : null,
+      rowsIn: (_i = km.rowsIn) != null ? _i : 0,
+      noClock: (_j = km.noClock) != null ? _j : 0,
+      eventsPastCut: (_k = km.eventsPastCut) != null ? _k : 0,
+      lateEntrants: (_l = km.lateEntrants) != null ? _l : 0,
+      lateEntryMedianAge: (_m = km.lateEntryMedianAge) != null ? _m : null
     };
   }
   function latencySummary(rows, now, scope) {
+    var _a, _b;
     const km = kaplanMeier(latencyView(rows, "detection", now, { scope }), KM_OPTS);
     return {
       median: km.median,
       medianLowerBound: km.medianLowerBound,
+      medianBoundReason: (_a = km.medianBoundReason) != null ? _a : null,
       mean: km.mean,
       meanTruncated: km.meanTruncated,
+      meanUnmeasuredReason: (_b = km.meanUnmeasuredReason) != null ? _b : null,
       restrictionTime: km.restrictionTime,
       events: km.events,
       censored: km.censored,
@@ -9220,6 +9815,9 @@ var Server = (() => {
       severities: n2.severities,
       showNoFix: n2.showNoFix,
       rowCount: rows.length,
+      // `rowCount` = `overall.open` + `overall.resolved` + this: the repository drop-outs, which
+      // `mttrFromLedger` counts as neither (`stateCounts`).
+      leftCoverage: stateCounts(rows).leftCoverage,
       // WHO THIS PAGE MEASURED OVER, published whether or not anybody was removed — the figure
       // that makes the setting discoverable rather than hidden, and the only way a reader can
       // check a denominator that quietly shrank.
@@ -9268,6 +9866,13 @@ var Server = (() => {
          * the client never receives the table.
          */
         slaConsumed: slaConsumedDeciles(rows, n2.slaTargets),
+        /**
+         * What the SCA fetch asked Wiz for, as far as the vendor figures below depend on it.
+         * `scaHasFix` true means only findings that already have a published fix were fetched
+         * (`wizQueries.ts`'s `SCA_FETCH_HAS_FIX`), so `awaiting` and `actionable.vendorLatency`
+         * still ship but measure nothing — the page prints them as not measurable.
+         */
+        fetchFilter: { scaHasFix: SCA_FETCH_HAS_FIX },
         awaiting: awaitingVendorFix(rows),
         /**
          * The second clock, scoped and labelled. `notMeasured` is every scoped row this block
@@ -9282,7 +9887,9 @@ var Server = (() => {
           openPastSla: openPastSla(scaActionable, { slaTargets: n2.slaTargets }),
           km: shipKM(kaplanMeier(scaActionable, KM_OPTS)),
           /** How long we waited for a fix to EXIST, over the pre-toggle sca population. Pairs
-           *  additively with the clock above: exposure = latency + actionable. */
+           *  additively with the clock above: exposure = latency + actionable. Under
+           *  `fetchFilter.scaHasFix` every fetched finding already had its fix, and the ones
+           *  still waiting were never fetched, so this has no waiting population to measure. */
           vendorLatency: latencySummary(scaScoped, snap.now, "sca")
         }
       },
@@ -9295,7 +9902,7 @@ var Server = (() => {
   function mttrModel(p) {
     const n2 = norm(p);
     return cached(
-      "dsMttr4",
+      "dsMttr8",
       { ...keyOf(n2), slaTargets: n2.slaTargets, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => buildMttr(n2),
       CLOCK_TTL_SEC
@@ -9316,17 +9923,17 @@ var Server = (() => {
     return "domain";
   }
   function remediationSplitRow(group, rs, n2, now) {
-    var _a, _b, _c;
+    var _a, _b;
     const k = kaplanMeier(rs, KM_OPTS);
     const shipped = shipKM(k);
     const { perSev, overall } = mttrFromLedger(rs, { now, slaTargets: n2.slaTargets });
     const openByScope = {};
     const totalByScope = {};
     for (const r of rs) {
+      const open = isOpen8(r.status);
+      if (!open && isRepoDropout(r)) continue;
       totalByScope[r.scope] = ((_a = totalByScope[r.scope]) != null ? _a : 0) + 1;
-      if (!RESOLVED_STATUSES.has(String((_b = r.status) != null ? _b : "").toUpperCase())) {
-        openByScope[r.scope] = ((_c = openByScope[r.scope]) != null ? _c : 0) + 1;
-      }
+      if (open) openByScope[r.scope] = ((_b = openByScope[r.scope]) != null ? _b : 0) + 1;
     }
     return {
       group,
@@ -9334,6 +9941,7 @@ var Server = (() => {
         median: shipped.median,
         q25: shipped.q25,
         medianLowerBound: shipped.medianLowerBound,
+        medianBoundReason: shipped.medianBoundReason,
         reliableUntil: shipped.reliableUntil,
         events: shipped.events
       },
@@ -9359,28 +9967,29 @@ var Server = (() => {
       if (!list) buckets.set(g, list = []);
       list.push(r);
     }
-    const isOpen9 = (r) => {
-      var _a2;
-      return !RESOLVED_STATUSES.has(String((_a2 = r.status) != null ? _a2 : "").toUpperCase());
-    };
-    const openOf = (rs) => rs.filter(isOpen9).length;
+    const counts = new Map([...buckets].map(([g, rs]) => [g, stateCounts(rs)]));
     const byName = (a, b) => a < b ? -1 : a > b ? 1 : 0;
     const names = [...buckets.keys()].sort((a, b) => {
       if (a === SPLIT_NONE2) return 1;
       if (b === SPLIT_NONE2) return -1;
-      const ra = buckets.get(a), rb = buckets.get(b);
       if (dimension === "repo") {
-        return openOf(rb) - openOf(ra) || rb.length - openOf(rb) - (ra.length - openOf(ra)) || byName(a, b);
+        const ca = counts.get(a), cb = counts.get(b);
+        return cb.open - ca.open || cb.resolved - ca.resolved || byName(a, b);
       }
-      return rb.length - ra.length || byName(a, b);
+      return buckets.get(b).length - buckets.get(a).length || byName(a, b);
     });
     const kept = dimension === "repo" ? names.slice(0, REPO_TOP_N) : names;
     const dropped = dimension === "repo" ? names.slice(REPO_TOP_N) : [];
-    const cut = dropped.length ? {
-      groups: dropped.length,
-      open: dropped.reduce((a, g) => a + openOf(buckets.get(g)), 0),
-      resolved: dropped.reduce((a, g) => a + buckets.get(g).length - openOf(buckets.get(g)), 0)
-    } : null;
+    let cut = null;
+    if (dropped.length) {
+      cut = { groups: dropped.length, open: 0, resolved: 0, leftCoverage: 0 };
+      for (const g of dropped) {
+        const c = counts.get(g);
+        cut.open += c.open;
+        cut.resolved += c.resolved;
+        cut.leftCoverage += c.leftCoverage;
+      }
+    }
     const groups = new Set(rows.map((r) => splitBucketOf("supportGroup", r)));
     const oneGroup = groups.size === 1 ? [...groups][0] : null;
     return {
@@ -9397,7 +10006,7 @@ var Server = (() => {
   function mttrSplitModel(p) {
     const n2 = norm({ ...p, split: null });
     return cached(
-      "dsMttrSplit1",
+      "dsMttrSplit4",
       { ...keyOf(n2), slaTargets: n2.slaTargets, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => buildMttrSplit(n2),
       CLOCK_TTL_SEC
@@ -9407,7 +10016,7 @@ var Server = (() => {
     const n2 = norm(p);
     if (!n2.split) throw new Error("mttrGroupModel: a split { by, value } is required.");
     return cached(
-      "dsMttrGroup1",
+      "dsMttrGroup5",
       { ...keyOf(n2), slaTargets: n2.slaTargets, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => {
         const snap = baseSnapshot();
@@ -9438,21 +10047,22 @@ var Server = (() => {
     }
     const execCut = liveRepoRows(rows, n2.mttrExcludeEndOfLife);
     const byScope3 = (n2.scope ? [n2.scope] : [...SCOPES]).map((scope) => {
-      var _a2;
+      var _a2, _b;
       const sub = rows.filter((r) => r.scope === scope);
       const km = kaplanMeier(execCut.rows.filter((r) => r.scope === scope), KM_OPTS);
       return {
         group: scope,
         dimension: "scope",
         total: sub.length,
-        open: sub.filter((r) => isOpen8(r.status)).length,
-        resolved: sub.filter((r) => !isOpen8(r.status)).length,
+        // open + resolved + leftCoverage = total (`stateCounts`).
+        ...stateCounts(sub),
         kmMedian: km.median,
         kmMedianLowerBound: km.medianLowerBound,
+        kmMedianBoundReason: (_a2 = km.medianBoundReason) != null ? _a2 : null,
         // MTTR delayed-entry package: the "25% fixed within" figure — the honest thing to show
         // beside a null `kmMedian` under the reliability cut, same reasoning as `mttrModel`'s
         // per-severity `kmPerSev`.
-        kmQ25: (_a2 = km.q25) != null ? _a2 : null,
+        kmQ25: (_b = km.q25) != null ? _b : null,
         awaiting: awaitingVendorFix(sub).overall
       };
     });
@@ -9613,7 +10223,7 @@ var Server = (() => {
   function executiveModel(p) {
     const n2 = norm(p);
     return cached(
-      "dsExecutive2",
+      "dsExecutive5",
       {
         ...keyOf(n2),
         slaTargets: n2.slaTargets,
@@ -9688,8 +10298,8 @@ var Server = (() => {
       severities: isSecrets ? null : n2.severities,
       showNoFix: n2.showNoFix,
       rowCount: rows.length,
-      open: rows.filter((r) => isOpen8(r.status)).length,
-      resolved: rows.filter((r) => !isOpen8(r.status)).length,
+      // open + resolved + leftCoverage = rowCount (`stateCounts`).
+      ...stateCounts(rows),
       // The severity axis, or the reason there is not one.
       severityAxis: isSecrets ? { supported: false, reason: SEVERITY_AXIS_REFUSAL } : { supported: true },
       counts: isSecrets ? null : countsOf(rows),
@@ -9711,6 +10321,11 @@ var Server = (() => {
       tiers: riskTierStats(scopedTierRows(rows), void 0, scope),
       funnel: triageFunnel(rows, void 0, /* @__PURE__ */ new Set(), false, scope, n2.slaTargets),
       awaiting: awaitingVendorFix(rows, { scope }),
+      // The MTTR payload's `remediation.fetchFilter`, for the same card on this page: under
+      // `SCA_FETCH_HAS_FIX` the `awaiting` count above has no population (the findings it counts
+      // are never fetched), and the Dependencies page prints it as not measurable. sca only —
+      // the other two registers have no vendor clock to qualify.
+      fetchFilter: scope === "sca" ? { scaHasFix: SCA_FETCH_HAS_FIX } : null,
       latestScan: latest,
       signalCoverage: signalCoverage(rows),
       // WHAT THIS PAGE MEASURED, AND WHAT IT NEVER LOOKED AT. Three things narrow a register
@@ -9754,7 +10369,17 @@ var Server = (() => {
       // one — worse than a stale number, because it is a silently missing caveat.
       // `slaTargets` joins the key because `triageFunnel`'s `overdue` step (inside
       // `buildRegister`) reads it — see `mttrModel`'s matching comment.
-      "dsRegister2",
+      // "dsRegister2" -> "dsRegister3" (completeness gate): `latestScan` gained the scan row's
+      // completeness record (`disappearance`, `dropout_count`, …), and a row's `resolution_src`
+      // can now read "repo_dropout" — a warm dsRegister2 entry would draw neither.
+      // "dsRegister3" -> "dsRegister4" (hasFix relabel): the payload gained `fetchFilter`; a warm
+      // dsRegister3 entry lacks it and the Dependencies page would draw the awaiting-a-vendor
+      // count as a measurement again.
+      // "dsRegister4" -> "dsRegister5" (drop-outs counted apart): `resolved` no longer counts
+      // repository drop-outs, which ship as `leftCoverage`.
+      // "dsRegister5" -> "dsRegister6": `sevStats` stops counting them as `resolved` too — each
+      // severity gained `leftCoverage`.
+      "dsRegister6",
       { ...keyOf(n2), scope, slaTargets: n2.slaTargets },
       () => buildRegister(scope, n2),
       CLOCK_TTL_SEC
@@ -9877,8 +10502,16 @@ var Server = (() => {
     };
   }
   var HISTORY_DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+  var latestHistoryMemo;
+  function latestHistoryOnce() {
+    const version = dataVersion();
+    if (!latestHistoryMemo || latestHistoryMemo.version !== version) {
+      latestHistoryMemo = { version, entry: latestHistory() };
+    }
+    return latestHistoryMemo.entry;
+  }
   function latestSecretsTwins() {
-    const entry = latestHistory();
+    const entry = latestHistoryOnce();
     const stats = entry && entry.stats;
     if (!stats || typeof stats !== "object" || Array.isArray(stats)) return null;
     const scopes = stats["scopes"];
@@ -9896,7 +10529,12 @@ var Server = (() => {
     if (gap !== null && (typeof gap !== "number" || !Number.isFinite(gap))) return null;
     const date = entry.date;
     const asOf = typeof date === "string" && HISTORY_DAY_RE.test(date) ? date : null;
-    return { twins: { keys, folded, medianGapDays: gap }, asOf };
+    const out = { keys, folded, medianGapDays: gap };
+    for (const k of ["crossRepoKeys", "crossRepoNodes", "maxBucketSize"]) {
+      const v = t[k];
+      if (typeof v === "number" && Number.isFinite(v)) out[k] = v;
+    }
+    return { twins: out, asOf };
   }
   function buildSecrets(n2) {
     const snap = baseSnapshot();
@@ -9944,10 +10582,13 @@ var Server = (() => {
   function secretsModel(p) {
     const n2 = norm(p);
     return cached(
-      "dsSecrets2",
-      // `mttrExcludeEndOfLife` is here because `timeToRevoke` reads it; `severities` is not
-      // because nothing does. One rule, both directions.
-      { scope: "secrets", showNoFix: n2.showNoFix, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
+      "dsSecrets7",
+      // `mttrExcludeEndOfLife` is here because `timeToRevoke` reads it; `severities` is pinned to
+      // null because nothing reads it. One rule, both directions.
+      {
+        ...keyOf({ ...n2, scope: "secrets", severities: null }),
+        mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife
+      },
       () => buildSecrets(n2),
       CLOCK_TTL_SEC
     );
@@ -10071,7 +10712,7 @@ var Server = (() => {
   function reposModel(p) {
     const n2 = norm(p);
     return durablyCached(
-      "dsRepos2",
+      "dsRepos4",
       {
         ...keyOf(n2),
         coldAfterDays: n2.coldAfterDays,
@@ -10141,9 +10782,19 @@ var Server = (() => {
       movement: movement2,
       movementNote,
       kpis: {
-        tracked: rows.length,
-        open: rows.filter((r) => isOpen8(r.status)).length,
-        resolvedAllTime: rows.filter((r) => !isOpen8(r.status)).length,
+        // TRACKED IS OPEN + RESOLVED, the same sum each trend point's `open` + `resolved` makes
+        // (the page's sparkline under this card is exactly that), so a repository drop-out is in
+        // neither: it ships apart as `leftCoverage` (`stateCounts`) rather than inflating the
+        // all-time resolved count with findings nobody fixed.
+        ...(() => {
+          const c = stateCounts(rows);
+          return {
+            tracked: c.open + c.resolved,
+            open: c.open,
+            resolvedAllTime: c.resolved,
+            leftCoverage: c.leftCoverage
+          };
+        })(),
         // THE KM MEDIAN, AND NOTHING BESIDE IT — the comment above this block used to say
         // exactly that while the field below it shipped `medianMttr: overall.mttr_median`, the
         // plain median over resolved rows. The page drew THAT one, captioned with the
@@ -10162,16 +10813,14 @@ var Server = (() => {
         km: shipKM(kaplanMeier(historyCut.rows, KM_OPTS))
       },
       endOfLife: endOfLifeBlock(historyCut, n2.mttrExcludeEndOfLife),
-      // `mttrPageTrendSlice` reads both of these keys.
-      history: listHistory(),
       trend: trendFor(n2, snap.rows),
-      // See the block comment above: `scans`, `perScope` and `history` are per-scan/per-day
-      // facts with no project OR domain dimension and do NOT narrow with either view scope;
+      // See the block comment above: `scans` and `perScope` are per-scan facts with no project
+      // OR domain dimension and do NOT narrow with either view scope;
       // everything else in this payload does. The note names whichever scope is actually live,
       // because "scoped to the selected project" over a domain scope would be a wrong answer to
       // the only question the note exists to answer.
       scanScopeApplies: false,
-      scanScopeNote: n2.project || n2.domain ? "scans, perScope and history describe the whole register \u2014 a sync and a daily snapshot carry no " + (n2.project ? "project" : "domain") + " dimension to narrow by. Only rows/kpis/trend above are scoped to the selected " + (n2.project ? "project" : "domain") + "." : null
+      scanScopeNote: n2.project || n2.domain ? "scans and perScope describe the whole register \u2014 a sync carries no " + (n2.project ? "project" : "domain") + " dimension to narrow by. Only rows/kpis/trend above are scoped to the selected " + (n2.project ? "project" : "domain") + "." : null
     };
   }
   function trendFor(n2, all) {
@@ -10202,7 +10851,7 @@ var Server = (() => {
   function historyModel(p) {
     const n2 = norm(p);
     return durablyCached(
-      "dsHistory4",
+      "dsHistory9",
       { ...keyOf(n2), mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => buildHistory(n2)
     );
@@ -10269,7 +10918,12 @@ var Server = (() => {
     return durablyCached(
       // "dsScopeSummary2" -> "dsScopeSummary3": the payload gained `splits` (MTTR by team /
       // domain / repository); a warm "2" entry would draw the summary with no split at all.
-      "dsScopeSummary3",
+      // "dsScopeSummary3" -> "dsScopeSummary4" (KM false lower bound): the hero's and every
+      // split row's lower bound is null where the reliability cut left nothing to bound.
+      // "dsScopeSummary4" -> "dsScopeSummary5" (drop-outs censored): every half-life it reads
+      // changed as `dsMttr7` did, and the history counts under it as `dsHistory8` did.
+      // "dsScopeSummary5" -> "dsScopeSummary6": and again as `dsMttr8` / `dsHistory9` did.
+      "dsScopeSummary6",
       { ...keyOf(n2), slaTargets: n2.slaTargets, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => {
         const latest = latestScanRowOf(loadScanRows());
@@ -10340,14 +10994,17 @@ var Server = (() => {
       // (`api.bootstrapIfWarm`), so it is the one entry every page load reads, and a cold one
       // costs every open a second round trip plus the 6–7 s compute.
       { label: "bootCore", run: () => bootCoreModel() },
-      // The durable four next: they are what the Drive layer exists for, and a budget cut-out
-      // that never reached them would leave the expensive answers cold overnight.
+      // Then the landing page and the page opened next. ORDER IS WHO GETS A WARM PAGE FIRST, not
+      // what survives: the post-sync warm now runs in its own trigger execution after the commit,
+      // so an analyst opening the app while it runs reads whatever it has reached, and a budget
+      // cut-out no longer leaves the tail cold overnight — `continueWarm` resumes it.
+      { label: "executive", run: () => executiveModel(all) },
+      { label: "mttr", run: () => mttrModel(all) },
+      // The durable four: what the Drive layer exists for.
       { label: "history", run: () => historyModel(all) },
       { label: "program", run: () => programModel(all) },
       { label: "repos", run: () => reposModel(all) },
       { label: "storage", run: () => storageModel() },
-      { label: "executive", run: () => executiveModel(all) },
-      { label: "mttr", run: () => mttrModel(all) },
       { label: "mttrSplit", run: () => mttrSplitModel(all) },
       { label: "secrets", run: () => secretsModel(all) }
     ];
@@ -10367,35 +11024,162 @@ var Server = (() => {
     return targets;
   }
   function warmReadModels(budgetMs = WARM_BUDGET_MS) {
+    return warmPass(budgetMs, false);
+  }
+  var WARM_CONTINUE_HANDLER = "trigger_continueWarm";
+  var WARM_PROGRESS_PROP = "WARM_PROGRESS";
+  var WARM_START_DELAY_MS = 1e3;
+  var WARM_BUSY_DELAY_MS = 6e4;
+  var WARM_MAX_HOPS = 6;
+  var WARM_KEEP_LIST_MAX_CHARS = 8e3;
+  function readProgress() {
+    try {
+      const raw = getProp(WARM_PROGRESS_PROP);
+      if (!raw) return null;
+      const p = JSON.parse(raw);
+      if (!p || p.stamp !== currentStamp()) return null;
+      return {
+        stamp: p.stamp,
+        next: Number(p.next) || 0,
+        label: typeof p.label === "string" ? p.label : null,
+        hops: Number(p.hops) || 0,
+        touched: Array.isArray(p.touched) ? p.touched.map(String) : null
+      };
+    } catch (e) {
+      console.warn(`Read-model warm: progress unreadable, starting from the top: ${e}`);
+      return null;
+    }
+  }
+  function writeProgress(p) {
+    let json = JSON.stringify(p);
+    if (json.length > WARM_KEEP_LIST_MAX_CHARS) json = JSON.stringify({ ...p, touched: null });
+    setProp(WARM_PROGRESS_PROP, json);
+  }
+  function clearProgress() {
+    try {
+      deleteProp(WARM_PROGRESS_PROP);
+    } catch (e) {
+      console.warn(`Read-model warm: could not clear the progress record: ${e}`);
+    }
+  }
+  function scheduleWarm(delayMs = WARM_START_DELAY_MS) {
+    try {
+      clearTriggers(WARM_CONTINUE_HANDLER);
+      ScriptApp.newTrigger(WARM_CONTINUE_HANDLER).timeBased().after(delayMs).create();
+      return true;
+    } catch (e) {
+      console.warn(`Read-model warm: could not schedule a warm: ${e}`);
+      recordError("cacheWarm", `Could not schedule a warm: ${e instanceof Error ? e.message : String(e)}`);
+      return false;
+    }
+  }
+  function continueWarm(_e) {
+    try {
+      clearTriggers(WARM_CONTINUE_HANDLER);
+    } catch (e) {
+      console.warn(`Read-model warm: could not clear the fired trigger: ${e}`);
+    }
+    return warmPass(WARM_BUDGET_MS, true);
+  }
+  function warmPass(budgetMs, resume) {
+    var _a, _b, _c, _d;
     const job = activeJob();
+    const prior = readProgress();
     if (job) {
       const reason = `${job.kind} job ${job.job_id} is ${job.phase}`;
       console.log(`Read-model warm: skipped, ${reason}`);
-      return { warmed: 0, skipped: 0, swept: 0, blockedBy: reason, elapsedMs: 0 };
+      const continued2 = resume && chain(prior != null ? prior : freshProgress(), prior, WARM_BUSY_DELAY_MS);
+      return { warmed: 0, skipped: 0, swept: 0, blockedBy: reason, elapsedMs: 0, resumedAt: 0, continued: continued2 };
     }
-    return duringWarm(() => warmInner(budgetMs));
+    const targets = warmTargets();
+    let start = 0;
+    if (resume && prior && prior.next > 0 && ((_a = targets[prior.next]) == null ? void 0 : _a.label) === prior.label) {
+      start = prior.next;
+    }
+    const carried = start > 0 ? prior.touched : [];
+    const hop = duringWarm(() => warmInner(budgetMs, targets, start, carried !== null), carried != null ? carried : []);
+    let continued = false;
+    if (hop.firstSkipped === null) {
+      clearProgress();
+    } else {
+      continued = chain({
+        stamp: currentStamp(),
+        next: hop.firstSkipped,
+        label: (_c = (_b = targets[hop.firstSkipped]) == null ? void 0 : _b.label) != null ? _c : null,
+        hops: (_d = prior == null ? void 0 : prior.hops) != null ? _d : 0,
+        touched: carried === null ? null : hop.touched
+      }, prior, WARM_START_DELAY_MS);
+    }
+    if (hop.skipped) {
+      const msg = `Out of budget after ${hop.warmed} entries, ${hop.skipped} left cold`;
+      console.warn(`Read-model warm: ${msg}${continued ? "; continuing in the next hop" : ""}`);
+      if (!continued) recordError("cacheWarm", `${msg}.`);
+    }
+    return {
+      warmed: hop.warmed,
+      skipped: hop.skipped,
+      swept: hop.swept,
+      blockedBy: null,
+      elapsedMs: hop.elapsedMs,
+      resumedAt: start,
+      continued
+    };
   }
-  function warmInner(budgetMs) {
+  function freshProgress() {
+    return { stamp: currentStamp(), next: 0, label: null, hops: 0, touched: [] };
+  }
+  function chain(next, prior, delayMs) {
+    var _a, _b;
+    const hops = ((_a = prior == null ? void 0 : prior.hops) != null ? _a : 0) + 1;
+    try {
+      if (hops > WARM_MAX_HOPS) {
+        console.warn(`Read-model warm: gave up after ${WARM_MAX_HOPS} continuation hops`);
+        recordError("cacheWarm", `Gave up after ${WARM_MAX_HOPS} continuation hops under one data version.`);
+        writeProgress({ ...next, hops: (_b = prior == null ? void 0 : prior.hops) != null ? _b : 0 });
+        return false;
+      }
+      writeProgress({ ...next, hops });
+    } catch (e) {
+      console.warn(`Read-model warm: could not record progress: ${e}`);
+      recordError("cacheWarm", `Could not record warm progress: ${e instanceof Error ? e.message : String(e)}`);
+      return false;
+    }
+    return scheduleWarm(delayMs);
+  }
+  function warmInner(budgetMs, targets, start, sweepable) {
+    var _a;
     const t0 = Date.now();
     let warmed = 0;
     let skipped = 0;
-    for (const target of warmTargets()) {
+    let firstSkipped = null;
+    for (let i = start; i < targets.length; i++) {
+      const target = targets[i];
       if (Date.now() - t0 >= budgetMs) {
         skipped += 1;
+        if (firstSkipped === null) firstSkipped = i;
         continue;
       }
+      const ts = Date.now();
+      let ok = true;
       try {
         target.run();
         warmed += 1;
       } catch (e) {
+        ok = false;
         console.warn(`Read-model warm (${target.label}) failed: ${e}`);
+        recordError("cacheWarm", `${target.label}: ${e instanceof Error ? e.message : String(e)}`);
       }
+      console.log(JSON.stringify({ stage: "warm", label: target.label, ms: Date.now() - ts, ok }));
     }
-    if (skipped) {
-      console.warn(`Read-model warm: out of budget after ${warmed} entries, ${skipped} left cold`);
-    }
-    const swept = skipped ? 0 : sweepReadModels();
-    return { warmed, skipped, swept, blockedBy: null, elapsedMs: Date.now() - t0 };
+    const swept = skipped || !sweepable ? 0 : sweepReadModels();
+    return {
+      warmed,
+      skipped,
+      swept,
+      firstSkipped,
+      touched: (_a = warmTouched()) != null ? _a : [],
+      elapsedMs: Date.now() - t0
+    };
   }
 
   // src/server/scanJobs.ts
@@ -10694,7 +11478,10 @@ var Server = (() => {
           const variables = buildVariables(scope, {
             severities: (_e = params.severitiesByScope[scope]) != null ? _e : [],
             projectId,
-            after: cursor
+            after: cursor,
+            // Page 0 only — the one page whose count is kept (`progress.totalCount` below).
+            // Every later page would make the tenant recount the whole population for nothing.
+            includeTotalCount: paging.pageNumber === 0
           });
           const pageIndex = paging.pageNumber + 1;
           const page = fetchPage(scope, variables, paging);
@@ -10705,7 +11492,10 @@ var Server = (() => {
           cursor = page.pageInfo.endCursor;
           progress.pages = paging.pageNumber;
           progress.rows = slim.length;
-          if (page.totalCount !== null) progress.totalCount = page.totalCount;
+          if (page.totalCount !== null) {
+            progress.totalCount = page.totalCount;
+            progress.totalReported = true;
+          }
           if (page.partialErrors.length) {
             progress.partialPages += 1;
             for (const message of page.partialErrors) {
@@ -10772,14 +11562,21 @@ var Server = (() => {
         phase: "FAILED",
         error: e == null ? "Sync failed." : String(e).slice(0, 1e3)
       });
+      markRecorded(e);
       throw e;
     }
+  }
+  function reportedTotalOf(progress) {
+    if (!progress) return null;
+    const n2 = Number(progress.totalCount);
+    if (!Number.isFinite(n2)) return null;
+    return progress.totalReported === true || n2 > 0 ? n2 : null;
   }
   function finishSync(jobId, params) {
     clearCancel(jobId);
     updateJob(jobId, { phase: "RECONCILING", params_json: JSON.stringify(params) });
     const perScope = params.scopes.map((scope) => {
-      var _a, _b, _c, _d;
+      var _a, _b, _c, _d, _e, _f;
       return {
         scope,
         // The spill IS the projection reconcile is fed; reading it back rather than keeping it in
@@ -10787,7 +11584,12 @@ var Server = (() => {
         records: (_a = readSlim(scanIdFor(params.syncId, scope))) != null ? _a : [],
         mode: "live",
         scannedSeverities: (_b = params.severitiesByScope[scope]) != null ? _b : [],
-        rawRef: (_d = (_c = params.perScope[scope]) == null ? void 0 : _c.rawRef) != null ? _d : null
+        rawRef: (_d = (_c = params.perScope[scope]) == null ? void 0 : _c.rawRef) != null ? _d : null,
+        // What the completeness gate weighs the records against — see domain/scanCompleteness.ts.
+        completeness: {
+          reportedTotal: reportedTotalOf(params.perScope[scope]),
+          partialPages: Number((_f = (_e = params.perScope[scope]) == null ? void 0 : _e.partialPages) != null ? _f : 0) || 0
+        }
       };
     });
     scheduleWatchdog();
@@ -10799,24 +11601,38 @@ var Server = (() => {
     afterPersist(params, outcome);
   }
   function afterPersist(params, outcome) {
+    recordDeferrals(outcome);
     try {
       recordDaily(dailyStats(params, outcome));
     } catch (e) {
       console.warn(`Failed to record the daily history entry: ${e}`);
+      recordError("dailyHistory", e);
     }
     autoCompactIfDue();
     warmAfterSync();
   }
+  function recordDeferrals(outcome) {
+    var _a, _b, _c, _d;
+    for (const s2 of outcome.scopes) {
+      const c = s2.completeness;
+      const verdict = readDisappearance((_a = c == null ? void 0 : c.disappearance) != null ? _a : null);
+      if (!c || !verdict.deferred) continue;
+      const total = c.reported_total === null ? "no total reported" : `${c.reported_total} reported`;
+      recordError(
+        "syncCompleteness",
+        `${s2.scope} scan of sync ${s2.scan_id} looked incomplete (${(_b = verdict.reason) != null ? _b : "unknown"}: ${s2.total} received, ${total}, ${(_c = c.duplicates) != null ? _c : 0} duplicate(s), ${(_d = c.partial_pages) != null ? _d : 0} partial page(s)). ${c.absent} open finding(s) it did not return were left open; the next complete scan will resolve them.`,
+        "warning"
+      );
+    }
+  }
   function warmAfterSync() {
     try {
-      const report = warmReadModels();
-      if (report.blockedBy) {
-        console.warn(`Post-sync read-model warm did not run: ${report.blockedBy}`);
-      } else {
-        console.log(`Post-sync read-model warm: ${report.warmed} warmed, ${report.skipped} cold.`);
+      if (scheduleWarm(WARM_START_DELAY_MS)) {
+        console.log("Post-sync read-model warm: scheduled.");
       }
     } catch (e) {
-      console.warn(`Post-sync read-model warm failed: ${e}`);
+      console.warn(`Post-sync read-model warm could not be scheduled: ${e}`);
+      recordError("cacheWarm", e);
     }
   }
   function dailyStats(params, outcome) {
@@ -10837,7 +11653,11 @@ var Server = (() => {
           total_count: (_d = (_c = params.perScope[s2.scope]) == null ? void 0 : _c.totalCount) != null ? _d : 0,
           // The caveat travels with the figure: a scope whose pages came back PARTIAL has good
           // rows and a suspect count, and a history entry that hid that would be the lie.
-          partial_pages: (_f = (_e = params.perScope[s2.scope]) == null ? void 0 : _e.partialPages) != null ? _f : 0
+          partial_pages: (_f = (_e = params.perScope[s2.scope]) == null ? void 0 : _e.partialPages) != null ? _f : 0,
+          // Whether this scope's absences were adjudicated, and what they amounted to — the absent
+          // share is recorded here and never gated on (domain/scanCompleteness.ts). Null on an
+          // idempotent replay, which assessed nothing.
+          completeness: s2.completeness
         };
       }),
       mttr: mttrFromLedger(
@@ -10855,6 +11675,7 @@ var Server = (() => {
       compactLedger(Math.floor(days));
     } catch (e) {
       console.warn(`Auto-compaction after the sync failed: ${e}`);
+      recordError("autoCompact", e);
     }
   }
   function cancelSync(jobId) {
@@ -10940,6 +11761,7 @@ var Server = (() => {
       }, 12e4);
     } catch (e) {
       if (e instanceof LedgerBusyError) scheduleContinuation(CONTINUE_RETRY_MS);
+      else recordError("continueSync", e);
       throw e;
     }
   }
@@ -10955,12 +11777,22 @@ var Server = (() => {
       }, 12e4);
     } catch (e) {
       if (e instanceof LedgerBusyError) scheduleWatchdog(CONTINUE_RETRY_MS);
+      else recordError("watchdogSync", e);
       throw e;
     }
   }
   function dailySync() {
-    if (!hasWizCredentials()) return;
-    startSync();
+    if (!hasWizCredentials()) {
+      recordError("dailySync", "Scheduled sync skipped: no Wiz credentials are configured.");
+      return;
+    }
+    try {
+      const res = startSync();
+      if (res.jobId === null) recordError("dailySync", `Scheduled sync skipped: ${res.message}`);
+    } catch (e) {
+      if (!(e instanceof LedgerBusyError)) recordError("dailySync", e);
+      throw e;
+    }
   }
   function jobStatus(jobId) {
     return getJob(jobId);
@@ -10994,20 +11826,95 @@ var Server = (() => {
     return result;
   }
 
+  // src/server/setup.ts
+  var DAILY_SYNC_HANDLER = "trigger_dailySync";
+  var TRIGGER_TZ = "Europe/Paris";
+  var WARM_HANDLER = "trigger_warmReadModels";
+  var WARM_READY_BY_HOURS = [9, 13, 17];
+  var WARM_TRIGGER_HOURS = WARM_READY_BY_HOURS.map((h) => (h + 23) % 24);
+  var WARM_TRIGGER_NEAR_MINUTE = 30;
+  var WARM_TRIGGER_COUNT = WARM_TRIGGER_HOURS.length;
+  function warmTriggerSchedule() {
+    return `${TRIGGER_TZ}|${WARM_TRIGGER_HOURS.join(",")}@${WARM_TRIGGER_NEAR_MINUTE}`;
+  }
+  function dailySyncSchedule(hour) {
+    return `${TRIGGER_TZ}|${hour}`;
+  }
+  function reconcileDailySyncTrigger(hour) {
+    const existing = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === DAILY_SYNC_HANDLER);
+    const want = dailySyncSchedule(hour);
+    if (existing.length === 1 && getProp(PROP_KEYS.dailySyncSchedule) === want) {
+      return `Daily sync trigger: already installed (${hour}:00 ${TRIGGER_TZ})`;
+    }
+    ScriptApp.newTrigger(DAILY_SYNC_HANDLER).timeBased().everyDays(1).atHour(hour).inTimezone(TRIGGER_TZ).create();
+    for (const t of existing) ScriptApp.deleteTrigger(t);
+    setProp(PROP_KEYS.dailySyncSchedule, want);
+    return `Daily sync trigger: installed (${hour}:00 ${TRIGGER_TZ})` + (existing.length ? ` (replaced ${existing.length})` : "");
+  }
+  function setup() {
+    const notes = [];
+    let ssId = getProp(PROP_KEYS.ledgerSpreadsheetId);
+    let ss;
+    if (ssId) {
+      ss = SpreadsheetApp.openById(ssId);
+      notes.push(`Ledger: reusing ${ssId}`);
+    } else {
+      ss = SpreadsheetApp.create("Wiz Sidekick DevSecOps \u2014 ledger");
+      ssId = ss.getId();
+      setProp(PROP_KEYS.ledgerSpreadsheetId, ssId);
+      notes.push(`Ledger: created ${ssId}`);
+    }
+    ensureTabs(ss);
+    notes.push("Tabs: ensured (headers appended where missing)");
+    let folderId = getProp(PROP_KEYS.archiveFolderId);
+    if (!folderId) {
+      folderId = DriveApp.createFolder("Wiz Sidekick DevSecOps \u2014 archive").getId();
+      setProp(PROP_KEYS.archiveFolderId, folderId);
+      notes.push(`Archive: created ${folderId}`);
+    } else {
+      notes.push(`Archive: reusing ${folderId}`);
+    }
+    if (!getProp(PROP_KEYS.wizAuthUrl)) setProp(PROP_KEYS.wizAuthUrl, DEFAULT_WIZ_AUTH_URL);
+    if (!getProp(PROP_KEYS.allowedUsers)) {
+      const owner = Session.getEffectiveUser().getEmail();
+      if (owner) {
+        setProp(PROP_KEYS.allowedUsers, owner);
+        notes.push(`Access: seeded ALLOWED_USERS with ${owner}`);
+      }
+    }
+    notes.push(reconcileDailySyncTrigger(loadSettings().syncSchedule));
+    const warmExisting = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === WARM_HANDLER);
+    const wantSchedule = warmTriggerSchedule();
+    if (warmExisting.length === WARM_TRIGGER_HOURS.length && getProp(PROP_KEYS.warmTriggerSchedule) === wantSchedule) {
+      notes.push(`Warm triggers: already installed (${wantSchedule})`);
+    } else {
+      for (const t of warmExisting) ScriptApp.deleteTrigger(t);
+      for (const hour of WARM_TRIGGER_HOURS) {
+        ScriptApp.newTrigger(WARM_HANDLER).timeBased().everyDays(1).atHour(hour).nearMinute(WARM_TRIGGER_NEAR_MINUTE).inTimezone(TRIGGER_TZ).create();
+      }
+      setProp(PROP_KEYS.warmTriggerSchedule, wantSchedule);
+      notes.push(
+        `Warm triggers: installed ${WARM_TRIGGER_HOURS.length}x daily, warm by ${WARM_READY_BY_HOURS.map((h) => `${h}:00`).join(", ")} ${TRIGGER_TZ}` + (warmExisting.length ? ` (replaced ${warmExisting.length})` : "")
+      );
+    }
+    return notes.join("\n");
+  }
+
   // src/server/api.ts
-  function run(fn) {
+  function run(fn, label = "api") {
     try {
       return { ok: true, data: fn() };
     } catch (e) {
       const kind = e instanceof LedgerBusyError ? "busy" : e instanceof WizNotAuthorizedError ? "not-authorized" : "error";
+      if (kind === "error") recordError(label, e, kind);
       return { ok: false, error: String(e instanceof Error ? e.message : e), errorKind: kind };
     }
   }
-  function mutate(fn) {
+  function mutate(fn, label = "api", lockWaitMs) {
     return run(() => withScriptLock(() => {
       recoverIfNeeded();
       return fn();
-    }));
+    }, lockWaitMs), label);
   }
   function bootstrap(_p) {
     const viewer = enforcedScope();
@@ -11039,6 +11946,7 @@ var Server = (() => {
   }
   function withLiveBootFields(core) {
     const job = activeJob();
+    const settings = loadSettings();
     return {
       product: core.product,
       buildId: BUILD_ID,
@@ -11054,8 +11962,13 @@ var Server = (() => {
       activeJob: job ? jobSummarySlice(job, !isTerminalPhase(job.phase) && isStaleJob(job)) : null,
       canEditAccess: canEditUsers(),
       hubUrl: readHubUrl(),
-      settings: core.settings,
-      scope: core.scope,
+      settings,
+      scope: {
+        projectView: settings.projectView,
+        domainView: settings.domainView,
+        shown: viewShown(core, settings.projectView, settings.domainView),
+        ...core.scope
+      },
       filterOptions: core.filterOptions
     };
   }
@@ -11065,7 +11978,7 @@ var Server = (() => {
       const at = (/* @__PURE__ */ new Date()).toISOString();
       setProp(PROP_KEYS.wizVerifiedAt, at);
       return { ...res, at };
-    });
+    }, "testWizConnection");
   }
   function readViewerScope(p) {
     const raw = (p != null ? p : {})["viewerScope"];
@@ -11234,7 +12147,17 @@ var Server = (() => {
     var _a;
     const patch = { ...(_a = p.settings) != null ? _a : {} };
     delete patch["supportGroupDomains"];
-    return mutate(() => saveSettings(withSettings(loadSettings(), patch)));
+    return mutate(() => {
+      const saved = saveSettings(withSettings(loadSettings(), patch));
+      if (getProp(PROP_KEYS.dailySyncSchedule) !== dailySyncSchedule(saved.syncSchedule)) {
+        try {
+          reconcileDailySyncTrigger(saved.syncSchedule);
+        } catch (e) {
+          recordError("syncHourTrigger", e);
+        }
+      }
+      return saved;
+    }, "putSettings");
   }
   function saveSupportGroupDomain(p) {
     var _a, _b, _c;
@@ -11269,16 +12192,25 @@ var Server = (() => {
       }];
       setSupportGroupDomains(items);
       return { saved: true, errors: [], items: getSupportGroupDomains2().items };
-    });
+    }, "saveSupportGroupDomain");
   }
+  var VIEW_SWITCH_LOCK_WAIT_MS = 1e4;
   function setProjectView(p) {
-    return mutate(() => saveSettings(withProjectView(loadSettings(), p.projectView)));
+    return mutate(
+      () => saveSettings(withProjectView(loadSettings(), p.projectView), { viewOnly: true }),
+      "setProjectView",
+      VIEW_SWITCH_LOCK_WAIT_MS
+    );
   }
   function setDomainView(p) {
-    return mutate(() => saveSettings(withDomainView(loadSettings(), p.domainView)));
+    return mutate(
+      () => saveSettings(withDomainView(loadSettings(), p.domainView), { viewOnly: true }),
+      "setDomainView",
+      VIEW_SWITCH_LOCK_WAIT_MS
+    );
   }
   function refreshDomains(_p) {
-    return mutate(() => refreshRepoTags());
+    return mutate(() => refreshRepoTags(), "refreshDomains");
   }
   function domainMapHealth(_p) {
     return run(() => mapHealth());
@@ -11552,7 +12484,7 @@ var Server = (() => {
       const raw = (p != null ? p : {})["scopes"];
       const scopes = Array.isArray(raw) ? raw.map(String).filter((s2) => SCOPES.includes(s2)) : void 0;
       return startSync(scopes ? { scopes } : {});
-    });
+    }, "runSync");
   }
   function getJobStatus(p) {
     return run(() => {
@@ -11567,19 +12499,19 @@ var Server = (() => {
     return run(() => {
       var _a;
       return cancelSync(String((_a = (p != null ? p : {})["jobId"]) != null ? _a : ""));
-    });
+    }, "cancelSync");
   }
   function deleteScans2(p) {
     var _a;
     const scanIds = ((_a = (p != null ? p : {})["scanIds"]) != null ? _a : []).map(String);
-    return mutate(() => deleteScans(scanIds));
+    return mutate(() => deleteScans(scanIds), "deleteScans");
   }
   function compact(p) {
     const params = p != null ? p : {};
     const dryRun = params["dryRun"] === true;
     const days = params["retentionDays"] !== void 0 && params["retentionDays"] !== null ? Number(params["retentionDays"]) : loadSettings().retentionDays;
     if (dryRun) return run(() => previewMaintenance(days));
-    return mutate(() => compactLedger(days, false));
+    return mutate(() => compactLedger(days, false), "compact");
   }
   function resetLedger2(_p) {
     return mutate(() => {
@@ -11589,12 +12521,7 @@ var Server = (() => {
         console.warn(`resetLedger: continuation-trigger cleanup skipped: ${e}`);
       }
       return resetLedger();
-    });
-  }
-  function csvCell(v) {
-    if (v === null || v === void 0) return "";
-    const s2 = String(v);
-    return /[",\r\n]/.test(s2) ? `"${s2.replace(/"/g, '""')}"` : s2;
+    }, "resetLedger");
   }
   function getExportCsv(p) {
     return run(() => {
@@ -11645,7 +12572,9 @@ var Server = (() => {
       var _a;
       const raw = Number((_a = (p != null ? p : {})["limit"]) != null ? _a : RECENT_ERROR_LIMIT);
       const limit = Number.isFinite(raw) && raw > 0 ? Math.min(Math.floor(raw), RECENT_ERROR_LIMIT) : RECENT_ERROR_LIMIT;
-      const errors = listJobs().filter((j) => j.error !== null && j.error !== "").map((j) => ({
+      const jobErrors = listJobs().filter((j) => j.error !== null && j.error !== "").map((j) => ({
+        source: "job",
+        level: "error",
         job_id: j.job_id,
         kind: j.kind,
         phase: j.phase,
@@ -11653,14 +12582,35 @@ var Server = (() => {
         at: j.updated_at,
         started_at: j.started_at,
         error: j.error
-      })).sort((a, b) => a.at < b.at ? 1 : a.at > b.at ? -1 : 0).slice(0, limit);
+      }));
+      const serverErrors = recentErrors().map((e) => ({
+        source: "server",
+        level: e.kind === "warning" ? "warning" : "error",
+        job_id: null,
+        kind: e.op,
+        phase: null,
+        scope: null,
+        at: e.ts,
+        started_at: null,
+        error: e.message
+      }));
+      const errors = [...jobErrors, ...serverErrors].sort((a, b) => a.at < b.at ? 1 : a.at > b.at ? -1 : 0).slice(0, limit);
       return {
         errors,
         // The panel must be able to say what it is NOT showing.
-        covers: "jobs",
-        note: "Job failures only \u2014 this register has no error-log tab. A read that fails returns its message to the caller and records no row."
+        covers: "jobs+server",
+        note: "Failed sync jobs, and the last 25 failures and warnings recorded on the server \u2014 RPCs that threw and background chores. A request refused because a write was already running is not recorded."
       };
     });
+  }
+  function clearRecentErrors(_p) {
+    return run(() => {
+      if (!canEditUsers()) {
+        throw new Error("Only the owner or an admin can clear the error log.");
+      }
+      clearErrors();
+      return { cleared: true };
+    }, "clearRecentErrors");
   }
 
   // ../gas_shared/server/inlineBoot.ts
@@ -11750,72 +12700,6 @@ var Server = (() => {
     return HtmlService.createHtmlOutput(welcomeHtml(email, continueUrl, accountChooserUrl())).setTitle(PRODUCT).addMetaTag("viewport", "width=device-width, initial-scale=1");
   }
 
-  // src/server/setup.ts
-  var DAILY_SYNC_HANDLER = "trigger_dailySync";
-  var DAILY_SYNC_HOUR = DEFAULT_SYNC_HOUR;
-  var WARM_HANDLER = "trigger_warmReadModels";
-  var WARM_READY_BY_HOURS = [9, 13, 17];
-  var WARM_TRIGGER_HOURS = WARM_READY_BY_HOURS.map((h) => (h + 23) % 24);
-  var WARM_TRIGGER_NEAR_MINUTE = 30;
-  var WARM_TRIGGER_TZ = "Europe/Paris";
-  function warmTriggerSchedule() {
-    return `${WARM_TRIGGER_TZ}|${WARM_TRIGGER_HOURS.join(",")}@${WARM_TRIGGER_NEAR_MINUTE}`;
-  }
-  function setup() {
-    const notes = [];
-    let ssId = getProp(PROP_KEYS.ledgerSpreadsheetId);
-    let ss;
-    if (ssId) {
-      ss = SpreadsheetApp.openById(ssId);
-      notes.push(`Ledger: reusing ${ssId}`);
-    } else {
-      ss = SpreadsheetApp.create("Wiz Sidekick DevSecOps \u2014 ledger");
-      ssId = ss.getId();
-      setProp(PROP_KEYS.ledgerSpreadsheetId, ssId);
-      notes.push(`Ledger: created ${ssId}`);
-    }
-    ensureTabs(ss);
-    notes.push("Tabs: ensured (headers appended where missing)");
-    let folderId = getProp(PROP_KEYS.archiveFolderId);
-    if (!folderId) {
-      folderId = DriveApp.createFolder("Wiz Sidekick DevSecOps \u2014 archive").getId();
-      setProp(PROP_KEYS.archiveFolderId, folderId);
-      notes.push(`Archive: created ${folderId}`);
-    } else {
-      notes.push(`Archive: reusing ${folderId}`);
-    }
-    if (!getProp(PROP_KEYS.wizAuthUrl)) setProp(PROP_KEYS.wizAuthUrl, DEFAULT_WIZ_AUTH_URL);
-    if (!getProp(PROP_KEYS.allowedUsers)) {
-      const owner = Session.getEffectiveUser().getEmail();
-      if (owner) {
-        setProp(PROP_KEYS.allowedUsers, owner);
-        notes.push(`Access: seeded ALLOWED_USERS with ${owner}`);
-      }
-    }
-    const dailyExisting = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === DAILY_SYNC_HANDLER);
-    if (!dailyExisting.length) {
-      ScriptApp.newTrigger(DAILY_SYNC_HANDLER).timeBased().everyDays(1).atHour(DAILY_SYNC_HOUR).create();
-      notes.push(`Daily sync trigger: installed (${DAILY_SYNC_HOUR}:00 script-local)`);
-    } else {
-      notes.push("Daily sync trigger: already installed");
-    }
-    const warmExisting = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === WARM_HANDLER);
-    const wantSchedule = warmTriggerSchedule();
-    if (warmExisting.length === WARM_TRIGGER_HOURS.length && getProp(PROP_KEYS.warmTriggerSchedule) === wantSchedule) {
-      notes.push(`Warm triggers: already installed (${wantSchedule})`);
-    } else {
-      for (const t of warmExisting) ScriptApp.deleteTrigger(t);
-      for (const hour of WARM_TRIGGER_HOURS) {
-        ScriptApp.newTrigger(WARM_HANDLER).timeBased().everyDays(1).atHour(hour).nearMinute(WARM_TRIGGER_NEAR_MINUTE).inTimezone(WARM_TRIGGER_TZ).create();
-      }
-      setProp(PROP_KEYS.warmTriggerSchedule, wantSchedule);
-      notes.push(
-        `Warm triggers: installed ${WARM_TRIGGER_HOURS.length}x daily, warm by ${WARM_READY_BY_HOURS.map((h) => `${h}:00`).join(", ")} ${WARM_TRIGGER_TZ}` + (warmExisting.length ? ` (replaced ${warmExisting.length})` : "")
-      );
-    }
-    return notes.join("\n");
-  }
-
   // src/server/diagnostics.ts
   function reporter() {
     const lines = [];
@@ -11829,6 +12713,8 @@ var Server = (() => {
       }
     };
   }
+  var TRIGGER_CAP = 20;
+  var SYNC_TRIGGER_SLOTS = 2;
   function deploymentDiagnostic() {
     const r = reporter();
     const ok = (label, value) => r.line(`  OK    ${label}: ${value}`);
@@ -11867,22 +12753,106 @@ var Server = (() => {
       ok(`Severities requested (${scope})`, s2.fetchSeverities[scope].join(", ") || "(all)");
     }
     r.line("");
-    const daily = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === "trigger_dailyScan").length;
-    if (daily) ok("Daily scan trigger", `installed (${daily})`);
-    else bad("Daily scan trigger", "not installed \u2014 run setup()");
+    const handlers = ScriptApp.getProjectTriggers().map((t) => t.getHandlerFunction());
+    const count = (names) => handlers.filter((h) => names.includes(h)).length;
+    const daily = count([DAILY_SYNC_HANDLER]);
+    const dailySig = getProp(PROP_KEYS.dailySyncSchedule);
+    const wantDaily = dailySyncSchedule(s2.syncSchedule);
+    if (daily > 1) {
+      bad("Daily sync trigger", `${daily} installed, expected 1 \u2014 the sync runs ${daily}x a day`);
+    } else if (!daily) {
+      bad("Daily sync trigger", "not installed \u2014 run setup()");
+    } else if (dailySig !== wantDaily) {
+      bad("Daily sync trigger", `schedule ${dailySig != null ? dailySig : "(unrecorded)"} is not the saved sync hour's ${wantDaily} \u2014 run setup() as the deploying account`);
+    } else {
+      ok("Daily sync trigger", `installed (${dailySig})`);
+    }
+    const warm = count([WARM_HANDLER]);
+    const warmSig = getProp(PROP_KEYS.warmTriggerSchedule);
+    if (warm !== WARM_TRIGGER_COUNT) {
+      bad("Warm triggers", `${warm} installed, expected ${WARM_TRIGGER_COUNT} \u2014 run setup()`);
+    } else if (warmSig !== warmTriggerSchedule()) {
+      bad("Warm triggers", `schedule ${warmSig != null ? warmSig : "(unrecorded)"} is not this build's ${warmTriggerSchedule()} \u2014 run setup()`);
+    } else {
+      ok("Warm triggers", `${warm} installed (${warmSig})`);
+    }
+    const oneShots = count([...Object.values(CONTINUE_HANDLERS), ...Object.values(WATCHDOG_HANDLERS)]);
+    const warmOneShots = count([WARM_CONTINUE_HANDLER]);
     const job = activeJob();
+    const warmNote = warmOneShots ? ` + ${warmOneShots} warm` : "";
+    ok("Pending one-shots", job || !oneShots ? `${oneShots}${warmNote}` : `${oneShots} with no sync in flight (each clears itself when it fires)${warmNote}`);
+    const free = TRIGGER_CAP - handlers.length;
+    if (free >= (job ? 0 : SYNC_TRIGGER_SLOTS)) ok("Triggers used", `${handlers.length} of ${TRIGGER_CAP}`);
+    else bad("Triggers used", `${handlers.length} of ${TRIGGER_CAP} \u2014 no room for a sync's ${SYNC_TRIGGER_SLOTS} one-shots; delete stray triggers in the editor's Triggers panel`);
     if (job) {
-      ok("Scan in flight", `${job.job_id} \u2014 ${job.phase}${job.scope ? ` (${job.scope})` : ""}`);
+      ok("Sync in flight", `${job.job_id} \u2014 ${job.phase}${job.scope ? ` (${job.scope})` : ""}`);
       r.line(`        page ${job.page}, ${job.findings_so_far} finding(s) so far`);
       if (isStaleJob(job)) {
         bad("  heartbeat", "silent for over 30 minutes \u2014 run resetStuckJob() from the editor");
       }
     } else {
-      ok("Scan in flight", "none");
+      ok("Sync in flight", "none");
     }
     const verified = getProp(PROP_KEYS.wizVerifiedAt);
     if (verified) ok("Credentials last verified", verified);
     else bad("Credentials last verified", "never \u2014 the tenant has not accepted them yet");
+    return r.text();
+  }
+  function redact2(v) {
+    if (!v) return "(unset)";
+    const t = v.trim();
+    return t.length <= 8 ? "(set)" : `${t.slice(0, 4)}\u2026${t.slice(-2)} (${t.length} chars)`;
+  }
+  function wizDiagnostic() {
+    var _a, _b, _c, _d;
+    const r = reporter();
+    const say = (label, value) => r.line(`  ${label}: ${value}`);
+    r.line("Wiz connectivity diagnostic");
+    r.line(`Build ${BUILD_ID}`);
+    r.line("");
+    const mode = resolveWizAuthMode(
+      getProp(PROP_KEYS.wizApiToken),
+      getProp(PROP_KEYS.wizClientId),
+      getProp(PROP_KEYS.wizClientSecret)
+    );
+    say("Auth mode", mode != null ? mode : "NONE \u2014 set WIZ_API_TOKEN, or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET");
+    say("API url", (_a = getProp(PROP_KEYS.wizApiUrl)) != null ? _a : "(unset)");
+    say("Auth url", (_b = getProp(PROP_KEYS.wizAuthUrl)) != null ? _b : "(unset)");
+    say("Client id", redact2(getProp(PROP_KEYS.wizClientId)));
+    say("Client secret", redact2(getProp(PROP_KEYS.wizClientSecret)));
+    say("Static token", redact2(getProp(PROP_KEYS.wizApiToken)));
+    say("Project scope", ((_c = projectScope()) != null ? _c : []).join(", ") || "(all projects)");
+    r.line("");
+    if (!hasWizCredentials()) {
+      r.line("STOP: no usable credentials, so there is nothing to test. Set WIZ_API_URL and");
+      r.line("either WIZ_API_TOKEN or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET in Project Settings.");
+      return r.text();
+    }
+    forgetToken();
+    try {
+      const token = getToken(true);
+      r.line(`  Step 1 OK    token acquired (${token.length} chars)`);
+    } catch (e) {
+      r.line(`  Step 1 FAIL  ${String(e instanceof Error ? e.message : e).slice(0, 600)}`);
+      r.line("");
+      r.line(e instanceof WizNotAuthorizedError ? "This is the deployment's authorization, NOT the credentials. Accept the consent\nprompt this run should have shown you, then deploy a NEW VERSION of the web app \u2014\npushing code does not change what the /exec URL serves." : "The token endpoint refused these credentials. Check WIZ_CLIENT_ID and\nWIZ_CLIENT_SECRET, and that WIZ_AUTH_URL matches your tenant's region.");
+      return r.text();
+    }
+    try {
+      const page = fetchPage("sast", { first: 1, includeTotalCount: true });
+      r.line(`  Step 2 OK    query answered \u2014 ${(_d = page.totalCount) != null ? _d : "?"} finding(s) in scope`);
+      if (page.partialErrors.length) {
+        r.line(`               with partial errors: ${page.partialErrors.join("; ").slice(0, 300)}`);
+      }
+      setProp(PROP_KEYS.wizVerifiedAt, (/* @__PURE__ */ new Date()).toISOString());
+      r.line("");
+      r.line("Connectivity is fine. Settings > System will now read 'Verified'.");
+    } catch (e) {
+      r.line(`  Step 2 FAIL  ${String(e instanceof Error ? e.message : e).slice(0, 600)}`);
+      r.line("");
+      r.line("The token was accepted but the query was not. A 401 here means the service");
+      r.line("account cannot read this data; a 404 means WIZ_API_URL's host or path is wrong.");
+    }
     return r.text();
   }
 

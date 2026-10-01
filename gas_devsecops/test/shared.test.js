@@ -263,8 +263,8 @@ registerDiagnosticsContract({
   ...base,
   // FOUR SECTIONS, AND NO STORAGE AND NO ERRORS. Cell usage is on the Data page (readModels.ts
   // publishes `cellLimit` and pages/data.js's cellsSummary computes the ratio), and this
-  // register's api_getRecentErrors covers job failures only — api.ts says so in `covers` — and
-  // is rendered on the Data page too. Nothing moved between pages when these four became cards.
+  // register's api_getRecentErrors (failed jobs plus the server-side log — api.ts says so in
+  // `covers`) is rendered on the Data page too. Nothing moved between pages when these four became cards.
   sections: ["product", "build", "credentials", "lastSync"],
   // A register with nothing to sync is broken here, which is why the same boolean gas_ai draws
   // `neutral` is drawn `bad`. The shared section refuses to default the tone for that reason.

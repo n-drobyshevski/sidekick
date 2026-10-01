@@ -143,13 +143,37 @@ export function compactionView(preview) {
   };
 }
 
-/** The recent-errors panel: its rows, AND the scope note saying what it does not cover. */
+/**
+ * The recent-errors panel: its rows, AND the scope note saying what it does not cover.
+ *
+ * `serverCount` is what "Clear log" can actually remove: `api_clearRecentErrors` drops the
+ * server-side log only, and a failed job's row stays listed (it belongs to the jobs tab), so
+ * the control is disabled when only job rows remain rather than offering a clear that would
+ * visibly change nothing.
+ */
 export function recentErrorsView(payload) {
+  const errors = Array.isArray(payload && payload.errors) ? payload.errors : [];
   return {
-    errors: Array.isArray(payload && payload.errors) ? payload.errors : [],
+    errors,
     covers: (payload && payload.covers) || null,
     note: (payload && payload.note) || null,
+    serverCount: errors.filter((r) => r && r.source === "server").length,
   };
+}
+
+/** Where a recent-errors row was recorded, in the reader's words. A row with no `source`
+ *  predates the server log, when job rows were the only kind. */
+export function errorSourceLabel(source) {
+  if (source === "server") return "Server";
+  if (source === "job" || source === undefined || source === null) return "Sync job";
+  return String(source);
+}
+
+/** A row's level. "warning" only when the server said so — a sync whose absences the
+ *  completeness gate held back is not a failure. A job row, or a row from a server that
+ *  predates the field, is an error, which is what every row used to be. */
+export function errorLevel(row) {
+  return row && row.level === "warning" ? "warning" : "error";
 }
 
 /**
@@ -568,6 +592,14 @@ export async function renderData(host, _params, ctx) {
     clear(errorsHost);
     errorsHost.append(el("p", { class: "small muted", "data-denominator": v.covers ? `Covers: ${v.covers}.` : "" },
       v.note || (v.covers ? `Covers: ${v.covers}.` : "This log's coverage was not stated.")));
+    // CLEAR IS A CAPABILITY (gas_shared/ui/diagnostics.js's errorLogBody rule): only the owner
+    // or an admin may call api_clearRecentErrors, so nobody else is offered the control at all.
+    // Disabled, rather than absent, while there is nothing it could remove.
+    const boot = bootstrapCached();
+    if (boot && boot.canEditAccess) {
+      errorsHost.append(el("div", { style: "margin-bottom:12px" },
+        el("button", { disabled: v.serverCount ? null : true, onclick: onClearErrors }, "Clear log")));
+    }
     if (!v.errors.length) {
       errorsHost.append(emptyState("No recent failures."));
       return;
@@ -575,13 +607,45 @@ export async function renderData(host, _params, ctx) {
     errorsHost.append(dataTable({
       columns: [
         { key: "at", label: "When", cell: (r) => fmtDateTime(r.at) },
-        { key: "kind", label: "Kind", cell: (r) => r.kind },
+        { key: "level", label: "Level", cell: (r) => (errorLevel(r) === "warning"
+          ? el("span", { class: "pill warn" }, "Warning")
+          : el("span", { class: "pill bad" }, "Error")) },
+        { key: "source", label: "Source", cell: (r) => errorSourceLabel(r.source) },
+        { key: "kind", label: "Operation", cell: (r) => r.kind || absentText },
         { key: "scope", label: "Register", cell: (r) => r.scope || absentText },
-        { key: "phase", label: "Phase", cell: (r) => r.phase },
+        { key: "phase", label: "Phase", cell: (r) => r.phase || absentText },
         { key: "error", label: "Error", cell: (r) => r.error },
       ],
       rows: v.errors,
       emptyText: "No recent failures.",
     }));
+  }
+
+  async function onClearErrors() {
+    let ran = false;
+    try {
+      ({ ran } = await confirmedAction(
+        () => confirmDialog({
+          title: "Clear the error log?",
+          body: "Removes the failures recorded on the server. Failed sync jobs stay listed — "
+            + "they belong to the job history. No scan or ledger data is affected.",
+          confirmLabel: "Clear log",
+        }),
+        () => call("api_clearRecentErrors", {}),
+      ));
+    } catch (e) {
+      toast(`Clear failed: ${String((e && e.message) || e)}`, "error");
+      return;
+    }
+    if (!ran) return;
+    toast("Error log cleared.");
+    try {
+      renderErrors(await call("api_getRecentErrors", {}));
+    } catch (e) {
+      clear(errorsHost).append(errorState(
+        "Couldn't load recent errors.",
+        { detail: String((e && e.message) || e) },
+      ));
+    }
   }
 }
