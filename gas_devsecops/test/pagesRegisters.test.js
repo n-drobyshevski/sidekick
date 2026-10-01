@@ -35,6 +35,8 @@ import {
 } from "../src/client/js/pages/sast.js";
 import { REMOVAL_CELLS, TWIN_NOTE, bucketTotals, secretsModel } from "../src/client/js/pages/secrets.js";
 import { code } from "../../gas_shared/test/contracts/emptyStates.js";
+import { HAS_FIX_NOT_MEASURABLE } from "../src/client/js/pages/registerModel.js";
+import { HAS_FIX_NOT_MEASURABLE as MTTR_HAS_FIX_NOT_MEASURABLE } from "../src/client/js/pages/mttr.js";
 
 const SRC = (name) =>
   readFileSync(new URL(`../src/client/js/pages/${name}.js`, import.meta.url), "utf8");
@@ -391,6 +393,31 @@ describe("sca — two clocks, never one blended number", () => {
     expect(SCA.clocks.awaitingVendor.denominator).toMatch(/no published fixed version/);
     expect(SCA.clocks.actionable.denominator).toMatch(/78 of 90/);
     expect(SCA.clocks.actionable.denominator).toMatch(/measures us rather than upstream/);
+  });
+
+  it("draws the awaiting count as a measurement when the payload carries no hasFix filter", () => {
+    // scaPayload() has no `fetchFilter` — an older cached payload, or a fetch without hasFix.
+    expect(SCA.clocks.awaitingVendor.measurable).toBe(true);
+    expect(SCA.clocks.awaitingVendor.reason).toBe(null);
+  });
+
+  it("marks the awaiting count not measurable under the hasFix fetch, in the MTTR page's words", () => {
+    // The fetch asks only for findings that already have a fix, so the ones this card counts
+    // are never fetched; the near-zero is structural, not the vendors keeping up.
+    const vm = scaModel({ ...scaPayload(), fetchFilter: { scaHasFix: true } });
+    expect(vm.clocks.awaitingVendor.measurable).toBe(false);
+    expect(vm.clocks.awaitingVendor.reason).toBe(HAS_FIX_NOT_MEASURABLE);
+    // The same constant the MTTR page prints, not a second spelling of it.
+    expect(MTTR_HAS_FIX_NOT_MEASURABLE).toBe(HAS_FIX_NOT_MEASURABLE);
+    expect(scaModel({ ...scaPayload(), fetchFilter: { scaHasFix: false } })
+      .clocks.awaitingVendor.measurable).toBe(true);
+  });
+
+  it("renders the not-measurable card with the reason and without the count's denominator", () => {
+    const sca = code(SCA_SRC);
+    expect(sca).toMatch(/vm\.clocks\.awaitingVendor\.measurable\s*\?/);
+    expect(sca).toMatch(/value: "Not measurable"/);
+    expect(sca).toMatch(/sentenceStart\(HAS_FIX_REASON\) \+ ", so a finding still waiting is never seen\."/);
   });
 
   it("counts rows with a fixed version without claiming the AGGREGATE endpoint has the versions", () => {

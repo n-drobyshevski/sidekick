@@ -59,7 +59,9 @@ import { chartUnavailable, loadCharts } from "../../../../../gas_shared/ui/chart
 // across all four surfaces" rule. `sevPalette` is defined once in `sca.js`; `sast.js` already
 // imports it from there, and this is the same import rather than a second copy.
 import { agingTableModel, sevPalette, textCell, yesNo } from "./sca.js";
-import { PROVENANCE_LABEL, provenance } from "./registerModel.js";
+import {
+  HAS_FIX_NOT_MEASURABLE, HAS_FIX_REASON, PROVENANCE_LABEL, hasFixFetch, provenance,
+} from "./registerModel.js";
 import { findingRowLabel, openFindingSheet } from "./findingSheet.js";
 import {
   REGISTER_LABELS, SPLIT_NONE, splitBucketNote, splitCountNote, splitDim, splitGroupOf,
@@ -1078,18 +1080,14 @@ export function resolutionBucketView(buckets) {
   return { show: labels.length > 0, labels, rows, total };
 }
 
-/**
- * Why the vendor figures cannot be measured here: the SCA fetch carries Wiz's `hasFix: true`
- * (server `wizQueries.ts` `SCA_FETCH_HAS_FIX`), so a finding still waiting on a vendor is
- * never fetched at all. Published by the server as `remediation.fetchFilter.scaHasFix`.
- */
-export const HAS_FIX_REASON = "this register fetches only packages with a published fix";
-export const HAS_FIX_NOT_MEASURABLE = "Not measurable — " + HAS_FIX_REASON;
+// The hasFix reason lives in registerModel.js, shared with the Dependencies register's own
+// "Awaiting a vendor fix" card; re-exported so this page's callers keep their import.
+export { HAS_FIX_NOT_MEASURABLE, HAS_FIX_REASON };
 
-/** Whether the payload says the SCA fetch only asked for findings that already have a fix. */
+/** Whether the payload says the SCA fetch only asked for findings that already have a fix
+ *  (`remediation.fetchFilter.scaHasFix`). */
 export function scaFetchHasFix(mttr) {
-  const f = mttr && mttr.remediation && mttr.remediation.fetchFilter;
-  return !!(f && f.scaHasFix === true);
+  return hasFixFetch(mttr && mttr.remediation && mttr.remediation.fetchFilter);
 }
 
 /**

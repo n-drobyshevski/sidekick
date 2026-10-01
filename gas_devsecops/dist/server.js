@@ -5848,7 +5848,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "bd467396b068" : "dev";
+  var BUILD_ID = true ? "3b4481574ca4" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
@@ -10146,6 +10146,11 @@ var Server = (() => {
       tiers: riskTierStats(scopedTierRows(rows), void 0, scope),
       funnel: triageFunnel(rows, void 0, /* @__PURE__ */ new Set(), false, scope, n2.slaTargets),
       awaiting: awaitingVendorFix(rows, { scope }),
+      // The MTTR payload's `remediation.fetchFilter`, for the same card on this page: under
+      // `SCA_FETCH_HAS_FIX` the `awaiting` count above has no population (the findings it counts
+      // are never fetched), and the Dependencies page prints it as not measurable. sca only —
+      // the other two registers have no vendor clock to qualify.
+      fetchFilter: scope === "sca" ? { scaHasFix: SCA_FETCH_HAS_FIX } : null,
       latestScan: latest,
       signalCoverage: signalCoverage(rows),
       // WHAT THIS PAGE MEASURED, AND WHAT IT NEVER LOOKED AT. Three things narrow a register
@@ -10192,7 +10197,10 @@ var Server = (() => {
       // "dsRegister2" -> "dsRegister3" (completeness gate): `latestScan` gained the scan row's
       // completeness record (`disappearance`, `dropout_count`, …), and a row's `resolution_src`
       // can now read "repo_dropout" — a warm dsRegister2 entry would draw neither.
-      "dsRegister3",
+      // "dsRegister3" -> "dsRegister4" (hasFix relabel): the payload gained `fetchFilter`; a warm
+      // dsRegister3 entry lacks it and the Dependencies page would draw the awaiting-a-vendor
+      // count as a measurement again.
+      "dsRegister4",
       { ...keyOf(n2), scope, slaTargets: n2.slaTargets },
       () => buildRegister(scope, n2),
       CLOCK_TTL_SEC

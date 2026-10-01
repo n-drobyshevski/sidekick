@@ -16,6 +16,28 @@
 
 import { fmtCount } from "../../../../../gas_shared/ui/figures.js";
 
+/* ------------------------------------------------------------------ the hasFix fetch */
+
+/**
+ * Why the vendor figures cannot be measured here: the SCA fetch carries Wiz's `hasFix: true`
+ * (server `wizQueries.ts` `SCA_FETCH_HAS_FIX`), so a finding still waiting on a vendor is
+ * never fetched at all. Here rather than on one page because two pages print it — the MTTR
+ * page's awaiting figure and vendor wait, and the Dependencies register's "Awaiting a vendor
+ * fix" card — and the reason must read the same on both.
+ */
+export const HAS_FIX_REASON = "this register fetches only packages with a published fix";
+export const HAS_FIX_NOT_MEASURABLE = "Not measurable — " + HAS_FIX_REASON;
+
+/**
+ * Whether a payload's `fetchFilter` block says the SCA fetch asked only for findings that
+ * already have a fix. The server publishes it as `remediation.fetchFilter` on the MTTR payload
+ * and as `fetchFilter` on the Dependencies register's. Absent (an older cached payload) reads
+ * as false, i.e. the figure is drawn as it always was.
+ */
+export function hasFixFetch(fetchFilter) {
+  return !!(fetchFilter && fetchFilter.scaHasFix === true);
+}
+
 /* ------------------------------------------------------------------ provenance */
 
 export const PROVENANCE = {

@@ -434,6 +434,8 @@ describe("the caching audit is per model, and the header states it", () => {
     // ships a false floor or mean — same unchanged layer claim. "dsMttr5" -> "dsMttr6" (hasFix
     // relabel): `remediation.fetchFilter` joined the payload — same claim again.
     // "dsSecrets3" -> "dsSecrets4" (twin fold): `twins` can carry the cross-repository counts.
+    // "dsRegister3" -> "dsRegister4" (hasFix relabel, register page): `fetchFilter` joined the
+    // payload — same claim.
     expect(layerOf("dsExecutive3")).toEqual(["cached"]);
     // "dsMttr1" -> "dsMttr2": the namespace was bumped when `remediation` gained its
     // `slaConsumed` block. A warm entry from THAT old namespace carries no deciles, and a
@@ -449,7 +451,7 @@ describe("the caching audit is per model, and the header states it", () => {
     // over figures that have one is a silently missing caveat. (Unlike its three siblings
     // above, `registerModel`'s own build never calls `kaplanMeier`, so the delayed-entry
     // package left this namespace untouched.)
-    expect(layerOf("dsRegister3")).toEqual(["cached", "cached", "cached"]);
+    expect(layerOf("dsRegister4")).toEqual(["cached", "cached", "cached"]);
 
     // Time-invariant models: dated by the ledger's own clock, so a stored copy stays true.
     // "dsProgram1" -> "dsProgram2": the namespace was bumped when `capacity` gained
@@ -523,7 +525,7 @@ describe("the caching audit is per model, and the header states it", () => {
     registerModel("sca", ALL);
     registerModel("sast", ALL);
     const keys = H.cacheCalls
-      .filter((c) => c.name === "dsRegister3")
+      .filter((c) => c.name === "dsRegister4")
       .map((c) => JSON.stringify(c.params));
     expect(new Set(keys).size).toBe(2);
   });
@@ -651,6 +653,12 @@ describe("mttrModel", () => {
     const m = mttrModel(ALL) as any;
     expect(m.remediation.fetchFilter).toEqual({ scaHasFix: SCA_FETCH_HAS_FIX });
     expect(SCA_FETCH_HAS_FIX).toBe(true);
+  });
+
+  it("publishes the same flag on the Dependencies register, and only there", () => {
+    // The register page's "Awaiting a vendor fix" card reads the same near-zero count.
+    expect((registerModel("sca", ALL) as any).fetchFilter).toEqual({ scaHasFix: SCA_FETCH_HAS_FIX });
+    expect((registerModel("sast", ALL) as any).fetchFilter).toBeNull();
   });
 
   it("drops the no-fix population from the point-in-time blocks when the toggle is off", () => {
@@ -1695,7 +1703,7 @@ describe("warmReadModels", () => {
     expect(new Set(H.cacheCalls.map((c) => c.name))).toEqual(new Set([
       "dsBootCore1",
       "dsHistory6", "dsProgram2", "dsRepos2", "dsStorage1",
-      "dsExecutive3", "dsMttr6", "dsMttrSplit2", "dsSecrets4", "dsRegister3",
+      "dsExecutive3", "dsMttr6", "dsMttrSplit2", "dsSecrets4", "dsRegister4",
     ]));
     // FIRST, because doGet only inlines a bootstrap core that is already stored: a budget
     // cut-out must never be what leaves every page load paying the second round trip.

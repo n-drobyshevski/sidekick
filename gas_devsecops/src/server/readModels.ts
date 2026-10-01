@@ -1867,6 +1867,11 @@ function buildRegister(scope: Scope, n: NormParams): Rec {
     tiers: riskTierStats(scopedTierRows(rows), undefined, scope),
     funnel: triageFunnel(rows as never, undefined, new Set<string>(), false, scope, n.slaTargets),
     awaiting: awaitingVendorFix(rows, { scope }),
+    // The MTTR payload's `remediation.fetchFilter`, for the same card on this page: under
+    // `SCA_FETCH_HAS_FIX` the `awaiting` count above has no population (the findings it counts
+    // are never fetched), and the Dependencies page prints it as not measurable. sca only —
+    // the other two registers have no vendor clock to qualify.
+    fetchFilter: scope === "sca" ? { scaHasFix: SCA_FETCH_HAS_FIX } : null,
     latestScan: latest,
     signalCoverage: signalCoverage(rows),
 
@@ -1917,7 +1922,10 @@ export function registerModel(scope: Scope, p?: ModelParams): Rec {
     // "dsRegister2" -> "dsRegister3" (completeness gate): `latestScan` gained the scan row's
     // completeness record (`disappearance`, `dropout_count`, …), and a row's `resolution_src`
     // can now read "repo_dropout" — a warm dsRegister2 entry would draw neither.
-    "dsRegister3",
+    // "dsRegister3" -> "dsRegister4" (hasFix relabel): the payload gained `fetchFilter`; a warm
+    // dsRegister3 entry lacks it and the Dependencies page would draw the awaiting-a-vendor
+    // count as a measurement again.
+    "dsRegister4",
     { ...keyOf(n), scope, slaTargets: n.slaTargets },
     () => buildRegister(scope, n),
     CLOCK_TTL_SEC,

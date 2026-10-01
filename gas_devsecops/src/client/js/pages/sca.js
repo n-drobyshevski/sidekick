@@ -27,7 +27,10 @@
 
 import { bootstrapCached, listJoin, listSplit, navigate, swrCall } from "../../../../../gas_shared/store.js";
 import { chartUnavailable, loadCharts } from "../../../../../gas_shared/ui/chartsLoader.js";
-import { PROVENANCE_LABEL, populationLine, provenance } from "./registerModel.js";
+import {
+  HAS_FIX_NOT_MEASURABLE, HAS_FIX_REASON, PROVENANCE_LABEL, hasFixFetch, populationLine,
+  provenance,
+} from "./registerModel.js";
 import { findingRowLabel, openFindingSheet } from "./findingSheet.js";
 import { wizLinkColumn } from "../../../../../gas_shared/ui/wizLinks.js";
 import {
@@ -36,7 +39,7 @@ import {
   figureCardModel, firstRunNotice, fmtCount, glossaryTip, heroStat, kpiCard, measuredEmpty,
   meter, num, onPageTeardown, pageHeader, pageOf, pct1, segmented, sevBadge, sevEntries,
   sevKeyRow, sevSegmentBar, skeletonStack, sortRows, statRow, statusPill, tableFooter, tipLabel,
-  togglePills, fmtDate, triCell,
+  togglePills, fmtDate, triCell, sentenceStart,
 } from "../ui.js";
 
 // =========================================================================================
@@ -1043,6 +1046,12 @@ export function scaModel(payload, opts) {
   const openTotal = num(awaiting.openTotal, num(p.open));
   const awaitingCount = num(awaiting.overall);
   const actionableCount = Math.max(0, openTotal - awaitingCount);
+  // UNDER THE `hasFix` FETCH THE AWAITING COUNT IS NOT A READING. The fetch asks Wiz only for
+  // findings whose package already has a fixed version, so the findings this card counts are
+  // the ones never fetched, and its count sits near zero by construction — drawn as a figure,
+  // it reads as "the vendors are keeping up". The MTTR page says the same of its own copy of
+  // this figure, in the same words (registerModel.js's HAS_FIX_REASON).
+  const awaitingMeasurable = !hasFixFetch(p.fetchFilter);
 
   return {
     scope: "sca",
@@ -1092,6 +1101,8 @@ export function scaModel(payload, opts) {
           : num(awaiting.pctOfOpen, null),
         perSev: awaiting.perSev || {},
         notApplicable: num(awaiting.notApplicable),
+        measurable: awaitingMeasurable,
+        reason: awaitingMeasurable ? null : HAS_FIX_NOT_MEASURABLE,
         // THE SHORT FORM, AND IT IS THE ONE ON SCREEN. R3's ladder: "N of M open findings"
         // under the figure, the sentence below one level down on the label's own tip. Two
         // counts rather than the percentage they imply — a share is what the reader can
@@ -1298,13 +1309,22 @@ function paintSca(host, vm, filters) {
     // the card and its sentence stays on one line. The two counts are also a SPLIT of one
     // population (112 + 168 = 280), which reads down a column as naturally as across a row.
     el("div", { class: "kpi-row kpi-row--column" },
-      figureCard({
-        label: vm.clocks.awaitingVendor.label,
-        value: fmtCount(vm.clocks.awaitingVendor.count),
-        sub: `${vm.clocks.awaitingVendor.short} — measures ${vm.clocks.awaitingVendor.measures}`,
-        help: { term: vm.clocks.awaitingVendor.glossary },
-        denominator: vm.clocks.awaitingVendor.denominator,
-      }),
+      // NOT MEASURABLE UNDER THE hasFix FETCH: the reason instead of a count, and no
+      // denominator sentence — "N of M have no published fix" is the claim it cannot make.
+      vm.clocks.awaitingVendor.measurable
+        ? figureCard({
+          label: vm.clocks.awaitingVendor.label,
+          value: fmtCount(vm.clocks.awaitingVendor.count),
+          sub: `${vm.clocks.awaitingVendor.short} — measures ${vm.clocks.awaitingVendor.measures}`,
+          help: { term: vm.clocks.awaitingVendor.glossary },
+          denominator: vm.clocks.awaitingVendor.denominator,
+        })
+        : figureCard({
+          label: vm.clocks.awaitingVendor.label,
+          value: "Not measurable",
+          sub: sentenceStart(HAS_FIX_REASON) + ", so a finding still waiting is never seen.",
+          help: { term: vm.clocks.awaitingVendor.glossary },
+        }),
       figureCard({
         label: vm.clocks.actionable.label,
         value: fmtCount(vm.clocks.actionable.count),
