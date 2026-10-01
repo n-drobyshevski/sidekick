@@ -5981,7 +5981,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "030b3a63e624" : "dev";
+  var BUILD_ID = true ? "10a12b78bff9" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
@@ -11848,6 +11848,23 @@ var Server = (() => {
     return result;
   }
 
+  // ../gas_shared/server/dailyTrigger.ts
+  function dailyTriggerSignature(tz, hour) {
+    return `${tz}|${hour}`;
+  }
+  function reconcileDailyTrigger(spec) {
+    const { handler, tz, hour, label } = spec;
+    const existing = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === handler);
+    const want = dailyTriggerSignature(tz, hour);
+    if (existing.length === 1 && spec.getSignature() === want) {
+      return `${label}: already installed (${hour}:00 ${tz})`;
+    }
+    ScriptApp.newTrigger(handler).timeBased().everyDays(1).atHour(hour).inTimezone(tz).create();
+    for (const t of existing) ScriptApp.deleteTrigger(t);
+    spec.setSignature(want);
+    return `${label}: installed (${hour}:00 ${tz})` + (existing.length ? ` (replaced ${existing.length})` : "");
+  }
+
   // src/server/setup.ts
   var DAILY_SYNC_HANDLER = "trigger_dailySync";
   var TRIGGER_TZ = "Europe/Paris";
@@ -11860,18 +11877,17 @@ var Server = (() => {
     return `${TRIGGER_TZ}|${WARM_TRIGGER_HOURS.join(",")}@${WARM_TRIGGER_NEAR_MINUTE}`;
   }
   function dailySyncSchedule(hour) {
-    return `${TRIGGER_TZ}|${hour}`;
+    return dailyTriggerSignature(TRIGGER_TZ, hour);
   }
   function reconcileDailySyncTrigger(hour) {
-    const existing = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === DAILY_SYNC_HANDLER);
-    const want = dailySyncSchedule(hour);
-    if (existing.length === 1 && getProp(PROP_KEYS.dailySyncSchedule) === want) {
-      return `Daily sync trigger: already installed (${hour}:00 ${TRIGGER_TZ})`;
-    }
-    ScriptApp.newTrigger(DAILY_SYNC_HANDLER).timeBased().everyDays(1).atHour(hour).inTimezone(TRIGGER_TZ).create();
-    for (const t of existing) ScriptApp.deleteTrigger(t);
-    setProp(PROP_KEYS.dailySyncSchedule, want);
-    return `Daily sync trigger: installed (${hour}:00 ${TRIGGER_TZ})` + (existing.length ? ` (replaced ${existing.length})` : "");
+    return reconcileDailyTrigger({
+      handler: DAILY_SYNC_HANDLER,
+      tz: TRIGGER_TZ,
+      hour,
+      label: "Daily sync trigger",
+      getSignature: () => getProp(PROP_KEYS.dailySyncSchedule),
+      setSignature: (sig) => setProp(PROP_KEYS.dailySyncSchedule, sig)
+    });
   }
   function setup() {
     const notes = [];

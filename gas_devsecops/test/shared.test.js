@@ -29,6 +29,9 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 
 import * as errorLog from "../src/server/errorLog";
 import { registerErrorLogContract } from "../../gas_shared/test/contracts/errorLog.js";
+import { DAILY_SYNC_HANDLER, reconcileDailySyncTrigger, TRIGGER_TZ } from "../src/server/setup";
+import { PROP_KEYS } from "../src/server/props";
+import { registerDailyTriggerContract } from "../../gas_shared/test/contracts/dailyTrigger.js";
 
 import { SEVERITY_COLORS, SEVERITY_TEXT, SLA_TARGETS } from "../src/domain/config";
 import { LANE_ICONS, ROUTE_ICONS } from "../src/client/js/routeIcons.js";
@@ -370,3 +373,12 @@ registerWizLinksContract({ describe, it, expect });
 // The recent-errors log: the shared implementation through this register's own binding of it
 // (src/server/errorLog.ts). The call-site specs — which operation records what — stay local.
 registerErrorLogContract({ ...base, beforeEach, afterEach, log: errorLog });
+
+// The daily trigger reconcile: the shared implementation through this register's binding of it
+// (setup.reconcileDailySyncTrigger — the saved hour, here 14). How setup() and the settings
+// save reach it stays in test/setup.test.ts and test/api.test.ts.
+registerDailyTriggerContract({
+  ...base, beforeEach, afterEach,
+  handler: DAILY_SYNC_HANDLER, tz: TRIGGER_TZ, hour: 14, propKey: PROP_KEYS.dailySyncSchedule,
+  reconcile: () => reconcileDailySyncTrigger(14),
+});
