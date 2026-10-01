@@ -45,6 +45,9 @@ export const PROP_KEYS = {
   // runPendingSupportGroupRefresh), so the Wiz call runs outside the scan's lock. Set to the
   // time it was queued; deleted once it has run.
   supportGroupRefreshPending: "SUPPORT_GROUP_REFRESH_PENDING",
+  // The support-group map cache's generation (settingsStore.ts): moved by setSupportGroupMap,
+  // the map tab's only writer, so a scan's DATA_VERSION bump no longer forces a re-read of it.
+  supportGroupMapGen: "SUPPORT_GROUP_MAP_GEN",
 } as const;
 
 export const DEFAULT_WIZ_AUTH_URL = "https://auth.app.wiz.io/oauth/token";

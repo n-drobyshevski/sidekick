@@ -7,6 +7,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const readAllCalls: string[] = [];
 let settingsRows: Array<Record<string, unknown>> = [];
 let sgMapRows: Array<Record<string, unknown>> = [];
+/** Runs inside `readAll`, after the rows are taken — another execution acting mid-read. */
+let duringRead: (() => void) | null = null;
 
 vi.mock("../src/server/sheetsDb", () => ({
   TABS: {
@@ -16,14 +18,22 @@ vi.mock("../src/server/sheetsDb", () => ({
   },
   readAll: (tab: { name: string }) => {
     readAllCalls.push(tab.name);
-    if (tab.name === "support_group_map") return sgMapRows;
-    return tab.name === "settings" ? settingsRows : [];
+    const rows = tab.name === "support_group_map" ? sgMapRows
+      : tab.name === "settings" ? settingsRows : [];
+    const hook = duringRead;
+    duringRead = null;
+    hook?.();
+    return rows;
   },
   ensureTab: () => {},
   // `getJob` reads the tail rather than the whole tab; the fake mirrors that so the
   // module under test can be loaded at all.
   readTail: (tab: { name: string }) => (tab.name === "settings" ? settingsRows : []),
-  overwrite: () => {},
+  // The two settingsStore tabs keep what is written, so a later execution's read sees it.
+  overwrite: (tab: { name: string }, rows: Array<Record<string, unknown>>) => {
+    if (tab.name === "settings") settingsRows = rows;
+    if (tab.name === "support_group_map") sgMapRows = rows;
+  },
   appendRows: () => {},
 }));
 
@@ -49,6 +59,7 @@ vi.stubGlobal("PropertiesService", {
 
 beforeEach(() => {
   readAllCalls.length = 0;
+  duringRead = null;
   settingsRows = [{ key: "retention_days", value_json: "30" }];
   vi.resetModules();
 });
@@ -187,6 +198,18 @@ describe("settingsStore cross-execution cache", () => {
     expect(settingsReads()).toBe(2);
   });
 
+  // The tab read takes ~1 s, long enough for a save to land inside it. The reader took the OLD
+  // rows, so it must write them back under the version it missed on — never under the one the
+  // save just minted, which would replace the saved dict there for six hours.
+  it("a read overlapping a save does not overwrite the saved dict", async () => {
+    const writer = await nextExecution();
+    const reader = await nextExecution();
+    duringRead = () => writer.saveSettings({ retention_days: 45 });
+    expect(reader.getRetentionDays()).toBe(30); // the rows it took before the save
+    expect((await nextExecution()).getRetentionDays()).toBe(45);
+    expect(settingsReads()).toBe(1);
+  });
+
   it("does not cache a dict too large for one CacheService value", async () => {
     settingsRows = [{ key: "support_group_map", value_json: JSON.stringify({ blob: "x".repeat(100_000) }) }];
     (await nextExecution()).loadSettings();
@@ -203,7 +226,8 @@ describe("settingsStore cross-execution cache", () => {
 
 // The support-group map tab (~5k rows) was read in every execution that attached support
 // groups — 0.7–1.4 s measured, often the execution's first Sheets touch. It is cached across
-// executions now, keyed on the data version its only writer (`setSupportGroupMap`) bumps, and
+// executions now, keyed on its own generation (`SUPPORT_GROUP_MAP_GEN`), which its only writer
+// (`setSupportGroupMap`) moves — not on the data version, which every scan bumps — and
 // gzip-chunked through serverCache because it is over CacheService's 100 KB per value.
 describe("settingsStore support-group map cache", () => {
   const props = new Map<string, string>();
@@ -268,6 +292,37 @@ describe("settingsStore support-group map cache", () => {
   it("falls back to the tab when the cache throws", async () => {
     cacheThrows = true;
     expect((await nextExecution()).getSupportGroupMap().map).toEqual({ "sub-1": "Platform", "sub-2": "Data" });
+    expect(tabReads()).toBe(1);
+  });
+
+  // Every scan bumps DATA_VERSION and none writes this tab; keyed on the version, the map was
+  // re-read after every scan for nothing. Its own generation moves only on a refresh.
+  it("keeps serving the cached map across a data-version bump", async () => {
+    (await nextExecution()).getSupportGroupMap();
+    props.set("DATA_VERSION", "999");
+    expect((await nextExecution()).getSupportGroupMap().map).toEqual({ "sub-1": "Platform", "sub-2": "Data" });
+    expect(tabReads()).toBe(1);
+  });
+
+  it("moves the generation on every refresh, so a second refresh is not served the first", async () => {
+    (await nextExecution()).setSupportGroupMap({ "sub-1": "One" });
+    const genOne = props.get("SUPPORT_GROUP_MAP_GEN");
+    expect(genOne).toBeTruthy();
+    (await nextExecution()).setSupportGroupMap({ "sub-2": "Two" });
+    expect(props.get("SUPPORT_GROUP_MAP_GEN")).not.toBe(genOne);
+    expect((await nextExecution()).getSupportGroupMap().map).toEqual({ "sub-2": "Two" });
+    expect(tabReads()).toBe(0);
+  });
+
+  // The ~1 s tab read is long enough for a refresh to land inside it. The reader took the OLD
+  // rows, so it must write them back under the generation it missed on — never under the one the
+  // refresh just minted, which would replace the saved map for six hours.
+  it("a read overlapping a refresh does not overwrite the saved map", async () => {
+    const writer = await nextExecution();
+    const reader = await nextExecution();
+    duringRead = () => writer.setSupportGroupMap({ "sub-9": "Security" });
+    expect(reader.getSupportGroupMap().map).toEqual({ "sub-1": "Platform", "sub-2": "Data" });
+    expect((await nextExecution()).getSupportGroupMap().map).toEqual({ "sub-9": "Security" });
     expect(tabReads()).toBe(1);
   });
 });

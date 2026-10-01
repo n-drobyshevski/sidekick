@@ -5929,7 +5929,10 @@ var Server = (() => {
     // A support-group refresh a scan queued for the next warm hop (scanJobs.handOffAfterScan →
     // runPendingSupportGroupRefresh), so the Wiz call runs outside the scan's lock. Set to the
     // time it was queued; deleted once it has run.
-    supportGroupRefreshPending: "SUPPORT_GROUP_REFRESH_PENDING"
+    supportGroupRefreshPending: "SUPPORT_GROUP_REFRESH_PENDING",
+    // The support-group map cache's generation (settingsStore.ts): moved by setSupportGroupMap,
+    // the map tab's only writer, so a scan's DATA_VERSION bump no longer forces a re-read of it.
+    supportGroupMapGen: "SUPPORT_GROUP_MAP_GEN"
   };
   var DEFAULT_WIZ_AUTH_URL = "https://auth.app.wiz.io/oauth/token";
   var DEFAULT_SUPPORT_GROUP_TAG_KEY = "Wiz/provisioning";
@@ -6708,7 +6711,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "b646dd6a69a6" : "dev";
+  var BUILD_ID = true ? "606d8fe052f9" : "dev";
   var CACHE_EPOCH = "3";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
@@ -8389,9 +8392,18 @@ var Server = (() => {
   function settingsCacheKey() {
     return "settings1:" + dataVersion();
   }
-  function readSettingsCache() {
+  function safeSettingsCacheKey() {
     try {
-      const raw = CacheService.getScriptCache().get(settingsCacheKey());
+      return settingsCacheKey();
+    } catch (e) {
+      console.warn(`Settings cache key unreadable: ${e}`);
+      return null;
+    }
+  }
+  function readSettingsCache(key) {
+    if (key === null) return void 0;
+    try {
+      const raw = CacheService.getScriptCache().get(key);
       if (!raw) return void 0;
       const parsed = JSON.parse(raw);
       return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : void 0;
@@ -8400,18 +8412,20 @@ var Server = (() => {
       return void 0;
     }
   }
-  function writeSettingsCache(settings) {
+  function writeSettingsCache(key, settings) {
+    if (key === null) return;
     try {
       const json = JSON.stringify(settings);
       if (json.length > SETTINGS_CACHE_MAX_CHARS) return;
-      CacheService.getScriptCache().put(settingsCacheKey(), json, SETTINGS_CACHE_TTL_SEC);
+      CacheService.getScriptCache().put(key, json, SETTINGS_CACHE_TTL_SEC);
     } catch (e) {
       console.warn(`Settings cache write failed: ${e}`);
     }
   }
   function loadSettings() {
     if (settingsMemo !== void 0) return settingsMemo;
-    const hit = readSettingsCache();
+    const cacheKey2 = safeSettingsCacheKey();
+    const hit = readSettingsCache(cacheKey2);
     if (hit) {
       settingsMemo = hit;
       return hit;
@@ -8432,7 +8446,7 @@ var Server = (() => {
       }
     }
     settingsMemo = out;
-    writeSettingsCache(out);
+    writeSettingsCache(cacheKey2, out);
     return out;
   }
   function saveSettings(settings) {
@@ -8445,7 +8459,7 @@ var Server = (() => {
     );
     settingsMemo = settings;
     bumpDataVersion();
-    writeSettingsCache(settings);
+    writeSettingsCache(safeSettingsCacheKey(), settings);
   }
   var getFetchSeverities2 = () => getFetchSeverities(loadSettings());
   var getDisplaySeverities2 = () => getDisplaySeverities(loadSettings());
@@ -8480,28 +8494,41 @@ var Server = (() => {
     return rows;
   }
   var SG_MAP_CACHE_TTL_SEC = 21600;
+  var SG_MAP_CACHE_NAME = "sgMap2";
   function sgMapCacheKey() {
-    return "sgMap1:" + dataVersion();
+    var _a;
+    return `${SG_MAP_CACHE_NAME}:${(_a = getProp(PROP_KEYS.supportGroupMapGen)) != null ? _a : "0"}`;
   }
-  function readSgMapCache() {
+  function safeSgMapCacheKey() {
     try {
-      const hit = cacheGetJson(sgMapCacheKey());
+      return sgMapCacheKey();
+    } catch (e) {
+      console.warn(`Support-group map cache key unreadable: ${e}`);
+      return null;
+    }
+  }
+  function readSgMapCache(key) {
+    if (key === null) return void 0;
+    try {
+      const hit = cacheGetJson(key);
       return hit && typeof hit === "object" && !Array.isArray(hit) ? hit : void 0;
     } catch (e) {
       console.warn(`Support-group map cache read failed: ${e}`);
       return void 0;
     }
   }
-  function writeSgMapCache(map) {
+  function writeSgMapCache(key, map) {
+    if (key === null) return;
     try {
-      cachePutJson(sgMapCacheKey(), map, SG_MAP_CACHE_TTL_SEC);
+      cachePutJson(key, map, SG_MAP_CACHE_TTL_SEC);
     } catch (e) {
       console.warn(`Support-group map cache write failed: ${e}`);
     }
   }
   function getSupportGroupMap2() {
     if (sgMapMemo !== void 0) return { version: 0, map: sgMapMemo };
-    const hit = readSgMapCache();
+    const cacheKey2 = safeSgMapCacheKey();
+    const hit = readSgMapCache(cacheKey2);
     if (hit) {
       sgMapMemo = hit;
       return { version: 0, map: hit };
@@ -8510,7 +8537,7 @@ var Server = (() => {
     const rows = readAll(TABS.supportGroupMap);
     const map = rows.length ? supportGroupRowsToMap(rows) : getSupportGroupMap(loadSettings()).map;
     sgMapMemo = map;
-    writeSgMapCache(map);
+    writeSgMapCache(cacheKey2, map);
     return { version: 0, map };
   }
   function setFetchSeverities(sevs) {
@@ -8562,7 +8589,8 @@ var Server = (() => {
     } else {
       bumpDataVersion();
     }
-    writeSgMapCache(sgMapMemo);
+    setProp(PROP_KEYS.supportGroupMapGen, dataVersion());
+    writeSgMapCache(safeSgMapCacheKey(), sgMapMemo);
   }
 
   // src/server/bizDomains.ts

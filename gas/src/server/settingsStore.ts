@@ -4,6 +4,7 @@
 import type { RiskRule } from "../domain/program";
 import * as logic from "../domain/settingsLogic";
 import type { Rec } from "../domain/util";
+import { getProp, PROP_KEYS, setProp } from "./props";
 import { bumpDataVersion, cacheGetJson, cachePutJson, dataVersion } from "./serverCache";
 import { ensureTab, readAll, overwrite, TABS } from "./sheetsDb";
 
@@ -32,13 +33,30 @@ const SETTINGS_CACHE_TTL_SEC = 21_600;
 // support-group map can exceed that; it is simply not cached, and reads fall back to the tab.
 const SETTINGS_CACHE_MAX_CHARS = 90_000;
 
+// RESOLVED ONCE PER LOAD AND HANDED TO BOTH THE READ AND THE WRITE-BACK, never recomputed
+// between them. `dataVersion()` reads the Script Property on every call, so a load that missed,
+// spent its ~1 s reading the OLD tab while a concurrent `saveSettings` bumped the version, and
+// then re-resolved the key for its write-back would store the old dict under the key the save
+// had just moved every reader to — replacing the saved dict there for six hours. Written under
+// the key it was read under, a stale dict lands where no reader asks any more.
 function settingsCacheKey(): string {
   return "settings1:" + dataVersion();
 }
 
-function readSettingsCache(): Rec | undefined {
+/** The key, or null when the version cannot be read — no cache this execution, the tab is. */
+function safeSettingsCacheKey(): string | null {
   try {
-    const raw = CacheService.getScriptCache().get(settingsCacheKey());
+    return settingsCacheKey();
+  } catch (e) {
+    console.warn(`Settings cache key unreadable: ${e}`);
+    return null;
+  }
+}
+
+function readSettingsCache(key: string | null): Rec | undefined {
+  if (key === null) return undefined;
+  try {
+    const raw = CacheService.getScriptCache().get(key);
     if (!raw) return undefined;
     const parsed = JSON.parse(raw) as unknown;
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Rec) : undefined;
@@ -48,11 +66,12 @@ function readSettingsCache(): Rec | undefined {
   }
 }
 
-function writeSettingsCache(settings: Rec): void {
+function writeSettingsCache(key: string | null, settings: Rec): void {
+  if (key === null) return;
   try {
     const json = JSON.stringify(settings);
     if (json.length > SETTINGS_CACHE_MAX_CHARS) return;
-    CacheService.getScriptCache().put(settingsCacheKey(), json, SETTINGS_CACHE_TTL_SEC);
+    CacheService.getScriptCache().put(key, json, SETTINGS_CACHE_TTL_SEC);
   } catch (e) {
     console.warn(`Settings cache write failed: ${e}`);
   }
@@ -60,7 +79,8 @@ function writeSettingsCache(settings: Rec): void {
 
 export function loadSettings(): Rec {
   if (settingsMemo !== undefined) return settingsMemo;
-  const hit = readSettingsCache();
+  const cacheKey = safeSettingsCacheKey();
+  const hit = readSettingsCache(cacheKey);
   if (hit) {
     settingsMemo = hit;
     return hit;
@@ -81,7 +101,7 @@ export function loadSettings(): Rec {
     }
   }
   settingsMemo = out;
-  writeSettingsCache(out);
+  writeSettingsCache(cacheKey, out);
   return out;
 }
 
@@ -97,7 +117,7 @@ export function saveSettings(settings: Rec): void {
   // Settings feed the cached bootstrap payload and _domain assignment.
   bumpDataVersion();
   // Under the NEW version's key, so the next request reads the saved dict from the cache.
-  writeSettingsCache(settings);
+  writeSettingsCache(safeSettingsCacheKey(), settings);
 }
 
 export const getFetchSeverities = (): string[] => logic.getFetchSeverities(loadSettings());
@@ -153,19 +173,40 @@ export function supportGroupMapToRows(map: unknown): Rec[] {
 
 // ACROSS EXECUTIONS TOO, in CacheService — the same move as the settings dict above. The tab is
 // ~5k rows and was read in every execution that attached support groups: measured at 0.7–1.4 s,
-// and often the execution's first Sheets touch, which is what opens the spreadsheet. Keyed on
-// the data version, which `setSupportGroupMap` (the tab's only writer) bumps; it also writes the
-// new map under the new key. The map is over CacheService's 100 KB per value, so it goes through
-// serverCache's gzip + chunked helpers. Any cache error falls back to the tab.
+// and often the execution's first Sheets touch, which is what opens the spreadsheet. The map is
+// over CacheService's 100 KB per value, so it goes through serverCache's gzip + chunked helpers.
+// Any cache error falls back to the tab.
+//
+// KEYED ON THE MAP'S OWN GENERATION (`SUPPORT_GROUP_MAP_GEN`), NOT THE DATA VERSION. It used to
+// be the data version — but every scan bumps that and a scan never writes this tab, so the
+// 0.7–1.4 s read came back after every scan for nothing. `setSupportGroupMap` is the tab's only
+// writer (the post-scan refresh and the Settings refresh both go through it); it moves the
+// generation and writes the new map under the new key itself. The legacy fallback below (a map
+// still in the old settings cell) is safe under this key too: nothing writes that cell any more
+// but `setSupportGroupMap`, which deletes it. The six-hour TTL bounds only a hand edit in Sheets.
 const SG_MAP_CACHE_TTL_SEC = 21_600;
+// "sgMap1" -> "sgMap2": the key's suffix changed from DATA_VERSION to the generation; a "1"
+// entry is never asked for again and ages out with its TTL.
+const SG_MAP_CACHE_NAME = "sgMap2";
 
 function sgMapCacheKey(): string {
-  return "sgMap1:" + dataVersion();
+  return `${SG_MAP_CACHE_NAME}:${getProp(PROP_KEYS.supportGroupMapGen) ?? "0"}`;
 }
 
-function readSgMapCache(): Record<string, string> | undefined {
+/** The key, or null when the generation cannot be read — no cache this execution, the tab is. */
+function safeSgMapCacheKey(): string | null {
   try {
-    const hit = cacheGetJson(sgMapCacheKey());
+    return sgMapCacheKey();
+  } catch (e) {
+    console.warn(`Support-group map cache key unreadable: ${e}`);
+    return null;
+  }
+}
+
+function readSgMapCache(key: string | null): Record<string, string> | undefined {
+  if (key === null) return undefined;
+  try {
+    const hit = cacheGetJson(key);
     return hit && typeof hit === "object" && !Array.isArray(hit)
       ? (hit as Record<string, string>)
       : undefined;
@@ -175,9 +216,10 @@ function readSgMapCache(): Record<string, string> | undefined {
   }
 }
 
-function writeSgMapCache(map: Record<string, string>): void {
+function writeSgMapCache(key: string | null, map: Record<string, string>): void {
+  if (key === null) return;
   try {
-    cachePutJson(sgMapCacheKey(), map, SG_MAP_CACHE_TTL_SEC);
+    cachePutJson(key, map, SG_MAP_CACHE_TTL_SEC);
   } catch (e) {
     console.warn(`Support-group map cache write failed: ${e}`);
   }
@@ -185,7 +227,12 @@ function writeSgMapCache(map: Record<string, string>): void {
 
 export function getSupportGroupMap(): { version: number; map: Record<string, string> } {
   if (sgMapMemo !== undefined) return { version: 0, map: sgMapMemo };
-  const hit = readSgMapCache();
+  // ONE KEY FOR THE READ AND THE WRITE-BACK, resolved before the tab is opened. Re-reading the
+  // generation for the write-back would race `setSupportGroupMap`: a miss under the old
+  // generation, a ~1 s tab read overlapping the refresh, then a write under the NEW key — the
+  // stale (or, read mid-`overwrite`, empty) map replacing the saved one there for six hours.
+  const cacheKey = safeSgMapCacheKey();
+  const hit = readSgMapCache(cacheKey);
   if (hit) {
     sgMapMemo = hit;
     return { version: 0, map: hit };
@@ -196,7 +243,7 @@ export function getSupportGroupMap(): { version: number; map: Record<string, str
   // deployments whose map fit). The next refresh rewrites it into the tab.
   const map = rows.length ? supportGroupRowsToMap(rows) : logic.getSupportGroupMap(loadSettings()).map;
   sgMapMemo = map;
-  writeSgMapCache(map);
+  writeSgMapCache(cacheKey, map);
   return { version: 0, map };
 }
 
@@ -271,6 +318,10 @@ export function setSupportGroupMap(map: unknown): void {
   } else {
     bumpDataVersion();
   }
-  // Under the NEW version's key, so the next request reads the new map from the cache.
-  writeSgMapCache(sgMapMemo);
+  // A new generation, named by the version just minted: unique and never reused, so a deleted
+  // property (which reads "0") cannot collide with a generation an older map was cached under
+  // for longer than that entry's TTL.
+  setProp(PROP_KEYS.supportGroupMapGen, dataVersion());
+  // Under the NEW generation's key, so the next request reads the new map from the cache.
+  writeSgMapCache(safeSgMapCacheKey(), sgMapMemo);
 }
