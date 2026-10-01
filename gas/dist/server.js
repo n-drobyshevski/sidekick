@@ -6708,7 +6708,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "8cea6012cc3d" : "dev";
+  var BUILD_ID = true ? "b646dd6a69a6" : "dev";
   var CACHE_EPOCH = "3";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
@@ -7000,11 +7000,18 @@ var Server = (() => {
   }
   function ensureHeaders(sh, headers) {
     const width = Math.max(sh.getLastColumn(), 1);
-    const existing = sh.getRange(1, 1, 1, width).getValues()[0].map(String).filter((h) => h !== "");
+    const raw = sh.getRange(1, 1, 1, width).getValues()[0].map(String);
+    const existing = raw.filter((h) => h !== "");
     const missing = headers.filter((h) => !existing.includes(h));
     if (missing.length) {
       sh.getRange(1, existing.length + 1, 1, missing.length).setValues([missing]);
     }
+    const row = raw.slice();
+    missing.forEach((h, i) => {
+      row[existing.length + i] = h;
+    });
+    while (row.length && row[row.length - 1] === "") row.pop();
+    return row;
   }
   function ensureTab(tab) {
     const ss = ledgerSpreadsheet();
@@ -7108,25 +7115,34 @@ var Server = (() => {
     const max = sh.getMaxRows();
     if (max > needed) sh.deleteRows(needed + 1, max - needed);
   }
+  var UPDATE_TAIL_ROWS = 50;
   function updateWhere(tab, keyColumn, keyValue, patch) {
     const sh = sheet(tab);
+    if (sh.getLastRow() < 2) return false;
+    const declared = TAB_HEADERS[tab];
+    const headers = declared ? ensureHeaders(sh, declared) : sh.getRange(1, 1, 1, Math.max(sh.getLastColumn(), 1)).getValues()[0].map(String);
     const lastRow = sh.getLastRow();
-    const lastCol = sh.getLastColumn();
-    if (lastRow < 2) return false;
-    const values = sh.getRange(1, 1, lastRow, lastCol).getValues();
-    const headers = values[0].map(String);
+    const lastCol = headers.length;
     const keyIdx = headers.indexOf(keyColumn);
     if (keyIdx < 0) return false;
-    for (let i = 1; i < values.length; i++) {
-      if (fromCell(values[i][keyIdx]) === keyValue) {
-        const rowVals = values[i].slice();
-        for (const [k, v] of Object.entries(patch)) {
-          const idx = headers.indexOf(k);
-          if (idx >= 0) rowVals[idx] = toCell(v);
-        }
-        sh.getRange(i + 1, 1, 1, lastCol).setValues([rowVals]);
-        return true;
+    const write = (sheetRow, values) => {
+      const rowVals = values.slice();
+      for (const [k, v] of Object.entries(patch)) {
+        const idx = headers.indexOf(k);
+        if (idx >= 0) rowVals[idx] = toCell(v);
       }
+      sh.getRange(sheetRow, 1, 1, lastCol).setValues([rowVals]);
+      return true;
+    };
+    const tailFirst = Math.max(2, lastRow - UPDATE_TAIL_ROWS + 1);
+    const tail = sh.getRange(tailFirst, 1, lastRow - tailFirst + 1, lastCol).getValues();
+    for (let i = tail.length - 1; i >= 0; i--) {
+      if (fromCell(tail[i][keyIdx]) === keyValue) return write(tailFirst + i, tail[i]);
+    }
+    if (tailFirst <= 2) return false;
+    const head = sh.getRange(2, 1, tailFirst - 2, lastCol).getValues();
+    for (let i = head.length - 1; i >= 0; i--) {
+      if (fromCell(head[i][keyIdx]) === keyValue) return write(i + 2, head[i]);
     }
     return false;
   }
