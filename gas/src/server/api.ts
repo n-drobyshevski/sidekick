@@ -4452,6 +4452,9 @@ function scheduleWarmContinuation(delayMs: number): void {
     const hops = Number(cache.get(key) ?? "0") + 1;
     if (hops > WARM_MAX_HOPS) {
       console.warn(`Cache warm: gave up after ${WARM_MAX_HOPS} continuation hops`);
+      // Recorded, because the entries left cold stay cold until the next scheduled fire and
+      // nothing else says why.
+      errorLog.recordError("cacheWarm", `Gave up after ${WARM_MAX_HOPS} continuation hops under one data version.`);
       return;
     }
     cache.put(key, String(hops), 21_600);
@@ -4510,6 +4513,8 @@ function warmReadModelsInner(budgetMs: number): number {
       warmed += 1;
     } catch (e) {
       console.warn(`Cache warm (${label}) failed: ${e}`);
+      // One entry per target that failed, so the in-app list names which read model went cold.
+      errorLog.recordError("cacheWarm", `${label}: ${e instanceof Error ? e.message : String(e)}`);
     }
   };
 

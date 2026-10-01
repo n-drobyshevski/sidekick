@@ -474,6 +474,10 @@ function step(job: JobRow, budgetMs = BUDGET_MS): void {
       phase: "FAILED",
       error: e == null ? "Scan failed." : String(e).slice(0, 1000),
     });
+    // This entry is the failure's record — this register's recent-errors list reads the log
+    // alone, not the jobs tab, so it is recorded here rather than only marked as devsecops
+    // does. Recording also marks the thrown value, so `api.run()` (the first hop runs inside
+    // `runScan`) skips it as it passes on the way out instead of listing it a second time.
     errorLog.recordError("scan", e);
     throw e;
   }

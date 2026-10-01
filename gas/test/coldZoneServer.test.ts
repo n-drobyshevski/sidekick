@@ -42,6 +42,8 @@ const H = vi.hoisted(() => ({
   coldThrows: false,
   // Operation labels `errorLog.recordError` was handed this run.
   recorded: [] as string[],
+  // And each one as `op: message`, for the specs that read what was said.
+  recordedLines: [] as string[],
   // What `durablyPeek` finds stored, by namespace — empty means every entry is cold.
   peek: new Map<string, unknown>(),
 }));
@@ -115,7 +117,10 @@ vi.mock("../src/server/bizDomains", () => ({
   attachBizDomains: (rows: Rec[]) => { for (const r of rows) r["_bizDomain"] = ""; },
 }));
 vi.mock("../src/server/errorLog", () => ({
-  recordError: (op: string) => { H.recorded.push(op); },
+  recordError: (op: string, e: unknown) => {
+    H.recorded.push(op);
+    H.recordedLines.push(`${op}: ${e instanceof Error ? e.message : String(e)}`);
+  },
   recentErrors: () => [],
 }));
 
@@ -175,6 +180,7 @@ beforeEach(() => {
   H.keys.length = 0;
   H.coldThrows = false;
   H.recorded.length = 0;
+  H.recordedLines.length = 0;
   H.peek.clear();
   H.ruleVersion = 0;
   H.cold = { mode: "fixed", coldAfterDays: 90, targetSharePct: 20, floorDays: 14 };
@@ -611,6 +617,35 @@ describe("a warm that runs out of budget", () => {
     triggers = [];
     warmReadModels(0);
     expect(triggers).toEqual([]);
+  });
+
+  // Giving up leaves the rest cold until the next scheduled fire. That used to be a
+  // console.warn only, in an execution transcript nobody opens; now the in-app list says so.
+  it("records giving up in the error log, once", () => {
+    for (let i = 0; i < 6; i++) warmReadModels(0);
+    expect(H.recorded).toEqual([]); // a hop that continues is not a fault
+    warmReadModels(0);
+    expect(H.recordedLines).toEqual([
+      "cacheWarm: Gave up after 6 continuation hops under one data version.",
+    ]);
+  });
+});
+
+describe("a warm target that fails", () => {
+  beforeEach(() => {
+    vi.stubGlobal("CacheService", {
+      getScriptCache: () => ({ get: () => null, put: () => {}, remove: () => {} }),
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  it("is recorded under its own label, and the rest of the pass still runs", () => {
+    H.coldThrows = true;
+    warmReadModels();
+    expect(H.recordedLines).toContain("cacheWarm: coldZone: Erreur liée à un service : Drive");
+    // The entries after it were still computed, to the last in the warm order: one failure
+    // never aborts the pass.
+    expect(H.keys.at(-1)?.ns).toMatch(/^storageStats/);
   });
 });
 

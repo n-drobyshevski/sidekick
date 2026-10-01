@@ -23,7 +23,10 @@
 // where a claim about THIS register lives.
 
 import { readFileSync } from "node:fs";
-import { describe, expect, it, afterAll, beforeAll } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+
+import * as errorLog from "../src/server/errorLog";
+import { registerErrorLogContract } from "../../gas_shared/test/contracts/errorLog.js";
 
 import { SEVERITY_COLORS, SLA_TARGETS } from "../src/domain/config";
 
@@ -526,3 +529,7 @@ registerScopedViewContract({ describe, it, expect, dims: ["d", "g"] });
 
 // Links out to Wiz: the finding's own console URL, and the public CVE page.
 registerWizLinksContract({ describe, it, expect });
+
+// The recent-errors log: the shared implementation through this register's own binding of it
+// (src/server/errorLog.ts). The call-site specs — which operation records what — stay local.
+registerErrorLogContract({ ...base, beforeEach, afterEach, log: errorLog });

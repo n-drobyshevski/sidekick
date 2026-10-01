@@ -1,101 +1,28 @@
-// A bounded ring buffer of recent server-side errors, persisted in Script Properties so a
-// failure survives the request that produced it and is viewable in-app (Settings →
-// Diagnostics) instead of only in the Apps Script execution log — which the operator can't
-// reach from the deployed web app. The motivating case is a *silent* background failure
-// (the post-scan support-group refresh only console.warn'd), which now leaves a durable trace.
+// The recent-errors log, viewable in-app (Settings → Diagnostics) instead of only in the Apps
+// Script execution log. The motivating case was a *silent* background failure (the post-scan
+// support-group refresh only console.warn'd), which now leaves a durable trace.
 //
-// Best-effort by design: recording never throws (it must not mask the error it is logging)
-// and is not lock-guarded (a lost entry under a rare concurrent write is acceptable for a
-// diagnostic log; the ledger lock is far too heavy for an error path). One Script Property
-// holds the whole JSON array, so the entry count and message length are capped to stay well
-// under the 9 KB per-value quota.
+// The implementation is shared with gas_devsecops (gas_shared/server/errorLog.ts, which holds
+// the key, the caps and the record-once rule); this module binds it to this register's Script
+// Properties and re-exports the same API, so call sites import from here as they always did.
 
-import { nowIso, type Rec } from "../domain/util";
-import { getProp, setProp, deleteProp } from "./props";
+import {
+  createErrorLog,
+  utf8ByteLength,
+  type ErrorEntry,
+} from "../../../gas_shared/server/errorLog";
+import { deleteProp, getProp, setProp } from "./props";
 
-const KEY = "RECENT_ERRORS";
-const MAX_ENTRIES = 25;
-const MAX_MESSAGE_LEN = 500;
-// Script Properties cap a single value at ~9 KB. 25 long messages can exceed that, so the
-// serialized blob is trimmed (oldest first) to stay under this ceiling — otherwise setProperty
-// throws and recordError silently drops the write, defeating the whole log. MEASURED IN UTF-8
-// BYTES, the unit the quota counts, not in string length: a localized exception message
-// (Cyrillic is two bytes a character) fit a character ceiling at nearly twice the quota.
-const MAX_BLOB_BYTES = 8500;
+// Bound lazily, through arrows: a spec that mocks ./props without one of these must not fail
+// at this module's evaluation.
+const log = createErrorLog({
+  get: (key) => getProp(key),
+  set: (key, value) => setProp(key, value),
+  delete: (key) => deleteProp(key),
+});
 
-export interface ErrorEntry {
-  ts: string; // ISO-Z of when it was recorded
-  op: string; // operation label, e.g. "supportGroupRefresh", "scan", "api"
-  kind: string; // error kind, e.g. "error", "sealed", "rebuild"
-  message: string; // the error message, truncated
-}
-
-/**
- * The UTF-8 encoded length of `s`, without encoding it. A surrogate pair is one four-byte code
- * point; a lone surrogate counts as the three-byte replacement character it is written as.
- */
-export function utf8ByteLength(s: string): number {
-  let n = 0;
-  for (let i = 0; i < s.length; i++) {
-    const c = s.charCodeAt(i);
-    if (c < 0x80) n += 1;
-    else if (c < 0x800) n += 2;
-    else if (c >= 0xd800 && c <= 0xdbff && (s.charCodeAt(i + 1) & 0xfc00) === 0xdc00) {
-      n += 4;
-      i++;
-    } else n += 3;
-  }
-  return n;
-}
-
-function truncate(s: string): string {
-  return s.length > MAX_MESSAGE_LEN ? s.slice(0, MAX_MESSAGE_LEN) + "…" : s;
-}
-
-/** The recorded errors, newest first. Tolerates a missing / malformed blob (returns []). */
-export function recentErrors(): ErrorEntry[] {
-  const raw = getProp(KEY);
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter((e): e is Rec => Boolean(e) && typeof e === "object" && !Array.isArray(e))
-      .map((e) => ({
-        ts: String(e["ts"] ?? ""),
-        op: String(e["op"] ?? "api"),
-        kind: String(e["kind"] ?? "error"),
-        message: String(e["message"] ?? ""),
-      }));
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Record one error (newest first, capped at MAX_ENTRIES). `err` may be any thrown value; its
- * `.message` is preferred over String(err). Swallows every failure of its own — a diagnostic
- * write must never break, or mask, the operation that raised the error.
- */
-export function recordError(op: string, err: unknown, kind = "error", now?: number): void {
-  try {
-    const message =
-      err instanceof Error ? err.message : typeof err === "string" ? err : String(err);
-    const entry: ErrorEntry = { ts: nowIso(now), op, kind, message: truncate(message) };
-    const next = [entry, ...recentErrors()].slice(0, MAX_ENTRIES);
-    // Trim oldest-first until the blob fits a Script Property (always keep the just-added one).
-    let blob = JSON.stringify(next);
-    while (next.length > 1 && utf8ByteLength(blob) > MAX_BLOB_BYTES) {
-      next.pop();
-      blob = JSON.stringify(next);
-    }
-    setProp(KEY, blob);
-  } catch {
-    // Diagnostics are best-effort — never let logging an error raise one.
-  }
-}
-
-/** Drop the whole recent-errors log (the Diagnostics "Clear" action). */
-export function clearErrors(): void {
-  deleteProp(KEY);
-}
+export const recentErrors = log.recentErrors;
+export const recordError = log.recordError;
+export const markRecorded = log.markRecorded;
+export const clearErrors = log.clearErrors;
+export { utf8ByteLength, type ErrorEntry };

@@ -5650,6 +5650,84 @@ var Server = (() => {
     return { ledger, episodes: decodeRows(s.episodeTable, s.strings) };
   }
 
+  // ../gas_shared/server/errorLog.ts
+  var KEY = "RECENT_ERRORS";
+  var MAX_ENTRIES = 25;
+  var MAX_MESSAGE_LEN = 500;
+  var MAX_BLOB_BYTES = 8500;
+  function utf8ByteLength(s) {
+    let n = 0;
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      if (c < 128) n += 1;
+      else if (c < 2048) n += 2;
+      else if (c >= 55296 && c <= 56319 && (s.charCodeAt(i + 1) & 64512) === 56320) {
+        n += 4;
+        i++;
+      } else n += 3;
+    }
+    return n;
+  }
+  function truncate(s) {
+    return s.length > MAX_MESSAGE_LEN ? s.slice(0, MAX_MESSAGE_LEN) + "\u2026" : s;
+  }
+  function isoSeconds(now) {
+    const ms = now != null ? now : Date.now();
+    return new Date(Math.floor(ms / 1e3) * 1e3).toISOString().replace(".000Z", "Z");
+  }
+  function createErrorLog(props) {
+    const alreadyRecorded = /* @__PURE__ */ new WeakSet();
+    function recentErrors2() {
+      const raw = props.get(KEY);
+      if (!raw) return [];
+      try {
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return [];
+        return parsed.filter(
+          (e) => Boolean(e) && typeof e === "object" && !Array.isArray(e)
+        ).map((e) => {
+          var _a, _b, _c, _d;
+          return {
+            ts: String((_a = e["ts"]) != null ? _a : ""),
+            op: String((_b = e["op"]) != null ? _b : "api"),
+            kind: String((_c = e["kind"]) != null ? _c : "error"),
+            message: String((_d = e["message"]) != null ? _d : "")
+          };
+        });
+      } catch {
+        return [];
+      }
+    }
+    function markRecorded2(err) {
+      try {
+        if (err !== null && typeof err === "object") alreadyRecorded.add(err);
+      } catch {
+      }
+    }
+    function recordError2(op, err, kind = "error", now) {
+      try {
+        if (err !== null && typeof err === "object") {
+          if (alreadyRecorded.has(err)) return;
+          alreadyRecorded.add(err);
+        }
+        const message = err instanceof Error ? err.message : typeof err === "string" ? err : String(err);
+        const entry = { ts: isoSeconds(now), op, kind, message: truncate(message) };
+        const next = [entry, ...recentErrors2()].slice(0, MAX_ENTRIES);
+        let blob = JSON.stringify(next);
+        while (next.length > 1 && utf8ByteLength(blob) > MAX_BLOB_BYTES) {
+          next.pop();
+          blob = JSON.stringify(next);
+        }
+        props.set(KEY, blob);
+      } catch {
+      }
+    }
+    function clearErrors2() {
+      props.delete(KEY);
+    }
+    return { recentErrors: recentErrors2, recordError: recordError2, markRecorded: markRecorded2, clearErrors: clearErrors2 };
+  }
+
   // src/server/props.ts
   var PROP_KEYS = {
     wizApiToken: "WIZ_API_TOKEN",
@@ -5720,62 +5798,15 @@ var Server = (() => {
   }
 
   // src/server/errorLog.ts
-  var KEY = "RECENT_ERRORS";
-  var MAX_ENTRIES = 25;
-  var MAX_MESSAGE_LEN = 500;
-  var MAX_BLOB_BYTES = 8500;
-  function utf8ByteLength(s) {
-    let n = 0;
-    for (let i = 0; i < s.length; i++) {
-      const c = s.charCodeAt(i);
-      if (c < 128) n += 1;
-      else if (c < 2048) n += 2;
-      else if (c >= 55296 && c <= 56319 && (s.charCodeAt(i + 1) & 64512) === 56320) {
-        n += 4;
-        i++;
-      } else n += 3;
-    }
-    return n;
-  }
-  function truncate(s) {
-    return s.length > MAX_MESSAGE_LEN ? s.slice(0, MAX_MESSAGE_LEN) + "\u2026" : s;
-  }
-  function recentErrors() {
-    const raw = getProp(KEY);
-    if (!raw) return [];
-    try {
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      return parsed.filter((e) => Boolean(e) && typeof e === "object" && !Array.isArray(e)).map((e) => {
-        var _a, _b, _c, _d;
-        return {
-          ts: String((_a = e["ts"]) != null ? _a : ""),
-          op: String((_b = e["op"]) != null ? _b : "api"),
-          kind: String((_c = e["kind"]) != null ? _c : "error"),
-          message: String((_d = e["message"]) != null ? _d : "")
-        };
-      });
-    } catch {
-      return [];
-    }
-  }
-  function recordError(op, err, kind = "error", now) {
-    try {
-      const message = err instanceof Error ? err.message : typeof err === "string" ? err : String(err);
-      const entry = { ts: nowIso(now), op, kind, message: truncate(message) };
-      const next = [entry, ...recentErrors()].slice(0, MAX_ENTRIES);
-      let blob = JSON.stringify(next);
-      while (next.length > 1 && utf8ByteLength(blob) > MAX_BLOB_BYTES) {
-        next.pop();
-        blob = JSON.stringify(next);
-      }
-      setProp(KEY, blob);
-    } catch {
-    }
-  }
-  function clearErrors() {
-    deleteProp(KEY);
-  }
+  var log = createErrorLog({
+    get: (key) => getProp(key),
+    set: (key, value) => setProp(key, value),
+    delete: (key) => deleteProp(key)
+  });
+  var recentErrors = log.recentErrors;
+  var recordError = log.recordError;
+  var markRecorded = log.markRecorded;
+  var clearErrors = log.clearErrors;
 
   // src/server/archiveStore.ts
   var SUBFOLDERS = [
@@ -6512,7 +6543,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "ac706610ed93" : "dev";
+  var BUILD_ID = true ? "a10459953f59" : "dev";
   var CACHE_EPOCH = "3";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
@@ -13805,6 +13836,7 @@ var Server = (() => {
       const hops = Number((_a = cache.get(key)) != null ? _a : "0") + 1;
       if (hops > WARM_MAX_HOPS) {
         console.warn(`Cache warm: gave up after ${WARM_MAX_HOPS} continuation hops`);
+        recordError("cacheWarm", `Gave up after ${WARM_MAX_HOPS} continuation hops under one data version.`);
         return;
       }
       cache.put(key, String(hops), 21600);
@@ -13853,6 +13885,7 @@ var Server = (() => {
         warmed += 1;
       } catch (e) {
         console.warn(`Cache warm (${label}) failed: ${e}`);
+        recordError("cacheWarm", `${label}: ${e instanceof Error ? e.message : String(e)}`);
       }
     };
     warm("bootstrap", () => bootstrap());
@@ -14089,7 +14122,7 @@ var Server = (() => {
   function wizDiagnostic() {
     var _a, _b;
     const lines = [];
-    const log = (m) => {
+    const log2 = (m) => {
       lines.push(m);
       console.log(m);
     };
@@ -14100,20 +14133,20 @@ var Server = (() => {
     const clientSecret = getProp(PROP_KEYS.wizClientSecret);
     const projectId = getProp(PROP_KEYS.wizProjectIdV2);
     const mode = resolveWizAuthMode(token, clientId, clientSecret);
-    log("=== Wiz diagnostic ===");
-    log(`WIZ_API_URL:        ${apiUrl || "(unset!)"}`);
-    log(`Auth mode:          ${mode != null ? mode : "(none)"}`);
-    log(`WIZ_API_TOKEN:      ${preview(token)}`);
-    log(`WIZ_CLIENT_ID:      ${preview(clientId)}`);
-    log(`WIZ_CLIENT_SECRET:  ${secretPreview(clientSecret)}`);
-    if (mode === "oauth") log(`WIZ_AUTH_URL:       ${authUrl}`);
-    log(`WIZ_PROJECT_ID_V2:  ${projectId || "(unset \u2014 querying all projects)"}`);
+    log2("=== Wiz diagnostic ===");
+    log2(`WIZ_API_URL:        ${apiUrl || "(unset!)"}`);
+    log2(`Auth mode:          ${mode != null ? mode : "(none)"}`);
+    log2(`WIZ_API_TOKEN:      ${preview(token)}`);
+    log2(`WIZ_CLIENT_ID:      ${preview(clientId)}`);
+    log2(`WIZ_CLIENT_SECRET:  ${secretPreview(clientSecret)}`);
+    if (mode === "oauth") log2(`WIZ_AUTH_URL:       ${authUrl}`);
+    log2(`WIZ_PROJECT_ID_V2:  ${projectId || "(unset \u2014 querying all projects)"}`);
     if (!apiUrl) {
-      log("FAIL: WIZ_API_URL is required, e.g. https://api.<region>.app.wiz.io/graphql.");
+      log2("FAIL: WIZ_API_URL is required, e.g. https://api.<region>.app.wiz.io/graphql.");
       return lines.join("\n");
     }
     if (mode === null) {
-      log(
+      log2(
         "FAIL: no usable credentials \u2014 the app runs in dry-run mode. Set WIZ_API_TOKEN, or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET."
       );
       return lines.join("\n");
@@ -14121,12 +14154,12 @@ var Server = (() => {
     let bearer = "";
     try {
       bearer = getToken(true);
-      log(
+      log2(
         mode === "token" ? `Step 1 OK: using raw WIZ_API_TOKEN (${preview(bearer)}).` : `Step 1 OK: OAuth exchange minted an access token (${preview(bearer)}).`
       );
     } catch (e) {
-      log(`Step 1 FAIL: could not obtain a token \u2014 ${e.message}`);
-      log(
+      log2(`Step 1 FAIL: could not obtain a token \u2014 ${e.message}`);
+      log2(
         mode === "oauth" ? "\u2192 The token endpoint rejected the client credentials. Verify WIZ_CLIENT_ID / WIZ_CLIENT_SECRET (regenerate the service account in Wiz), and that WIZ_AUTH_URL matches the auth host shown on the service-account page." : "\u2192 WIZ_API_TOKEN is unusable. A Wiz GraphQL service account gives a client id + secret, not a durable token; use WIZ_CLIENT_ID / WIZ_CLIENT_SECRET."
       );
       return lines.join("\n");
@@ -14135,49 +14168,49 @@ var Server = (() => {
     try {
       const page = queryPage(buildVariables({ first: 1 }));
       firstNode = (_b = page.nodes[0]) != null ? _b : null;
-      log(`Step 2 OK: query succeeded \u2014 ${page.nodes.length} finding(s) on page 1.`);
+      log2(`Step 2 OK: query succeeded \u2014 ${page.nodes.length} finding(s) on page 1.`);
     } catch (e) {
       const msg = e.message;
-      log(`Step 2 FAIL: the query was rejected \u2014 ${msg}`);
+      log2(`Step 2 FAIL: the query was rejected \u2014 ${msg}`);
       if (/HTTP 401|HTTP 403|Unauthorized/i.test(msg)) {
-        log(
+        log2(
           "\u2192 401/403/Unauthorized: the token was not accepted (expired, invalid, or minted for a different tenant). Confirm the service account targets this tenant."
         );
       } else if (/HTTP 404/i.test(msg)) {
-        log(
+        log2(
           "\u2192 404: WIZ_API_URL host/path is wrong \u2014 it must be https://api.<region>.app.wiz.io/graphql for your tenant's region."
         );
       } else {
-        log(
+        log2(
           '\u2192 If the body names a field (e.g. "Cannot query field"), the service account lacks permission for it or the tenant schema differs.'
         );
       }
       return lines.join("\n");
     }
     if (firstNode === null) {
-      log(
+      log2(
         "Step 3 SKIPPED: the query returned no findings, so there was no row to read a Wiz console link off. Not a failure \u2014 widen the severity filter or the project and re-run if you want this checked."
       );
     } else {
       const raw = firstNode["portalUrl"];
       const usable = normalizeWizUrl(raw);
       if (usable) {
-        log(`Step 3 OK: findings carry a Wiz console link (${usable}).`);
+        log2(`Step 3 OK: findings carry a Wiz console link (${usable}).`);
       } else if (typeof raw === "string" && raw.trim()) {
-        log(
+        log2(
           `Step 3 WARN: this tenant returned a portalUrl the register will not link to \u2014 ${raw.trim()}`
         );
-        log(
+        log2(
           "\u2192 The finding sheet shows no Wiz row for it. Links are allowed only on the Wiz consoles (app.wiz.io / app.wiz.us); see gas_shared/domain/wizUrl.ts for why the list is a security boundary rather than a typo-catcher, and widen it there if your tenant is genuinely served from another host."
         );
       } else {
-        log("Step 3 WARN: the query worked but this finding carried no portalUrl.");
-        log(
+        log2("Step 3 WARN: the query worked but this finding carried no portalUrl.");
+        log2(
           "\u2192 The finding sheet will show no Wiz row for findings like it. If EVERY finding is like this, the tenant is not populating the field and there is nothing to link to; the register states that rather than guessing a URL."
         );
       }
     }
-    log("=== All checks passed. Live scans should work. ===");
+    log2("=== All checks passed. Live scans should work. ===");
     return lines.join("\n");
   }
   return __toCommonJS(index_exports);

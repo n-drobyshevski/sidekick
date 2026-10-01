@@ -4072,12 +4072,11 @@ var Server = (() => {
     ) !== null;
   }
 
-  // src/server/errorLog.ts
+  // ../gas_shared/server/errorLog.ts
   var KEY = "RECENT_ERRORS";
   var MAX_ENTRIES = 25;
   var MAX_MESSAGE_LEN = 500;
   var MAX_BLOB_BYTES = 8500;
-  var alreadyRecorded = /* @__PURE__ */ new WeakSet();
   function utf8ByteLength(s2) {
     let n2 = 0;
     for (let i = 0; i < s2.length; i++) {
@@ -4094,52 +4093,73 @@ var Server = (() => {
   function truncate(s2) {
     return s2.length > MAX_MESSAGE_LEN ? s2.slice(0, MAX_MESSAGE_LEN) + "\u2026" : s2;
   }
-  function recentErrors() {
-    const raw = getProp(KEY);
-    if (!raw) return [];
-    try {
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      return parsed.filter((e) => Boolean(e) && typeof e === "object" && !Array.isArray(e)).map((e) => {
-        var _a, _b, _c, _d;
-        return {
-          ts: String((_a = e["ts"]) != null ? _a : ""),
-          op: String((_b = e["op"]) != null ? _b : "api"),
-          kind: String((_c = e["kind"]) != null ? _c : "error"),
-          message: String((_d = e["message"]) != null ? _d : "")
-        };
-      });
-    } catch {
-      return [];
-    }
+  function isoSeconds(now) {
+    const ms = now != null ? now : Date.now();
+    return new Date(Math.floor(ms / 1e3) * 1e3).toISOString().replace(".000Z", "Z");
   }
-  function markRecorded(err) {
-    try {
-      if (err !== null && typeof err === "object") alreadyRecorded.add(err);
-    } catch {
-    }
-  }
-  function recordError(op, err, kind = "error", now) {
-    try {
-      if (err !== null && typeof err === "object") {
-        if (alreadyRecorded.has(err)) return;
-        alreadyRecorded.add(err);
+  function createErrorLog(props) {
+    const alreadyRecorded = /* @__PURE__ */ new WeakSet();
+    function recentErrors2() {
+      const raw = props.get(KEY);
+      if (!raw) return [];
+      try {
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return [];
+        return parsed.filter(
+          (e) => Boolean(e) && typeof e === "object" && !Array.isArray(e)
+        ).map((e) => {
+          var _a, _b, _c, _d;
+          return {
+            ts: String((_a = e["ts"]) != null ? _a : ""),
+            op: String((_b = e["op"]) != null ? _b : "api"),
+            kind: String((_c = e["kind"]) != null ? _c : "error"),
+            message: String((_d = e["message"]) != null ? _d : "")
+          };
+        });
+      } catch {
+        return [];
       }
-      const message = err instanceof Error ? err.message : typeof err === "string" ? err : String(err);
-      const entry = { ts: nowIso(now), op, kind, message: truncate(message) };
-      const next = [entry, ...recentErrors()].slice(0, MAX_ENTRIES);
-      let blob = JSON.stringify(next);
-      while (next.length > 1 && utf8ByteLength(blob) > MAX_BLOB_BYTES) {
-        next.pop();
-        blob = JSON.stringify(next);
-      }
-      setProp(KEY, blob);
-    } catch {
     }
+    function markRecorded2(err) {
+      try {
+        if (err !== null && typeof err === "object") alreadyRecorded.add(err);
+      } catch {
+      }
+    }
+    function recordError2(op, err, kind = "error", now) {
+      try {
+        if (err !== null && typeof err === "object") {
+          if (alreadyRecorded.has(err)) return;
+          alreadyRecorded.add(err);
+        }
+        const message = err instanceof Error ? err.message : typeof err === "string" ? err : String(err);
+        const entry = { ts: isoSeconds(now), op, kind, message: truncate(message) };
+        const next = [entry, ...recentErrors2()].slice(0, MAX_ENTRIES);
+        let blob = JSON.stringify(next);
+        while (next.length > 1 && utf8ByteLength(blob) > MAX_BLOB_BYTES) {
+          next.pop();
+          blob = JSON.stringify(next);
+        }
+        props.set(KEY, blob);
+      } catch {
+      }
+    }
+    function clearErrors2() {
+      props.delete(KEY);
+    }
+    return { recentErrors: recentErrors2, recordError: recordError2, markRecorded: markRecorded2, clearErrors: clearErrors2 };
   }
-  function clearErrors() {
-    deleteProp(KEY);
-  }
+
+  // src/server/errorLog.ts
+  var log = createErrorLog({
+    get: (key) => getProp(key),
+    set: (key, value) => setProp(key, value),
+    delete: (key) => deleteProp(key)
+  });
+  var recentErrors = log.recentErrors;
+  var recordError = log.recordError;
+  var markRecorded = log.markRecorded;
+  var clearErrors = log.clearErrors;
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -5960,7 +5980,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "d23dd129a0ec" : "dev";
+  var BUILD_ID = true ? "3a4280533601" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
