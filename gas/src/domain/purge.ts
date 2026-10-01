@@ -5,7 +5,7 @@
 //
 //   1. purge findings by severity — reaches the two tabs, the compaction checkpoint, AND the
 //      Drive scan archives, because the ledger is derived state and `deleteScansCore` rebuilds
-//      it by replaying those archives (domain/maintenance.ts:170). Rows removed from a tab
+//      it by replaying those archives (domain/maintenance.ts). Rows removed from a tab
 //      alone come straight back the next time an operator deletes a scan.
 //   2. prune resolved episodes — reaches the episodes tab and the checkpoint. Sealed scans'
 //      archives were already pruned by compaction, so there is nothing to rewrite; but the
@@ -21,7 +21,7 @@
 
 import { parseSeverities, serializeSeverities, type Checkpoint } from "./compaction";
 import { SELECTABLE_SEVERITIES } from "./config";
-import type { EpisodeRow, LedgerState, ScanRow } from "./ledgerCore";
+import { scansAsc, type EpisodeRow, type LedgerState, type ScanRow } from "./ledgerCore";
 import type { LedgerRow } from "./reconcile";
 import { effectiveSeverity } from "./severity";
 import { parseTs, type Rec } from "./util";
@@ -174,8 +174,8 @@ export function purgeStateBySeverity(
  * Drop matching rows from a compaction checkpoint.
  *
  * Load-bearing: the checkpoint is the rebuild baseline `deleteScansCore` seeds `vuln_ledger`
- * from (maintenance.ts:216-220). Purging the tabs but not the blob stages every purged
- * lifecycle for the next scan deletion.
+ * from (minus the keys a standing episode answers for). Purging the tabs but not the blob
+ * stages every purged lifecycle for the next scan deletion.
  */
 export function purgeCheckpointBySeverity(
   checkpoint: Checkpoint,
@@ -189,7 +189,7 @@ export function purgeCheckpointBySeverity(
   };
 }
 
-/** Drop specific vuln_keys from a checkpoint — the episode-prune counterpart of the above. */
+/** Drop specific vuln_keys from a checkpoint. */
 export function purgeCheckpointByKeys(
   checkpoint: Checkpoint,
   keys: ReadonlySet<string>,
@@ -328,27 +328,23 @@ export function previewEpisodePrune(
 }
 
 /**
- * New state with matching episodes dropped, plus the keys removed.
+ * New state with matching episodes dropped, plus the episodes removed (and their keys).
  *
- * The caller MUST also purge those keys from the compaction checkpoint
- * (purgeCheckpointByKeys). `deleteScansCore` seeds the rebuilt ledger from the checkpoint
- * "minus keys already in resolved_episodes" (maintenance.ts:216-220) — removing an episode
- * un-masks its checkpoint entry, so the next scan deletion restores it as a live RESOLVED
- * `vuln_ledger` row. Pruning the tab alone doesn't delete the lifecycle; it relocates it.
+ * The caller MUST also purge the compaction checkpoints (purgeCheckpointForPrunedEpisodes).
+ * `deleteScansCore` seeds the rebuilt ledger from the checkpoint minus the keys a standing
+ * episode answers for — removing an episode un-masks its checkpoint entry, so the next scan
+ * deletion restores it as a live RESOLVED `vuln_ledger` row. Pruning the tab alone doesn't
+ * delete the lifecycle; it relocates it.
  */
 export function pruneEpisodesCore(
   state: LedgerState,
   c: EpisodePruneCriteria,
-): { state: LedgerState; removed: number; prunedKeys: string[] } {
+): { state: LedgerState; removed: number; pruned: EpisodeRow[]; prunedKeys: string[] } {
   const set = c.severities ? purgeSet(c.severities) : null;
   const episodes: EpisodeRow[] = [];
-  const prunedKeys: string[] = [];
+  const pruned: EpisodeRow[] = [];
   for (const e of state.episodes) {
-    if (episodeMatches(e, c, set)) {
-      prunedKeys.push(e.vuln_key);
-      continue;
-    }
-    episodes.push({ ...e });
+    (episodeMatches(e, c, set) ? pruned : episodes).push({ ...e });
   }
   return {
     state: {
@@ -356,9 +352,39 @@ export function pruneEpisodesCore(
       ledger: Object.fromEntries(Object.entries(state.ledger).map(([k, v]) => [k, { ...v }])),
       episodes,
     },
-    removed: prunedKeys.length,
-    prunedKeys,
+    removed: pruned.length,
+    pruned,
+    prunedKeys: pruned.map((e) => e.vuln_key),
   };
+}
+
+/**
+ * Drop from one checkpoint the rows that ARE the pruned lifecycles — and only those.
+ *
+ * A checkpoint's row for a pruned episode's key is that episode's lifecycle (resolved, or
+ * still open if the checkpoint predates the resolution) unless the scan that SUPERSEDED the
+ * episode is inside the checkpoint's sealed prefix: then the row is the lifecycle that
+ * replaced it — a genuine reopen a later compaction sealed — and `deleteScansCore` keeps that
+ * supersession and seeds the key from this very row. Purging it there deleted a live finding
+ * the operator never asked to prune, one scan deletion later. Judged per checkpoint, because
+ * an older one, sealed before the reopen, still holds the pruned lifecycle itself.
+ */
+export function purgeCheckpointForPrunedEpisodes(
+  checkpoint: Checkpoint,
+  pruned: readonly EpisodeRow[],
+  scans: readonly ScanRow[],
+): { checkpoint: Checkpoint; removed: number } {
+  const order = new Map(scansAsc([...scans]).map((s, i) => [s.scan_id, i]));
+  const floor = checkpoint.floor_scan_id === null ? undefined : order.get(checkpoint.floor_scan_id);
+  const keys = new Set<string>();
+  for (const e of pruned) {
+    const by = e.superseded_by_scan === null ? undefined : order.get(e.superseded_by_scan);
+    // A scan missing from the order (or a floorless checkpoint) reads as unsealed: the row is
+    // the episode's own lifecycle, which is what every prune assumed before supersessions held.
+    if (by !== undefined && floor !== undefined && by <= floor) continue;
+    keys.add(e.vuln_key);
+  }
+  return purgeCheckpointByKeys(checkpoint, keys);
 }
 
 // -------------------------------------------------------------------- history trim

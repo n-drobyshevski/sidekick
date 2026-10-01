@@ -6573,13 +6573,9 @@ var Server = (() => {
   function pruneEpisodesCore(state, c) {
     const set = c.severities ? purgeSet(c.severities) : null;
     const episodes = [];
-    const prunedKeys = [];
+    const pruned = [];
     for (const e of state.episodes) {
-      if (episodeMatches(e, c, set)) {
-        prunedKeys.push(e.vuln_key);
-        continue;
-      }
-      episodes.push({ ...e });
+      (episodeMatches(e, c, set) ? pruned : episodes).push({ ...e });
     }
     return {
       state: {
@@ -6587,9 +6583,21 @@ var Server = (() => {
         ledger: Object.fromEntries(Object.entries(state.ledger).map(([k, v]) => [k, { ...v }])),
         episodes
       },
-      removed: prunedKeys.length,
-      prunedKeys
+      removed: pruned.length,
+      pruned,
+      prunedKeys: pruned.map((e) => e.vuln_key)
     };
+  }
+  function purgeCheckpointForPrunedEpisodes(checkpoint, pruned, scans) {
+    const order = new Map(scansAsc([...scans]).map((s, i) => [s.scan_id, i]));
+    const floor = checkpoint.floor_scan_id === null ? void 0 : order.get(checkpoint.floor_scan_id);
+    const keys = /* @__PURE__ */ new Set();
+    for (const e of pruned) {
+      const by = e.superseded_by_scan === null ? void 0 : order.get(e.superseded_by_scan);
+      if (by !== void 0 && floor !== void 0 && by <= floor) continue;
+      keys.add(e.vuln_key);
+    }
+    return purgeCheckpointByKeys(checkpoint, keys);
   }
   function trimHistoryRows(rows, beforeDate) {
     const kept = rows.filter((r) => {
@@ -6711,7 +6719,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "606d8fe052f9" : "dev";
+  var BUILD_ID = true ? "486532d60341" : "dev";
   var CACHE_EPOCH = "3";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
@@ -8032,16 +8040,17 @@ var Server = (() => {
   }
   function pruneEpisodes(c) {
     const state = loadState();
-    const { state: pruned, removed, prunedKeys } = pruneEpisodesCore(state, c);
+    const { state: next, removed, pruned } = pruneEpisodesCore(state, c);
     if (!removed) return { removed: 0, checkpointRemoved: 0, remaining: state.episodes.length };
     const jobId = newJobId("purge");
     const journalRef = writeJournal(jobId, state);
-    const keys = new Set(prunedKeys);
-    const checkpointRemoved = rewriteCheckpoints((cp) => purgeCheckpointByKeys(cp, keys));
-    writeStateTables(pruned);
+    const checkpointRemoved = rewriteCheckpoints(
+      (cp) => purgeCheckpointForPrunedEpisodes(cp, pruned, state.scans)
+    );
+    writeStateTables(next);
     shrinkTab(TABS.episodes);
     trashFile(journalRef);
-    return { removed, checkpointRemoved, remaining: pruned.episodes.length };
+    return { removed, checkpointRemoved, remaining: next.episodes.length };
   }
   function trimHistory(beforeDate) {
     const rows = readAll(TABS.mttrHistory);

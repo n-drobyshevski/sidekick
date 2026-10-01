@@ -17,8 +17,8 @@ import {
 } from "../src/domain/ledgerCore";
 import { deleteScansCore } from "../src/domain/maintenance";
 import {
-  purgeCheckpointByKeys,
   purgeCheckpointBySeverity,
+  purgeCheckpointForPrunedEpisodes,
   purgePayloadBySeverity,
   pruneEpisodesCore,
   purgeStateBySeverity,
@@ -195,7 +195,7 @@ describe("episode prune survives a scan deletion", () => {
     const out = pruneEpisodesCore(withEpisode, {
       resolvedBeforeMs: Date.parse("2026-06-01T00:00:00Z"), severities: null,
     });
-    const cleanCp = purgeCheckpointByKeys(checkpoint, new Set(out.prunedKeys)).checkpoint;
+    const cleanCp = purgeCheckpointForPrunedEpisodes(checkpoint, out.pruned, withEpisode.scans).checkpoint;
 
     // The archives no longer carry it either (scan 3 dropped it), so nothing re-adds it.
     const trimmed: Record<string, unknown> = {};

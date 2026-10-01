@@ -47,7 +47,7 @@ import {
   previewHistoryTrim,
   previewSeverityPurge,
   pruneEpisodesCore,
-  purgeCheckpointByKeys,
+  purgeCheckpointForPrunedEpisodes,
   purgeCheckpointBySeverity,
   purgeStateBySeverity,
   trimHistoryRows,
@@ -1126,22 +1126,25 @@ export interface EpisodePruneResult {
  * Drop sealed lifecycles matching an age (+ optional severity) criterion.
  *
  * The checkpoint purge is not optional bookkeeping: `deleteScansCore` seeds the rebuilt ledger
- * from the checkpoint MINUS the keys present in `resolved_episodes` (maintenance.ts:216-220),
- * so an episode removed from the tab alone comes back as a live RESOLVED `vuln_ledger` row the
- * next time a scan is deleted. Both edits ride the same journal.
+ * from the checkpoint MINUS the keys a standing episode answers for, so an episode removed
+ * from the tab alone comes back as a live RESOLVED `vuln_ledger` row the next time a scan is
+ * deleted. Only the pruned lifecycles go, though: where a checkpoint sealed the scan that
+ * superseded a pruned episode, its row is the reopen that replaced it and stays
+ * (purgeCheckpointForPrunedEpisodes). Both edits ride the same journal.
  */
 export function pruneEpisodes(c: EpisodePruneCriteria): EpisodePruneResult {
   const state = loadState();
-  const { state: pruned, removed, prunedKeys } = pruneEpisodesCore(state, c);
+  const { state: next, removed, pruned } = pruneEpisodesCore(state, c);
   if (!removed) return { removed: 0, checkpointRemoved: 0, remaining: state.episodes.length };
   const jobId = newJobId("purge");
   const journalRef = archive.writeJournal(jobId, state);
-  const keys = new Set(prunedKeys);
-  const checkpointRemoved = rewriteCheckpoints((cp) => purgeCheckpointByKeys(cp, keys));
-  writeStateTables(pruned);
+  const checkpointRemoved = rewriteCheckpoints((cp) =>
+    purgeCheckpointForPrunedEpisodes(cp, pruned, state.scans),
+  );
+  writeStateTables(next);
   shrinkTab(TABS.episodes);
   archive.trashFile(journalRef);
-  return { removed, checkpointRemoved, remaining: pruned.episodes.length };
+  return { removed, checkpointRemoved, remaining: next.episodes.length };
 }
 
 /**
