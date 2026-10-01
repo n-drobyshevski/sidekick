@@ -798,10 +798,9 @@ function warmAfterSync(): void {
  * constant — the same `settingsLogic.effectiveSlaTargets` every live read model measures
  * against. This entry is a durable, once-written fact (`historyStore.recordDaily` never
  * rewrites a past day), so it is dated by the settings in force when the sync committed, the
- * same way `outcome`/`params` already are. It matters beyond symmetry with the live figure:
- * `readModels.ts`'s `mttrPageTrendSlice` ships this array's `history` WHOLE as the MTTR page's
- * fallback chart on a young ledger, so a day recorded here with a stale constant-based SLA
- * would visibly disagree with the live page the moment an operator saved a custom window.
+ * same way `outcome`/`params` already are. No page draws the day blobs today (the secrets
+ * twin fold reads the newest one's `scopes`), but a day recorded here against a stale
+ * constant-based SLA would disagree with the live page the moment anything did.
  */
 function dailyStats(params: SyncParams, outcome: ledgerStore.PersistOutcome): Rec {
   const ledger = ledgerStore.loadState().ledger;

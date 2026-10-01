@@ -176,24 +176,19 @@ const PROGRAM_TREND_KEYS = ["date", "reconstructed", "coverage_pct", "efficiency
 /**
  * `getMttrPage`'s trend slice.
  *
- * `history` SURVIVES HERE, unlike on Scan History, and that asymmetry is deliberate. The MTTR
- * page reads it twice: `hist[hist.length - 2]` feeds the change chips, and — when the
- * reconstructed series is empty and the vendor-fix filter is on — the whole array is the
- * FALLBACK the median and open-past-SLA charts draw from. Dropping it would blank those charts
- * on a young ledger, which is exactly the state they exist to cover.
+ * NO `history`. It used to survive here on the strength of an MTTR page that read it for change
+ * chips and a young-ledger chart fallback — readers gas/'s page has and this one never grew:
+ * `mttr.js` draws `trend` alone (`halfLifeTrendPoints`). `historyModel` no longer builds the
+ * array at all, so a key passed through here would only ever be the empty default.
  */
 export function mttrPageTrendSlice(trends: unknown): Rec | null {
   if (!trends || typeof trends !== "object") return null;
-  const t = trends as Rec;
-  return { history: t["history"] ?? [], trend: pickRows(t["trend"], MTTR_TREND_KEYS) };
+  return { trend: pickRows((trends as Rec)["trend"], MTTR_TREND_KEYS) };
 }
 
 /**
- * `getMttrTrend`'s slice — the Scan History page, its only caller.
- *
- * `history` is dropped WHOLE: this page never dereferences it. It is the entire `mttr_history`
- * tab, shipped on every visit for nobody, and it is the one place the array can go because the
- * MTTR page's fallback (above) is the only thing that needs it.
+ * `getScanHistory`'s slice — the Scan History page, its only caller. Same shape as the MTTR
+ * page's, five fields per point where that one keeps nine.
  */
 export function historyTrendSlice(trends: unknown): Rec | null {
   if (!trends || typeof trends !== "object") return null;

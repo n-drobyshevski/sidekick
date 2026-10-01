@@ -21,7 +21,7 @@
 //
 // NO NEW SLICE WAS NEEDED, AND THAT WAS CHECKED RATHER THAN ASSUMED. Every endpoint below
 // feeds an EXISTING `pagePayload` function with the key the model already publishes:
-// `programModel().trend` -> `programTrendSlice`, `historyModel().{history,trend}` ->
+// `programModel().trend` -> `programTrendSlice`, `historyModel().trend` ->
 // `mttrPageTrendSlice` / `historyTrendSlice`, `historyModel().scans` -> `scanRowsSlice`,
 // `mttrModel()` -> `execMttrSlice`, `executiveModel().byScope` -> `execGroupSlice` /
 // `mttrGroupTableSlice`. `test/api.test.ts`'s "each read model reaches its slice" block asserts
@@ -999,8 +999,7 @@ export function getExecutivePage(p?: unknown): ApiResult {
  * `trends` comes from `historyModel`, not from `mttrModel`, and that is the caching audit
  * rather than a convenience: the trend backbone is time-invariant and lives in the durable
  * layer, while `mttrModel` is a clock model on a 1 h TTL. `mttrPageTrendSlice` reads
- * `{history, trend}` — both keys `historyModel` publishes — and keeps `history` because this
- * page is the only reader of it (the change chips, and the young-ledger chart fallback).
+ * `trend` alone.
  */
 export function getMttrPage(p?: unknown): ApiResult {
   return run(() => {
@@ -1174,10 +1173,9 @@ export function getReposPage(p?: unknown): ApiResult {
 /**
  * Scan History: what was measured and when.
  *
- * ENUMERATED, NOT SPREAD, and both omissions are the reason. `historyModel().history` is the
- * whole `mttr_history` set and this page never dereferences it — only the MTTR page does — and
- * the raw `trend` carries nine fields per point where this page draws five. Spreading the
- * model and patching two keys would ship both by default the day a third key is added.
+ * ENUMERATED, NOT SPREAD. The raw `trend` carries nine fields per point where this page draws
+ * five, and `scanScopeApplies`-style flags are named one by one; spreading the model and
+ * patching keys would ship whatever it gains next by default.
  */
 export function getScanHistory(p?: unknown): ApiResult {
   return run(() => {

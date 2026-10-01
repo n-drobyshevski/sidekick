@@ -5586,10 +5586,8 @@ var Server = (() => {
   var HISTORY_TREND_KEYS = ["date", "reconstructed", "open", "resolved", "km_median_days"];
   var PROGRAM_TREND_KEYS = ["date", "reconstructed", "coverage_pct", "efficiency_pct"];
   function mttrPageTrendSlice(trends) {
-    var _a;
     if (!trends || typeof trends !== "object") return null;
-    const t = trends;
-    return { history: (_a = t["history"]) != null ? _a : [], trend: pickRows(t["trend"], MTTR_TREND_KEYS) };
+    return { trend: pickRows(trends["trend"], MTTR_TREND_KEYS) };
   }
   function historyTrendSlice(trends) {
     if (!trends || typeof trends !== "object") return null;
@@ -5853,7 +5851,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "cbbb42233449" : "dev";
+  var BUILD_ID = true ? "17f42ab08a88" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
@@ -9148,9 +9146,6 @@ var Server = (() => {
       return (_a = NAME_RE.exec(n2)) == null ? void 0 : _a[1];
     }).filter((d) => Boolean(d)).sort();
   }
-  function listHistory() {
-    return recordedDays().map((date) => ({ date, stats: readGzJson(subfolder(FOLDER2), fileName(date)) }));
-  }
   function latestHistory() {
     const days = recordedDays();
     if (days.length === 0) return null;
@@ -9421,6 +9416,7 @@ var Server = (() => {
     baseMemo = void 0;
     clockMemo = void 0;
     newestScanMemo = void 0;
+    latestHistoryMemo = void 0;
   }
   var clockMemo;
   function ledgerClock(scope) {
@@ -10365,8 +10361,16 @@ var Server = (() => {
     };
   }
   var HISTORY_DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+  var latestHistoryMemo;
+  function latestHistoryOnce() {
+    const version = dataVersion();
+    if (!latestHistoryMemo || latestHistoryMemo.version !== version) {
+      latestHistoryMemo = { version, entry: latestHistory() };
+    }
+    return latestHistoryMemo.entry;
+  }
   function latestSecretsTwins() {
-    const entry = latestHistory();
+    const entry = latestHistoryOnce();
     const stats = entry && entry.stats;
     if (!stats || typeof stats !== "object" || Array.isArray(stats)) return null;
     const scopes = stats["scopes"];
@@ -10658,16 +10662,14 @@ var Server = (() => {
         km: shipKM(kaplanMeier(historyCut.rows, KM_OPTS))
       },
       endOfLife: endOfLifeBlock(historyCut, n2.mttrExcludeEndOfLife),
-      // `mttrPageTrendSlice` reads both of these keys.
-      history: listHistory(),
       trend: trendFor(n2, snap.rows),
-      // See the block comment above: `scans`, `perScope` and `history` are per-scan/per-day
-      // facts with no project OR domain dimension and do NOT narrow with either view scope;
+      // See the block comment above: `scans` and `perScope` are per-scan facts with no project
+      // OR domain dimension and do NOT narrow with either view scope;
       // everything else in this payload does. The note names whichever scope is actually live,
       // because "scoped to the selected project" over a domain scope would be a wrong answer to
       // the only question the note exists to answer.
       scanScopeApplies: false,
-      scanScopeNote: n2.project || n2.domain ? "scans, perScope and history describe the whole register \u2014 a sync and a daily snapshot carry no " + (n2.project ? "project" : "domain") + " dimension to narrow by. Only rows/kpis/trend above are scoped to the selected " + (n2.project ? "project" : "domain") + "." : null
+      scanScopeNote: n2.project || n2.domain ? "scans and perScope describe the whole register \u2014 a sync carries no " + (n2.project ? "project" : "domain") + " dimension to narrow by. Only rows/kpis/trend above are scoped to the selected " + (n2.project ? "project" : "domain") + "." : null
     };
   }
   function trendFor(n2, all) {
@@ -10698,7 +10700,7 @@ var Server = (() => {
   function historyModel(p) {
     const n2 = norm(p);
     return durablyCached(
-      "dsHistory6",
+      "dsHistory7",
       { ...keyOf(n2), mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => buildHistory(n2)
     );

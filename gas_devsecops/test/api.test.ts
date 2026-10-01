@@ -997,11 +997,12 @@ describe("each read model reaches its slice", () => {
     expect(cold["totals"]).toHaveProperty("teams_in_coldest_share");
   });
 
-  it("getMttrPage: historyModel -> mttrPageTrendSlice, keeping `history`", async () => {
+  it("getMttrPage: historyModel -> mttrPageTrendSlice, trend only", async () => {
     const { api } = await syncedRegister();
     const d = (api.getMttrPage({}) as unknown as Rec)["data"] as Rec;
     const trends = d["trends"] as Rec;
-    expect(trends).toHaveProperty("history"); // the young-ledger fallback lives here
+    // No page reads a `history` array; it cost one Drive read per recorded day.
+    expect(Object.keys(trends)).toEqual(["trend"]);
     expect(Array.isArray(trends["trend"])).toBe(true);
     // The summary DOES ship from this endpoint (divergence from gas/, which splits it).
     expect(d["mttr"]).toHaveProperty("remediation");

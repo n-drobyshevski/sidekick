@@ -479,7 +479,7 @@ describe("the caching audit is per model, and the header states it", () => {
     // rows both payloads carry gained the completeness record — same unchanged layer claim.
     //
     // "dsExecutive2" -> "dsExecutive3", "dsMttr4" -> "dsMttr5", "dsSecrets2" -> "dsSecrets3",
-    // "dsHistory5" -> "dsHistory6" (KM false lower bound): an empty reliability cut no longer
+    // "dsHistory5" -> "dsHistory7" (KM false lower bound): an empty reliability cut no longer
     // ships a false floor or mean — same unchanged layer claim. "dsMttr5" -> "dsMttr6" (hasFix
     // relabel): `remediation.fetchFilter` joined the payload — same claim again.
     // "dsSecrets3" -> "dsSecrets4" (twin fold): `twins` can carry the cross-repository counts.
@@ -520,7 +520,7 @@ describe("the caching audit is per model, and the header states it", () => {
     // per-register `movement` / `movementNote` blocks. A warm entry from THAT old namespace
     // carries no movement block, and the new section would draw "no movement decomposition in
     // this payload" over a window that is measurable.
-    expect(layerOf("dsHistory6")).toEqual(["durablyCached"]);
+    expect(layerOf("dsHistory7")).toEqual(["durablyCached"]);
     expect(layerOf("dsStorage1")).toEqual(["durablyCached"]);
 
     // And nothing reached both layers, which is the failure the spelling-out above exists to
@@ -1116,6 +1116,28 @@ describe("secretsModel: the twin fold is read from the newest per-sync history b
     expect(H.historyReads).toEqual(["latest"]);
     expect(H.historyReads).not.toContain("list");
   });
+
+  // Once per EXECUTION, not once per param set: a warm or a page load resolving several
+  // `secretsModel` entries reads the newest day blob once. A new data version reads again.
+  it("reads the newest day once per data version, however many param sets ask", () => {
+    H.history = [historyDay("2026-03-02", [{ scope: "secrets", twins: { keys: 6, folded: 7, medianGapDays: 2 } }])];
+    freshSecrets();
+    secretsModel({ ...ALL, severities: ["HIGH"] });
+    secretsModel({ ...ALL, showNoFix: false });
+    expect(H.historyReads).toEqual(["latest"]);
+    H.version = "v2";
+    secretsModel(ALL);
+    expect(H.historyReads).toEqual(["latest", "latest"]);
+  });
+});
+
+describe("historyModel ships no day-blob array", () => {
+  // `listHistory()` was one Drive read per recorded day, for a `history` key no page reads.
+  it("never lists the history folder, and publishes no `history`", () => {
+    const m = historyModel(ALL);
+    expect(m).not.toHaveProperty("history");
+    expect(H.historyReads).not.toContain("list");
+  });
 });
 
 // --------------------------------------------------------------------------------------- //
@@ -1435,7 +1457,7 @@ describe("historyModel", () => {
   it("is shaped for the three pagePayload slices that read it", () => {
     const m = historyModel(ALL) as any;
     expect(Array.isArray(m.scans)).toBe(true);
-    expect(Array.isArray(m.history)).toBe(true); // mttrPageTrendSlice reads this
+    expect(m).not.toHaveProperty("history"); // no slice reads it any more
     expect(Array.isArray(m.trend)).toBe(true); // both trend slices read this
     expect(m.scans[0].scan_id).toBe("sync-2"); // newest first, as the table draws it
   });
@@ -1752,7 +1774,7 @@ describe("warmReadModels", () => {
     expect(H.swept).toBe(1);
     expect(new Set(H.cacheCalls.map((c) => c.name))).toEqual(new Set([
       "dsBootCore1",
-      "dsHistory6", "dsProgram2", "dsRepos2", "dsStorage1",
+      "dsHistory7", "dsProgram2", "dsRepos2", "dsStorage1",
       "dsExecutive3", "dsMttr6", "dsMttrSplit2", "dsSecrets5", "dsRegister4",
     ]));
     // FIRST, because doGet only inlines a bootstrap core that is already stored: a budget
@@ -1812,7 +1834,7 @@ describe("warmReadModels", () => {
     expect(first("dsBootCore1")).toBe(0);
     expect(first("dsBootCore1")).toBeLessThan(first("dsExecutive3"));
     expect(first("dsExecutive3")).toBeLessThan(first("dsMttr6"));
-    expect(first("dsMttr6")).toBeLessThan(first("dsHistory6"));
+    expect(first("dsMttr6")).toBeLessThan(first("dsHistory7"));
     expect(first("dsStorage1")).toBeLessThan(first("dsMttrSplit2"));
   });
 
@@ -1869,7 +1891,7 @@ describe("the resumable warm chain", () => {
     // The sweep ran with the FIRST hop's keep-list seeded in — a sweep over this hop's touches
     // alone would trash the core and the durable four.
     expect(H.swept).toBe(1);
-    expect(H.carried.at(-1)).toEqual(expect.arrayContaining(["dsBootCore1", "dsHistory6", "dsStorage1"]));
+    expect(H.carried.at(-1)).toEqual(expect.arrayContaining(["dsBootCore1", "dsHistory7", "dsStorage1"]));
     // Its own fired trigger is gone, no new one armed, and the record cleared.
     expect(H.triggers).toEqual([]);
     expect(H.props[PROGRESS]).toBeUndefined();

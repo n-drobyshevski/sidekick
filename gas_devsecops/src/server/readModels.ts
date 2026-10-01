@@ -11,7 +11,7 @@
 // `historyTrendSlice`, `scanRowsSlice`, `jobSummarySlice`, …). S5 builds models; S7 assembles
 // and slices. Where a model's natural output feeds an existing slice, the field names below
 // are chosen to match that slice's reads exactly — `programModel().trend` for
-// `programTrendSlice`, `historyModel().{history,trend,scans}` for the two trend slices and
+// `programTrendSlice`, `historyModel().{trend,scans}` for the two trend slices and
 // `scanRowsSlice`, `executiveModel().byScope` for `execGroupSlice` / `mttrGroupTableSlice`.
 //
 // ONE IMPORT RUNS THE OTHER WAY AND IT IS NOT A SLICE. `registerRowsModel` takes the ORDERING
@@ -223,7 +223,7 @@ import {
   loadTrend,
   previousSeverityCounts,
 } from "./ledgerStore";
-import { latestHistory, listHistory } from "./historyStore";
+import { latestHistory } from "./historyStore";
 import { activeJob, clearTriggers } from "./jobsStore";
 import * as errorLog from "./errorLog";
 import { cellCount, gridSize, TAB_HEADERS, TABS } from "./sheetsDb";
@@ -558,6 +558,7 @@ export function __resetModelMemosForTest(): void {
   baseMemo = undefined;
   clockMemo = undefined;
   newestScanMemo = undefined;
+  latestHistoryMemo = undefined;
 }
 
 interface LedgerClock {
@@ -2240,8 +2241,25 @@ export function registerRowsModel(scope: Scope, p?: RowPageParams): Rec {
  */
 const HISTORY_DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+let latestHistoryMemo: { version: string; entry: ReturnType<typeof latestHistory> } | undefined;
+
+/**
+ * `historyStore.latestHistory()` once per execution — a folder listing plus one Drive read,
+ * asked for by every `secretsModel` param set a warm or a page load resolves. Keyed on
+ * `dataVersion()` like the memos above. The sync's own `recordDaily` writes the day AFTER the
+ * commit's bump, inside the sync's execution; nothing there reads this (the post-sync warm runs
+ * in its own execution, `readModels.continueWarm`), so the memo cannot hold the pre-write day.
+ */
+function latestHistoryOnce(): ReturnType<typeof latestHistory> {
+  const version = dataVersion();
+  if (!latestHistoryMemo || latestHistoryMemo.version !== version) {
+    latestHistoryMemo = { version, entry: latestHistory() };
+  }
+  return latestHistoryMemo.entry;
+}
+
 function latestSecretsTwins(): { twins: Rec; asOf: string | null } | null {
-  const entry = latestHistory();
+  const entry = latestHistoryOnce();
   const stats = entry && entry.stats;
   if (!stats || typeof stats !== "object" || Array.isArray(stats)) return null;
   const scopes = (stats as Rec)["scopes"];
@@ -2258,7 +2276,7 @@ function latestSecretsTwins(): { twins: Rec; asOf: string | null } | null {
   if (!("medianGapDays" in t)) return null;
   const gap = t["medianGapDays"];
   if (gap !== null && (typeof gap !== "number" || !Number.isFinite(gap))) return null;
-  // Refused by type before any cast, like the three above. `listHistory`/`latestHistory`
+  // Refused by type before any cast, like the three above. `historyStore`'s readers
   // derive the date from the file NAME through the same regex, so a bad one here means the
   // store's own naming contract broke — which is a reason to say nothing about the day, not
   // a reason to invent one.
@@ -2594,9 +2612,15 @@ export function reposModel(p?: ModelParams): Rec {
 /**
  * What was actually measured and when, plus the trend backbone three pages draw from.
  *
- * SHAPED FOR THE EXISTING SLICES. `scans` feeds `pagePayload.scanRowsSlice`; `{history, trend}`
- * feeds `mttrPageTrendSlice` (MTTR page, which reads `history` for its change chips and as the
- * young-ledger fallback) and `historyTrendSlice` (Scan History, which drops `history` whole).
+ * SHAPED FOR THE EXISTING SLICES. `scans` feeds `pagePayload.scanRowsSlice`; `trend` feeds
+ * `mttrPageTrendSlice` (MTTR page) and `historyTrendSlice` (Scan History).
+ *
+ * NO `history` ARRAY. This payload used to carry `historyStore.listHistory()` — every
+ * `mttr_history` day blob, one Drive read per recorded day — for an MTTR-page "change chips and
+ * young-ledger fallback" that this register's client never drew: no page reads `trends.history`.
+ * The secrets twin fold, the one thing that reads a day blob, takes the newest alone
+ * (`latestHistoryOnce`).
+ *
  * One cached backbone, three views of it — which is why the trend lives here rather than
  * inside `mttrModel`: `mttrModel` is a clock model on a 1 h TTL, and the trend is not.
  *
@@ -2609,10 +2633,8 @@ export function reposModel(p?: ModelParams): Rec {
  * through `scopedRows` and DO narrow to `n.project`. `scans` and `perScope`, though, come off
  * `loadScanRows()` directly — a `ScanRow` is a per-scan BATTERY record (`scan_id, ts, scope,
  * severities, total, ...`) with no project dimension at all, so there is no subtree of it to
- * select. `history` (`listHistory()`) is the same shape of fact: a whole-register snapshot
- * per UTC day, recorded before this package's project scope existed. `scanScopeApplies:
- * false` names exactly which three keys that covers, so a client cannot draw them as if they
- * had narrowed alongside the rest of this payload.
+ * select. `scanScopeApplies: false` names exactly which two keys that covers, so a client
+ * cannot draw them as if they had narrowed alongside the rest of this payload.
  *
  * `movement` / `movementNote` ARE PER SCOPE AND ALWAYS COVER ALL THREE. See
  * `domain/movementDecomposition.ts` for the arithmetic and `movementPopulation` below for the
@@ -2720,18 +2742,15 @@ function buildHistory(n: NormParams): Rec {
       km: shipKM(kaplanMeier(historyCut.rows, KM_OPTS)),
     },
     endOfLife: endOfLifeBlock(historyCut, n.mttrExcludeEndOfLife),
-    // `mttrPageTrendSlice` reads both of these keys.
-    history: listHistory(),
     trend: trendFor(n, snap.rows),
-    // See the block comment above: `scans`, `perScope` and `history` are per-scan/per-day
-    // facts with no project OR domain dimension and do NOT narrow with either view scope;
+    // See the block comment above: `scans` and `perScope` are per-scan facts with no project
+    // OR domain dimension and do NOT narrow with either view scope;
     // everything else in this payload does. The note names whichever scope is actually live,
     // because "scoped to the selected project" over a domain scope would be a wrong answer to
     // the only question the note exists to answer.
     scanScopeApplies: false,
     scanScopeNote: n.project || n.domain
-      ? "scans, perScope and history describe the whole register — a sync and a "
-        + "daily snapshot carry no "
+      ? "scans and perScope describe the whole register — a sync carries no "
         + (n.project ? "project" : "domain")
         + " dimension to narrow by. Only rows/kpis/trend above are scoped to the selected "
         + (n.project ? "project" : "domain") + "."
@@ -2802,8 +2821,11 @@ export function historyModel(p?: ModelParams): Rec {
   // now files repository drop-outs under `bounded`.
   //
   // "dsHistory5" -> "dsHistory6" (KM false lower bound): `kpis.km` changed as `dsMttr5` did.
+  //
+  // "dsHistory6" -> "dsHistory7": the `history` array is gone (see `buildHistory`'s comment),
+  // and `scanScopeNote` no longer names it. A warm dsHistory6 entry still ships the array.
   return durablyCached(
-    "dsHistory6",
+    "dsHistory7",
     { ...keyOf(n), mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
     () => buildHistory(n),
   );

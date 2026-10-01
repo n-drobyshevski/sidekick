@@ -350,8 +350,9 @@ describe("mttrPageTrendSlice — nine fields of thirteen", () => {
     expect((mttrPageTrendSlice(TRENDS)!.trend as { sla_net: number }[])[0]!.sla_net).toBe(1);
   });
 
-  it("keeps history, unlike the Scan History slice", () => {
-    expect(mttrPageTrendSlice(TRENDS)!.history).toEqual(TRENDS.history);
+  // No client reads it, and historyModel no longer builds it — a stray one is not passed on.
+  it("ships no history array", () => {
+    expect(mttrPageTrendSlice(TRENDS)).not.toHaveProperty("history");
   });
 });
 
