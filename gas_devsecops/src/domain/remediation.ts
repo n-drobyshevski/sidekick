@@ -129,11 +129,18 @@ export interface KMPoint {
   events: number;
 }
 
+/** See `KMResult.medianBoundReason`. */
+export type MedianBoundReason = "not-reached" | "past-cut" | "cut-empty-not-reached" | "cut-empty";
+
 export interface KMResult {
   curve: KMPoint[]; // distinct event times ascending; the implicit anchor S(0)=1 is not stored
   median: number | null; // smallest event time with S(t) <= 0.5
-  medianLowerBound: number | null; // when median is null: the max observed time (else null)
-  mean: number | null; // restricted mean (RMST); null when there are no events
+  // When median is null: the max observed time (legacy path); the extended path's own rule is
+  // `medianBoundReason` below — the reliability cut, the max observed time, or null.
+  medianLowerBound: number | null;
+  // Restricted mean (RMST); null when there are no events, or (extended path) when the
+  // reliability cut left no curve to integrate — see `meanUnmeasuredReason`.
+  mean: number | null;
   restrictionTime: number | null; // τ = max observed time (events ∪ censored); null when empty
   meanTruncated: boolean; // S(τ) > 0 → survival hadn't reached 0, so RMST is a lower bound
   naiveMean: number | null; // mean of closed-only mttr_days (util.mean); null with no events
@@ -219,6 +226,31 @@ export interface KMResult {
    * `rowsIn` identity above: `events` already carries both eventsUsed and eventsPastCut summed.
    */
   eventsPastCut?: number;
+  /**
+   * WHY `medianLowerBound` IS WHAT IT IS when `median` is null — so a reader can tell a floor
+   * that holds from an absence with no floor to offer (extended path only):
+   *
+   *   "not-reached"            the published curve never falls to half by the last
+   *                            observation (no cut ran, or nothing closed):
+   *                            `medianLowerBound = maxObserved`.
+   *   "past-cut"               the cut curve stays above half up to `reliableUntil`, where the
+   *                            uncut curve is the same curve: `medianLowerBound = reliableUntil`.
+   *   "cut-empty-not-reached"  the reliability cut left nothing (`reliableUntil` null under
+   *                            `minRisk`) and the UNCUT curve never falls to half either:
+   *                            `medianLowerBound = maxObserved`, a floor on the MEDIAN only —
+   *                            `q25` is null because the cut withheld it, not because a quarter
+   *                            never closed.
+   *   "cut-empty"              the reliability cut left nothing and the UNCUT curve DOES fall
+   *                            to half, so nothing observed is a true floor:
+   *                            `medianLowerBound = null`.
+   *
+   * Null when `median` is measured, or when nothing was observed at all.
+   */
+  medianBoundReason?: MedianBoundReason | null;
+  /** Why `mean` is null (extended path): "no-events" (nothing closed), "cut-empty" (the
+   *  reliability cut left no curve to integrate — see `kaplanMeierExtended`). Null when `mean`
+   *  is a number. */
+  meanUnmeasuredReason?: "no-events" | "cut-empty" | null;
   /** Of the rows that survived pre-entry exclusion (became an event or a censored
    *  observation), how many had `entry_days > 0` — the onboarding backlog: findings already
    *  open, on their own clock, the day this register started watching. 0 when nothing entered
@@ -398,7 +430,9 @@ export function kmMedianFromCurve(curve: KMPoint[]): number | null {
  *   - computes the risk set with `kmCurveEntry` (entry < t <= exit) instead of `kmCurve`;
  *   - when `opts.minRisk`, cuts the curve at the Gebski et al. (Int J Epidemiol 2018)
  *     reliability boundary and reads `median`/`q25`/`q75` off the CUT curve only (see
- *     `reliableUntilFromCurve`);
+ *     `reliableUntilFromCurve`); when the cut leaves nothing, `medianLowerBound` survives
+ *     only if the uncut curve never reaches half either, and the RMST is withdrawn
+ *     (`medianBoundReason`, `meanUnmeasuredReason`);
  *   - when `opts.horizonDays`, restricts RMST to τ = min(horizonDays, the reliability cut (if
  *     any) else the max observed time), reporting that τ as `restrictionTime` and keeping the
  *     uncapped figure in the new `maxObserved` field.
@@ -642,6 +676,10 @@ function kaplanMeierExtended(rows: RemediationRow[], opts: KMOptions | undefined
       rowsIn,
       noClock,
       eventsPastCut: 0, // no events at all -> nothing to have been cut past
+      // Nothing closed: survival never left 1, so "median > maxObserved" holds whenever there
+      // was anything to observe.
+      medianBoundReason: maxObserved === null ? null : "not-reached",
+      meanUnmeasuredReason: "no-events",
       lateEntrants,
       lateEntryMedianAge,
     };
@@ -675,20 +713,39 @@ function kaplanMeierExtended(rows: RemediationRow[], opts: KMOptions | undefined
     opts?.horizonDays !== undefined
       ? Math.min(opts.horizonDays, reliableUntil ?? maxObserved!)
       : maxObserved!;
+  // THE CUT LEFT NOTHING (`minRisk`, first event already unreliable — every population under
+  // 50 at risk lands here). Nothing on the curve is trusted, so nothing read off the empty
+  // curve may stand in for it. Two figures used to: `medianLowerBound = maxObserved` ("the
+  // median is past the longest observation") and RMST = τ over a curve of S ≡ 1, flagged
+  // `meanTruncated` and so drawn as "≥ τ". Ten findings, eight closed on day 2, two open at
+  // day 30 published "MTTR at least 30 days" and "mean ≥ 30 days" for a median of 2. So:
+  //  - the median bound survives only where the UNCUT curve also never reaches half (then
+  //    every reading of the data agrees it is past the last observation);
+  //  - the restricted mean is withdrawn outright (null, not truncated) — the area under a
+  //    curve nobody trusts is not a floor on anything. `meanUnmeasuredReason` says why.
+  const cutEmpty = !!opts?.minRisk && reliableUntil === null;
+  const uncutMedian = cutEmpty ? kmMedianFromCurve(fullCurve) : null;
   const { rmst, sAtTau } = rmstToTau(curve, tau);
 
-  const medianLowerBound =
+  const medianBoundReason: MedianBoundReason | null =
     median_ !== null ? null
-    : opts?.minRisk ? (reliableUntil ?? maxObserved)
-    : maxObserved;
+    : cutEmpty ? (uncutMedian === null ? "cut-empty-not-reached" : "cut-empty")
+    : opts?.minRisk ? "past-cut"
+    : "not-reached";
+  const medianLowerBound =
+    medianBoundReason === "past-cut" ? reliableUntil
+    : medianBoundReason === "not-reached" || medianBoundReason === "cut-empty-not-reached"
+      ? maxObserved
+    : null;
 
   return {
     curve,
     median: median_,
     medianLowerBound,
-    mean: rmst,
+    mean: cutEmpty ? null : rmst,
     restrictionTime: tau,
-    meanTruncated: sAtTau > 0,
+    meanTruncated: cutEmpty ? false : sAtTau > 0,
+    meanUnmeasuredReason: cutEmpty ? "cut-empty" : null,
     naiveMean,
     naiveMedian,
     events: events.length,
@@ -702,6 +759,7 @@ function kaplanMeierExtended(rows: RemediationRow[], opts: KMOptions | undefined
     rowsIn,
     noClock,
     eventsPastCut,
+    medianBoundReason,
     lateEntrants,
     lateEntryMedianAge,
   };

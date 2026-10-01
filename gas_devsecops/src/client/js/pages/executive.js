@@ -49,7 +49,8 @@ import {
 // `fmtCount`/`fmtDays` themselves come from `../ui.js` now, not from `./mttr.js` — see
 // `ui/figures.js`'s module header.
 import {
-  endOfLifeExclusionNote, kmHalfLifeView, rateView, trackingSinceView, WINDOW_LINE_HELP,
+  endOfLifeExclusionNote, kmHalfLifeView, rateView, TOO_FEW_LINES, TOO_FEW_TO_ESTIMATE,
+  trackingSinceView, WINDOW_LINE_HELP,
   windowLineView,
 } from "./mttr.js";
 
@@ -164,6 +165,7 @@ export function executiveRegisterView(byScope) {
       const open = Number(r.open || 0);
       const half = kmHalfLifeView({
         median: r.kmMedian, q25: r.kmQ25, medianLowerBound: r.kmMedianLowerBound,
+        medianBoundReason: r.kmMedianBoundReason,
       });
       return {
         scope,
@@ -887,10 +889,16 @@ export async function renderExecutive(host, params, _ctx) {
           + " median to publish.",
           view.state === "quartile"
             ? "A quarter of what is tracked has already closed — " + view.secondary + "."
-            : "Too few findings have closed within the reliable window to say even that much —"
-              + " " + view.secondary + ".",
+            : view.state === "half-bound"
+              ? "Too few findings are at risk to trust any of the curve, and even the whole of"
+                + " it stays above half — " + view.secondary + "."
+              : "Too few findings have closed within the reliable window to say even that much —"
+                + " " + view.secondary + ".",
         ],
       };
+    }
+    if (!view.measured && view.secondary === TOO_FEW_TO_ESTIMATE) {
+      return { term: "half-life", lines: TOO_FEW_LINES };
     }
     if (!view.measured) {
       return {

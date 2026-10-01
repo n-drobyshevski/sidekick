@@ -427,14 +427,18 @@ describe("the caching audit is per model, and the header states it", () => {
     //
     // "dsRegister2" -> "dsRegister3", "dsHistory4" -> "dsHistory5" (completeness gate): the scan
     // rows both payloads carry gained the completeness record — same unchanged layer claim.
-    expect(layerOf("dsExecutive2")).toEqual(["cached"]);
+    //
+    // "dsExecutive2" -> "dsExecutive3", "dsMttr4" -> "dsMttr5", "dsSecrets2" -> "dsSecrets3",
+    // "dsHistory5" -> "dsHistory6" (KM false lower bound): an empty reliability cut no longer
+    // ships a false floor or mean — same unchanged layer claim.
+    expect(layerOf("dsExecutive3")).toEqual(["cached"]);
     // "dsMttr1" -> "dsMttr2": the namespace was bumped when `remediation` gained its
     // `slaConsumed` block. A warm entry from THAT old namespace carries no deciles, and a
     // section missing for a cache reason reads as a register with nothing inside its SLA
-    // windows — the same shape of risk the newer dsMttr2 -> dsMttr3 -> dsMttr4 bumps above
+    // windows — the same shape of risk the newer dsMttr2 -> dsMttr3 -> dsMttr4 -> dsMttr5 bumps above
     // guard against.
-    expect(layerOf("dsMttr4")).toEqual(["cached"]);
-    expect(layerOf("dsSecrets2")).toEqual(["cached"]);
+    expect(layerOf("dsMttr5")).toEqual(["cached"]);
+    expect(layerOf("dsSecrets3")).toEqual(["cached"]);
     // "dsRegister1" -> "dsRegister2": the namespace was bumped when the payload gained its
     // `population` block. The CLAIM these three lines encode is the LAYER each model caches
     // in, not the spelling of its namespace, and that is unchanged — a warm entry from the
@@ -461,7 +465,7 @@ describe("the caching audit is per model, and the header states it", () => {
     // per-register `movement` / `movementNote` blocks. A warm entry from THAT old namespace
     // carries no movement block, and the new section would draw "no movement decomposition in
     // this payload" over a window that is measurable.
-    expect(layerOf("dsHistory5")).toEqual(["durablyCached"]);
+    expect(layerOf("dsHistory6")).toEqual(["durablyCached"]);
     expect(layerOf("dsStorage1")).toEqual(["durablyCached"]);
 
     // And nothing reached both layers, which is the failure the spelling-out above exists to
@@ -742,7 +746,7 @@ describe("effective SLA windows reach the models that publish them", () => {
     H.slaTargets = { CRITICAL: 90 };
     __resetModelMemosForTest();
     mttrModel(ALL);
-    const keys = H.cacheCalls.filter((c) => c.name === "dsMttr4").map((c) => JSON.stringify(c.params));
+    const keys = H.cacheCalls.filter((c) => c.name === "dsMttr5").map((c) => JSON.stringify(c.params));
     expect(new Set(keys).size).toBe(2);
   });
 });
@@ -799,7 +803,7 @@ describe("secretsModel has no severity axis", () => {
     secretsModel(ALL);
     secretsModel({ ...ALL, severities: ["CRITICAL"] });
     const keys = H.cacheCalls
-      .filter((c) => c.name === "dsSecrets2")
+      .filter((c) => c.name === "dsSecrets3")
       .map((c) => JSON.stringify(c.params));
     expect(new Set(keys).size).toBe(1);
   });
@@ -1600,7 +1604,7 @@ describe("executiveModel", () => {
     const after = executiveModel(ALL) as any;
     expect(after.coldZone.cold_after_days).toBe(7);
     const keys = H.cacheCalls
-      .filter((c) => c.name === "dsExecutive2")
+      .filter((c) => c.name === "dsExecutive3")
       .map((c) => JSON.stringify(c.params));
     expect(new Set(keys).size).toBe(2);
   });
@@ -1626,7 +1630,7 @@ describe("executiveModel", () => {
     expect(after.coldZone.target_share_pct).toBe(20);
 
     const keys = H.cacheCalls
-      .filter((c) => c.name === "dsExecutive2")
+      .filter((c) => c.name === "dsExecutive3")
       .map((c) => JSON.stringify(c.params));
     expect(new Set(keys).size).toBe(2);
   });
@@ -1659,8 +1663,8 @@ describe("warmReadModels", () => {
     expect(H.swept).toBe(1);
     expect(new Set(H.cacheCalls.map((c) => c.name))).toEqual(new Set([
       "dsBootCore1",
-      "dsHistory5", "dsProgram2", "dsRepos2", "dsStorage1",
-      "dsExecutive2", "dsMttr4", "dsMttrSplit1", "dsSecrets2", "dsRegister3",
+      "dsHistory6", "dsProgram2", "dsRepos2", "dsStorage1",
+      "dsExecutive3", "dsMttr5", "dsMttrSplit2", "dsSecrets3", "dsRegister3",
     ]));
     // FIRST, because doGet only inlines a bootstrap core that is already stored: a budget
     // cut-out must never be what leaves every page load paying the second round trip.
@@ -1900,7 +1904,7 @@ describe("the remediation-speed end-of-life exclusion", () => {
     estate();
     mttrModel(ALL);
     reposModel(ALL);
-    const mttrKey = H.cacheCalls.find((c) => c.name === "dsMttr4")!.params as Record<string, any>;
+    const mttrKey = H.cacheCalls.find((c) => c.name === "dsMttr5")!.params as Record<string, any>;
     const reposKey = H.cacheCalls.find((c) => c.name === "dsRepos2")!.params as Record<string, any>;
     expect(mttrKey.mttrExcludeEndOfLife).toBe(false);
     // The Repositories page draws no remediation-speed aggregate, so the flag is deliberately

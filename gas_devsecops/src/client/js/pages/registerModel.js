@@ -329,7 +329,10 @@ export function executiveHeadline(km) {
   if (km.median !== null && km.median !== undefined) {
     return { value: km.median, bound: false, censored: km.censored ?? 0 };
   }
-  return { value: km.medianLowerBound ?? null, bound: true, censored: km.censored ?? 0 };
+  // No median AND no floor (a reliability cut that left nothing, or nothing observed) is not a
+  // bound on anything: `bound` says the value is a floor, so it cannot be true of a null.
+  const floor = km.medianLowerBound ?? null;
+  return { value: floor, bound: floor !== null, censored: km.censored ?? 0 };
 }
 
 /**

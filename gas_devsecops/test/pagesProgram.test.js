@@ -36,7 +36,7 @@ import {
 import {
   accountingView, actionableClockView, awaitingView, endOfLifeExclusionNote, fmtCount, fmtDays,
   kmHalfLifeView, mttrHeroView,
-  mttrSeverityRows, PAST_CUT_HELP, rateView, resolutionBucketView, rmstView, slaSeverityRows,
+  mttrSeverityRows, PAST_CUT_HELP, TOO_FEW_TO_ESTIMATE, rateView, resolutionBucketView, rmstView, slaSeverityRows,
   survivalAxisNote, trackingSinceView, WINDOW_LINE_HELP, windowLineView,
 } from "../src/client/js/pages/mttr.js";
 import {
@@ -367,6 +367,31 @@ describe("a curve that never reaches half", () => {
       expect(view.secondary).toBeNull();
       expect(view.value).not.toMatch(/^0/);
     }
+  });
+
+  it("[unmeasured] a reliability cut that left nothing says so, with no floor at all", () => {
+    // "cut-empty" (remediation.ts `medianBoundReason`): too few at risk to trust any of the
+    // curve while the uncut curve DOES reach half — so no observed figure is a floor.
+    const view = kmHalfLifeView({
+      median: null, q25: null, medianLowerBound: null, reliableUntil: null,
+      medianBoundReason: "cut-empty", events: 8,
+    });
+    expect(view).toEqual({
+      measured: false, value: "Not measured", isLowerBound: false, days: null,
+      q25Days: null, state: "unmeasured", secondary: TOO_FEW_TO_ESTIMATE,
+    });
+  });
+
+  it("[half-bound] an empty cut whose uncut curve never reaches half bounds the median only", () => {
+    const view = kmHalfLifeView({
+      median: null, q25: null, medianLowerBound: 30, reliableUntil: null,
+      medianBoundReason: "cut-empty-not-reached",
+    });
+    expect(view.state).toBe("half-bound");
+    expect(view.value).toBe("Not reached");
+    // Never "under 25%": the empty cut's null q25 says nothing about a quarter.
+    expect(view.secondary).toBe("under half fixed within 30 days");
+    expect(view.secondary).not.toMatch(/25%/);
   });
 
   it("reaches the MTTR hero, with the censored count beside it", () => {
@@ -706,6 +731,15 @@ describe("the restricted mean", () => {
 
   it("is \"Not measured\", not zero, with no events", () => {
     expect(rmstView({ mean: null, meanTruncated: false }).text).toBe("Not measured");
+  });
+
+  it("says why it is unmeasured when the reliability cut left no curve", () => {
+    const view = rmstView({ mean: null, meanTruncated: false, meanUnmeasuredReason: "cut-empty" });
+    expect(view.measured).toBe(false);
+    expect(view.text).toBe("Not measured");
+    expect(view.note).toMatch(/too few findings at risk/);
+    expect(rmstView({ mean: null, meanUnmeasuredReason: "no-events" }).note)
+      .toMatch(/nothing has closed/);
   });
 });
 

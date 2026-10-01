@@ -184,6 +184,7 @@ import {
   openPastSla,
   resolutionBuckets,
   type KMResult,
+  type MedianBoundReason,
 } from "../domain/remediation";
 import {
   capacityByMonth,
@@ -965,12 +966,18 @@ export interface ShippedKM {
   /** Published INSTEAD of a median where the curve never reaches half. Never collapsed into
    *  `median` — "> 41 d" and "41 d" are different claims. */
   medianLowerBound: number | null;
+  /** Why `medianLowerBound` is that figure — or, as "cut-empty", why it is null although the
+   *  median is too: the reliability cut left nothing while the uncut curve does reach half.
+   *  `remediation.ts`'s `KMResult.medianBoundReason` has all four. */
+  medianBoundReason: MedianBoundReason | null;
   /** Computed off the SAME (already-cut) `km.curve` `median` reads — see this interface's own
    *  `curve` note. Was already true before this package; stated explicitly now that "the curve"
    *  is no longer simply "every observed event". */
   p90: number | null;
   mean: number | null;
   meanTruncated: boolean;
+  /** Why `mean` is null: "no-events", or "cut-empty" (no reliable curve to integrate). */
+  meanUnmeasuredReason: "no-events" | "cut-empty" | null;
   restrictionTime: number | null;
   events: number;
   censored: number;
@@ -1023,9 +1030,11 @@ function shipKM(km: KMResult): ShippedKM {
     curve: km.curve.map((p) => ({ t: p.t, s: p.s })),
     median: km.median,
     medianLowerBound: km.medianLowerBound,
+    medianBoundReason: km.medianBoundReason ?? null,
     p90: kmQuantileFromCurve(km.curve, 0.9),
     mean: km.mean,
     meanTruncated: km.meanTruncated,
+    meanUnmeasuredReason: km.meanUnmeasuredReason ?? null,
     restrictionTime: km.restrictionTime,
     events: km.events,
     censored: km.censored,
@@ -1050,8 +1059,10 @@ function latencySummary(rows: BaseRow[], now: number, scope: Scope | undefined):
   return {
     median: km.median,
     medianLowerBound: km.medianLowerBound,
+    medianBoundReason: km.medianBoundReason ?? null,
     mean: km.mean,
     meanTruncated: km.meanTruncated,
+    meanUnmeasuredReason: km.meanUnmeasuredReason ?? null,
     restrictionTime: km.restrictionTime,
     events: km.events,
     censored: km.censored,
@@ -1242,6 +1253,11 @@ export function mttrModel(p?: ModelParams): Rec {
   // being missing outright — the same "silently wrong beats silently missing" reasoning as
   // the bump above, which is exactly why this is a new key rather than a lazy backfill.
   //
+  // "dsMttr4" -> "dsMttr5" (KM false lower bound): where the reliability cut leaves nothing,
+  // every `ShippedKM` now ships `medianLowerBound` null (unless even the uncut curve stays
+  // above half), `mean` null, and the new `medianBoundReason`/`meanUnmeasuredReason`. A warm
+  // dsMttr4 entry carries the false "at least N days" floor under the same field names.
+  //
   // `slaTargets` JOINS THE KEY (not just `keyOf`'s base four) because this compute reads it —
   // `openPastSla`, `agingDistribution` and `mttrFromLedger`'s `sla_target`/`sla_pct` all take
   // it as an argument below. Without it in the key, an operator saving a new Deadlines window
@@ -1253,7 +1269,7 @@ export function mttrModel(p?: ModelParams): Rec {
   // which repositories every figure below is measured over, so an operator flipping it and
   // reloading would otherwise read the OLD half-life off an entry whose params look the same.
   return cached(
-    "dsMttr4",
+    "dsMttr5",
     { ...keyOf(n), slaTargets: n.slaTargets, mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
     () => buildMttr(n),
     CLOCK_TTL_SEC,
@@ -1321,6 +1337,7 @@ function remediationSplitRow(group: string, rs: BaseRow[], n: NormParams, now: n
     group,
     km: {
       median: shipped.median, q25: shipped.q25, medianLowerBound: shipped.medianLowerBound,
+      medianBoundReason: shipped.medianBoundReason,
       reliableUntil: shipped.reliableUntil, events: shipped.events,
     },
     p90: kmQuantileFromCurve(k.curve, 0.9),
@@ -1380,12 +1397,13 @@ function buildMttrSplit(n: NormParams): Rec {
   };
 }
 
-/** The split, cached. A new namespace: nothing ever served this shape. Keyed like `dsMttr4`
- *  on the two settings the compute reads. */
+/** The split, cached. Keyed like `dsMttr5` on the two settings the compute reads.
+ *  "dsMttrSplit1" -> "dsMttrSplit2": each row's `km` gained `medianBoundReason`, and its
+ *  `medianLowerBound` is null where the reliability cut left nothing to bound (`dsMttr5`). */
 export function mttrSplitModel(p?: ModelParams): Rec {
   const n = norm({ ...p, split: null });
   return cached(
-    "dsMttrSplit1",
+    "dsMttrSplit2",
     { ...keyOf(n), slaTargets: n.slaTargets, mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
     () => buildMttrSplit(n),
     CLOCK_TTL_SEC,
@@ -1402,8 +1420,9 @@ export function mttrSplitModel(p?: ModelParams): Rec {
 export function mttrGroupModel(p: ModelParams): Rec {
   const n = norm(p);
   if (!n.split) throw new Error("mttrGroupModel: a split { by, value } is required.");
+  // "dsMttrGroup1" -> "dsMttrGroup2": `buildMttr`'s payload changed under it (`dsMttr5`).
   return cached(
-    "dsMttrGroup1",
+    "dsMttrGroup2",
     { ...keyOf(n), slaTargets: n.slaTargets, mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
     () => {
       const snap = baseSnapshot();
@@ -1470,6 +1489,7 @@ function buildExecutive(n: NormParams): Rec {
       resolved: sub.filter((r) => !isOpen(r.status)).length,
       kmMedian: km.median,
       kmMedianLowerBound: km.medianLowerBound,
+      kmMedianBoundReason: km.medianBoundReason ?? null,
       // MTTR delayed-entry package: the "25% fixed within" figure — the honest thing to show
       // beside a null `kmMedian` under the reliability cut, same reasoning as `mttrModel`'s
       // per-severity `kmPerSev`.
@@ -1688,6 +1708,10 @@ export function executiveModel(p?: ModelParams): Rec {
   // payload gained `trackingSince`. Same "silently wrong beats silently missing" reasoning as
   // `mttrModel`'s own bump.
   //
+  // "dsExecutive2" -> "dsExecutive3" (KM false lower bound): `byScope` rows gained
+  // `kmMedianBoundReason`, and `kmMedianLowerBound` is null where the reliability cut left
+  // nothing to bound — see `mttrModel`'s `dsMttr5` note.
+  //
   // `coldAfterDays` joins it beside them on the identical argument, one block later: the
   // cold-zone headline is computed from it, so an operator saving a new window and reloading
   // would otherwise keep reading the OLD cold count for up to `CLOCK_TTL_SEC` off an entry
@@ -1701,7 +1725,7 @@ export function executiveModel(p?: ModelParams): Rec {
   // never changes SHAPE with the mode — a key that sometimes carries three fewer fields makes
   // "same params" mean two different things.
   return cached(
-    "dsExecutive2",
+    "dsExecutive3",
     {
       ...keyOf(n),
       slaTargets: n.slaTargets,
@@ -2276,8 +2300,12 @@ export function secretsModel(p?: ModelParams): Rec {
   // `mean`/`restrictionTime` read a reliability-cut, horizon-capped curve — this register's
   // own coverage numbers (mostly UNKNOWN validation state) make the cut bite harder here than
   // anywhere else in the product, so a warm dsSecrets1 entry would be the most misleading one.
+  //
+  // "dsSecrets2" -> "dsSecrets3" (KM false lower bound): `timeToRevoke.km`/`.medianLowerBound`
+  // stop publishing the max observed time as a floor where the reliability cut left nothing
+  // and the uncut curve does reach half; `km` gained `medianBoundReason`/`meanUnmeasuredReason`.
   return cached(
-    "dsSecrets2",
+    "dsSecrets3",
     // `mttrExcludeEndOfLife` is here because `timeToRevoke` reads it; `severities` is not
     // because nothing does. One rule, both directions.
     { scope: "secrets", showNoFix: n.showNoFix, mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
@@ -2726,8 +2754,10 @@ export function historyModel(p?: ModelParams): Rec {
   // "dsHistory4" -> "dsHistory5" (completeness gate): every `scans` row gained the completeness
   // record the Saved scans table marks a deferred scan from, and the movement decomposition
   // now files repository drop-outs under `bounded`.
+  //
+  // "dsHistory5" -> "dsHistory6" (KM false lower bound): `kpis.km` changed as `dsMttr5` did.
   return durablyCached(
-    "dsHistory5",
+    "dsHistory6",
     { ...keyOf(n), mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
     () => buildHistory(n),
   );
@@ -2869,7 +2899,9 @@ export function scopeSummaryModel(viewer: ViewerScope): Rec {
   return durablyCached(
     // "dsScopeSummary2" -> "dsScopeSummary3": the payload gained `splits` (MTTR by team /
     // domain / repository); a warm "2" entry would draw the summary with no split at all.
-    "dsScopeSummary3",
+    // "dsScopeSummary3" -> "dsScopeSummary4" (KM false lower bound): the hero's and every
+    // split row's lower bound is null where the reliability cut left nothing to bound.
+    "dsScopeSummary4",
     { ...keyOf(n), slaTargets: n.slaTargets, mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
     () => {
       const latest = latestScanRowOf(loadScanRows());

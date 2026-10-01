@@ -2490,6 +2490,10 @@ var Server = (() => {
         noClock,
         eventsPastCut: 0,
         // no events at all -> nothing to have been cut past
+        // Nothing closed: survival never left 1, so "median > maxObserved" holds whenever there
+        // was anything to observe.
+        medianBoundReason: maxObserved === null ? null : "not-reached",
+        meanUnmeasuredReason: "no-events",
         lateEntrants,
         lateEntryMedianAge
       };
@@ -2506,15 +2510,19 @@ var Server = (() => {
     const q25 = kmQuantileFromCurve(curve, 0.25);
     const q75 = kmQuantileFromCurve(curve, 0.75);
     const tau = (opts == null ? void 0 : opts.horizonDays) !== void 0 ? Math.min(opts.horizonDays, reliableUntil != null ? reliableUntil : maxObserved) : maxObserved;
+    const cutEmpty = !!(opts == null ? void 0 : opts.minRisk) && reliableUntil === null;
+    const uncutMedian = cutEmpty ? kmMedianFromCurve(fullCurve) : null;
     const { rmst, sAtTau } = rmstToTau(curve, tau);
-    const medianLowerBound = median_ !== null ? null : (opts == null ? void 0 : opts.minRisk) ? reliableUntil != null ? reliableUntil : maxObserved : maxObserved;
+    const medianBoundReason = median_ !== null ? null : cutEmpty ? uncutMedian === null ? "cut-empty-not-reached" : "cut-empty" : (opts == null ? void 0 : opts.minRisk) ? "past-cut" : "not-reached";
+    const medianLowerBound = medianBoundReason === "past-cut" ? reliableUntil : medianBoundReason === "not-reached" || medianBoundReason === "cut-empty-not-reached" ? maxObserved : null;
     return {
       curve,
       median: median_,
       medianLowerBound,
-      mean: rmst,
+      mean: cutEmpty ? null : rmst,
       restrictionTime: tau,
-      meanTruncated: sAtTau > 0,
+      meanTruncated: cutEmpty ? false : sAtTau > 0,
+      meanUnmeasuredReason: cutEmpty ? "cut-empty" : null,
       naiveMean,
       naiveMedian,
       events: events.length,
@@ -2528,6 +2536,7 @@ var Server = (() => {
       rowsIn,
       noClock,
       eventsPastCut,
+      medianBoundReason,
       lateEntrants,
       lateEntryMedianAge
     };
@@ -5456,6 +5465,7 @@ var Server = (() => {
         km: {
           median: km["median"],
           medianLowerBound: km["medianLowerBound"],
+          medianBoundReason: km["medianBoundReason"],
           q25: km["q25"],
           reliableUntil: km["reliableUntil"],
           events: km["events"],
@@ -5478,6 +5488,7 @@ var Server = (() => {
           kmMedian: r["kmMedian"],
           kmQ25: r["kmQ25"],
           kmMedianLowerBound: r["kmMedianLowerBound"],
+          kmMedianBoundReason: r["kmMedianBoundReason"],
           open: r["open"]
         };
       })
@@ -5772,7 +5783,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "766a266450ce" : "dev";
+  var BUILD_ID = true ? "27c744a1a365" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
@@ -9483,37 +9494,42 @@ var Server = (() => {
     };
   }
   function shipKM(km) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l;
     return {
       curve: km.curve.map((p) => ({ t: p.t, s: p.s })),
       median: km.median,
       medianLowerBound: km.medianLowerBound,
+      medianBoundReason: (_a = km.medianBoundReason) != null ? _a : null,
       p90: kmQuantileFromCurve(km.curve, 0.9),
       mean: km.mean,
       meanTruncated: km.meanTruncated,
+      meanUnmeasuredReason: (_b = km.meanUnmeasuredReason) != null ? _b : null,
       restrictionTime: km.restrictionTime,
       events: km.events,
       censored: km.censored,
       total: km.total,
-      q25: (_a = km.q25) != null ? _a : null,
-      q75: (_b = km.q75) != null ? _b : null,
-      reliableUntil: (_c = km.reliableUntil) != null ? _c : null,
-      excludedPreEntry: (_d = km.excludedPreEntry) != null ? _d : 0,
-      maxObserved: (_e = km.maxObserved) != null ? _e : null,
-      rowsIn: (_f = km.rowsIn) != null ? _f : 0,
-      noClock: (_g = km.noClock) != null ? _g : 0,
-      eventsPastCut: (_h = km.eventsPastCut) != null ? _h : 0,
-      lateEntrants: (_i = km.lateEntrants) != null ? _i : 0,
-      lateEntryMedianAge: (_j = km.lateEntryMedianAge) != null ? _j : null
+      q25: (_c = km.q25) != null ? _c : null,
+      q75: (_d = km.q75) != null ? _d : null,
+      reliableUntil: (_e = km.reliableUntil) != null ? _e : null,
+      excludedPreEntry: (_f = km.excludedPreEntry) != null ? _f : 0,
+      maxObserved: (_g = km.maxObserved) != null ? _g : null,
+      rowsIn: (_h = km.rowsIn) != null ? _h : 0,
+      noClock: (_i = km.noClock) != null ? _i : 0,
+      eventsPastCut: (_j = km.eventsPastCut) != null ? _j : 0,
+      lateEntrants: (_k = km.lateEntrants) != null ? _k : 0,
+      lateEntryMedianAge: (_l = km.lateEntryMedianAge) != null ? _l : null
     };
   }
   function latencySummary(rows, now, scope) {
+    var _a, _b;
     const km = kaplanMeier(latencyView(rows, "detection", now, { scope }), KM_OPTS);
     return {
       median: km.median,
       medianLowerBound: km.medianLowerBound,
+      medianBoundReason: (_a = km.medianBoundReason) != null ? _a : null,
       mean: km.mean,
       meanTruncated: km.meanTruncated,
+      meanUnmeasuredReason: (_b = km.meanUnmeasuredReason) != null ? _b : null,
       restrictionTime: km.restrictionTime,
       events: km.events,
       censored: km.censored,
@@ -9638,7 +9654,7 @@ var Server = (() => {
   function mttrModel(p) {
     const n2 = norm(p);
     return cached(
-      "dsMttr4",
+      "dsMttr5",
       { ...keyOf(n2), slaTargets: n2.slaTargets, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => buildMttr(n2),
       CLOCK_TTL_SEC
@@ -9677,6 +9693,7 @@ var Server = (() => {
         median: shipped.median,
         q25: shipped.q25,
         medianLowerBound: shipped.medianLowerBound,
+        medianBoundReason: shipped.medianBoundReason,
         reliableUntil: shipped.reliableUntil,
         events: shipped.events
       },
@@ -9740,7 +9757,7 @@ var Server = (() => {
   function mttrSplitModel(p) {
     const n2 = norm({ ...p, split: null });
     return cached(
-      "dsMttrSplit1",
+      "dsMttrSplit2",
       { ...keyOf(n2), slaTargets: n2.slaTargets, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => buildMttrSplit(n2),
       CLOCK_TTL_SEC
@@ -9750,7 +9767,7 @@ var Server = (() => {
     const n2 = norm(p);
     if (!n2.split) throw new Error("mttrGroupModel: a split { by, value } is required.");
     return cached(
-      "dsMttrGroup1",
+      "dsMttrGroup2",
       { ...keyOf(n2), slaTargets: n2.slaTargets, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => {
         const snap = baseSnapshot();
@@ -9781,7 +9798,7 @@ var Server = (() => {
     }
     const execCut = liveRepoRows(rows, n2.mttrExcludeEndOfLife);
     const byScope3 = (n2.scope ? [n2.scope] : [...SCOPES]).map((scope) => {
-      var _a2;
+      var _a2, _b;
       const sub = rows.filter((r) => r.scope === scope);
       const km = kaplanMeier(execCut.rows.filter((r) => r.scope === scope), KM_OPTS);
       return {
@@ -9792,10 +9809,11 @@ var Server = (() => {
         resolved: sub.filter((r) => !isOpen8(r.status)).length,
         kmMedian: km.median,
         kmMedianLowerBound: km.medianLowerBound,
+        kmMedianBoundReason: (_a2 = km.medianBoundReason) != null ? _a2 : null,
         // MTTR delayed-entry package: the "25% fixed within" figure — the honest thing to show
         // beside a null `kmMedian` under the reliability cut, same reasoning as `mttrModel`'s
         // per-severity `kmPerSev`.
-        kmQ25: (_a2 = km.q25) != null ? _a2 : null,
+        kmQ25: (_b = km.q25) != null ? _b : null,
         awaiting: awaitingVendorFix(sub).overall
       };
     });
@@ -9956,7 +9974,7 @@ var Server = (() => {
   function executiveModel(p) {
     const n2 = norm(p);
     return cached(
-      "dsExecutive2",
+      "dsExecutive3",
       {
         ...keyOf(n2),
         slaTargets: n2.slaTargets,
@@ -10290,7 +10308,7 @@ var Server = (() => {
   function secretsModel(p) {
     const n2 = norm(p);
     return cached(
-      "dsSecrets2",
+      "dsSecrets3",
       // `mttrExcludeEndOfLife` is here because `timeToRevoke` reads it; `severities` is not
       // because nothing does. One rule, both directions.
       { scope: "secrets", showNoFix: n2.showNoFix, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
@@ -10548,7 +10566,7 @@ var Server = (() => {
   function historyModel(p) {
     const n2 = norm(p);
     return durablyCached(
-      "dsHistory5",
+      "dsHistory6",
       { ...keyOf(n2), mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => buildHistory(n2)
     );
@@ -10615,7 +10633,9 @@ var Server = (() => {
     return durablyCached(
       // "dsScopeSummary2" -> "dsScopeSummary3": the payload gained `splits` (MTTR by team /
       // domain / repository); a warm "2" entry would draw the summary with no split at all.
-      "dsScopeSummary3",
+      // "dsScopeSummary3" -> "dsScopeSummary4" (KM false lower bound): the hero's and every
+      // split row's lower bound is null where the reliability cut left nothing to bound.
+      "dsScopeSummary4",
       { ...keyOf(n2), slaTargets: n2.slaTargets, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => {
         const latest = latestScanRowOf(loadScanRows());

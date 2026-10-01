@@ -454,6 +454,14 @@ export function secretsModel(payload, opts) {
       medianDays: median.bounded || ttr.median === null || ttr.median === undefined
         ? null
         : num(ttr.median, null),
+      // Why there is neither a median nor a floor — the sub-line the card prints instead of a
+      // claim about a half that was never measured. "cut-empty" is the reliability cut leaving
+      // nothing while the uncut curve does reach half (remediation.ts `medianBoundReason`).
+      medianNote: ttr.km && ttr.km.medianBoundReason === "cut-empty"
+        ? "too few credentials at risk to estimate it yet"
+        : num(ttr.events, 0) > 0
+          ? "no median to report yet"
+          : "no rotation observed yet",
       p90Text: days1(ttr.p90),
       withinSlaPct: ttr.withinSlaPct === null || ttr.withinSlaPct === undefined
         ? null
@@ -1144,7 +1152,9 @@ function paintSecrets(host, vm, filters) {
         value: vm.timeToRevoke.medianText,
         sub: vm.timeToRevoke.medianIsLowerBound
           ? "a lower bound: the curve never reaches half"
-          : "half of rotations happened within this",
+          : vm.timeToRevoke.medianDays !== null
+            ? "half of rotations happened within this"
+            : vm.timeToRevoke.medianNote,
         help: { term: "censoring" },
         denominator: vm.timeToRevoke.denominator,
       }),

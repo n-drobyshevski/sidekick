@@ -295,6 +295,12 @@ describe("the front door", () => {
     expect(exact).toEqual({ value: 12, bound: false, censored: 3 });
   });
 
+  it("is no bound when there is neither a median nor a floor", () => {
+    // A reliability cut that left nothing to bound (`medianBoundReason` "cut-empty").
+    expect(executiveHeadline({ median: null, medianLowerBound: null, censored: 2 }))
+      .toEqual({ value: null, bound: false, censored: 2 });
+  });
+
   it("survives having no curve at all", () => {
     expect(executiveHeadline(null).value).toBeNull();
     expect(executiveHeadline({}).value).toBeNull();

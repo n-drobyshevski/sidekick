@@ -48,7 +48,7 @@ import { parseTs, type Rec } from "./util";
  * `fmtKmMedian` distinguishes a missing estimate (renders "—") from a present one, and an
  * absent `remediation` and an absent `remediation.km` have to reach it the same way.
  *
- * `km` CARRIES SEVEN FIELDS NOW, NOT TWO (MTTR delayed-entry package, then the measurement-
+ * `km` CARRIES EIGHT FIELDS NOW, NOT TWO (MTTR delayed-entry package, then the measurement-
  * window package): `q25` and `reliableUntil` joined `median`/`medianLowerBound` so the
  * Executive hero can run the SAME `kmHalfLifeView` decision MTTR & SLA does — "Not reached"
  * plus a 25th-percentile or reliability-cut reading, never the retired "at least N days" —
@@ -58,7 +58,9 @@ import { parseTs, type Rec } from "./util";
  * many fixes the estimate actually rests on and how many rows never entered observation at
  * all, and neither number was on this slice before — `curveNote()` on that page already says
  * the CURVE itself stays MTTR-only; these three are scalars the estimate is ABOUT, not the
- * curve. Still an allowlist of exactly what the hero reads, not a field wider than that —
+ * curve. `medianBoundReason` joined last: it is what lets `kmHalfLifeView` tell a floor that
+ * holds from a reliability cut that left nothing (`remediation.ts`'s `KMResult`). Still an
+ * allowlist of exactly what the hero reads, not a field wider than that —
  * `censored` stays off the wire here (Executive's own qualifier line deliberately does not
  * claim it; see `executiveHeroView`'s header).
  *
@@ -83,6 +85,7 @@ export function execMttrSlice(mttr: unknown): Rec | null {
       ? {
         km: {
           median: km["median"], medianLowerBound: km["medianLowerBound"],
+          medianBoundReason: km["medianBoundReason"],
           q25: km["q25"], reliableUntil: km["reliableUntil"],
           events: km["events"], total: km["total"], excludedPreEntry: km["excludedPreEntry"],
         },
@@ -103,7 +106,8 @@ export function execMttrSlice(mttr: unknown): Rec | null {
  * `kmQ25` AND `kmMedianLowerBound` JOINED `kmMedian` (MTTR delayed-entry package), for the same
  * reason `execMttrSlice`'s `km` widened: the byScope table now runs `kmHalfLifeView` per row
  * too, so a register whose curve never reaches half reads "Not reached" (with its own quartile
- * reading) instead of a bare dash with a footnote pointing at MTTR & SLA.
+ * reading) instead of a bare dash with a footnote pointing at MTTR & SLA. `kmMedianBoundReason`
+ * joined them for the reason `execMttrSlice`'s `medianBoundReason` did.
  *
  * ROWS ARE NOT CAPPED HERE, though the page draws five. How many rows are worth showing is a
  * presentation decision, and it already lives in `executiveByDomainView` where it is tested;
@@ -122,6 +126,7 @@ export function execGroupSlice(byGroup: unknown): Rec | null {
       kmMedian: r["kmMedian"],
       kmQ25: r["kmQ25"],
       kmMedianLowerBound: r["kmMedianLowerBound"],
+      kmMedianBoundReason: r["kmMedianBoundReason"],
       open: r["open"],
     })),
   };

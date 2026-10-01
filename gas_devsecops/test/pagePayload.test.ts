@@ -25,6 +25,7 @@ const FULL_MTTR = {
       curve: Array.from({ length: 52 }, (_, i) => ({ t: i, s: 1 - i / 104 })),
       median: null,
       medianLowerBound: 118.4,
+      medianBoundReason: "past-cut",
       q25: 52.7,
       reliableUntil: 118.4,
       mean: 63.2,
@@ -47,8 +48,8 @@ const FULL_MTTR = {
   },
 };
 
-describe("execMttrSlice — the hero's km block, seven fields now, and nothing else", () => {
-  it("ships exactly rowCount, overall.{resolved,open} and km.{median,medianLowerBound,q25,reliableUntil,events,total,excludedPreEntry}", () => {
+describe("execMttrSlice — the hero's km block, eight fields now, and nothing else", () => {
+  it("ships exactly rowCount, overall.{resolved,open} and km.{median,medianLowerBound,medianBoundReason,q25,reliableUntil,events,total,excludedPreEntry}", () => {
     const out = execMttrSlice(FULL_MTTR)!;
     expect(Object.keys(out).sort()).toEqual(["overall", "remediation", "rowCount"]);
     expect(Object.keys(out.overall as object).sort()).toEqual(["open", "resolved"]);
@@ -58,8 +59,8 @@ describe("execMttrSlice — the hero's km block, seven fields now, and nothing e
     // window package: events/total/excludedPreEntry joined them so the hero's "Window …" line
     // can state how many fixes the estimate rests on without a second round trip to MTTR & SLA.
     expect((out.remediation as { km: object }).km).toEqual({
-      median: null, medianLowerBound: 118.4, q25: 52.7, reliableUntil: 118.4,
-      events: 32, total: 99, excludedPreEntry: 5,
+      median: null, medianLowerBound: 118.4, medianBoundReason: "past-cut", q25: 52.7,
+      reliableUntil: 118.4, events: 32, total: 99, excludedPreEntry: 5,
     });
   });
 
@@ -278,10 +279,11 @@ describe("execGroupSlice — five columns and the dimension tag", () => {
     const out = execGroupSlice(FULL_GROUP)!;
     expect(Object.keys(out).sort()).toEqual(["dimension", "rows"]);
     // MTTR delayed-entry package: kmQ25/kmMedianLowerBound joined kmMedian so the byScope
-    // table can run kmHalfLifeView per row too.
+    // table can run kmHalfLifeView per row too; kmMedianBoundReason so it can tell a floor
+    // from a reliability cut that left nothing.
     expect((out.rows as object[]).map((r) => Object.keys(r).sort())).toEqual([
-      ["group", "kmMedian", "kmMedianLowerBound", "kmQ25", "open"],
-      ["group", "kmMedian", "kmMedianLowerBound", "kmQ25", "open"],
+      ["group", "kmMedian", "kmMedianBoundReason", "kmMedianLowerBound", "kmQ25", "open"],
+      ["group", "kmMedian", "kmMedianBoundReason", "kmMedianLowerBound", "kmQ25", "open"],
     ]);
   });
 

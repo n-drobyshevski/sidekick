@@ -740,6 +740,23 @@ describe("secrets — the denominators are sentences and the exclusions are prin
     expect(unreachable.timeToRevoke.medianDays).toBe(null);
   });
 
+  it("says why there is no median when a reliability cut left nothing to bound", () => {
+    const base = secretsPayload().secrets.timeToRevoke;
+    const cutEmpty = secretsModel(secretsPayload({
+      secrets: {
+        ...secretsPayload().secrets,
+        timeToRevoke: {
+          ...base, median: null, medianLowerBound: null,
+          km: { ...(base.km || {}), medianBoundReason: "cut-empty" },
+        },
+      },
+    }));
+    expect(cutEmpty.timeToRevoke.medianText).toBe("—");
+    expect(cutEmpty.timeToRevoke.medianIsLowerBound).toBe(false);
+    expect(cutEmpty.timeToRevoke.medianDays).toBe(null);
+    expect(cutEmpty.timeToRevoke.medianNote).toMatch(/too few credentials/);
+  });
+
   it("carries the twin fold as a measurement note", () => {
     expect(SECRETS.twinNote).toBe(TWIN_NOTE);
     expect(SECRETS.twinNote).toMatch(/187 keys/);

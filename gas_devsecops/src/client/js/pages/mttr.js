@@ -102,8 +102,8 @@ export { fmtCount, fmtDays };
 /**
  * The half-life decision, in ONE place, for every surface that draws it.
  *
- * FOUR outcomes now (MTTR delayed-entry package), and `state` names which one so a caller
- * never has to re-derive it from `isLowerBound`/`measured` alone:
+ * FIVE outcomes now (MTTR delayed-entry package, then the empty-cut split), and `state` names
+ * which one so a caller never has to re-derive it from `isLowerBound`/`measured` alone:
  *
  *   "median"          median present        "41 days"       a measured median.
  *   "quartile"        median null, q25 real "Not reached"    the CUT curve never falls to
@@ -114,7 +114,16 @@ export { fmtCount, fmtDays };
  *                     but a reliable floor  (secondary line) within the reliable window;
  *                     (`reliableUntil` or                    `secondary` says "under 25%
  *                     `medianLowerBound`) > 0                fixed within N d" instead.
+ *   "half-bound"      the cut left nothing, "Not reached"    `medianBoundReason` is
+ *                     but even the uncut                     "cut-empty-not-reached":
+ *                     curve stays above half                 `secondary` says "under half
+ *                                                            fixed within N d" — a floor on
+ *                                                            the median, not on any quartile.
  *   "unmeasured"      no number at all      "Not measured"   nothing to rest on. NOT zero.
+ *                                                            `secondary` is null, or (reason
+ *                                                            "cut-empty": too few findings at
+ *                                                            risk to trust any of the curve)
+ *                                                            `TOO_FEW_TO_ESTIMATE`.
  *
  * "AT LEAST N DAYS" IS RETIRED. The reliability cut (Gebski et al. 2018,
  * `domain/remediation.ts`) means `medianLowerBound` is no longer simply "the longest thing
@@ -127,11 +136,22 @@ export { fmtCount, fmtDays };
  * median or not" (styling, routing a tip) without switching on all four states.
  *
  * @param {object|null|undefined} km  a shipped KMResult
- *   (`{median, q25, medianLowerBound, reliableUntil, …}`)
+ *   (`{median, q25, medianLowerBound, medianBoundReason, reliableUntil, …}`)
  * @returns {{measured: boolean, value: string, isLowerBound: boolean, days: number|null,
- *            q25Days: number|null, state: "median"|"quartile"|"quartile-bound"|"unmeasured",
+ *            q25Days: number|null,
+ *            state: "median"|"quartile"|"quartile-bound"|"half-bound"|"unmeasured",
  *            secondary: string|null}}
  */
+/** `kmHalfLifeView`'s secondary line where the reliability cut left no curve at all. */
+export const TOO_FEW_TO_ESTIMATE = "too few findings to estimate it yet";
+
+/** The hero tip for that state, shared by MTTR & SLA and Executive. */
+export const TOO_FEW_LINES = [
+  "Findings have closed, but too few were at risk for any of the survival curve to be"
+  + " trusted: “not measured”, not zero.",
+  "The curve is read only while one more fix could move it by under two points.",
+];
+
 export function kmHalfLifeView(km) {
   const median = num(km && km.median);
   const q25 = num(km && km.q25);
@@ -149,6 +169,25 @@ export function kmHalfLifeView(km) {
       measured: true, value: "Not reached", isLowerBound: true, days: null,
       q25Days: q25, state: "quartile",
       secondary: "25% fixed within " + fmtDays(q25),
+    };
+  }
+  // THE CUT LEFT NOTHING (`medianBoundReason`, remediation.ts). Too few findings were at risk
+  // for any of the curve to be trusted, so the empty curve's null q25 says nothing about a
+  // quarter. "cut-empty": the uncut curve does reach half, so no floor holds and the honest
+  // answer is that there is nothing to estimate from yet. "cut-empty-not-reached": even the
+  // uncut curve stays above half, so the bound is a floor on the MEDIAN — and only that.
+  const reason = km && typeof km.medianBoundReason === "string" ? km.medianBoundReason : null;
+  if (reason === "cut-empty") {
+    return {
+      measured: false, value: "Not measured", isLowerBound: false, days: null,
+      q25Days: null, state: "unmeasured", secondary: TOO_FEW_TO_ESTIMATE,
+    };
+  }
+  if (reason === "cut-empty-not-reached" && legacyBound !== null && legacyBound > 0) {
+    return {
+      measured: true, value: "Not reached", isLowerBound: true, days: null,
+      q25Days: null, state: "half-bound",
+      secondary: "under half fixed within " + fmtDays(legacyBound),
     };
   }
   // Neither a median nor a 25th-percentile reading — but the reliability cut (or, in legacy
@@ -641,11 +680,20 @@ export function halfLifeTrendPoints(trends) {
   return first < 0 ? [] : dated.slice(first);
 }
 
-/** The restricted mean, and the "≥" it earns when survival never reached zero. */
+/**
+ * The restricted mean, and the "≥" it earns when survival never reached zero. Unmeasured, it
+ * carries `note` — why there is no area to report (`meanUnmeasuredReason`, remediation.ts):
+ * the reliability cut left no curve, or nothing has closed.
+ */
 export function rmstView(km) {
   const mean = km && km.mean !== null && km.mean !== undefined ? Number(km.mean) : null;
   if (mean === null || !Number.isFinite(mean)) {
-    return { measured: false, text: "Not measured", truncated: false, restrictionTime: null };
+    return {
+      measured: false, text: "Not measured", truncated: false, restrictionTime: null,
+      note: km && km.meanUnmeasuredReason === "cut-empty"
+        ? "too few findings at risk to trust any of the curve"
+        : "nothing has closed yet, so there is no curve to average",
+    };
   }
   const truncated = !!(km && km.meanTruncated);
   return {
@@ -1388,9 +1436,11 @@ export async function renderMttr(host, params, ctx) {
     const censoredTrackPct = meterPctFor(censoredRate);
     const awaitingTrackPct = awaiting.show ? meterPctFor(awaiting.share) : null;
     const numeric = view.measured && !view.isLowerBound && num(view.days) !== null;
-    const rmstNote = rmst.truncated
-      ? "a lower bound — survival had not reached zero at " + fmtDays(rmst.restrictionTime)
-      : "average days open, counted up to " + fmtDays(rmst.restrictionTime);
+    const rmstNote = !rmst.measured
+      ? rmst.note
+      : rmst.truncated
+        ? "a lower bound — survival had not reached zero at " + fmtDays(rmst.restrictionTime)
+        : "average days open, counted up to " + fmtDays(rmst.restrictionTime);
 
     clear(heroHost);
     const brief = el("div", { class: "brief" });
@@ -1556,6 +1606,9 @@ export async function renderMttr(host, params, ctx) {
    * LEADS the lines instead; `lower-bound` stays reachable from the Key sheet.
    */
   function heroHelp(view) {
+    if (!view.measured && view.secondary === TOO_FEW_TO_ESTIMATE) {
+      return { term: "half-life", lines: TOO_FEW_LINES };
+    }
     if (!view.isLowerBound) return { term: "half-life" };
     return {
       term: "half-life",
@@ -1565,9 +1618,14 @@ export async function renderMttr(host, params, ctx) {
         view.state === "quartile"
           // "quartile": a quarter of what is tracked has closed, even though half has not.
           ? "A quarter of what is tracked has already closed — " + view.secondary + "."
-          // "quartile-bound": not even a quarter has closed within the reliable window.
-          : "Too few findings have closed within the reliable window to say even that much —"
-            + " " + view.secondary + ".",
+          : view.state === "half-bound"
+            // "half-bound": too few at risk to trust any of the curve, and even all of it
+            // stays above half.
+            ? "Too few findings are at risk to trust any of the curve, and even the whole of it"
+              + " stays above half — " + view.secondary + "."
+            // "quartile-bound": not even a quarter has closed within the reliable window.
+            : "Too few findings have closed within the reliable window to say even that much —"
+              + " " + view.secondary + ".",
       ],
     };
   }
