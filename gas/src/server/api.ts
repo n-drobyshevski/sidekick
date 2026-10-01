@@ -65,6 +65,9 @@ import {
   buildSplit, informativeSplits, scopeSummaryOf, type ScopeSplitRow,
 } from "../../../gas_shared/domain/scopeSummary";
 import { groupRows, rowsInGroup } from "../../../gas_shared/domain/rowGroups";
+// All three CSV exports below (getExportCsv, getExportCoverageCsv, getReport's csv format)
+// encode through this one function, which neutralises formula-leading text.
+import { csvCell } from "../../../gas_shared/domain/csv";
 import { hasWizCredentials, PROP_KEYS, setProp } from "./props";
 import { readHubUrl, writeHubUrl } from "./hubUrl";
 import { BASE_FILTER_WORDS } from "./wizClient";
@@ -3570,12 +3573,6 @@ export function getReport(p?: unknown): ApiResult {
     ].join("\n");
     return { content: md, filename: `wiz-report-${generated.slice(0, 10)}.md`, matrix };
   });
-}
-
-function csvCell(v: unknown): string {
-  if (v === null || v === undefined) return "";
-  const s = String(v);
-  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 export function getExportCsv(p?: unknown): ApiResult {

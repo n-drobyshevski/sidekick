@@ -6493,7 +6493,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "0f0376d799f4" : "dev";
+  var BUILD_ID = true ? "21e544789c74" : "dev";
   var CACHE_EPOCH = "3";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
@@ -9727,6 +9727,15 @@ var Server = (() => {
     const groups = Array.from(byKey.values()).sort((x, y) => rank(x.worstSeverity) - rank(y.worstSeverity) || y.open - x.open || y.count - x.count || (x.value < y.value ? -1 : x.value > y.value ? 1 : 0));
     const cap = (_a = opts.cap) != null ? _a : 500;
     return { groups: groups.slice(0, cap), truncated: Math.max(0, groups.length - cap) };
+  }
+
+  // ../gas_shared/domain/csv.ts
+  var FORMULA_LEAD = /^[=+\-@\t\r]/;
+  function csvCell(v) {
+    if (v === null || v === void 0) return "";
+    let s = String(v);
+    if (typeof v !== "number" && FORMULA_LEAD.test(s)) s = `'${s}`;
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   }
 
   // src/server/hubUrl.ts
@@ -13131,11 +13140,6 @@ var Server = (() => {
       ].join("\n");
       return { content: md, filename: `wiz-report-${generated.slice(0, 10)}.md`, matrix };
     });
-  }
-  function csvCell(v) {
-    if (v === null || v === void 0) return "";
-    const s = String(v);
-    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   }
   function getExportCsv(p) {
     return run(() => {

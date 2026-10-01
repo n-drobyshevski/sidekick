@@ -81,6 +81,7 @@ import * as bootCore from "./bootCore";
 import { stageLaps } from "./stageLog";
 import * as access from "./access";
 import { rosterRows, serializeScoped, validateScoped } from "../../../gas_shared/domain/scopedAccess";
+import { csvCell } from "../../../gas_shared/domain/csv";
 import { canEditUsers } from "./access";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
 import { activeJob, getJob, isStaleJob, isTerminalPhase, listJobs, type JobRow } from "./jobsStore";
@@ -1373,12 +1374,6 @@ export function resetLedger(_p?: unknown): ApiResult {
 //  Data page — export and diagnostics
 // --------------------------------------------------------------------------------------- //
 
-function csvCell(v: unknown): string {
-  if (v === null || v === undefined) return "";
-  const s = String(v);
-  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
 /**
  * The ledger as CSV — the audit artifact.
  *
@@ -1389,6 +1384,10 @@ function csvCell(v: unknown): string {
  * that nothing downstream could round-trip — and a second literal list would drift from the
  * tab the day a column is added. Reading the live headers means the export is exactly the
  * ledger.
+ *
+ * EVERY CELL GOES THROUGH `csvCell` (gas_shared/domain/csv.ts), which neutralises a value that
+ * a spreadsheet would read as a formula: repository names, file paths and titles come from
+ * whatever was scanned.
  *
  * NO SECRET VALUE CAN APPEAR HERE, and that is true by construction rather than by filtering:
  * the ledger has no column holding one (`scanJobs.DENIED_KEY` refuses `snippet` and

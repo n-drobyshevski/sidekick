@@ -61,6 +61,8 @@ const drive = {
 };
 
 let projectTriggers: string[] = [];
+/** Edits a fake-tenant node before the sync sees it. Reset per test; the CSV spec sets it. */
+let tamperNode: ((scope: Scope, n: Rec) => void) | null = null;
 
 vi.mock("../src/server/sheetsDb", async (importOriginal) => {
   // TABS and TAB_HEADERS come from the REAL module. A stubbed header list would compare the
@@ -365,6 +367,7 @@ vi.mock("../src/server/wizClient", async (importOriginal) => {
     ...real,
     fetchPage: (scope: Scope, _v: Rec, paging: { pageSize: number; pageNumber: number }) => {
       const nodes = [0, 1, 2].map((i) => node(scope, i));
+      for (const n of nodes) tamperNode?.(scope, n);
       paging.pageNumber += 1;
       return {
         nodes,
@@ -614,6 +617,7 @@ beforeEach(() => {
   for (const k of Object.keys(drive.named)) delete drive.named[k];
   drive.snapshot = null;
   projectTriggers = [];
+  tamperNode = null;
   externalLockHold = false;
   lockAcquisitions = 0;
   warmReports.length = 0;
@@ -1057,6 +1061,19 @@ describe("getExportCsv", () => {
     const d = (api.getExportCsv({ scope: "sast" }) as unknown as Rec)["data"] as Rec;
     expect(d["rowCount"]).toBe(3);
     expect(d["scope"]).toBe("sast");
+  });
+
+  it("neutralises a formula-leading value from the register — it arrives from a scanned repo", async () => {
+    tamperNode = (scope, n) => {
+      if (scope !== "sca" || n["id"] !== "sca-0") return;
+      n["name"] = '=HYPERLINK("https://evil.example","open")';
+      n["detailedName"] = "@SUM(1)";
+    };
+    const { api } = await syncedRegister();
+    const content = String(((api.getExportCsv({}) as unknown as Rec)["data"] as Rec)["content"]);
+    expect(content).toContain('"\'=HYPERLINK(""https://evil.example"",""open"")"');
+    expect(content).toContain(",'@SUM(1),");
+    expect(content).not.toMatch(/(^|,)=HYPERLINK/m);
   });
 });
 

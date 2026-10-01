@@ -5478,7 +5478,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "b3d9367f7977" : "dev";
+  var BUILD_ID = true ? "4edcf20aacc9" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
@@ -7363,6 +7363,15 @@ var Server = (() => {
   function ownerDomain() {
     const at = ownerEmail().lastIndexOf("@");
     return at >= 0 ? ownerEmail().slice(at + 1).toLowerCase() : "";
+  }
+
+  // ../gas_shared/domain/csv.ts
+  var FORMULA_LEAD = /^[=+\-@\t\r]/;
+  function csvCell(v) {
+    if (v === null || v === void 0) return "";
+    let s2 = String(v);
+    if (typeof v !== "number" && FORMULA_LEAD.test(s2)) s2 = `'${s2}`;
+    return /[",\r\n]/.test(s2) ? `"${s2.replace(/"/g, '""')}"` : s2;
   }
 
   // src/server/locks.ts
@@ -11592,11 +11601,6 @@ var Server = (() => {
       }
       return resetLedger();
     });
-  }
-  function csvCell(v) {
-    if (v === null || v === void 0) return "";
-    const s2 = String(v);
-    return /[",\r\n]/.test(s2) ? `"${s2.replace(/"/g, '""')}"` : s2;
   }
   function getExportCsv(p) {
     return run(() => {
