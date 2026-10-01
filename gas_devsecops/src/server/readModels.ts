@@ -227,7 +227,7 @@ import { latestHistory, listHistory } from "./historyStore";
 import { activeJob } from "./jobsStore";
 import * as errorLog from "./errorLog";
 import { cellCount, gridSize, TAB_HEADERS, TABS } from "./sheetsDb";
-import { BASE_FILTER_WORDS } from "./wizQueries";
+import { BASE_FILTER_WORDS, SCA_FETCH_HAS_FIX } from "./wizQueries";
 import { loadSettings } from "./settingsStore";
 import { cached, dataVersion } from "./serverCache";
 import { durablyCached, duringWarm, sweepReadModels } from "./readModelStore";
@@ -1207,6 +1207,13 @@ function buildMttr(n: NormParams): Rec {
        * the client never receives the table.
        */
       slaConsumed: slaConsumedDeciles(rows, n.slaTargets),
+      /**
+       * What the SCA fetch asked Wiz for, as far as the vendor figures below depend on it.
+       * `scaHasFix` true means only findings that already have a published fix were fetched
+       * (`wizQueries.ts`'s `SCA_FETCH_HAS_FIX`), so `awaiting` and `actionable.vendorLatency`
+       * still ship but measure nothing — the page prints them as not measurable.
+       */
+      fetchFilter: { scaHasFix: SCA_FETCH_HAS_FIX },
       awaiting: awaitingVendorFix(rows),
       /**
        * The second clock, scoped and labelled. `notMeasured` is every scoped row this block
@@ -1221,7 +1228,9 @@ function buildMttr(n: NormParams): Rec {
         openPastSla: openPastSla(scaActionable, { slaTargets: n.slaTargets }),
         km: shipKM(kaplanMeier(scaActionable, KM_OPTS)),
         /** How long we waited for a fix to EXIST, over the pre-toggle sca population. Pairs
-         *  additively with the clock above: exposure = latency + actionable. */
+         *  additively with the clock above: exposure = latency + actionable. Under
+         *  `fetchFilter.scaHasFix` every fetched finding already had its fix, and the ones
+         *  still waiting were never fetched, so this has no waiting population to measure. */
         vendorLatency: latencySummary(scaScoped, snap.now, "sca"),
       },
     },
@@ -1258,6 +1267,10 @@ export function mttrModel(p?: ModelParams): Rec {
   // above half), `mean` null, and the new `medianBoundReason`/`meanUnmeasuredReason`. A warm
   // dsMttr4 entry carries the false "at least N days" floor under the same field names.
   //
+  // "dsMttr5" -> "dsMttr6" (hasFix relabel): `remediation.fetchFilter.scaHasFix` joined the
+  // payload; a warm dsMttr5 entry lacks it and the page would draw the awaiting meter and the
+  // vendor wait as measurements again.
+  //
   // `slaTargets` JOINS THE KEY (not just `keyOf`'s base four) because this compute reads it —
   // `openPastSla`, `agingDistribution` and `mttrFromLedger`'s `sla_target`/`sla_pct` all take
   // it as an argument below. Without it in the key, an operator saving a new Deadlines window
@@ -1269,7 +1282,7 @@ export function mttrModel(p?: ModelParams): Rec {
   // which repositories every figure below is measured over, so an operator flipping it and
   // reloading would otherwise read the OLD half-life off an entry whose params look the same.
   return cached(
-    "dsMttr5",
+    "dsMttr6",
     { ...keyOf(n), slaTargets: n.slaTargets, mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
     () => buildMttr(n),
     CLOCK_TTL_SEC,
@@ -1397,7 +1410,7 @@ function buildMttrSplit(n: NormParams): Rec {
   };
 }
 
-/** The split, cached. Keyed like `dsMttr5` on the two settings the compute reads.
+/** The split, cached. Keyed like `dsMttr6` on the two settings the compute reads.
  *  "dsMttrSplit1" -> "dsMttrSplit2": each row's `km` gained `medianBoundReason`, and its
  *  `medianLowerBound` is null where the reliability cut left nothing to bound (`dsMttr5`). */
 export function mttrSplitModel(p?: ModelParams): Rec {
@@ -1420,9 +1433,10 @@ export function mttrSplitModel(p?: ModelParams): Rec {
 export function mttrGroupModel(p: ModelParams): Rec {
   const n = norm(p);
   if (!n.split) throw new Error("mttrGroupModel: a split { by, value } is required.");
-  // "dsMttrGroup1" -> "dsMttrGroup2": `buildMttr`'s payload changed under it (`dsMttr5`).
+  // "dsMttrGroup1" -> "dsMttrGroup2": `buildMttr`'s payload changed under it (`dsMttr5`), and
+  // "dsMttrGroup2" -> "dsMttrGroup3" again (`dsMttr6`).
   return cached(
-    "dsMttrGroup2",
+    "dsMttrGroup3",
     { ...keyOf(n), slaTargets: n.slaTargets, mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
     () => {
       const snap = baseSnapshot();

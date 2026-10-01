@@ -1148,7 +1148,7 @@ describe("failure of absence: disappearance (rule 8)", () => {
   });
 
   it("failure of absence: a WITHDRAWN sca fix resolves as `disappeared` — recorded, not fixed", () => {
-    // `BASE.sca` carries `hasFix: true` (src/server/wizQueries.ts:290), so a WITHDRAWN fix
+    // `BASE.sca` carries `hasFix: true` (src/server/wizQueries.ts `SCA_FETCH_HAS_FIX`), so a WITHDRAWN fix
     // reads as a remediation: the finding leaves the FILTERED population and the API simply
     // stops returning it, which is exactly what disappearance-resolution means. Nothing in
     // the ledger distinguishes it from a real fix — this row's resolved_at and

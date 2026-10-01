@@ -4739,10 +4739,11 @@ var Server = (() => {
     LOW: "LOW",
     INFO: "INFORMATIONAL"
   };
+  var SCA_FETCH_HAS_FIX = true;
   var BASE = {
     sca: {
       status: ["OPEN", "RESOLVED"],
-      hasFix: true,
+      hasFix: SCA_FETCH_HAS_FIX,
       codeToCloudPipelineStage: ["CODE"],
       isDefaultBranch: { equals: true }
     },
@@ -4766,8 +4767,11 @@ var Server = (() => {
   var BASE_FILTER_WORDS = {
     // hasFix: true                     — and note what this one costs: a WITHDRAWN fix drops a
     //                                    finding out of the population and reads as a
-    //                                    remediation (sync.ts records the gap). A reader owed
-    //                                    the count is owed the reason it can move.
+    //                                    remediation (reconcile closes it as "disappeared";
+    //                                    nothing tells it apart from a fix). A reader owed the
+    //                                    count is owed the reason it can move. It also leaves
+    //                                    the awaiting-a-vendor count and the vendor wait with
+    //                                    nothing to measure — see SCA_FETCH_HAS_FIX.
     // codeToCloudPipelineStage: [CODE] — keeps the OS sidekick's container images out.
     // isDefaultBranch: {equals: true}  — a branch nobody merged is not remediation debt.
     sca: [
@@ -5783,7 +5787,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "27c744a1a365" : "dev";
+  var BUILD_ID = true ? "154641d21204" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
@@ -9627,6 +9631,13 @@ var Server = (() => {
          * the client never receives the table.
          */
         slaConsumed: slaConsumedDeciles(rows, n2.slaTargets),
+        /**
+         * What the SCA fetch asked Wiz for, as far as the vendor figures below depend on it.
+         * `scaHasFix` true means only findings that already have a published fix were fetched
+         * (`wizQueries.ts`'s `SCA_FETCH_HAS_FIX`), so `awaiting` and `actionable.vendorLatency`
+         * still ship but measure nothing — the page prints them as not measurable.
+         */
+        fetchFilter: { scaHasFix: SCA_FETCH_HAS_FIX },
         awaiting: awaitingVendorFix(rows),
         /**
          * The second clock, scoped and labelled. `notMeasured` is every scoped row this block
@@ -9641,7 +9652,9 @@ var Server = (() => {
           openPastSla: openPastSla(scaActionable, { slaTargets: n2.slaTargets }),
           km: shipKM(kaplanMeier(scaActionable, KM_OPTS)),
           /** How long we waited for a fix to EXIST, over the pre-toggle sca population. Pairs
-           *  additively with the clock above: exposure = latency + actionable. */
+           *  additively with the clock above: exposure = latency + actionable. Under
+           *  `fetchFilter.scaHasFix` every fetched finding already had its fix, and the ones
+           *  still waiting were never fetched, so this has no waiting population to measure. */
           vendorLatency: latencySummary(scaScoped, snap.now, "sca")
         }
       },
@@ -9654,7 +9667,7 @@ var Server = (() => {
   function mttrModel(p) {
     const n2 = norm(p);
     return cached(
-      "dsMttr5",
+      "dsMttr6",
       { ...keyOf(n2), slaTargets: n2.slaTargets, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => buildMttr(n2),
       CLOCK_TTL_SEC
@@ -9767,7 +9780,7 @@ var Server = (() => {
     const n2 = norm(p);
     if (!n2.split) throw new Error("mttrGroupModel: a split { by, value } is required.");
     return cached(
-      "dsMttrGroup2",
+      "dsMttrGroup3",
       { ...keyOf(n2), slaTargets: n2.slaTargets, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => {
         const snap = baseSnapshot();

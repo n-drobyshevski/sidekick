@@ -289,6 +289,19 @@ export const API_SEVERITY: Record<string, string> = {
 };
 
 /**
+ * THE SCA FETCH ASKS FOR `hasFix: true`, AND HAS FROM THIS REGISTER'S FIRST SCAN. Only a
+ * dependency finding whose package already has a published fixed version is ever fetched, so
+ * the two figures built to measure the vendor — how many open findings are still waiting on a
+ * fix, and how long detection-to-fix takes — have no population to measure: a finding still
+ * waiting is never in the register, and one whose fix is withdrawn drops out of the fetch and
+ * reads as `resolution_src: "disappeared"`. Kept (a population change belongs in its own
+ * measured round, against a tenant probe), and PUBLISHED instead: `buildMttr` ships it as
+ * `remediation.fetchFilter.scaHasFix`, and the MTTR page reads that flag to print those two
+ * figures as not measurable rather than as a zero.
+ */
+export const SCA_FETCH_HAS_FIX = true;
+
+/**
  * The base scope of each register — the population before severity or project narrowing.
  *
  * `codeToCloudPipelineStage: ["CODE"]` is what keeps the SCA register on repository
@@ -301,7 +314,7 @@ export const API_SEVERITY: Record<string, string> = {
 const BASE: Record<string, Record<string, unknown>> = {
   sca: {
     status: ["OPEN", "RESOLVED"],
-    hasFix: true,
+    hasFix: SCA_FETCH_HAS_FIX,
     codeToCloudPipelineStage: ["CODE"],
     isDefaultBranch: { equals: true },
   },
@@ -356,8 +369,11 @@ const BASE: Record<string, Record<string, unknown>> = {
 export const BASE_FILTER_WORDS: Record<Scope, string[]> = {
   // hasFix: true                     — and note what this one costs: a WITHDRAWN fix drops a
   //                                    finding out of the population and reads as a
-  //                                    remediation (sync.ts records the gap). A reader owed
-  //                                    the count is owed the reason it can move.
+  //                                    remediation (reconcile closes it as "disappeared";
+  //                                    nothing tells it apart from a fix). A reader owed the
+  //                                    count is owed the reason it can move. It also leaves
+  //                                    the awaiting-a-vendor count and the vendor wait with
+  //                                    nothing to measure — see SCA_FETCH_HAS_FIX.
   // codeToCloudPipelineStage: [CODE] — keeps the OS sidekick's container images out.
   // isDefaultBranch: {equals: true}  — a branch nobody merged is not remediation debt.
   sca: [

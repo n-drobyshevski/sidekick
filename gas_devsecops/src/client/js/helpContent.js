@@ -111,6 +111,7 @@ const ENTRIES = [
       "An open SCA finding whose package has no fixed version published yet.",
       "Reported separately: the wait measures the vendor, not the team.",
       "Counting it as remediation time would credit or blame the wrong party.",
+      "Not measurable here: SCA is fetched only where a fixed version exists, so none still waiting is seen.",
     ],
   },
   {

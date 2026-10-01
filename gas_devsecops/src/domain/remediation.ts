@@ -13,9 +13,10 @@
 //   openPastSlaFromRecords now come from metrics.ts, which already exists in this tree (D4's
 //   own header worried it might not; it does).
 //
-//   NO REMEDIATION_ROLLOUT_ISO / ROLLOUT_MS / published_date (D4b rule 2) — this is a fresh
-//   register with no legacy hasFix-only ingestion to grandfather in, and its ledger carries no
-//   published_date column (LedgerRow in ledgerTypes.ts has no CVE-publication timestamp — sca,
+//   NO REMEDIATION_ROLLOUT_ISO / ROLLOUT_MS / published_date (D4b rule 2) — gas/'s constant
+//   marks the day its ingestion filter CHANGED; this register's SCA fetch has carried
+//   `hasFix: true` (server/wizQueries.ts `SCA_FETCH_HAS_FIX`) on every scan, so there is no
+//   such day and nothing to grandfather in. Its ledger also carries no published_date column (LedgerRow in ledgerTypes.ts has no CVE-publication timestamp — sca,
 //   sast and secrets all lack one). Three DIVERGENCEs follow from that:
 //     - latencyObservation drops the "legacy row assumed a fix" branch outright; a row with no
 //       captured first_seen is simply unmeasured, same as it would be anyway.
@@ -1032,7 +1033,10 @@ export interface AwaitingVendorFix {
 /**
  * The "awaiting vendor fix" segment: OPEN, SCA findings with no vendor fix available yet
  * (awaiting_vendor_fix), which is exactly the population the actionable clock excludes — they
- * sit outside every SLA/MTTR deadline until a fix appears. perSev / overall count those rows by
+ * sit outside every SLA/MTTR deadline until a fix appears. Under the `hasFix: true` SCA fetch
+ * (server/wizQueries.ts `SCA_FETCH_HAS_FIX`) that population is never fetched, so `overall` is
+ * near zero by construction — only a fetched row whose fix columns were not captured lands
+ * here — and the MTTR page labels it not measurable rather than reading it as a count. perSev / overall count those rows by
  * normalized severity; openTotal is the full open backlog for context (every scope), and
  * pctOfOpen is the awaiting share of it — null when nothing is open, so the UI never renders a
  * fake 0% against an empty denominator. `opts.scope` narrows to one register before computing.
@@ -1172,6 +1176,12 @@ function latencyObservation(
  * only the findings that got fixed and measure how fast the fixed ones were fixed, the
  * survivorship bias the KM estimator exists to avoid.
  *
+ * THE SCA FETCH DOES EXACTLY THAT DROPPING UPSTREAM. It asks Wiz for `hasFix: true`
+ * (server/wizQueries.ts `SCA_FETCH_HAS_FIX`), so a finding still waiting on a vendor never
+ * reaches the ledger and this censored population never arrives. The function is right; its
+ * input is not, which is why the MTTR page prints the vendor wait as not measurable while that
+ * flag (`remediation.fetchFilter.scaHasFix`) is on.
+ *
  * Note the projected `status`: an event carries "RESOLVED" and a censored row "OPEN", because
  * `openAge` gates on `isOpen(status)` while `resolvedMttr` does not. A finding that closed
  * before any fix appeared is therefore projected as "OPEN" even though it is resolved — it is
@@ -1256,8 +1266,10 @@ export function baseRowNoFix(row: Pick<BaseRow, "scope" | "awaiting_vendor_fix">
  * reconcile.ts uses to derive fix_observed_at.
  *
  * DIVERGENCE (D4b rule 2): gas/'s recordNoFix also exempted a record first seen before
- * REMEDIATION_ROLLOUT_ISO (a fix by construction, under the old hasFix-only ingestion filter).
- * This is a fresh register with no such legacy migration, so that branch is dropped outright.
+ * REMEDIATION_ROLLOUT_ISO (a fix by construction, under its old hasFix-only ingestion filter).
+ * This register's SCA fetch has carried `hasFix: true` on every scan, so no date separates
+ * records ingested under a different filter, and that branch is dropped outright. A record the
+ * fetch returned with neither fix field is still no-fix here — rare, but a real reading.
  *
  * DIVERGENCE (D4b rule 3): a record explicitly tagged with a non-sca `scope` is never no-fix —
  * same guard as baseRowNoFix, applied to the frame shape. A record with no `scope` key at all

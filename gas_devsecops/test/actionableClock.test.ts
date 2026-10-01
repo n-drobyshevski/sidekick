@@ -14,8 +14,9 @@
 // never awaiting. THE CLAIM: "rows first seen before the broadened-ingestion rollout had a fix
 // by construction, because the old filter only ingested findings that already had one"
 // (gas/src/domain/config.ts:85-89). WHAT FALSIFIES IT HERE: that is a statement about ONE
-// deployment's migration history, and this register has no such history — gas_devsecops is
-// fresh, has never run a hasFix-only filter, and has no row predating its own first scan.
+// deployment's migration history, and this register has no such history — gas_devsecops has
+// run the SAME `hasFix: true` SCA filter on every scan (src/server/wizQueries.ts
+// `SCA_FETCH_HAS_FIX`), so no date separates rows ingested under a different one.
 // There is no REMEDIATION_ROLLOUT_ISO in src/domain/config.ts and rule 3 of the D3 brief says
 // there must not be one. So the two cases are replaced below by their opposites, at the same
 // dates, asserting that an early sca row with no fix columns is awaiting like any other —

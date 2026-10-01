@@ -35,7 +35,7 @@ import {
 } from "../src/client/js/pages/executive.js";
 import {
   accountingView, actionableClockView, awaitingView, endOfLifeExclusionNote, fmtCount, fmtDays,
-  kmHalfLifeView, mttrHeroView,
+  HAS_FIX_NOT_MEASURABLE, kmHalfLifeView, mttrHeroView,
   mttrSeverityRows, PAST_CUT_HELP, TOO_FEW_TO_ESTIMATE, rateView, resolutionBucketView, rmstView, slaSeverityRows,
   survivalAxisNote, trackingSinceView, WINDOW_LINE_HELP, windowLineView,
 } from "../src/client/js/pages/mttr.js";
@@ -900,6 +900,27 @@ describe("ai_verdict at zero percent", () => {
   });
 });
 
+// -------------------------------------------------------------- the awaiting-a-vendor meter
+
+describe("the awaiting-a-vendor meter", () => {
+  it("is a measurement when the payload names no hasFix fetch", () => {
+    const view = awaitingView(mttrPayload(kmCensored()));
+    expect(view.measurable).toBe(true);
+    expect(view.reason).toBeNull();
+    expect(view.overall).toBe(4);
+  });
+
+  it("is not measurable under the hasFix fetch — a near-zero there is not the vendors keeping up", () => {
+    const base = mttrPayload(kmCensored());
+    const view = awaitingView({
+      ...base, remediation: { ...base.remediation, fetchFilter: { scaHasFix: true } },
+    });
+    expect(view.show).toBe(true);
+    expect(view.measurable).toBe(false);
+    expect(view.reason).toBe(HAS_FIX_NOT_MEASURABLE);
+  });
+});
+
 // -------------------------------------------------------------------- the actionable clock
 
 describe("the actionable clock", () => {
@@ -927,6 +948,25 @@ describe("the actionable clock", () => {
   it("REFUSES a register-wide framing rather than obliging one", () => {
     expect(() => actionableClockView(mttr, { registerWide: true })).toThrow(/SCA-only/);
     expect(() => actionableClockView(mttr, { registerWide: true })).toThrow(/construction/);
+  });
+
+  it("prints the vendor wait as not measurable under the hasFix fetch, and says why", () => {
+    const measured = actionableClockView(mttr);
+    expect(measured.latencyMeasurable).toBe(true);
+    expect(measured.latency).not.toBeNull();
+
+    const hasFix = {
+      ...mttr,
+      remediation: { ...mttr.remediation, fetchFilter: { scaHasFix: true } },
+    };
+    const view = actionableClockView(hasFix);
+    expect(view.latencyMeasurable).toBe(false);
+    expect(view.latency).toBeNull();
+    expect(view.segments).toBeNull();
+    expect(view.latencyReason).toBe(HAS_FIX_NOT_MEASURABLE);
+    expect(view.latencyReason).toMatch(/only packages with a published fix/);
+    // The actionable half-life itself is still a measurement: the fix date is known.
+    expect(view.half.state).toBe(measured.half.state);
   });
 
   it("keeps its label even when the payload carries no actionable block", () => {

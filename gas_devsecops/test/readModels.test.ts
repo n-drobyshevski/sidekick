@@ -206,6 +206,7 @@ import {
   storageModel,
   warmReadModels,
 } from "../src/server/readModels";
+import { SCA_FETCH_HAS_FIX } from "../src/server/wizQueries";
 
 // --------------------------------------------------------------------------------------- //
 //  A ledger, by hand
@@ -430,14 +431,15 @@ describe("the caching audit is per model, and the header states it", () => {
     //
     // "dsExecutive2" -> "dsExecutive3", "dsMttr4" -> "dsMttr5", "dsSecrets2" -> "dsSecrets3",
     // "dsHistory5" -> "dsHistory6" (KM false lower bound): an empty reliability cut no longer
-    // ships a false floor or mean — same unchanged layer claim.
+    // ships a false floor or mean — same unchanged layer claim. "dsMttr5" -> "dsMttr6" (hasFix
+    // relabel): `remediation.fetchFilter` joined the payload — same claim again.
     expect(layerOf("dsExecutive3")).toEqual(["cached"]);
     // "dsMttr1" -> "dsMttr2": the namespace was bumped when `remediation` gained its
     // `slaConsumed` block. A warm entry from THAT old namespace carries no deciles, and a
     // section missing for a cache reason reads as a register with nothing inside its SLA
-    // windows — the same shape of risk the newer dsMttr2 -> dsMttr3 -> dsMttr4 -> dsMttr5 bumps above
+    // windows — the same shape of risk the newer dsMttr2 -> ... -> dsMttr6 bumps above
     // guard against.
-    expect(layerOf("dsMttr5")).toEqual(["cached"]);
+    expect(layerOf("dsMttr6")).toEqual(["cached"]);
     expect(layerOf("dsSecrets3")).toEqual(["cached"]);
     // "dsRegister1" -> "dsRegister2": the namespace was bumped when the payload gained its
     // `population` block. The CLAIM these three lines encode is the LAYER each model caches
@@ -642,6 +644,14 @@ describe("mttrModel", () => {
     expect(m.remediation.actionable.vendorLatency.segments.total).toBe(3);
   });
 
+  // The SCA fetch asks Wiz for `hasFix: true`, so the vendor figures have no waiting population;
+  // the payload says so rather than leaving the page to read a near-zero as a measurement.
+  it("publishes the SCA hasFix fetch filter the vendor figures depend on", () => {
+    const m = mttrModel(ALL) as any;
+    expect(m.remediation.fetchFilter).toEqual({ scaHasFix: SCA_FETCH_HAS_FIX });
+    expect(SCA_FETCH_HAS_FIX).toBe(true);
+  });
+
   it("drops the no-fix population from the point-in-time blocks when the toggle is off", () => {
     const on = mttrModel({ ...ALL }) as any;
     const off = mttrModel({ ...ALL, showNoFix: false }) as any;
@@ -746,7 +756,7 @@ describe("effective SLA windows reach the models that publish them", () => {
     H.slaTargets = { CRITICAL: 90 };
     __resetModelMemosForTest();
     mttrModel(ALL);
-    const keys = H.cacheCalls.filter((c) => c.name === "dsMttr5").map((c) => JSON.stringify(c.params));
+    const keys = H.cacheCalls.filter((c) => c.name === "dsMttr6").map((c) => JSON.stringify(c.params));
     expect(new Set(keys).size).toBe(2);
   });
 });
@@ -1664,7 +1674,7 @@ describe("warmReadModels", () => {
     expect(new Set(H.cacheCalls.map((c) => c.name))).toEqual(new Set([
       "dsBootCore1",
       "dsHistory6", "dsProgram2", "dsRepos2", "dsStorage1",
-      "dsExecutive3", "dsMttr5", "dsMttrSplit2", "dsSecrets3", "dsRegister3",
+      "dsExecutive3", "dsMttr6", "dsMttrSplit2", "dsSecrets3", "dsRegister3",
     ]));
     // FIRST, because doGet only inlines a bootstrap core that is already stored: a budget
     // cut-out must never be what leaves every page load paying the second round trip.
@@ -1904,7 +1914,7 @@ describe("the remediation-speed end-of-life exclusion", () => {
     estate();
     mttrModel(ALL);
     reposModel(ALL);
-    const mttrKey = H.cacheCalls.find((c) => c.name === "dsMttr5")!.params as Record<string, any>;
+    const mttrKey = H.cacheCalls.find((c) => c.name === "dsMttr6")!.params as Record<string, any>;
     const reposKey = H.cacheCalls.find((c) => c.name === "dsRepos2")!.params as Record<string, any>;
     expect(mttrKey.mttrExcludeEndOfLife).toBe(false);
     // The Repositories page draws no remediation-speed aggregate, so the flag is deliberately

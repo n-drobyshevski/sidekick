@@ -1079,18 +1079,39 @@ export function resolutionBucketView(buckets) {
 }
 
 /**
+ * Why the vendor figures cannot be measured here: the SCA fetch carries Wiz's `hasFix: true`
+ * (server `wizQueries.ts` `SCA_FETCH_HAS_FIX`), so a finding still waiting on a vendor is
+ * never fetched at all. Published by the server as `remediation.fetchFilter.scaHasFix`.
+ */
+export const HAS_FIX_REASON = "this register fetches only packages with a published fix";
+export const HAS_FIX_NOT_MEASURABLE = "Not measurable — " + HAS_FIX_REASON;
+
+/** Whether the payload says the SCA fetch only asked for findings that already have a fix. */
+export function scaFetchHasFix(mttr) {
+  const f = mttr && mttr.remediation && mttr.remediation.fetchFilter;
+  return !!(f && f.scaHasFix === true);
+}
+
+/**
  * The awaiting-a-vendor-fix segment: open SCA findings with no published fix.
  *
  * `notApplicable` is the count of open sast/secrets rows whose flag read true anyway — the
  * server refuses to trust it, and so does this. Rendering it keeps "we did not count these"
  * distinct from "there were none".
+ *
+ * `measurable` is false under the `hasFix` fetch: the count it would show is structurally
+ * near zero — the findings it counts are the ones the fetch leaves out — so the page prints
+ * `reason` instead of a meter that reads as "the vendors are keeping up".
  */
 export function awaitingView(mttr) {
   const a = (mttr && mttr.remediation && mttr.remediation.awaiting) || null;
   if (!a) return { show: false };
   const openTotal = Number(a.openTotal || 0);
+  const measurable = !scaFetchHasFix(mttr);
   return {
     show: true,
+    measurable,
+    reason: measurable ? null : HAS_FIX_NOT_MEASURABLE,
     overall: Number(a.overall || 0),
     notApplicable: Number(a.notApplicable || 0),
     share: rateView(a.pctOfOpen, openTotal, fmtCount(openTotal) + " open findings"),
@@ -1135,7 +1156,10 @@ export function actionableClockView(mttr, opts) {
   const rowCount = Number(a.rowCount || 0);
   const notMeasured = Number(a.notMeasured || 0);
   const half = kmHalfLifeView(a.km);
-  const latency = a.vendorLatency || null;
+  // Under the `hasFix` fetch the vendor wait has no waiting population — every fetched
+  // finding already had its fix — so neither its half-life nor how it divides is a reading.
+  const latencyMeasurable = !scaFetchHasFix(mttr);
+  const latency = latencyMeasurable ? a.vendorLatency || null : null;
   const segments = (latency && latency.segments) || null;
   return {
     ...base,
@@ -1156,6 +1180,8 @@ export function actionableClockView(mttr, opts) {
         + " of them outside this clock",
     ),
     latency: latency ? kmHalfLifeView(latency) : null,
+    latencyMeasurable,
+    latencyReason: latencyMeasurable ? null : HAS_FIX_NOT_MEASURABLE,
     segments,
   };
 }
@@ -1499,7 +1525,15 @@ export async function renderMttr(host, params, ctx) {
         }),
         caption: "kept in the estimate as evidence (censored), not dropped",
       }),
-      first ? null : awaiting.show
+      first ? null : awaiting.show && !awaiting.measurable
+        ? briefFigure({
+          label: "Awaiting a vendor",
+          help: { term: "awaiting-fix" },
+          value: "Not measurable",
+          valueClass: "brief-value--text",
+          caption: sentenceStart(HAS_FIX_REASON) + ", so a finding still waiting is never seen.",
+        })
+        : awaiting.show
         ? briefFigure({
           label: "Awaiting a vendor",
           help: {
@@ -2649,8 +2683,11 @@ export async function renderMttr(host, params, ctx) {
     ));
     row.append(kpiCard(
       "Waiting for a vendor",
-      view.latency ? view.latency.value : absentText,
-      "detection to a fix existing, over the pre-toggle SCA population",
+      !view.latencyMeasurable ? "Not measurable"
+        : view.latency ? view.latency.value : absentText,
+      !view.latencyMeasurable
+        ? HAS_FIX_REASON + ", so nothing waiting is seen"
+        : "detection to a fix existing, over the pre-toggle SCA population",
       null,
       { term: "awaiting-fix" },
     ));

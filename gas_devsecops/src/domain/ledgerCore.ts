@@ -545,9 +545,13 @@ export interface BaseRowsOptions {
  * DIVERGENCE (gas/): there is no REMEDIATION_ROLLOUT_ISO branch and there must not be one.
  * gas/ treats a row first seen before its rollout date as having had a fix by construction,
  * because its OLD filter only ingested findings that already carried one — a statement about
- * one deployment's history. This register is fresh; it has never had a hasFix-only filter and
- * has no rows predating itself. Carrying the constant over would silently declare every early
- * sca row fixable at detection on the strength of another product's migration.
+ * the day one deployment's filter changed. This register's SCA fetch has carried that same
+ * `hasFix: true` on EVERY scan (server/wizQueries.ts `SCA_FETCH_HAS_FIX`), so no such day
+ * exists and no date could split the rows. What the filter does mean: an SCA row reaches the
+ * ledger already carrying a fix, so `fix_observed_at` is normally its first scan and
+ * `awaiting_vendor_fix` is true only for a fetched row whose fix columns were not captured. The
+ * awaiting count and the vendor wait built on this flag therefore measure nothing under this
+ * fetch, and the MTTR page says so (`remediation.fetchFilter.scaHasFix`).
  */
 function withDerived(
   row: LedgerRow,

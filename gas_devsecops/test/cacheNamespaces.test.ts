@@ -36,7 +36,7 @@ describe("cache namespaces", () => {
     const names = namespaces();
     expect(names.length).toBeGreaterThan(8);
     for (const n of [
-      "dsBootCore2", "dsMttr5", "dsMttrSplit2", "dsMttrGroup2", "dsExecutive3", "dsStorage1",
+      "dsBootCore2", "dsMttr6", "dsMttrSplit2", "dsMttrGroup3", "dsExecutive3", "dsStorage1",
       "settingsImpact1", "dsRegister3", "dsHistory6", "dsSecrets3", "dsScopeSummary4",
     ]) {
       expect(names).toContain(n);
