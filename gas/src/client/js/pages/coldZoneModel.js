@@ -613,6 +613,42 @@ export function coldGroupRows(view) {
 }
 
 /**
+ * The pinned "Everything" row above the support groups — the estate's own totals, and the
+ * control that lets go of a group selection.
+ *
+ * IT IS A ROW, NOT A GROUP. It sorts and pages with nothing (`pagedTable`'s `leadRows`), and
+ * its key is null because null is what "no group" already means to `coldSelection`, the chips
+ * and the scatter. It carries NO band distribution: the band key row above the table is the
+ * estate's distribution already, and an estate-sized bar on `coldBandScale` would either
+ * overflow the shared scale or shrink every group's bar to fit it. Verdict, rank and last
+ * movement are per-group claims with no estate reading, so they are null rather than invented.
+ *
+ * Null when there are no totals — an unmeasured estate has no figures for the row to carry.
+ */
+export function coldEstateRow(view) {
+  const t = view && view.totals;
+  if (!t) return null;
+  return {
+    key: null,
+    label: "Everything",
+    isEstate: true,
+    verdict: null,
+    verdictWord: absentText,
+    assets: num(t.assets, 0),
+    coldAssets: num(t.cold_assets, 0),
+    sharePct: num(t.cold_asset_share_pct),
+    relativeRank: null,
+    inColdestShare: false,
+    openInCold: num(t.open_in_cold, 0),
+    highRiskInCold: num(t.high_risk_in_cold, 0),
+    lastMovementAt: null,
+    lastMovementText: absentText,
+    bands: null,
+    bandTotal: 0,
+  };
+}
+
+/**
  * What the two controls above the assets table currently ask for, as one value.
  *
  * TWO AXES, AND VERDICT IS NOT ONE OF THEM. For an observed asset the verdict IS a function of
