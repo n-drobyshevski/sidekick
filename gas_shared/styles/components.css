@@ -2054,6 +2054,12 @@ h2.section-collapse__title { margin: 0; }
 .bandbar-tip__mark[data-rank="3"] { background: var(--rank-3-tint); }
 .bandbar-tip__mark[data-rank="4"] { background: var(--rank-4-tint); }
 .bandbar-tip__mark[data-rank="none"] { background-color: var(--surface-2); background-image: var(--hatch); }
+/* What the grey track measures, and what the bar never draws: commentary on the picture, so
+   quieter than the legend above it and set off from it by one hairline. */
+.bandbar-tip__note { display: block; color: var(--text-3); }
+.bandbar-tip__note--first {
+  margin-top: var(--space-half); padding-top: var(--space-1); border-top: 1px solid var(--hairline);
+}
 @media (forced-colors: active) {
   .bandbar { background: transparent; border: 1px solid CanvasText; }
   .bandbar__seg[data-on="false"] { opacity: 1; }

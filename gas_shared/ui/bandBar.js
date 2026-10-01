@@ -19,6 +19,11 @@
 // the row's legend, one marked line per band. The mark is never the only carrier: the word is
 // always beside it.
 //
+// THE GREY IS SAID IN WORDS TOO. The unfilled track is not a band: it is the distance to the
+// table's largest row, which is what makes the column comparable. The track's card says so
+// (`scaleNote`), and — because a band total is not the row's whole population — it also
+// names what the bar never draws: the units that sit in no band at all (`outsideNote`).
+//
 // THE SCALE IS A PROPERTY OF THE TABLE, NEVER OF A ROW, and this is the defect the component
 // exists to refuse. A bar normalised to its own row's total draws 280 subjects and 30 subjects
 // at the same length, so a reader comparing two rows compares two different units — the exact
@@ -62,17 +67,23 @@ import { tipAnchor } from "./tip.js";
  * @param {string} [spec.unitOne]  the same noun for a count of exactly 1 ("asset"). Spelled
  *   out by the caller rather than derived: an -s rule writes "repositorys". Without it a 1
  *   keeps the plural, which is the old reading rather than a wrong one.
+ * @param {number} [spec.of]  the row's WHOLE population (the Repos / Assets column). When it
+ *   exceeds the drawn total, the difference is the units in no band, which `outsideNote` names.
+ * @param {string} [spec.outsideWhy]  why a unit sits in no band, for `outsideNote`.
+ * @param {string} [spec.peer]  what one row of the table is ("product"), for `scaleNote`.
  * @param {string} spec.name  the row's own label, opening the sentence.
  * @returns {{total: number, fillPct: number, segments: Array, aria: string, empty: boolean}}
  *   Each segment carries `tip` (the lines its hover card shows) and `phrase` (its clause of the
- *   sentence); `name` is the row's label.
+ *   sentence); `name` is the row's label. `scaleNote` says what the unfilled track measures and
+ *   `outsideNote` counts the units in no band; each is null when it has nothing to say.
  */
 export function bandBarModel(spec) {
   const p = spec || {};
   const bands = Array.isArray(p.bands) ? p.bands : [];
   const unit = typeof p.unit === "string" && p.unit ? p.unit : "";
   const unitOne = typeof p.unitOne === "string" && p.unitOne ? p.unitOne : unit;
-  const counted = (n) => String(n) + (unit ? " " + (n === 1 ? unitOne : unit) : "");
+  const noun = (n) => (unit ? " " + (n === 1 ? unitOne : unit) : "");
+  const counted = (n) => String(n) + noun(n);
   const name = typeof p.name === "string" ? p.name : "";
 
   const kept = [];
@@ -118,7 +129,27 @@ export function bandBarModel(spec) {
   const body = clauses.length ? clauses.join(", ") + "." : "nothing to show.";
   const aria = name ? name + ": " + body : body;
 
-  return { total, fillPct, segments, aria, name, empty: segments.length === 0 };
+  // THE GREY, IN WORDS. Only when there is grey: a row that fills its track is the largest
+  // row, and a lone row has no scale to state.
+  const peer = typeof p.peer === "string" && p.peer ? p.peer : "row";
+  const scaleNote = max > 0 && total > 0 && total < max
+    ? "Bar length is out of " + counted(max) + ", the largest " + peer + " here."
+    : null;
+
+  // WHAT THE BAR NEVER DRAWS. Refused by type like every count above: a population nobody
+  // reported is not a reason to claim that zero units sit outside the bands.
+  const of = typeof p.of === "number" && Number.isFinite(p.of) ? p.of : null;
+  const outside = of !== null && of > total ? of - total : 0;
+  const why = typeof p.outsideWhy === "string" && p.outsideWhy ? p.outsideWhy : "";
+  const outsideNote = outside > 0
+    ? String(outside) + " more" + noun(outside) + " " + (outside === 1 ? "is" : "are")
+      + " in no band"
+      + (why ? " (" + why + ")" : "") + "."
+    : null;
+
+  return {
+    total, fillPct, segments, aria, name, scaleNote, outsideNote, empty: segments.length === 0,
+  };
 }
 
 /**
@@ -192,7 +223,13 @@ export function bandBar(model, opts) {
     el("span", { class: cls, role: "img", "aria-label": model.aria }, fill),
     () => ({
       aka: model.name || null,
-      lines: model.segments.map((s) => tipMarked(s.rank, s.phrase)),
+      lines: [
+        ...model.segments.map((s) => tipMarked(s.rank, s.phrase)),
+        ...[model.scaleNote, model.outsideNote].filter(Boolean)
+          .map((t, i) => el("span", {
+            class: "bandbar-tip__note" + (i === 0 ? " bandbar-tip__note--first" : ""),
+          }, t)),
+      ],
     }),
   );
 }

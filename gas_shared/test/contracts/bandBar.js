@@ -210,6 +210,42 @@ export function registerBandBarContract(ctx) {
       expect(m.aria).toBe("Payments: " + m.segments.map((x) => x.phrase).join(", ") + ".");
     });
 
+    // THE GREY, IN WORDS: the unfilled track is the distance to the table's largest row.
+    it("says what the unfilled track measures, and only when there is one", () => {
+      const spec = { unit: "repositories", unitOne: "repository", peer: "product" };
+      const short = bandBarModel({ ...spec, bands: bands([2, 1]), max: 12 });
+      expect(short.scaleNote).toBe("Bar length is out of 12 repositories, the largest product here.");
+      // The largest row fills its track; a lone row has no scale. Neither has grey to explain.
+      expect(bandBarModel({ ...spec, bands: bands([8, 4]), max: 12 }).scaleNote).toBeNull();
+      expect(bandBarModel({ ...spec, bands: bands([2, 1]) }).scaleNote).toBeNull();
+      // No peer named: a neutral noun, never a missing one.
+      expect(bandBarModel({ bands: bands([1]), max: 3, unit: "assets" }).scaleNote)
+        .toBe("Bar length is out of 3 assets, the largest row here.");
+    });
+
+    // WHAT THE BAR NEVER DRAWS: the row's population that sits in no band.
+    it("counts the units in no band from the row's whole population", () => {
+      const spec = {
+        bands: bands([2, 1]), max: 12, unit: "repositories", unitOne: "repository",
+        outsideWhy: "out of sight",
+      };
+      expect(bandBarModel({ ...spec, of: 6 }).outsideNote)
+        .toBe("3 more repositories are in no band (out of sight).");
+      expect(bandBarModel({ ...spec, of: 4 }).outsideNote)
+        .toBe("1 more repository is in no band (out of sight).");
+      // Everything is in a band, or the population is smaller than the bands (stale figures):
+      // nothing outside to name.
+      expect(bandBarModel({ ...spec, of: 3 }).outsideNote).toBeNull();
+      expect(bandBarModel({ ...spec, of: 2 }).outsideNote).toBeNull();
+      // REFUSED BY TYPE: an unreported population is not "zero outside", and not a guess.
+      for (const bad of [null, undefined, "6", NaN, Infinity, [], false]) {
+        expect(bandBarModel({ ...spec, of: bad }).outsideNote).toBeNull();
+      }
+      // No reason given: the count alone.
+      expect(bandBarModel({ ...spec, outsideWhy: undefined, of: 5 }).outsideNote)
+        .toBe("2 more repositories are in no band.");
+    });
+
     it("writes a sliver as <1%, never as a 0% that contradicts the drawn segment", () => {
       const m = bandBarModel({ bands: bands([999, 1]), max: 1000 });
       expect(m.segments[1].tip[1]).toBe("1 · <1% of the 1000");
@@ -244,6 +280,13 @@ export function registerBandBarContract(ctx) {
       expect(BAND_SRC).toContain("bandbar-tip__mark");
       expect(BAND_SRC).toMatch(/"bandbar-tip__mark",\s*"data-rank"/);
       expect(BAND_SRC).toMatch(/"aria-hidden": "true"/);
+    });
+
+    // THE TRACK'S CARD CARRIES BOTH NOTES after the legend, and only the track's: a segment's
+    // card is about its band.
+    it("puts the scale and no-band notes on the bar's own card", () => {
+      expect(BAND_SRC).toMatch(/\[model\.scaleNote, model\.outsideNote\]/);
+      expect(BAND_SRC).toContain("bandbar-tip__note");
     });
 
     it("is one role=img carrying the whole sentence", () => {

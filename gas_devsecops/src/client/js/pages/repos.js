@@ -1600,6 +1600,9 @@ export async function renderRepos(host, _params, _ctx) {
             if (r.isEstate) return "";
             const model = bandBarModel({
               bands: r.bands, max: scale, unit: "repositories", unitOne: "repository", name: r.label,
+              // The Repos column beside it: the difference is the repositories in no band.
+              of: r.repos, peer: "product",
+              outsideWhy: "out of the scanner's sight, or with nothing open",
             });
             const wrap = el("span", { class: "bandcell" });
             wrap.bandModel = model;
