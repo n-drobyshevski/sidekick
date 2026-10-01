@@ -32,7 +32,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   boundedDays, capacityVerdict, capacityView, coldestShareNote, coldKpiCards, coldModeCaption,
   coldCensusModel,
-  coldRepoRows, coldScatterPoints, coldTeamRows, coldZoneView, coverageMeterPct, densityView,
+  coldEstateRow, coldRepoRows, coldScatterPoints, coldTeamRows, coldZoneView, coverageMeterPct, densityView,
   coldBandDefs, coldBandKeyModel,
   droppedNoRepoNote, scopesWithoutScanNote, unclassifiedSecretsNote,
   footholdCellKind, footholdView, groupRows, halfLifeView, overallRow,
@@ -633,6 +633,34 @@ describe("repos: unclassifiedSecretsNote — secrets rows outside the high-risk 
   });
 });
 
+
+describe("repos: coldEstateRow — the pinned \"Everything\" row", () => {
+  it("carries the estate totals under a null key, which is what \"no product\" means", () => {
+    const row = coldEstateRow(coldZoneView(coldModel()));
+    expect(row.key).toBeNull();
+    expect(row.isEstate).toBe(true);
+    expect(row.label).toBe("Everything");
+    expect(row.repos).toBe(10);
+    expect(row.coldRepos).toBe(2);
+    expect(row.sharePct).toBeCloseTo((2 / 6) * 100);
+    expect(row.openInCold).toBe(24);
+    expect(row.highRiskInCold).toBe(6);
+    expect(row.verdict).toBeNull();
+    expect(row.relativeRank).toBeNull();
+    expect(row.supportGroup).toBeNull();
+    expect(row.bands).toBeNull();
+  });
+
+  it("keeps a null estate share null", () => {
+    const v = coldZoneView(coldModel({ totals: coldTotals({ cold_repo_share_pct: null }) }));
+    expect(coldEstateRow(v).sharePct).toBeNull();
+  });
+
+  it("is null with no totals to carry", () => {
+    expect(coldEstateRow(null)).toBeNull();
+    expect(coldEstateRow({ totals: null })).toBeNull();
+  });
+});
 
 describe("repos: coldTeamRows — a share nobody could take draws no meter", () => {
   it("carries the product's figures and its verdict word", () => {

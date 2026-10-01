@@ -33,8 +33,8 @@
 
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
-  applyColdSelection, coldBandKeyModel, coldBandScale, coldCensusModel, coldGroupRows,
-  coldGroupScatterPoints, coldKpiCards, coldModeCaption, coldScatterPoints,
+  applyColdSelection, coldBandKeyModel, coldBandScale, coldCensusModel, coldEstateRow,
+  coldGroupRows, coldGroupScatterPoints, coldKpiCards, coldModeCaption, coldScatterPoints,
   coldScatterSelectionNote, coldSelection, coldSelectionNote, coldZoneView, coldestShareNote,
   groupCountNote, markScatterPoints, scatterSelectionActive, severitiesNote, unmeasurableNote,
 } from "./coldZoneModel.js";
@@ -60,9 +60,13 @@ import {
  * PRIVATE ON PURPOSE. It is four shared primitives in the arrangement this page's two tables
  * both want; the day a third page here wants the same arrangement is the day it moves to
  * `gas_shared/ui`, and not before.
+ *
+ * `leadRows` are pinned above every page and sit outside the sort, the paging and the footer's
+ * count — the support-group table's "Everything" row is one, and it is not a group.
  */
 function pagedTable(spec) {
   const { columns, rows, sortSpec, emptyText } = spec;
+  const leadRows = Array.isArray(spec.leadRows) ? spec.leadRows : [];
   let page = 0;
   let pageSize = DEFAULT_PAGE_SIZE;
 
@@ -74,7 +78,7 @@ function pagedTable(spec) {
     page = cut.page;
     const table = dataTable({
       columns,
-      rows: cut.rows,
+      rows: leadRows.length ? leadRows.concat(cut.rows) : cut.rows,
       emptyText: emptyText || "Nothing to show.",
     });
     const footer = tableFooter({
@@ -351,8 +355,14 @@ export async function renderColdZone(main, _params, ctx) {
     // same length, and the column stops being readable — which is what the fold was paid for.
     const scale = coldBandScale(rows);
     renderBandKeys(view);
+    // THE WAY BACK TO THE WHOLE ESTATE, pinned first. Pressing a group's name again or
+    // dismissing its chip four sections down both let go of a selection, but neither is where
+    // the reader's eye is when they want to compare a group with everything — this row is, and
+    // it is pressed whenever no group is. See `coldEstateRow` for what it does and does not say.
+    const estate = coldEstateRow(view);
 
     host.append(pagedTable({
+      leadRows: estate ? [estate] : [],
       columns: [
         {
           key: "label", label: "Support group",
@@ -360,7 +370,11 @@ export async function renderColdZone(main, _params, ctx) {
           // clickable row already costs. The bars are NOT controls: five segments per row
           // times N rows is 5N new stops, which is the arity rule `quad.js` states and
           // `bandBar`'s own contract holds it to.
-          cell: (r) => el("button", {
+          cell: (r) => r.isEstate ? el("button", {
+            type: "button", class: "linklike group-pick", "data-group-all": "",
+            "aria-pressed": coldGroup === null ? "true" : "false",
+            onclick: pickAll,
+          }, r.label) : el("button", {
             type: "button", class: "linklike group-pick", "data-group-pick": r.key,
             "aria-pressed": coldGroup === r.key ? "true" : "false",
             onclick: () => pickGroup(r.key),
@@ -369,7 +383,7 @@ export async function renderColdZone(main, _params, ctx) {
         {
           key: "verdict", label: "Verdict",
           // The dot AND the word, never the dot alone.
-          cell: (r) => verdictMark(r.verdict, r.verdictWord),
+          cell: (r) => (r.isEstate ? absent() : verdictMark(r.verdict, r.verdictWord)),
         },
         { key: "assets", label: "Assets", className: "num", cell: (r) => fmtCount(r.assets) },
         {
@@ -387,6 +401,7 @@ export async function renderColdZone(main, _params, ctx) {
             ],
           },
           cell: (r) => {
+            if (r.isEstate) return "";
             const model = bandBarModel({
               bands: r.bands, max: scale, unit: "assets", name: r.label,
             });
@@ -432,6 +447,7 @@ export async function renderColdZone(main, _params, ctx) {
             lines: coldestShareNote(view) ? [coldestShareNote(view)] : [],
           },
           cell: (r) => {
+            if (r.isEstate) return absent();
             const rank = r.relativeRank === null ? absentText : fmtCount(r.relativeRank);
             if (!r.inColdestShare) return rank;
             return el("span", {},
@@ -466,6 +482,9 @@ export async function renderColdZone(main, _params, ctx) {
       // `sortRows` leaves a list untouched when it is given no value function.
       emptyText: "No support group has an asset to report on yet.",
     }));
+    // The pinned row's `.is-picked` is a row class `dataTable` has no hook for, so the first
+    // paint marks it the same way every later press does.
+    markAll();
     // UNDER AN ACTIVE SUPPORT-GROUP SCOPE THIS TABLE IS ONE ROW, and that is the scope doing
     // its job rather than a group having vanished. Said here because a one-row roll-up with no
     // explanation reads as a broken join — the header chip is several inches away and answers
@@ -537,6 +556,23 @@ export async function renderColdZone(main, _params, ctx) {
     syncSelection();
   }
 
+  /** "Everything": let go of the group. Never a toggle — there is nothing to press it off to. */
+  function pickAll() {
+    if (coldGroup === null) return;
+    coldGroup = null;
+    syncSelection();
+  }
+
+  /** The "Everything" button and its row follow "nothing picked". */
+  function markAll() {
+    for (const btn of host.querySelectorAll("[data-group-all]")) {
+      const on = coldGroup === null;
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+      const row = btn.closest("tr");
+      if (row) row.classList.toggle("is-picked", on);
+    }
+  }
+
   /**
    * Repaint what the selection changed, and nothing else.
    *
@@ -558,6 +594,7 @@ export async function renderColdZone(main, _params, ctx) {
       const row = btn.closest("tr");
       if (row) row.classList.toggle("is-picked", on);
     }
+    markAll();
     for (const cell of host.querySelectorAll(".bandcell")) {
       if (!cell.bandModel) continue;
       clear(cell).append(bandBar(cell.bandModel, { selected: band }));
