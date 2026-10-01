@@ -31,6 +31,8 @@ const H = vi.hoisted(() => ({
   sgFetches: [] as { lockHeld: boolean }[],
   sgWrites: [] as { lockHeld: boolean }[],
   sgFetchThrows: false,
+  /** Runs inside the Wiz call — what another execution did while this one fetched. */
+  duringFetch: null as null | (() => void),
 }));
 
 vi.mock("../src/server/sheetsDb", () => ({
@@ -101,6 +103,7 @@ vi.mock("../src/server/supportGroups", () => ({
   fetchSupportGroups: () => {
     H.sgFetches.push({ lockHeld: H.lockHeld });
     if (H.sgFetchThrows) throw new Error("graphSearch failed");
+    H.duringFetch?.();
     return { map: { sub: "SG" }, stats: {} };
   },
   refreshSupportGroups: () => { throw new Error("the scan must not refresh inline"); },
@@ -168,6 +171,7 @@ beforeEach(() => {
   H.sgFetches.length = 0;
   H.sgWrites.length = 0;
   H.sgFetchThrows = false;
+  H.duringFetch = null;
   vi.spyOn(console, "log").mockImplementation(() => {});
   vi.spyOn(console, "warn").mockImplementation(() => {});
 });
@@ -262,5 +266,29 @@ describe("the post-scan support-group refresh", () => {
     expect(H.props[PENDING]).toBeTruthy();
     H.lockBusy = false;
     expect(runPendingSupportGroupRefresh()).toBe(true);
+  });
+
+  // Two warm passes (the post-scan hop and a standing fire) can both find the note and both
+  // fetch. A second write bumps DATA_VERSION again and discards what the first pass warmed.
+  it("writes once when a concurrent pass dequeued it during this one's Wiz call", () => {
+    live();
+    startScan();
+    H.duringFetch = () => {
+      H.duringFetch = null;
+      expect(runPendingSupportGroupRefresh()).toBe(true); // the other pass, start to finish
+    };
+    expect(runPendingSupportGroupRefresh()).toBe(false);
+    expect(H.sgFetches).toHaveLength(2);
+    expect(H.sgWrites).toEqual([{ lockHeld: true }]);
+    expect(H.props[PENDING]).toBeUndefined();
+  });
+
+  it("writes but leaves the note a newer scan queued during the Wiz call", () => {
+    live();
+    startScan();
+    H.duringFetch = () => { H.props[PENDING] = "2099-01-01T00:00:00.000Z"; };
+    expect(runPendingSupportGroupRefresh()).toBe(true);
+    expect(H.sgWrites).toHaveLength(1);
+    expect(H.props[PENDING]).toBe("2099-01-01T00:00:00.000Z");
   });
 });

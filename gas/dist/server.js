@@ -6719,7 +6719,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "071bd61fce6e" : "dev";
+  var BUILD_ID = true ? "1240b71cc9a3" : "dev";
   var CACHE_EPOCH = "3";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
@@ -11020,11 +11020,16 @@ var Server = (() => {
     }
     try {
       const { map } = fetchSupportGroups();
-      withScriptLock(() => {
+      return withScriptLock(() => {
+        const still = getProp(PROP_KEYS.supportGroupRefreshPending);
+        if (!still) {
+          console.log("Support-group refresh after scan: another pass already wrote it.");
+          return false;
+        }
         setSupportGroupMap(map);
-        deleteProp(PROP_KEYS.supportGroupRefreshPending);
+        if (still === pending) deleteProp(PROP_KEYS.supportGroupRefreshPending);
+        return true;
       }, SG_REFRESH_LOCK_MS);
-      return true;
     } catch (e) {
       if (e instanceof LedgerBusyError) {
         console.warn(`Support-group refresh after scan: ledger busy, left queued: ${e}`);

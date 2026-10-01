@@ -764,6 +764,12 @@ function autoCompactIfDue(): void {
  * One attempt per queued scan, as before: a failed graphSearch leaves the previous map in place
  * and is recorded. A lock that stays busy is not a failure — the note stays queued and the next
  * warm pass tries again.
+ *
+ * THE NOTE IS READ AGAIN UNDER THE LOCK. Two warm passes (the post-scan hop and a standing fire)
+ * can both find it and both fetch; only the first to the lock writes. The second finds the note
+ * gone and stops — its write would bump DATA_VERSION again and throw away whatever the first
+ * pass's warm had already computed, for the same map. A note that CHANGED meanwhile was queued by
+ * a newer scan: the map is written and that note left for its own pass.
  */
 export function runPendingSupportGroupRefresh(): boolean {
   let pending: string | null;
@@ -780,11 +786,16 @@ export function runPendingSupportGroupRefresh(): boolean {
   }
   try {
     const { map } = supportGroups.fetchSupportGroups();
-    withScriptLock(() => {
+    return withScriptLock(() => {
+      const still = getProp(PROP_KEYS.supportGroupRefreshPending);
+      if (!still) {
+        console.log("Support-group refresh after scan: another pass already wrote it.");
+        return false;
+      }
       settingsStore.setSupportGroupMap(map);
-      deleteProp(PROP_KEYS.supportGroupRefreshPending);
+      if (still === pending) deleteProp(PROP_KEYS.supportGroupRefreshPending);
+      return true;
     }, SG_REFRESH_LOCK_MS);
-    return true;
   } catch (e) {
     if (e instanceof LedgerBusyError) {
       console.warn(`Support-group refresh after scan: ledger busy, left queued: ${e}`);
