@@ -352,16 +352,37 @@ export function deleteScansCore(
       `missing, so the ledger can't be rebuilt.`,
   );
 
-  // Rebuild: sealed scan rows stay; the checkpoint's ledger (minus keys already in
-  // resolved_episodes) seeds finding_ledger; supersessions reset (post-floor survivors
-  // re-derive them during replay).
+  // Rebuild: sealed scan rows stay; the checkpoint's ledger (minus keys a standing episode
+  // answers for) seeds finding_ledger; supersessions the replay will re-derive reset.
+  //
+  // ONLY THOSE. A supersession is re-derived when the scan that wrote it is replayed — an
+  // unsealed survivor. One written by a SEALED scan never is: a later compaction baked that
+  // scan into the checkpoint, so the replay starts after it. Reset anyway, the superseded
+  // episode stood again beside the episode (or live row) that replaced it, and every finding
+  // that came back across two compactions — a drop-out whose repository returned, a genuine
+  // reopen — was counted twice. So it is kept, and its key is NOT left out of the seed: the
+  // checkpoint's row for it is the lifecycle that superseded the episode (gas/'s reset-all
+  // assumed one compaction, where no superseding scan is sealed yet). Matched on scope too,
+  // because one scan_id spans the three scopes (`existingScanDeltas`) and the superseding
+  // scan is always of the episode's own.
+  const sealedScans = new Set(
+    survivors.filter((r) => r.sealed).map((r) => `${r.scope}|${r.scan_id}`),
+  );
   const rebuilt: LedgerState = {
     scans: survivors.filter((r) => r.sealed).map((r) => ({ ...r })),
     ledger: {},
-    episodes: state.episodes.map((e) => ({ ...e, superseded_by_scan: null })),
+    episodes: state.episodes.map((e) => ({
+      ...e,
+      superseded_by_scan:
+        e.superseded_by_scan !== null && sealedScans.has(`${e.scope}|${e.superseded_by_scan}`)
+          ? e.superseded_by_scan
+          : null,
+    })),
   };
   if (checkpoint !== null) {
-    const episodeKeys = new Set(state.episodes.map((e) => e.finding_key));
+    const episodeKeys = new Set(
+      rebuilt.episodes.filter((e) => e.superseded_by_scan === null).map((e) => e.finding_key),
+    );
     for (const row of checkpoint.ledger ?? []) {
       if (!episodeKeys.has(row.finding_key)) rebuilt.ledger[row.finding_key] = { ...row };
     }

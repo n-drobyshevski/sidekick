@@ -3288,13 +3288,21 @@ var Server = (() => {
       readPayload,
       (scanId) => `Cannot delete: the archived payload for surviving scan ${scanId} is missing, so the ledger can't be rebuilt.`
     );
+    const sealedScans = new Set(
+      survivors.filter((r) => r.sealed).map((r) => `${r.scope}|${r.scan_id}`)
+    );
     const rebuilt = {
       scans: survivors.filter((r) => r.sealed).map((r) => ({ ...r })),
       ledger: {},
-      episodes: state.episodes.map((e) => ({ ...e, superseded_by_scan: null }))
+      episodes: state.episodes.map((e) => ({
+        ...e,
+        superseded_by_scan: e.superseded_by_scan !== null && sealedScans.has(`${e.scope}|${e.superseded_by_scan}`) ? e.superseded_by_scan : null
+      }))
     };
     if (checkpoint !== null) {
-      const episodeKeys = new Set(state.episodes.map((e) => e.finding_key));
+      const episodeKeys = new Set(
+        rebuilt.episodes.filter((e) => e.superseded_by_scan === null).map((e) => e.finding_key)
+      );
       for (const row of (_a = checkpoint.ledger) != null ? _a : []) {
         if (!episodeKeys.has(row.finding_key)) rebuilt.ledger[row.finding_key] = { ...row };
       }
@@ -5931,7 +5939,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "077a90135db1" : "dev";
+  var BUILD_ID = true ? "b20c0bde05a1" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");

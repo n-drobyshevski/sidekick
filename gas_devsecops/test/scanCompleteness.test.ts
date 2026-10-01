@@ -28,8 +28,10 @@ import type { LedgerState, ScanRow } from "../src/domain/ledgerTypes";
 import { mttrFromLedger } from "../src/domain/lifecycle";
 import {
   buildCheckpoint,
+  compactLedgerCore,
   deleteScansCore,
   toEpisodeRow,
+  type Checkpoint,
   type PayloadReader,
 } from "../src/domain/maintenance";
 import { movementDecomposition } from "../src/domain/movementDecomposition";
@@ -708,5 +710,138 @@ describe("replay re-applies the stored verdict — live persist and delete-and-r
     const cp = buildCheckpoint(rows, rows, null, floor, reader(payloads));
     const byKey = Object.fromEntries(cp.ledger.map((r) => [r.finding_key, r]));
     expect(byKey).toEqual(state.ledger);
+  });
+});
+
+// --------------------------------------------------------------------------- sealed supersession
+
+describe("a supersession a later compaction sealed survives delete-and-replay", () => {
+  // A sealed episode is superseded by the scan that brought its finding back — a drop-out
+  // resuming, or a genuine reopen. When a SECOND compaction then seals that scan, the replay
+  // after a delete never re-runs it, so the supersession cannot be re-derived: it has to be
+  // kept, and the live row the checkpoint holds for that key has to seed the rebuild. Reset
+  // instead, the old episode came back beside the new one and every such finding was counted
+  // twice (or, still open at the second floor, lost its live row).
+  const DAY = 86_400_000;
+  type Step = { records: Rec[]; ts: string } | { compact: string; cutoff: string };
+
+  function run(steps: Step[]) {
+    let state = emptyState();
+    let checkpoint: Checkpoint | null = null;
+    const payloads = new Map<string, Rec[]>();
+    const read: PayloadReader = (r) => payloads.get(r.scan_id) ?? null;
+    for (const s of steps) {
+      if ("records" in s) {
+        payloads.set(s.ts, s.records);
+        live(state, s.records, s.ts);
+        continue;
+      }
+      // 30 days is the retention floor, so the cutoff lands exactly on `s.cutoff`.
+      const plan = compactLedgerCore(state, 30, checkpoint, read, {
+        compactionId: s.compact,
+        now: Date.parse(s.cutoff) + 30 * DAY,
+      });
+      expect(plan.result.no_op).toBe(false);
+      state = plan.state!;
+      checkpoint = plan.checkpoint;
+    }
+    return { state, checkpoint, read };
+  }
+
+  /** Run `steps`, add one more scan, delete it — and compare with never having added it. */
+  function parity(steps: Step[], extra: { records: Rec[]; ts: string }) {
+    const twin = run(steps).state;
+    const withExtra = run([...steps, extra]);
+    const { state: rebuilt } = deleteScansCore(
+      withExtra.state, [extra.ts], withExtra.read, withExtra.checkpoint, Date.parse(T(20)),
+    );
+    const keys = baseRows(rebuilt, { now: Date.parse(T(20)) }).map((r) => r.finding_key);
+    return { twin, rebuilt, keys };
+  }
+
+  const resolvedNode = (n: Rec, at: string): Rec => ({ ...n, status: "RESOLVED", resolvedAt: at });
+  const AC = [...A, ...C];
+
+  it("drop-out sealed, its repository back API-resolved, that sealed too", () => {
+    const steps: Step[] = [
+      { records: ALL, ts: T(2) },
+      { records: AC, ts: T(3) }, // B (three findings) drops out
+      { records: AC, ts: T(4) },
+      { records: AC, ts: T(5) },
+      { compact: "c1", cutoff: T(3) }, // seals the drop-out episodes
+      { records: [...AC, ...B.map((n) => resolvedNode(n, T(6)))], ts: T(6) }, // back, resolved
+      { records: AC, ts: T(7) },
+      { records: AC, ts: T(8) },
+      { compact: "c2", cutoff: T(6) }, // seals the scan that superseded them, and the api rows
+    ];
+    const { twin, rebuilt, keys } = parity(steps, { records: AC, ts: T(9) });
+    // The scenario did what it says: one superseded drop-out episode and one live api episode
+    // per finding of B.
+    const b1 = twin.episodes.filter((e) => e.finding_key === "sca:id:b1");
+    expect(b1.map((e) => [e.resolution_src, e.superseded_by_scan])).toEqual([
+      [RESOLUTION_REPO_DROPOUT, T(6)],
+      [RESOLUTION_API, null],
+    ]);
+    expect(keys.filter((k) => k === "sca:id:b1")).toHaveLength(1);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(rebuilt.episodes).toEqual(twin.episodes);
+    expect(rebuilt.ledger).toEqual(twin.ledger);
+    expect(scansAsc(rebuilt.scans)).toEqual(scansAsc(twin.scans));
+  });
+
+  it("genuine reopen of a sealed episode, resolved again, that sealed too", () => {
+    const noA1 = ALL.filter((n) => n["id"] !== "a1");
+    const steps: Step[] = [
+      { records: ALL, ts: T(2) },
+      { records: [resolvedNode(A[0]!, T(3)), ...noA1], ts: T(3) }, // a1 fixed
+      { records: noA1, ts: T(4) },
+      { records: noA1, ts: T(5) },
+      { compact: "c1", cutoff: T(3) }, // seals a1's resolution
+      { records: ALL, ts: T(6) }, // a1 reopens
+      { records: [resolvedNode(A[0]!, T(7)), ...noA1], ts: T(7) }, // and is fixed again
+      { records: noA1, ts: T(8) },
+      { records: noA1, ts: T(9) },
+      { compact: "c2", cutoff: T(7) },
+    ];
+    const { twin, rebuilt, keys } = parity(steps, { records: noA1, ts: T(10) });
+    const a1 = twin.episodes.filter((e) => e.finding_key === "sca:id:a1");
+    expect(a1.map((e) => [e.resolved_at, e.reopened_count, e.superseded_by_scan])).toEqual([
+      [T(3), 0, T(6)],
+      [T(7), 1, null],
+    ]);
+    expect(keys.filter((k) => k === "sca:id:a1")).toHaveLength(1);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(rebuilt.episodes).toEqual(twin.episodes);
+    expect(rebuilt.ledger).toEqual(twin.ledger);
+    expect(scansAsc(rebuilt.scans)).toEqual(scansAsc(twin.scans));
+  });
+
+  it("genuine reopen sealed while the finding is still open keeps its live row", () => {
+    const noA1 = ALL.filter((n) => n["id"] !== "a1");
+    const steps: Step[] = [
+      { records: ALL, ts: T(2) },
+      { records: [resolvedNode(A[0]!, T(3)), ...noA1], ts: T(3) },
+      { records: noA1, ts: T(4) },
+      { records: noA1, ts: T(5) },
+      { compact: "c1", cutoff: T(3) },
+      { records: ALL, ts: T(6) }, // a1 reopens and stays open
+      { records: ALL, ts: T(7) },
+      { records: ALL, ts: T(8) },
+      { compact: "c2", cutoff: T(6) },
+    ];
+    const { twin, rebuilt, keys } = parity(steps, { records: ALL, ts: T(9) });
+    expect(twin.ledger["sca:id:a1"]).toMatchObject({ status: "OPEN", reopened_count: 1 });
+    expect(rebuilt.ledger["sca:id:a1"]).toMatchObject({ status: "OPEN", reopened_count: 1 });
+    expect(keys.filter((k) => k === "sca:id:a1")).toHaveLength(1);
+    expect(rebuilt.episodes).toEqual(twin.episodes);
+    // Byte for byte but one column: the checkpoint replays without episodes, so it reaches a1's
+    // reopen through reconcile's own reopen branch, which keeps the first episode's
+    // `first_scan_id` where the live collision path stamped the reopening scan. Nothing reads
+    // it off a row no longer first seen in the latest scan (insights.movement).
+    const sansFirstScan = (l: LedgerState["ledger"]) =>
+      Object.fromEntries(Object.entries(l).map(([k, r]) => [k, { ...r, first_scan_id: null }]));
+    expect(sansFirstScan(rebuilt.ledger)).toEqual(sansFirstScan(twin.ledger));
+    // The replayed scans see a1 as the open row it was, never as a second reopen.
+    expect(scansAsc(rebuilt.scans)).toEqual(scansAsc(twin.scans));
   });
 });
