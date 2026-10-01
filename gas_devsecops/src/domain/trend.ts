@@ -44,7 +44,7 @@
 // construction, not by a special case here.
 // ---------------------------------------------------------------------------------------
 
-import { SCOPES, SEVERITY_ORDER, SLA_TARGETS, type Scope } from "./config";
+import { SCOPES, SEVERITY_ORDER, SLA_TARGETS, isRepoDropout, type Scope } from "./config";
 import { GROUP_COLUMNS } from "./insights";
 import {
   RISK_TIER_ORDER,
@@ -177,11 +177,16 @@ export function trendFromFrames(
     mttr: mttrOf(r),
     sev: normalizeSeverity(r["severity"]),
     fixAvail: parseTs(r["fix_available_at"]),
+    // A repository drop-out is open until the register lost sight of it and in NEITHER count
+    // after: closed, but not resolved work (config.ts's RESOLUTION_REPO_DROPOUT).
+    dropout: isRepoDropout(r),
   }));
 
   const out: TrendPoint[] = [];
   for (const ts of times) {
-    const resolvedMask = parsed.map((r) => r.resolvedAt !== null && r.resolvedAt <= ts.ms);
+    const resolvedMask = parsed.map(
+      (r) => !r.dropout && r.resolvedAt !== null && r.resolvedAt <= ts.ms,
+    );
     const openMask = parsed.map(
       (r) =>
         r.first !== null &&
@@ -896,7 +901,9 @@ export function withOpenPastSla<T extends { date: string }>(
 // A row's SLA deadline (actionable_from + its severity target, in ms) paired with its
 // resolution time — the shared derivation behind withSlaBurn and cohortSlaAttainment. Rows
 // with a null actionable_from (awaiting a vendor fix) or a severity with no SLA target are
-// dropped, so neither the burn flow nor the attainment cohort ever counts them.
+// dropped, so neither the burn flow nor the attainment cohort ever counts them. A repository
+// drop-out is dropped too: its resolved_at is when the register lost sight of it, and read
+// here it would score as a resolution on time.
 function slaDeadlineRows(
   base: Rec[],
   severities: string[] | null,
@@ -904,6 +911,7 @@ function slaDeadlineRows(
 ): { deadline: number; resolvedAt: number | null }[] {
   const out: { deadline: number; resolvedAt: number | null }[] = [];
   for (const r of scopeRows(base, severities, scope)) {
+    if (isRepoDropout(r)) continue;
     const actionable = parseTs(r["actionable_from"]);
     const target = SLA_TARGETS[normalizeSeverity(r["severity"])];
     if (actionable === null || target === undefined) continue;
@@ -1056,12 +1064,17 @@ export function withCoverageEfficiency<T extends { date: string }>(
 
   // Classify once up front, not per point: the label is sticky, so it cannot change between
   // dates, and the register is findings-scale times points-scale if we don't hoist it.
-  const parsed: { first: number | null; resolvedAt: number | null; cls: RiskClass }[] =
-    classifiable.map((r) => ({
-      first: parseTs(r["first_seen"]),
-      resolvedAt: parseTs(r["resolved_at"]),
-      cls: classifyRisk(r as unknown as RiskRow, rule),
-    }));
+  const parsed: {
+    first: number | null;
+    resolvedAt: number | null;
+    dropout: boolean;
+    cls: RiskClass;
+  }[] = classifiable.map((r) => ({
+    first: parseTs(r["first_seen"]),
+    resolvedAt: parseTs(r["resolved_at"]),
+    dropout: isRepoDropout(r),
+    cls: classifyRisk(r as unknown as RiskRow, rule),
+  }));
   const secretFirst = secrets.map((r) => parseTs(r["first_seen"]));
 
   return points.map((p) => {
@@ -1076,6 +1089,9 @@ export function withCoverageEfficiency<T extends { date: string }>(
       for (const r of parsed) {
         if (r.first === null || r.first > d) continue; // did not exist yet
         const remediated = r.resolvedAt !== null && r.resolvedAt <= d;
+        // A repository drop-out leaves the population when the register lost sight of it —
+        // remediated it was not, and open it no longer is (program.ts's tallyRow, same rule).
+        if (remediated && r.dropout) continue;
         counted += 1;
         if (r.cls === "unknown") {
           unknown += 1;

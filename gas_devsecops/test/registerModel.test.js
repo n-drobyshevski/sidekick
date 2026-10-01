@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
-  PROVENANCE, PROVENANCE_HELP, REGISTERS, REGISTER_ORDER, activeFilterCount, boundedShare,
+  PROVENANCE, PROVENANCE_HELP, PROVENANCE_LABEL, REGISTERS, REGISTER_ORDER, activeFilterCount, boundedShare,
   executiveHeadline, facetEntries, headerFigures, populationLine, provenance, readFilters,
   returnedShare, scopeSummaries,
 } from "../src/client/js/pages/registerModel.js";
@@ -54,6 +54,18 @@ describe("a death date is not always a measurement", () => {
     expect(s.resolved).toBe(3);
     expect(s.bounded).toBe(2);
     expect(s.pct).toBeCloseTo(66.7, 1);
+  });
+
+  it("a repository drop-out is its own state, not a fix and not a bounded date", () => {
+    // reconcile.ts closes a vanished repository's findings as `repo_dropout`: out of the
+    // backlog, with no MTTR. Reading it as "Gone by" would claim a fix at some point in the
+    // last scan interval — the one thing a drop-out is not.
+    const left = { status: "RESOLVED", resolution_src: "repo_dropout" };
+    expect(provenance(left)).toBe(PROVENANCE.LEFT);
+    expect(PROVENANCE_LABEL[PROVENANCE.LEFT]).toBe("Repo left");
+    expect(PROVENANCE_HELP[PROVENANCE.LEFT]).toMatch(/^Repository left the scan — not counted as a fix\./);
+    // And it is out of the bounded-share denominator, as it is out of the aggregates.
+    expect(boundedShare([byApi(), byGone(), left])).toMatchObject({ resolved: 2, bounded: 1 });
   });
 
   it("reports null rather than zero when nothing has resolved", () => {

@@ -73,6 +73,7 @@ import { SCOPES, type Scope } from "../domain/config";
 import { mttrFromLedger } from "../domain/lifecycle";
 import { effectiveSlaTargets } from "../domain/settingsLogic";
 import { nowIso, pushAll, type Rec } from "../domain/util";
+import { readDisappearance } from "../domain/scanCompleteness";
 import * as archive from "./archiveStore";
 import * as errorLog from "./errorLog";
 import * as history from "./historyStore";
@@ -164,6 +165,14 @@ export interface ScopeProgress {
   rawRef: string | null;
   /** What the tenant said this scope's query totals. 0 = not reported yet. */
   totalCount: number;
+  /**
+   * Whether `totalCount` is the tenant's answer rather than the placeholder — the one bit
+   * `totalCount` alone cannot carry, since a register the tenant reports EMPTY reads 0 too, and
+   * the completeness gate treats "reported 0" (everything is gone) and "reported nothing" very
+   * differently. Absent on a job started before the field existed; `reportedTotalOf` reads that
+   * as "reported" only when the count is non-zero.
+   */
+  totalReported?: boolean;
   /** How many pages came back PARTIAL (nodes AND errors). Never capped. */
   partialPages: number;
   /** A capped sample of those errors — see MAX_PARTIAL_ERRORS. */
@@ -562,7 +571,10 @@ function step(job: JobRow, budgetMs = BUDGET_MS): void {
         cursor = page.pageInfo.endCursor;
         progress.pages = paging.pageNumber;
         progress.rows = slim.length;
-        if (page.totalCount !== null) progress.totalCount = page.totalCount;
+        if (page.totalCount !== null) {
+          progress.totalCount = page.totalCount;
+          progress.totalReported = true;
+        }
         if (page.partialErrors.length) {
           // Recorded beside the rows, never fatal — the nodes are good and the count is
           // suspect (wizClient.ts). Discarding either half would be the lie.
@@ -651,6 +663,14 @@ function step(job: JobRow, budgetMs = BUDGET_MS): void {
 
 /* ------------------------------------------------------------------ finish/persist */
 
+/** The tenant's reported total for a scope, or null when it never reported one. */
+function reportedTotalOf(progress: ScopeProgress | undefined): number | null {
+  if (!progress) return null;
+  const n = Number(progress.totalCount);
+  if (!Number.isFinite(n)) return null;
+  return progress.totalReported === true || n > 0 ? n : null;
+}
+
 /**
  * Reconcile and commit the whole battery — ONE call, every scope.
  *
@@ -673,6 +693,11 @@ function finishSync(jobId: string, params: SyncParams): void {
     mode: "live",
     scannedSeverities: params.severitiesByScope[scope] ?? [],
     rawRef: params.perScope[scope]?.rawRef ?? null,
+    // What the completeness gate weighs the records against — see domain/scanCompleteness.ts.
+    completeness: {
+      reportedTotal: reportedTotalOf(params.perScope[scope]),
+      partialPages: Number(params.perScope[scope]?.partialPages ?? 0) || 0,
+    },
   }));
 
   scheduleWatchdog();
@@ -691,6 +716,7 @@ function finishSync(jobId: string, params: SyncParams): void {
  * is independently guarded.
  */
 function afterPersist(params: SyncParams, outcome: ledgerStore.PersistOutcome): void {
+  recordDeferrals(outcome);
   try {
     history.recordDaily(dailyStats(params, outcome));
   } catch (e) {
@@ -699,6 +725,29 @@ function afterPersist(params: SyncParams, outcome: ledgerStore.PersistOutcome): 
   }
   autoCompactIfDue();
   warmAfterSync();
+}
+
+/**
+ * A deferred scope is a sync that SUCCEEDED and still owes the operator a sentence: its
+ * absences were held back, so the register's open count is carrying findings this sync could
+ * not confirm. That goes in the error log (Data → Recent errors), because the job row records
+ * DONE and nothing else on the server would say it. Best effort, like every chore here.
+ */
+function recordDeferrals(outcome: ledgerStore.PersistOutcome): void {
+  for (const s of outcome.scopes) {
+    const c = s.completeness;
+    const verdict = readDisappearance(c?.disappearance ?? null);
+    if (!c || !verdict.deferred) continue;
+    const total = c.reported_total === null ? "no total reported" : `${c.reported_total} reported`;
+    errorLog.recordError(
+      "syncCompleteness",
+      `${s.scope} scan of sync ${s.scan_id} looked incomplete (${verdict.reason ?? "unknown"}: `
+        + `${s.total} received, ${total}, ${c.duplicates ?? 0} duplicate(s), `
+        + `${c.partial_pages ?? 0} partial page(s)). ${c.absent} open finding(s) it did not `
+        + "return were left open; the next complete scan will resolve them.",
+      "warning",
+    );
+  }
 }
 
 /**
@@ -772,6 +821,10 @@ function dailyStats(params: SyncParams, outcome: ledgerStore.PersistOutcome): Re
       // The caveat travels with the figure: a scope whose pages came back PARTIAL has good
       // rows and a suspect count, and a history entry that hid that would be the lie.
       partial_pages: params.perScope[s.scope]?.partialPages ?? 0,
+      // Whether this scope's absences were adjudicated, and what they amounted to — the absent
+      // share is recorded here and never gated on (domain/scanCompleteness.ts). Null on an
+      // idempotent replay, which assessed nothing.
+      completeness: s.completeness,
     })),
     mttr: mttrFromLedger(
       Object.values(ledger) as unknown as Rec[],

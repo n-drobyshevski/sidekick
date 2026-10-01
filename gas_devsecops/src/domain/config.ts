@@ -260,9 +260,30 @@ export const RESOLVED_STATUSES = new Set(["RESOLVED", "REMEDIATED", "FIXED", "CL
 export const STATUS_OPEN = "OPEN";
 export const STATUS_RESOLVED = "RESOLVED";
 
-/** How a row left the register: the API said so, or it stopped being returned. */
+/** How a row left the register: the API said so, it stopped being returned, or its repository did. */
 export const RESOLUTION_API = "api";
 export const RESOLUTION_DISAPPEARED = "disappeared";
+/**
+ * The third way out, and the one that is NOT a fix: the finding's whole repository stopped
+ * being returned by a complete scan (`reconcile.ts`'s drop-out pass). The row is closed so it
+ * leaves the open backlog, but it carries no MTTR clock (`ledgerCore.withDerived`) and no
+ * remediation count reads it as work; if the repository comes back, the row resumes its
+ * original episode rather than reopening.
+ */
+export const RESOLUTION_REPO_DROPOUT = "repo_dropout";
+
+/**
+ * The smallest number of a repository's open findings that have to vanish together, with the
+ * repository itself gone from a complete scan, before the vanishing is read as the repository
+ * leaving rather than as fixes. Below it, a repository's last one or two findings closing is
+ * the ordinary case — a fix — and they resolve by disappearance as before.
+ */
+export const DROPOUT_MIN_OPEN = 3;
+
+/** Whether a row was closed by a repository drop-out — lost sight, not remediation. */
+export function isRepoDropout(row: { resolution_src?: unknown } | null | undefined): boolean {
+  return row != null && row.resolution_src === RESOLUTION_REPO_DROPOUT;
+}
 
 /**
  * EPSS at or above this is treated as a priority signal on its own.

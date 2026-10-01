@@ -118,6 +118,44 @@ export function isAllSeverities(raw) {
 }
 
 /**
+ * What a scan's completeness verdict means, in the words the table's marker carries. The
+ * stored value is `"deferred:<reason>"` (domain/scanCompleteness.ts); a blank or "complete"
+ * value is no deferral, and a reason this client was never taught still reads as deferred —
+ * the generic sentence is true of every reason.
+ */
+const DEFER_WHY = {
+  empty: "it returned nothing while the register still held open findings",
+  short: "it returned fewer findings than Wiz reported",
+  duplicates: "it returned the same findings more than once",
+};
+
+export function deferralOf(disappearance) {
+  const raw = typeof disappearance === "string" ? disappearance.trim() : "";
+  if (!raw.startsWith("deferred:")) return null;
+  const reason = raw.slice("deferred:".length);
+  const why = DEFER_WHY[reason] || "it looked incomplete";
+  return {
+    reason,
+    help: [`This scan was saved, but ${why}. Nothing it missed was resolved — the next `
+      + "complete scan resolves those findings."],
+  };
+}
+
+/** The −Resolved cell: the count, a deferral marker, and the drop-outs it leaves out. */
+function resolvedCell(r) {
+  const marks = [];
+  if (r.deferral) marks.push(statusPill("warn", "Deferred", r.deferral.help));
+  if (r.dropoutCount !== null && r.dropoutCount > 0) {
+    marks.push(statusPill("neutral", `${fmtCount(r.dropoutCount)} left`, [
+      "Findings on repositories that left the scan — closed, but not counted as fixes and "
+      + "not in the resolved count.",
+    ]));
+  }
+  if (!marks.length) return fmtCount(r.resolvedCount);
+  return el("span", {}, fmtCount(r.resolvedCount), ...marks.flatMap((m) => [" ", m]));
+}
+
+/**
  * The scan log's rows, one per (scan_id, scope) — exactly the payload's shape, sorted newest
  * first. `groupBySync` below is what proves three rows share one sync; this stays flat
  * because that IS the table.
@@ -133,6 +171,11 @@ export function scanRowsView(scans) {
     newCount: num(s.new_count, 0),
     resolvedCount: num(s.resolved_count, 0),
     reopenedCount: num(s.reopened_count, 0),
+    // The completeness verdict (null on a complete or legacy scan) and the repository
+    // drop-outs `resolved_count` deliberately leaves out. `null` drop-outs is "not measured" —
+    // a legacy or deferred scan — and draws nothing, never a zero.
+    deferral: deferralOf(s.disappearance),
+    dropoutCount: num(s.dropout_count, null),
     sealed: s.sealed === 1 || s.sealed === true,
     severitiesRaw: s.severities ?? null,
     severitiesText: severitiesLabel(s.severities),
@@ -848,7 +891,13 @@ export async function renderHistory(host, _params, _ctx) {
           },
           { key: "total", label: "Findings", className: "num", sortable: true, cell: (r) => fmtCount(r.total) },
           { key: "new", label: "+New", className: "num", cell: (r) => fmtCount(r.newCount) },
-          { key: "resolved", label: "−Resolved", className: "num", cell: (r) => fmtCount(r.resolvedCount) },
+          {
+            key: "resolved", label: "−Resolved", className: "num",
+            // The count, plus what it does NOT include: a deferred scan resolved nothing by
+            // absence, and drop-outs are closed without being fixes. Both are said beside the
+            // figure they qualify rather than in a column a reader has to switch on.
+            cell: (r) => resolvedCell(r),
+          },
           { key: "reopened", label: "Reopened", className: "num", cell: (r) => fmtCount(r.reopenedCount) },
           { key: "sealed", label: "Sealed", cell: (r) => (r.sealed ? "Sealed" : "") },
           // TWO FIELDS `scanRowsView` HAS ALWAYS PROJECTED AND NOTHING HAS EVER READ. `mode`

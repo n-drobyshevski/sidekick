@@ -40,7 +40,7 @@ import {
 } from "../src/client/js/pages/repos.js";
 import {
   groupBySync, isAllSeverities, kmMedianPoints, kpiView, openResolvedPoints, perScopeView,
-  scanRowsView, scanScopeNoteShown, severitiesLabel,
+  deferralOf, scanRowsView, scanScopeNoteShown, severitiesLabel,
 } from "../src/client/js/pages/history.js";
 import {
   cellsSummary, compactionView, confirmedAction, currentlyScoped, deletableScans, ledgerSummary,
@@ -1438,6 +1438,40 @@ describe("history: a null severities means ALL severities, never none", () => {
     expect(rows[0].allSeverities).toBe(true);
     expect(rows[0].severitiesText).toBe("All severities");
     expect(rows[0].severitiesText.toLowerCase()).not.toContain("none");
+  });
+});
+
+describe("history: a deferred scan is marked, and drop-outs are counted apart", () => {
+  const base = { scan_id: "sync-2", ts: "2026-03-02T00:00:00Z", scope: "sca", mode: "live", total: 4, new_count: 0, resolved_count: 0, reopened_count: 0, severities: null, sealed: 0 };
+
+  it("reads the stored verdict: deferred with its reason, and nothing for complete or legacy", () => {
+    const [deferred, complete, legacy] = scanRowsView([
+      { ...base, disappearance: "deferred:short", dropout_count: null },
+      { ...base, disappearance: "complete", dropout_count: 3, resolved_count: 2 },
+      { ...base },
+    ]);
+    expect(deferred.deferral.reason).toBe("short");
+    expect(deferred.deferral.help[0]).toMatch(/fewer findings than Wiz reported/);
+    expect(deferred.deferral.help[0]).toMatch(/next complete scan resolves those findings/);
+    expect(deferred.dropoutCount).toBeNull(); // not measured — never drawn as a zero
+    expect(complete.deferral).toBeNull();
+    expect(complete.dropoutCount).toBe(3);
+    expect(complete.resolvedCount).toBe(2); // the drop-outs are not in it
+    expect(legacy.deferral).toBeNull();
+    expect(legacy.dropoutCount).toBeNull();
+  });
+
+  it("a reason this client was never taught still reads as deferred", () => {
+    expect(deferralOf("deferred:something-new").help[0]).toMatch(/looked incomplete/);
+    for (const v of ["complete", "", null, undefined, 3]) expect(deferralOf(v)).toBeNull();
+  });
+
+  it("uses the vocabulary: a scan is saved, it does not run", () => {
+    for (const reason of ["empty", "short", "duplicates"]) {
+      const help = deferralOf(`deferred:${reason}`).help.join(" ");
+      expect(help).toMatch(/This scan was saved/);
+      expect(help).not.toMatch(/\brun\b|\bscanned\b/);
+    }
   });
 });
 

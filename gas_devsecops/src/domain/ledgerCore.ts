@@ -11,9 +11,10 @@
 // previous scan" was unambiguous. Here three registers share one scans tab and one ledger,
 // and a sca scan says nothing about whether a secret is still in HEAD. Every reader that
 // gas/ wrote against the whole scan log therefore takes a scope and filters to it FIRST; the
-// walk itself is unchanged. `latestScan` and `prevScanIdBySeverity` are the two that matter,
-// because both feed resolve-by-disappearance: reading the previous scan of ANY scope there
-// would resolve every open row of the other two registers on the first interleaved sync.
+// walk itself is unchanged. `latestScan` and `disappearanceWindow` (whose one-scan special
+// case is gas/'s `prevScanIdBySeverity`, kept below) are the ones that matter, because both
+// feed resolve-by-disappearance: reading the previous scan of ANY scope there would resolve
+// every open row of the other two registers on the first interleaved sync.
 //
 // THE SHAPES LIVE IN ledgerTypes.ts (ScanRow / EpisodeRow / LedgerState / BaseRow / Deltas /
 // Observation), not here — this module imports them and declares none of its own. gas/
@@ -30,12 +31,24 @@
 // are defects that would have shipped looking like success: the first as an idempotent replay
 // that reconciled nothing, the second as a remediation figure that counted three registers.
 
-import { DISAPPEARANCE_RESOLUTION, SEVERITY_ORDER, type Scope } from "./config";
+import {
+  DISAPPEARANCE_RESOLUTION,
+  RESOLUTION_REPO_DROPOUT,
+  SEVERITY_ORDER,
+  isRepoDropout,
+  type Scope,
+} from "./config";
 import { parseSeverities, serializeSeverities } from "./compaction";
-import { reconcile, emptyTwinStats, type TwinStats } from "./reconcile";
+import { reconcile, emptyTwinStats, type AbsenceStats, type TwinStats } from "./reconcile";
+import {
+  assessCompleteness,
+  disappearanceValue,
+  readDisappearance,
+} from "./scanCompleteness";
 import type {
   BaseRow,
   Deltas,
+  DisappearanceWindow,
   EpisodeRow,
   LedgerRow,
   LedgerState,
@@ -103,6 +116,11 @@ export function latestScan(scans: ScanRow[], scope: Scope): ScanRow | null {
  * gate is off, `severities` serializes to null, and an unscoped scan covers every severity —
  * so the first secrets scan reached fills the whole map. That is the correct answer, not a
  * degenerate one: an unscoped scan really did look for all of them.
+ *
+ * `persistFlatScan` no longer reads this — it reads `disappearanceWindow`, below, which is
+ * this map with deferred scans added. It stays because it is the shape the gas/ fixture
+ * (`test/fixtures/reconcile.json`) pins and the shape reconcile still accepts from a caller
+ * that passes no window.
  */
 export function prevScanIdBySeverity(
   scans: ScanRow[],
@@ -120,6 +138,54 @@ export function prevScanIdBySeverity(
     if (!remaining.size) break;
   }
   return Object.keys(mapping).length ? mapping : null;
+}
+
+/**
+ * The scans a row may have last been seen in for its absence from the NEXT scan of `scope` to
+ * resolve it — `prevScanIdBySeverity` generalised over deferred scans. null when `scope` has
+ * no scans.
+ *
+ * Per severity: walking the scope's log newest-first, every scan covering the severity joins
+ * the window, and the walk stops at the first COMPLETE one. A deferred scan resolved nothing by
+ * absence (scanCompleteness.ts), so what it failed to see is still waiting on a verdict — and
+ * so is what it DID see, if the next scan misses it. Both are in the window; nothing older is,
+ * because the newest complete covering scan already adjudicated everything before it.
+ *
+ * A legacy row (blank `disappearance`) is complete. With no deferred scan in the log every
+ * window is the one scan `prevScanIdBySeverity` names and `fallback` is `latestScan`, so a
+ * register that never deferred resolves exactly as it did before the gate existed.
+ *
+ * `fallback` answers a severity the map does not name — the same role `prevScanId` plays in
+ * reconcile's `?? prevScanId` — and is coverage-blind: the newest scans back to the newest
+ * complete one.
+ */
+export function disappearanceWindow(
+  scans: ScanRow[],
+  scope: Scope,
+): DisappearanceWindow | null {
+  const desc = scansAsc(scans, scope).reverse();
+  if (!desc.length) return null;
+  const remaining = new Set<string>(SEVERITY_ORDER);
+  const bySeverity: Record<string, string[]> = {};
+  for (const r of desc) {
+    const sevScope = parseSeverities(r.severities);
+    const deferred = readDisappearance(r.disappearance).deferred;
+    const covered =
+      sevScope === null ? [...remaining] : [...remaining].filter((s) => sevScope.includes(s));
+    for (const sev of covered) {
+      const ids = bySeverity[sev];
+      if (ids) ids.push(r.scan_id);
+      else bySeverity[sev] = [r.scan_id];
+    }
+    if (!deferred) covered.forEach((s) => remaining.delete(s));
+    if (!remaining.size) break;
+  }
+  const fallback: string[] = [];
+  for (const r of desc) {
+    fallback.push(r.scan_id);
+    if (!readDisappearance(r.disappearance).deferred) break;
+  }
+  return { bySeverity, fallback };
 }
 
 /**
@@ -168,6 +234,7 @@ function reconcileEpisodeCollisions(
   existingLedger: Record<string, LedgerRow>,
   deltas: Deltas,
   scanId: string,
+  absence: AbsenceStats,
 ): void {
   const newKeys = Object.keys(updated).filter((k) => !(k in existingLedger));
   if (!newKeys.length) return;
@@ -180,7 +247,18 @@ function reconcileEpisodeCollisions(
   }
   for (const [key, episode] of episodeReopens) {
     const row = updated[key]!;
-    if (row.status === "OPEN") {
+    if (row.status === "OPEN" && episode.resolution_src === RESOLUTION_REPO_DROPOUT) {
+      // A repository drop-out that was sealed before its repository came back. The same rule
+      // reconcile applies to a live drop-out row: the episode RESUMES — its first_seen and
+      // reopen count carry over, and the row is neither new nor reopened in the deltas.
+      row.reopened_count = Number(episode.reopened_count ?? 0);
+      if (episode.first_seen !== null && (row.first_seen === null || episode.first_seen < row.first_seen)) {
+        row.first_seen = episode.first_seen;
+      }
+      deltas.new_count -= 1;
+      absence.resumed += 1;
+      episode.superseded_by_scan = scanId;
+    } else if (row.status === "OPEN") {
       // Genuine reopen of a compacted resolution: seed the episode's reopen count,
       // reclassify new -> reopened, and mark the episode superseded.
       row.reopened_count = Number(episode.reopened_count ?? 0) + 1;
@@ -230,6 +308,22 @@ export interface PersistFlatOptions {
   rawRef?: string | null;
   obsRef?: string | null;
   now?: number;
+  /**
+   * LIVE: the fetch's own account of itself. When given, the completeness gate runs
+   * (scanCompleteness.ts), its verdict is written to the scan row, and a complete scan also
+   * runs the repository drop-out pass.
+   */
+  completeness?: { reportedTotal: number | null; partialPages: number } | null;
+  /**
+   * REPLAY: a stored scan row's completeness record, re-applied rather than re-assessed — the
+   * tenant's total and the partial-page count are facts of the original fetch that the
+   * archived records cannot reproduce. A blank `disappearance` is a legacy row and replays
+   * under the old rules (no gate, no drop-out). Wins over `completeness` when both are given.
+   */
+  stored?: Pick<
+    ScanRow,
+    "reported_total" | "partial_pages" | "duplicates" | "disappearance"
+  > | null;
 }
 
 export interface PersistFlatResult {
@@ -241,6 +335,12 @@ export interface PersistFlatResult {
    * REPORT it rather than infer it. Zeroed for sca and sast, and on an idempotent no-op.
    */
   twinStats: TwinStats;
+  /** The absence side of the scan (reconcile's `AbsenceStats`); zeroed on a no-op. */
+  absence: AbsenceStats;
+}
+
+function emptyAbsence(): AbsenceStats {
+  return { absent: 0, dropouts: 0, dropoutRepos: 0, resumed: 0 };
 }
 
 /**
@@ -268,21 +368,28 @@ export function persistFlatScan(
 
   const existing = existingScanDeltas(state.scans, scanId, scope);
   if (existing !== null) {
-    return { deltas: existing, observations: [], scanRow: null, twinStats: emptyTwinStats() };
+    return {
+      deltas: existing,
+      observations: [],
+      scanRow: null,
+      twinStats: emptyTwinStats(),
+      absence: emptyAbsence(),
+    };
   }
 
-  // Every one of these reads is scoped — see latestScan / prevScanIdBySeverity.
+  // Every one of these reads is scoped — see latestScan / disappearanceWindow.
   const prev = latestScan(state.scans, scope);
   const prevScanId = prev ? prev.scan_id : null;
   const prevScanTs = prev ? prev.ts : null;
-  const prevBySev = prevScanId !== null ? prevScanIdBySeverity(state.scans, scope) : null;
+  const window = prevScanId !== null ? disappearanceWindow(state.scans, scope) : null;
 
   // THE LEDGER IS PARTITIONED BEFORE IT GOES IN, and this is not tidiness — it is the third
   // place the "one ledger, three registers" generalisation has to be made, and the one that
   // bites hardest. reconcile's disappearance loop walks EVERY row of the ledger it is handed;
-  // its only cross-scope protection is `row.last_scan_id !== expectedPrev`, which holds right
-  // up until two scopes share a scan id — and jobsStore.ts says they always do (one sync job
-  // carries one scan_id and steps through the scopes). MEASURED on the interleaved case in
+  // its only cross-scope protection is the window-membership test on `row.last_scan_id`,
+  // which holds right up until two scopes share a scan id — and jobsStore.ts says they always
+  // do (one sync job carries one scan_id and steps through the scopes). MEASURED on the
+  // interleaved case in
   // test/ledgerCore.test.ts: handing reconcile the whole ledger made the sca step of the
   // second sync report `resolved_count: 3`, closing the sast and secrets rows of registers it
   // had not looked at. Scoped, it reports 1.
@@ -299,7 +406,45 @@ export function persistFlatScan(
     else otherScopes[key] = row;
   }
 
-  const { ledger: updated, observations, deltas, twinStats } = reconcile(
+  // THE COMPLETENESS DECISION — made once, at live persist, and stored; a replay reads it
+  // back. Three cases, and the third is the one that keeps old registers byte-stable:
+  //   stored        replay of a saved row: its verdict and its record, verbatim
+  //   completeness  a live scan: assess, record, and run the drop-out pass if complete
+  //   neither       a legacy caller: no gate, no drop-out, every new column null
+  let reportedTotal: number | null = null;
+  let partialPages: number | null = null;
+  let duplicates: number | null = null;
+  let disappearance: string | null = null;
+  let deferDisappearance = false;
+  let detectDropouts = false;
+  if (options.stored) {
+    const verdict = readDisappearance(options.stored.disappearance);
+    reportedTotal = options.stored.reported_total ?? null;
+    partialPages = options.stored.partial_pages ?? null;
+    duplicates = options.stored.duplicates ?? null;
+    disappearance = verdict.legacy ? null : String(options.stored.disappearance).trim();
+    deferDisappearance = verdict.deferred;
+    detectDropouts = !verdict.legacy && !verdict.deferred;
+  } else if (options.completeness) {
+    // "empty" asks whether the register holds anything this scan could have resolved — the
+    // OPEN rows of this scope inside its severity scope.
+    const inScope = sevScope === null ? null : new Set(sevScope);
+    let priorOpen = 0;
+    for (const row of Object.values(existingLedger)) {
+      if (row.status !== "OPEN") continue;
+      if (inScope !== null && (row.severity === null || !inScope.has(row.severity))) continue;
+      priorOpen += 1;
+    }
+    reportedTotal = options.completeness.reportedTotal;
+    partialPages = options.completeness.partialPages;
+    const verdict = assessCompleteness({ records, reportedTotal, partialPages, priorOpen });
+    duplicates = verdict.duplicates;
+    disappearance = disappearanceValue(verdict.reason);
+    deferDisappearance = verdict.reason !== null;
+    detectDropouts = verdict.reason === null;
+  }
+
+  const { ledger: updated, observations, deltas, twinStats, absence } = reconcile(
     records,
     existingLedger,
     scanId,
@@ -310,11 +455,13 @@ export function persistFlatScan(
       disappearanceMode,
       prevScanTs,
       scannedSeverities: sevScope,
-      prevScanIdBySeverity: prevBySev,
+      disappearanceWindow: window,
+      deferDisappearance,
+      detectDropouts,
     },
   );
 
-  reconcileEpisodeCollisions(state, updated, existingLedger, deltas, scanId);
+  reconcileEpisodeCollisions(state, updated, existingLedger, deltas, scanId, absence);
 
   const scanRow: ScanRow = {
     scan_id: scanId,
@@ -329,12 +476,19 @@ export function persistFlatScan(
     raw_ref: options.rawRef ?? null,
     obs_ref: options.obsRef ?? null,
     sealed: 0,
+    reported_total: reportedTotal,
+    partial_pages: partialPages,
+    duplicates,
+    disappearance,
+    // Null where it was not measured: a legacy row never ran the pass, a deferred one ran no
+    // absence at all. A complete scan with no drop-out records a measured 0.
+    dropout_count: detectDropouts ? absence.dropouts : null,
   };
   state.scans.push(scanRow);
   // reconcile copies rather than mutates, so the other scopes' rows go back in by reference,
   // byte-identical to what came out.
   state.ledger = { ...otherScopes, ...updated };
-  return { deltas, observations, scanRow, twinStats };
+  return { deltas, observations, scanRow, twinStats, absence };
 }
 
 // --------------------------------------------------------------------------- #
@@ -401,7 +555,13 @@ function withDerived(
   trackingStart: string | null | undefined,
 ): BaseRow {
   const first = parseTs(row.first_seen);
-  const resolved = parseTs(row.resolved_at);
+  // A REPOSITORY DROP-OUT HAS NO REMEDIATION CLOCK. Its resolved_at dates when the register
+  // lost sight of it, not when anyone fixed it, so both MTTR samples are null and every
+  // estimator built on them — KM, percentiles, In-SLA, the trend medians — skips the row
+  // exactly as it skips one whose clock was never captured. It is not open either
+  // (age_days stays null), so it leaves the backlog without entering the fix figures.
+  const dropout = isRepoDropout(row);
+  const resolved = dropout ? null : parseTs(row.resolved_at);
   const open = row.status === "OPEN";
   const isSca = row.scope === "sca";
 
@@ -416,7 +576,7 @@ function withDerived(
   return {
     ...row,
     mttr_days: first !== null && resolved !== null ? (resolved - first) / DAY_MS : null,
-    age_days: resolved === null && first !== null ? (nowMs - first) / DAY_MS : null,
+    age_days: !dropout && resolved === null && first !== null ? (nowMs - first) / DAY_MS : null,
     // MTTR delayed-entry package (BaseRowsOptions.trackingStartByScope's own comment): the
     // DETECTION clock's entry age, relative to `first_seen` — the same origin `mttr_days` /
     // `age_days` above measure from, so `entryDaysFrom`'s one formula applies unchanged.

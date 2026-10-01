@@ -183,6 +183,26 @@ export interface ReconcileOptions {
   prevScanTs?: string | null;
   scannedSeverities?: string[] | null;
   prevScanIdBySeverity?: Record<string, string> | null;
+  /**
+   * Which prior scans a row may have last been seen in for its absence now to resolve it —
+   * per severity, plus a fallback for a severity the map does not name. Built by
+   * `ledgerCore.disappearanceWindow`: the newest COMPLETE scan covering the severity and every
+   * DEFERRED scan after it. Takes precedence over `prevScanIdBySeverity`, which is the
+   * one-scan special case of the same idea (and what the gas/ fixture pins).
+   */
+  disappearanceWindow?: DisappearanceWindow | null;
+  /** The scan failed the completeness gate: land what it saw, resolve nothing by absence. */
+  deferDisappearance?: boolean;
+  /**
+   * Run the repository drop-out pass (`reconcile.ts`). On for every complete live scan and its
+   * replay; off for a legacy row's replay, which must reproduce what it reproduced before.
+   */
+  detectDropouts?: boolean;
+}
+
+export interface DisappearanceWindow {
+  bySeverity: Record<string, string[]>;
+  fallback: string[];
 }
 
 // --------------------------------------------------------------------------- #
@@ -210,6 +230,21 @@ export interface ScanRow {
   // is to re-read every raw page.
   obs_ref: string | null;
   sealed: 0 | 1;
+
+  // THE COMPLETENESS RECORD (domain/scanCompleteness.ts). Optional because a row written before
+  // these columns existed carries none of them, and that absence is meaningful rather than a
+  // gap: a blank `disappearance` is a LEGACY scan — complete, and replayed under the rules it
+  // was written under. Every live scan written since carries all five.
+  /** The tenant's own total for the query; null when it reported none. */
+  reported_total?: number | null;
+  /** Pages that came back with GraphQL errors beside their nodes. */
+  partial_pages?: number | null;
+  /** Nodes the cursor returned more than once (by Wiz `id`). */
+  duplicates?: number | null;
+  /** "complete", "deferred:<reason>", or blank for a legacy row. Replay reads it back. */
+  disappearance?: string | null;
+  /** Rows this scan closed as repository drop-outs — counted apart from `resolved_count`. */
+  dropout_count?: number | null;
 }
 
 export interface EpisodeRow {

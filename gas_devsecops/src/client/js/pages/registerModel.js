@@ -10,7 +10,9 @@
 // `resolution_src` is "disappeared", the date is THE SCAN THAT FIRST STOPPED SEEING IT — an
 // upper bound whose error is the scan interval, not an observed event. Both are printed in
 // the same column and would otherwise look identical, so the provenance travels with the
-// date rather than living in a footnote nobody reads.
+// date rather than living in a footnote nobody reads. A third provenance, "repo_dropout", is
+// not a fix at all: the finding's whole repository stopped being returned, and the ledger
+// closes the row without an MTTR clock (domain/config.ts's RESOLUTION_REPO_DROPOUT).
 
 import { fmtCount } from "../../../../../gas_shared/ui/figures.js";
 
@@ -27,6 +29,8 @@ export const PROVENANCE = {
   UNKNOWN: "unknown",
   /** Seen again after it had been resolved. Its clock restarted on this sighting. */
   RETURNED: "returned",
+  /** Its repository stopped being returned. Closed, but not a fix and not timed as one. */
+  LEFT: "left",
 };
 
 /**
@@ -53,6 +57,7 @@ export function provenance(row) {
   }
   if (row.resolution_src === "api") return PROVENANCE.OBSERVED;
   if (row.resolution_src === "disappeared") return PROVENANCE.BOUNDED;
+  if (row.resolution_src === "repo_dropout") return PROVENANCE.LEFT;
   return PROVENANCE.UNKNOWN;
 }
 
@@ -63,6 +68,7 @@ export const PROVENANCE_LABEL = {
   [PROVENANCE.BOUNDED]: "Gone by",
   [PROVENANCE.UNKNOWN]: "Resolved",
   [PROVENANCE.RETURNED]: "Returned",
+  [PROVENANCE.LEFT]: "Repo left",
 };
 
 export const PROVENANCE_HELP = {
@@ -77,6 +83,10 @@ export const PROVENANCE_HELP = {
   [PROVENANCE.RETURNED]:
     "Seen again after it had been resolved. Its clock restarted on this sighting; the "
     + "earlier episode is not in this figure.",
+  [PROVENANCE.LEFT]:
+    "Repository left the scan — not counted as a fix. Every open finding on it went missing "
+    + "at once, so no remediation time is measured; if the repository comes back, this "
+    + "finding reopens on its original clock.",
 };
 
 /**
@@ -91,6 +101,8 @@ export function boundedShare(rows) {
   let bounded = 0;
   for (const r of rows ?? []) {
     if (r.status !== "RESOLVED") continue;
+    // Not in the denominator: the aggregates this share qualifies leave drop-outs out too.
+    if (provenance(r) === PROVENANCE.LEFT) continue;
     resolved += 1;
     if (provenance(r) === PROVENANCE.BOUNDED) bounded += 1;
   }

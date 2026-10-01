@@ -152,6 +152,7 @@ import {
 } from "../domain/settingsLogic";
 import { coldZoneHeadline, coldZoneProfile, type NewestScan } from "../domain/coldZone";
 import type { BaseRow, ScanRow } from "../domain/ledgerTypes";
+import { disappearanceWindow } from "../domain/ledgerCore";
 import { normalizeSeverity } from "../domain/severity";
 import { parseSeverities } from "../domain/compaction";
 import { attachProjectGrain, inProject, parseProjects } from "../domain/projectScope";
@@ -681,6 +682,14 @@ function newestScanByScope(): Partial<Record<Scope, NewestScan>> {
       if (seen !== undefined && ms <= seen) continue;
       newestMs[scope] = ms;
       byScope[scope] = { scan_id: s.scan_id, ts: s.ts };
+    }
+    // The window back to the newest COMPLETE scan, so a deferred newest scan — one that came
+    // back short or empty — does not read every repository it missed as unobserved. Identical
+    // to `scan_id` alone whenever the newest scan is complete (`coldZone.NewestScan`).
+    const scans = loadScanRows();
+    for (const scope of Object.keys(byScope) as Scope[]) {
+      const window = disappearanceWindow(scans, scope);
+      if (window) byScope[scope] = { ...byScope[scope]!, window_ids: window.fallback };
     }
     newestScanMemo = { version, byScope };
   }
@@ -1867,7 +1876,10 @@ export function registerModel(scope: Scope, p?: ModelParams): Rec {
     // one — worse than a stale number, because it is a silently missing caveat.
     // `slaTargets` joins the key because `triageFunnel`'s `overdue` step (inside
     // `buildRegister`) reads it — see `mttrModel`'s matching comment.
-    "dsRegister2",
+    // "dsRegister2" -> "dsRegister3" (completeness gate): `latestScan` gained the scan row's
+    // completeness record (`disappearance`, `dropout_count`, …), and a row's `resolution_src`
+    // can now read "repo_dropout" — a warm dsRegister2 entry would draw neither.
+    "dsRegister3",
     { ...keyOf(n), scope, slaTargets: n.slaTargets },
     () => buildRegister(scope, n),
     CLOCK_TTL_SEC,
@@ -2710,8 +2722,12 @@ export function historyModel(p?: ModelParams): Rec {
   // `eventsPastCut`/`lateEntrants`/`lateEntryMedianAge` too — `shipKM` is the one function
   // behind both `kpis.km` here and `remediation.km` in `mttrModel`, so the shape change (and
   // the bump it forces) is identical, even though this page draws no accounting block itself.
+  //
+  // "dsHistory4" -> "dsHistory5" (completeness gate): every `scans` row gained the completeness
+  // record the Saved scans table marks a deferred scan from, and the movement decomposition
+  // now files repository drop-outs under `bounded`.
   return durablyCached(
-    "dsHistory4",
+    "dsHistory5",
     { ...keyOf(n), mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
     () => buildHistory(n),
   );

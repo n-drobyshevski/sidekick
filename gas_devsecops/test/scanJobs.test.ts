@@ -241,6 +241,8 @@ interface ScopePlan {
   rowsPerPage: number;
   /** Pages (1-based) that come back PARTIAL — nodes AND errors. */
   partialOn: number[];
+  /** What page 0 reports as the total; defaults to `pages * rowsPerPage` (an honest tenant). */
+  reportedTotal?: number | null;
 }
 
 const tenant: {
@@ -401,7 +403,11 @@ vi.mock("../src/server/wizClient", async (importOriginal) => {
         },
         // Like the real documents: the count is selected only when the variables ask for it
         // (`@include(if: $includeTotalCount)`), so a sync that stopped asking reads null here.
-        totalCount: variables["includeTotalCount"] === true ? plan.pages * plan.rowsPerPage : null,
+        totalCount: variables["includeTotalCount"] !== true
+          ? null
+          : plan.reportedTotal !== undefined
+            ? plan.reportedTotal
+            : plan.pages * plan.rowsPerPage,
         partialErrors: plan.partialOn.includes(pageNumber + 1)
           ? [`Cannot return null for non-nullable field Weakness.name (page ${pageNumber + 1})`]
           : [],
@@ -1042,6 +1048,70 @@ describe("the history entry", () => {
     // The caveat travels with the figure.
     expect(scopes[0]!["partial_pages"]).toBe(1);
     expect(stats["mttr"]).toBeTruthy();
+  });
+});
+
+/* ========================================================== the completeness gate */
+
+describe("the completeness gate on a live sync", () => {
+  const recorded = (): Rec[] => JSON.parse(props["RECENT_ERRORS"] ?? "[]") as Rec[];
+  const small = (): Record<Scope, ScopePlan> => ({
+    sca: { pages: 2, rowsPerPage: 2, partialOn: [] },
+    sast: { pages: 1, rowsPerPage: 2, partialOn: [1] },
+    secrets: { pages: 1, rowsPerPage: 2, partialOn: [] },
+  });
+
+  it("hands persistSync the tenant's total and the partial pages, and stores the verdict", async () => {
+    const { scanJobs } = await load();
+    tenant.plan = small();
+    scanJobs.startSync();
+
+    const handed = calls.persistSync[0]!.perScope as Array<{ scope: Scope; completeness: Rec }>;
+    expect(handed.map((e) => [e.scope, e.completeness])).toEqual([
+      ["sca", { reportedTotal: 4, partialPages: 0 }],
+      ["sast", { reportedTotal: 2, partialPages: 1 }],
+      ["secrets", { reportedTotal: 2, partialPages: 0 }],
+    ]);
+    // The record lands on the scans tab — through the REAL headers, so a column the tab lacks
+    // would read null here.
+    expect(scanRows().map((r) => [r["scope"], r["disappearance"], r["reported_total"], r["partial_pages"]]))
+      .toEqual([
+        ["sca", "complete", 4, 0],
+        ["sast", "complete", 2, 1],
+        ["secrets", "complete", 2, 0],
+      ]);
+    expect(recorded().filter((e) => e["op"] === "syncCompleteness")).toEqual([]);
+  });
+
+  it("a short scope is deferred: its absences stay open, and the error log and history say so", async () => {
+    const { scanJobs } = await load();
+    tenant.plan = small();
+    scanJobs.startSync();
+
+    // A day later sca returns one page of two where it reports twenty.
+    setClock(Date.parse("2026-09-04T02:00:00.000Z"));
+    tenant.plan = { ...small(), sca: { pages: 1, rowsPerPage: 2, partialOn: [], reportedTotal: 20 } };
+    const jobId = scanJobs.startSync().jobId!;
+    const syncId = String(jobRow(jobId)["scan_id"]);
+
+    const sca = scanRows().find((r) => r["scan_id"] === syncId && r["scope"] === "sca")!;
+    expect(sca).toMatchObject({ disappearance: "deferred:short", resolved_count: 0 });
+    // sca-2 and sca-3 were not returned and are still OPEN — nothing was resolved by absence.
+    const ledger = tables["finding_ledger"] ?? [];
+    for (const key of ["sca:id:sca-2", "sca:id:sca-3"]) {
+      expect(ledger.find((r) => r["finding_key"] === key)!["status"]).toBe("OPEN");
+    }
+
+    const entries = recorded().filter((e) => e["op"] === "syncCompleteness");
+    expect(entries).toHaveLength(1);
+    expect(String(entries[0]!["message"])).toMatch(/^sca scan of sync .* looked incomplete \(short: 2 received, 20 reported/);
+    expect(String(entries[0]!["message"])).toMatch(/2 open finding\(s\) it did not return were left open/);
+
+    const day = drive.named["history/2026-09-04.json.gz"] as Rec;
+    const scaStats = (day["scopes"] as Rec[]).find((s) => s["scope"] === "sca")!;
+    expect(scaStats["completeness"]).toMatchObject({
+      disappearance: "deferred:short", reported_total: 20, absent: 2, dropouts: 0,
+    });
   });
 });
 

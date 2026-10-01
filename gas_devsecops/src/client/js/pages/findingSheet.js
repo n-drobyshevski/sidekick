@@ -132,13 +132,16 @@ function wizCveRow(id) {
  *
  * `warn` rather than `ok` for a bounded date, matching the register table's own cell: the
  * pill's colour is read first, and a green tick over "it went at some unknown point in the
- * last scan interval" overstates what the ledger knows.
+ * last scan interval" overstates what the ledger knows. A repository drop-out is `warn` for a
+ * stronger version of the same reason: nothing about it was fixed at all.
  */
 function provenanceChip(r) {
   const p = provenance(r);
   const kind = p === PROVENANCE.OPEN
     ? "neutral"
-    : p === PROVENANCE.BOUNDED || p === PROVENANCE.RETURNED ? "warn" : "ok";
+    : p === PROVENANCE.BOUNDED || p === PROVENANCE.RETURNED || p === PROVENANCE.LEFT
+      ? "warn"
+      : "ok";
   return { kind, text: PROVENANCE_LABEL[p], help: PROVENANCE_HELP[p] || null };
 }
 

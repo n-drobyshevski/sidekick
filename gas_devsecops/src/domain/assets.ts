@@ -39,6 +39,7 @@ import {
   POPULATION_ALL,
   POPULATION_HIGH_RISK,
   RESOLVED_STATUSES,
+  isRepoDropout,
 } from "./config";
 import type { BaseRow } from "./ledgerTypes";
 import {
@@ -353,7 +354,11 @@ function perAsset(rows: Classified[], windowStart: number | null, groupBy: Asset
       a.hasFoothold = true;
       a.fn += 1;
     }
-    if (high && !open) a.tp += 1;
+    // A repository drop-out is closed but not remediated (config.ts's RESOLUTION_REPO_DROPOUT):
+    // it counts toward neither coverage nor the window's closures, exactly as the confusion
+    // matrix (`program.ts`'s tallyRow) and capacity leave it out.
+    const dropout = isRepoDropout(row);
+    if (high && !open && !dropout) a.tp += 1;
 
     if (windowStart !== null) {
       // A NULL timestamp makes the comparison NULL in Spark, which `.otherwise(0)` counts as
@@ -361,7 +366,7 @@ function perAsset(rows: Classified[], windowStart: number | null, groupBy: Asset
       const firstMs = parseTs(row.first_seen);
       const resolvedMs = parseTs(row.resolved_at);
       if (firstMs !== null && firstMs >= windowStart) a.opened! += 1;
-      if (resolvedMs !== null && resolvedMs >= windowStart) a.closed! += 1;
+      if (!dropout && resolvedMs !== null && resolvedMs >= windowStart) a.closed! += 1;
       if (firstMs !== null && firstMs < windowStart && (resolvedMs === null || resolvedMs >= windowStart)) {
         a.openAtStart! += 1;
       }

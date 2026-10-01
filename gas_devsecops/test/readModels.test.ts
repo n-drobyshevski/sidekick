@@ -424,6 +424,9 @@ describe("the caching audit is per model, and the header states it", () => {
     // "dsMttr3" -> "dsMttr4", "dsHistory3" -> "dsHistory4" (row-accounting package): every
     // `ShippedKM` gained `rowsIn`/`noClock`/`eventsPastCut`/`lateEntrants`/`lateEntryMedianAge`
     // — same reasoning, same unchanged layer claim.
+    //
+    // "dsRegister2" -> "dsRegister3", "dsHistory4" -> "dsHistory5" (completeness gate): the scan
+    // rows both payloads carry gained the completeness record — same unchanged layer claim.
     expect(layerOf("dsExecutive2")).toEqual(["cached"]);
     // "dsMttr1" -> "dsMttr2": the namespace was bumped when `remediation` gained its
     // `slaConsumed` block. A warm entry from THAT old namespace carries no deciles, and a
@@ -439,7 +442,7 @@ describe("the caching audit is per model, and the header states it", () => {
     // over figures that have one is a silently missing caveat. (Unlike its three siblings
     // above, `registerModel`'s own build never calls `kaplanMeier`, so the delayed-entry
     // package left this namespace untouched.)
-    expect(layerOf("dsRegister2")).toEqual(["cached", "cached", "cached"]);
+    expect(layerOf("dsRegister3")).toEqual(["cached", "cached", "cached"]);
 
     // Time-invariant models: dated by the ledger's own clock, so a stored copy stays true.
     // "dsProgram1" -> "dsProgram2": the namespace was bumped when `capacity` gained
@@ -458,7 +461,7 @@ describe("the caching audit is per model, and the header states it", () => {
     // per-register `movement` / `movementNote` blocks. A warm entry from THAT old namespace
     // carries no movement block, and the new section would draw "no movement decomposition in
     // this payload" over a window that is measurable.
-    expect(layerOf("dsHistory4")).toEqual(["durablyCached"]);
+    expect(layerOf("dsHistory5")).toEqual(["durablyCached"]);
     expect(layerOf("dsStorage1")).toEqual(["durablyCached"]);
 
     // And nothing reached both layers, which is the failure the spelling-out above exists to
@@ -513,7 +516,7 @@ describe("the caching audit is per model, and the header states it", () => {
     registerModel("sca", ALL);
     registerModel("sast", ALL);
     const keys = H.cacheCalls
-      .filter((c) => c.name === "dsRegister2")
+      .filter((c) => c.name === "dsRegister3")
       .map((c) => JSON.stringify(c.params));
     expect(new Set(keys).size).toBe(2);
   });
@@ -1656,8 +1659,8 @@ describe("warmReadModels", () => {
     expect(H.swept).toBe(1);
     expect(new Set(H.cacheCalls.map((c) => c.name))).toEqual(new Set([
       "dsBootCore1",
-      "dsHistory4", "dsProgram2", "dsRepos2", "dsStorage1",
-      "dsExecutive2", "dsMttr4", "dsMttrSplit1", "dsSecrets2", "dsRegister2",
+      "dsHistory5", "dsProgram2", "dsRepos2", "dsStorage1",
+      "dsExecutive2", "dsMttr4", "dsMttrSplit1", "dsSecrets2", "dsRegister3",
     ]));
     // FIRST, because doGet only inlines a bootstrap core that is already stored: a budget
     // cut-out must never be what leaves every page load paying the second round trip.

@@ -215,6 +215,14 @@ function rowToScan(r: Rec): ScanRow {
     raw_ref: s(r, "raw_ref"),
     obs_ref: s(r, "obs_ref"),
     sealed: r["sealed"] === 1 || r["sealed"] === "1" || r["sealed"] === true ? 1 : 0,
+    // The completeness record. Blank cells stay null — on a row written before these columns
+    // existed that is the LEGACY marker the replay reads (`scanCompleteness.readDisappearance`),
+    // so it must not be coerced to 0 or to "complete" on the way in.
+    reported_total: n(r, "reported_total"),
+    partial_pages: n(r, "partial_pages"),
+    duplicates: n(r, "duplicates"),
+    disappearance: s(r, "disappearance"),
+    dropout_count: n(r, "dropout_count"),
   };
 }
 
@@ -514,6 +522,29 @@ export interface ScopePersist {
   scannedSeverities?: Iterable<string> | null;
   /** Internal storage address of the archived raw pages. Never leaves this module. */
   rawRef?: string | null;
+  /**
+   * The fetch's own account of itself — the tenant's total (null when it reported none) and
+   * how many pages came back partial. Given, the scope runs the completeness gate and the
+   * repository drop-out pass (`ledgerCore.persistFlatScan`); omitted, it persists under the
+   * legacy rules, which is what the dev seed does.
+   */
+  completeness?: { reportedTotal: number | null; partialPages: number } | null;
+}
+
+/** One scope's completeness verdict, as the sync reports it. Counts only. */
+export interface ScopeCompleteness {
+  /** The scan row's `disappearance`: "complete", "deferred:<reason>", or null (legacy). */
+  disappearance: string | null;
+  reported_total: number | null;
+  partial_pages: number | null;
+  duplicates: number | null;
+  /** Open rows the scan would close by absence — held back when deferred. */
+  absent: number;
+  /** Rows closed as repository drop-outs, and how many repositories they came from. */
+  dropouts: number;
+  dropout_repos: number;
+  /** Rows a returning repository brought back. */
+  resumed: number;
 }
 
 /** One scope's result. COUNTS AND IDS ONLY — no raw_ref, no obs_ref, no journal_ref. */
@@ -528,6 +559,8 @@ export interface ScopeOutcome {
   twins: TwinStats | null;
   /** False when the scope's row was already on the tab and this call reconciled nothing. */
   written: boolean;
+  /** The completeness verdict; null on an idempotent replay, which assessed nothing. */
+  completeness: ScopeCompleteness | null;
 }
 
 /**
@@ -571,6 +604,7 @@ export function persistSync(
         total: 0,
         twins: null,
         written: false,
+        completeness: null,
       });
       continue;
     }
@@ -597,6 +631,7 @@ export function persistSync(
       scanId: syncId,
       scannedSeverities: entry.scannedSeverities ?? null,
       rawRef: entry.rawRef ?? null,
+      completeness: entry.completeness ?? null,
     });
     outcomes.push({
       scope: entry.scope,
@@ -605,6 +640,18 @@ export function persistSync(
       total: entry.records.length,
       twins: out.twinStats,
       written: out.scanRow !== null,
+      completeness: out.scanRow
+        ? {
+          disappearance: out.scanRow.disappearance ?? null,
+          reported_total: out.scanRow.reported_total ?? null,
+          partial_pages: out.scanRow.partial_pages ?? null,
+          duplicates: out.scanRow.duplicates ?? null,
+          absent: out.absence.absent,
+          dropouts: out.absence.dropouts,
+          dropout_repos: out.absence.dropoutRepos,
+          resumed: out.absence.resumed,
+        }
+        : null,
     });
     if (out.scanRow) {
       newRows.push(out.scanRow);
@@ -755,6 +802,9 @@ export function loadTrend(options: TrendOptions = {}): Rec[] {
     severity: r.severity,
     first_seen: r.first_seen,
     resolved_at: r.resolved_at,
+    // Read by `trend.ts` to keep a repository drop-out out of the resolved count and the SLA
+    // cohort: its resolved_at is lost sight, not a fix.
+    resolution_src: r.resolution_src,
     mttr_days: r.mttr_days,
     actionable_from: r.actionable_from,
     fix_available_at: r.fix_available_at,
@@ -797,6 +847,7 @@ export function loadProgramTrend(
     status: r.status,
     first_seen: r.first_seen,
     resolved_at: r.resolved_at,
+    resolution_src: r.resolution_src,
     mttr_days: r.mttr_days,
     has_kev: r.has_kev,
     has_exploit: r.has_exploit,

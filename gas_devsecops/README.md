@@ -151,6 +151,19 @@ row rather than in a footnote. Where `resolution_src` is `disappeared` the date 
 that first stopped seeing the finding — an upper bound whose error is the scan interval. On
 SAST that is *every* closed row; on SCA and secrets it is most of them.
 
+**Absence only resolves a finding when the scan was complete.** Each live scan is checked
+first (`src/domain/scanCompleteness.ts`): no rows while open findings exist, fewer distinct
+rows than Wiz's own total (only when no page came back partial — SAST always does), or more
+repeated rows than `max(5, 1%)`. A scan that fails is still saved, but it is *deferred*:
+nothing it missed is resolved, the Data page's error log says so, and Scan history marks the
+row. The next complete scan resolves everything missed since the last complete one. The
+verdict is stored on the scan row, so deleting a scan and replaying the rest reaches the same
+ledger. **A repository that vanishes whole is not a fix either**: when a complete scan returns
+nothing for a repository whose missing open findings number three or more, they close as
+`repo_dropout` — out of the backlog, but with no MTTR, outside every remediation figure and
+outside the scan's resolved count. If the repository comes back, they resume their original
+clock rather than counting as reopened.
+
 **The design that carried the risk.** Neither source register does three scopes in one
 ledger: `gas/` has one, and `brick/`'s reconcile takes a `scope` but only stamps it,
 because its caller hands it a prior already filtered down. Here the prior is one tab holding

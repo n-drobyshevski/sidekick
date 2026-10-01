@@ -11,7 +11,8 @@
 //                       insights.ts's header for why bySupportGroup/byDomain were dropped
 //                       (host-only; no analog for a source repository).
 //   SCAN_ROW_KEYS       drops `shape` (ledgerTypes.ts's ScanRow has no such column — every
-//                       scan here is flat) and adds `scope` (the register a scan covered,
+//                       scan here is flat), adds `disappearance`/`dropout_count` (the
+//                       completeness verdict), and adds `scope` (the register a scan covered,
 //                       which the Scan History table needs on a three-scope register gas/'s
 //                       single-register version never had to show). raw_ref/obs_ref (the
 //                       Drive ids) stay OUT of the allowlist, same as gas/'s raw_ref/obs_ref —
@@ -214,6 +215,11 @@ export function programTrendSlice(trends: unknown): Rec | null {
 const SCAN_ROW_KEYS = [
   "scan_id", "ts", "scope", "mode", "total",
   "new_count", "resolved_count", "reopened_count", "severities", "sealed",
+  // The completeness verdict and the drop-outs it closed — what the table marks a deferred
+  // scan by, and the count `resolved_count` deliberately leaves out (domain/scanCompleteness.ts).
+  // The other three record columns (reported_total, partial_pages, duplicates) are operator
+  // diagnostics that reach the Data page's error log instead.
+  "disappearance", "dropout_count",
 ] as const;
 
 /** `getScanHistory`'s scans, narrowed to the columns the table reads. */

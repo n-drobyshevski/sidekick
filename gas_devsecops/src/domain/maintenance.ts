@@ -208,6 +208,11 @@ export function replayScans(
       scannedSeverities: parseSeverities(row.severities),
       rawRef: row.raw_ref,
       obsRef: row.obs_ref,
+      // The completeness verdict the LIVE persist reached, re-applied — never re-assessed. The
+      // tenant's total and the partial-page count are not in the archived records, so a replay
+      // that re-ran the gate would have to guess them; reading the stored row is what makes a
+      // delete-and-replay land on the ledger the live sequence wrote.
+      stored: row,
     });
     observationsByScan[row.scan_id] = observations;
   }
@@ -411,6 +416,9 @@ export function buildCheckpoint(
       mode: r.mode,
       scanId: r.scan_id,
       scannedSeverities: parseSeverities(r.severities),
+      // Same rule as `replayScans`: the stored verdict, so the checkpoint is the ledger the
+      // live sequence actually reached at the floor.
+      stored: r,
     });
   }
   return {
@@ -455,6 +463,9 @@ function openAndResolved(state: LedgerState): Rec[] {
       first_seen: row.first_seen,
       status: row.status,
       resolved_at: row.resolved_at,
+      // `mttrFromLedger` leaves repository drop-outs out of the MTTR figures, so the gate has
+      // to hand it the provenance on both sides or a sealed drop-out would read as a fix.
+      resolution_src: row.resolution_src,
     });
   }
   for (const e of state.episodes) {
@@ -466,6 +477,7 @@ function openAndResolved(state: LedgerState): Rec[] {
       first_seen: e.first_seen,
       status: "RESOLVED",
       resolved_at: e.resolved_at,
+      resolution_src: e.resolution_src,
     });
   }
   return out;
@@ -504,6 +516,7 @@ function coverageOf(state: LedgerState, now: number): unknown {
         scope: r.scope,
         severity: r.severity,
         status: r.status,
+        resolution_src: r.resolution_src,
         has_kev: r.has_kev,
         has_exploit: r.has_exploit,
         epss: r.epss,
@@ -529,6 +542,7 @@ function trendOf(state: LedgerState, now: number): unknown {
       severity: r.severity,
       first_seen: r.first_seen,
       resolved_at: r.resolved_at,
+      resolution_src: r.resolution_src,
       mttr_days: r.mttr_days,
       fix_available_at: r.fix_available_at,
     })),

@@ -132,6 +132,11 @@ var Server = (() => {
   var STATUS_RESOLVED = "RESOLVED";
   var RESOLUTION_API = "api";
   var RESOLUTION_DISAPPEARED = "disappeared";
+  var RESOLUTION_REPO_DROPOUT = "repo_dropout";
+  var DROPOUT_MIN_OPEN = 3;
+  function isRepoDropout(row) {
+    return row != null && row.resolution_src === RESOLUTION_REPO_DROPOUT;
+  }
   var EPSS_PRIORITY_THRESHOLD = 0.1;
   var DEFAULT_RISK_RULE = {
     kev: true,
@@ -546,7 +551,7 @@ var Server = (() => {
     return `${scope}:id:${id}`;
   }
   function mttrFromLedger(ledgerRows, opts = {}) {
-    const rows = [...ledgerRows];
+    const rows = [...ledgerRows].filter((r) => !isRepoDropout(r));
     if (!rows.length) return { perSev: {}, overall: {} };
     const work = rows.map((r) => ({
       sev: "severity" in r ? normalizeSeverity(r["severity"]) : "UNKNOWN",
@@ -950,6 +955,11 @@ var Server = (() => {
       stats: { keys, folded, medianGapDays: gaps.length ? median(gaps) : null }
     };
   }
+  function repoIdOf(rec, scope) {
+    const id = scope === "sca" ? str(rec, "vulnerableAsset.id") : str(rec, "resource.id");
+    const trimmed = id === null ? "" : id.trim();
+    return trimmed === "" ? null : trimmed;
+  }
   function makeRow(key, scope, attrs, sev2, firstSeen, scanId, scanTs, fixDate, fixObservedAt) {
     return {
       finding_key: key,
@@ -1012,13 +1022,16 @@ var Server = (() => {
     }
   }
   function reconcile(currentRecords, existingLedger, scanId, scanTs, prevScanId, options) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G, _H;
     const {
       scope,
       disappearanceMode = "scan_ts",
       prevScanTs = null,
       scannedSeverities = null,
-      prevScanIdBySeverity: prevScanIdBySeverity2 = null
+      prevScanIdBySeverity = null,
+      disappearanceWindow: disappearanceWindow2 = null,
+      deferDisappearance = false,
+      detectDropouts = false
     } = options;
     const updated = {};
     for (const [key, row] of Object.entries(existingLedger)) updated[key] = { ...row };
@@ -1027,6 +1040,7 @@ var Server = (() => {
     let newCount = 0;
     let resolvedCount = 0;
     let reopenedCount = 0;
+    let resumedCount = 0;
     const scanTsIso = (_a = toIso(parseTs(scanTs))) != null ? _a : String(scanTs);
     const folded = scope === "secrets" ? foldSecretTwins(currentRecords) : { nodes: currentRecords, stats: emptyTwinStats() };
     for (const rec of folded.nodes) {
@@ -1063,12 +1077,21 @@ var Server = (() => {
         );
         updated[key] = row;
         newCount += 1;
+      } else if (row.status === STATUS_RESOLVED && row.resolution_src === RESOLUTION_REPO_DROPOUT) {
+        row.status = STATUS_OPEN;
+        row.resolved_at = null;
+        row.resolution_src = null;
+        row.first_seen = (_i = minIso(row.first_seen, apiFirst)) != null ? _i : row.first_seen;
+        row.last_seen = scanTsIso;
+        row.last_scan_id = scanId;
+        seedFix(row);
+        resumedCount += 1;
       } else if (row.status === STATUS_RESOLVED && !apiSaysResolved) {
         row.status = STATUS_OPEN;
         row.resolved_at = null;
         row.resolution_src = null;
-        row.reopened_count = Number((_i = row.reopened_count) != null ? _i : 0) + 1;
-        row.first_seen = (_j = minIso(apiFirst, scanTsIso)) != null ? _j : scanTsIso;
+        row.reopened_count = Number((_j = row.reopened_count) != null ? _j : 0) + 1;
+        row.first_seen = (_k = minIso(apiFirst, scanTsIso)) != null ? _k : scanTsIso;
         row.last_seen = scanTsIso;
         row.last_scan_id = scanId;
         row.fix_date = null;
@@ -1079,7 +1102,7 @@ var Server = (() => {
         reopenedCount += 1;
       } else {
         if (row.status === STATUS_OPEN) {
-          row.first_seen = (_k = minIso(row.first_seen, apiFirst)) != null ? _k : row.first_seen;
+          row.first_seen = (_l = minIso(row.first_seen, apiFirst)) != null ? _l : row.first_seen;
         }
         row.last_seen = scanTsIso;
         row.last_scan_id = scanId;
@@ -1091,24 +1114,24 @@ var Server = (() => {
       row.severity = sev2;
       row.identifier = attrs.identifier;
       row.component = attrs.component;
-      row.repo_id = (_l = attrs.repo_id) != null ? _l : row.repo_id;
-      row.repo_name = (_m = attrs.repo_name) != null ? _m : row.repo_name;
-      row.branch = (_n = attrs.branch) != null ? _n : row.branch;
-      row.platform = (_o = attrs.platform) != null ? _o : row.platform;
-      row.fixed_version = (_p = attrs.fixed_version) != null ? _p : row.fixed_version;
-      row.cwe = (_q = attrs.cwe) != null ? _q : row.cwe;
-      row.ai_verdict = (_r = attrs.ai_verdict) != null ? _r : row.ai_verdict;
-      row.language = (_s = attrs.language) != null ? _s : row.language;
-      row.file_path = (_t = attrs.file_path) != null ? _t : row.file_path;
-      row.start_line = (_u = attrs.start_line) != null ? _u : row.start_line;
-      row.origin = (_v = attrs.origin) != null ? _v : row.origin;
-      row.secret_kind = (_w = attrs.secret_kind) != null ? _w : row.secret_kind;
-      row.confidence = (_x = attrs.confidence) != null ? _x : row.confidence;
-      row.owner_project = (_y = attrs.owner_project) != null ? _y : row.owner_project;
-      row.owner_path = (_z = attrs.owner_path) != null ? _z : row.owner_path;
-      row.tags_json = (_A = attrs.tags_json) != null ? _A : row.tags_json;
-      row.projects_json = (_B = attrs.projects_json) != null ? _B : row.projects_json;
-      row.portal_url = (_D = (_C = attrs.portal_url) != null ? _C : row.portal_url) != null ? _D : null;
+      row.repo_id = (_m = attrs.repo_id) != null ? _m : row.repo_id;
+      row.repo_name = (_n = attrs.repo_name) != null ? _n : row.repo_name;
+      row.branch = (_o = attrs.branch) != null ? _o : row.branch;
+      row.platform = (_p = attrs.platform) != null ? _p : row.platform;
+      row.fixed_version = (_q = attrs.fixed_version) != null ? _q : row.fixed_version;
+      row.cwe = (_r = attrs.cwe) != null ? _r : row.cwe;
+      row.ai_verdict = (_s = attrs.ai_verdict) != null ? _s : row.ai_verdict;
+      row.language = (_t = attrs.language) != null ? _t : row.language;
+      row.file_path = (_u = attrs.file_path) != null ? _u : row.file_path;
+      row.start_line = (_v = attrs.start_line) != null ? _v : row.start_line;
+      row.origin = (_w = attrs.origin) != null ? _w : row.origin;
+      row.secret_kind = (_x = attrs.secret_kind) != null ? _x : row.secret_kind;
+      row.confidence = (_y = attrs.confidence) != null ? _y : row.confidence;
+      row.owner_project = (_z = attrs.owner_project) != null ? _z : row.owner_project;
+      row.owner_path = (_A = attrs.owner_path) != null ? _A : row.owner_path;
+      row.tags_json = (_B = attrs.tags_json) != null ? _B : row.tags_json;
+      row.projects_json = (_C = attrs.projects_json) != null ? _C : row.projects_json;
+      row.portal_url = (_E = (_D = attrs.portal_url) != null ? _D : row.portal_url) != null ? _E : null;
       if (apiSaysResolved && row.status === STATUS_OPEN) {
         row.status = STATUS_RESOLVED;
         row.resolved_at = present(apiResolved) ? toIso(parseTs(apiResolved)) : scanTsIso;
@@ -1124,32 +1147,81 @@ var Server = (() => {
         status: row.status
       });
     }
+    let absentCount = 0;
+    let dropoutCount = 0;
+    let dropoutRepos = 0;
     if (prevScanId !== null) {
       const inScope = scannedSeverities !== null ? new Set(scannedSeverities) : null;
+      const windowBySev = /* @__PURE__ */ new Map();
+      const windowFallback = disappearanceWindow2 ? new Set(disappearanceWindow2.fallback) : null;
+      if (disappearanceWindow2) {
+        for (const [sev2, ids] of Object.entries(disappearanceWindow2.bySeverity)) {
+          windowBySev.set(sev2, new Set(ids));
+        }
+      }
+      const absentKeys = [];
       for (const [key, row] of Object.entries(updated)) {
         if (seen.has(key) || row.status === STATUS_RESOLVED) continue;
         const sevRow = row.severity;
         if (inScope !== null && (sevRow === null || !inScope.has(sevRow))) {
           continue;
         }
-        const expectedPrev = (_E = (prevScanIdBySeverity2 != null ? prevScanIdBySeverity2 : {})[sevRow != null ? sevRow : ""]) != null ? _E : prevScanId;
-        if (row.last_scan_id !== expectedPrev) continue;
-        if (disappearanceMode === "midpoint" && prevScanTs) {
-          row.resolved_at = midpointIso(prevScanTs, scanTsIso);
+        if (windowFallback !== null) {
+          const ids = (_F = windowBySev.get(sevRow != null ? sevRow : "")) != null ? _F : windowFallback;
+          if (row.last_scan_id === null || !ids.has(row.last_scan_id)) continue;
         } else {
-          row.resolved_at = scanTsIso;
+          const expectedPrev = (_G = (prevScanIdBySeverity != null ? prevScanIdBySeverity : {})[sevRow != null ? sevRow : ""]) != null ? _G : prevScanId;
+          if (row.last_scan_id !== expectedPrev) continue;
         }
-        row.status = STATUS_RESOLVED;
-        row.resolution_src = RESOLUTION_DISAPPEARED;
-        if (scope === "secrets" && row.removed_at == null) row.removed_at = row.resolved_at;
-        resolvedCount += 1;
-        observations.push({
-          scan_id: scanId,
-          finding_key: key,
-          present: 0,
-          severity: row.severity,
-          status: STATUS_RESOLVED
-        });
+        absentKeys.push(key);
+      }
+      absentCount = absentKeys.length;
+      const dropouts = /* @__PURE__ */ new Set();
+      if (detectDropouts && !deferDisappearance && absentKeys.length) {
+        const present2 = /* @__PURE__ */ new Set();
+        for (const rec of currentRecords) {
+          const id = repoIdOf(rec, scope);
+          if (id !== null) present2.add(id);
+        }
+        const byRepo = /* @__PURE__ */ new Map();
+        for (const key of absentKeys) {
+          const repo = ((_H = updated[key].repo_id) != null ? _H : "").trim();
+          if (repo === "" || present2.has(repo)) continue;
+          const list = byRepo.get(repo);
+          if (list) list.push(key);
+          else byRepo.set(repo, [key]);
+        }
+        for (const keys of byRepo.values()) {
+          if (keys.length < DROPOUT_MIN_OPEN) continue;
+          dropoutRepos += 1;
+          for (const k of keys) dropouts.add(k);
+        }
+      }
+      if (!deferDisappearance) {
+        for (const key of absentKeys) {
+          const row = updated[key];
+          if (disappearanceMode === "midpoint" && prevScanTs) {
+            row.resolved_at = midpointIso(prevScanTs, scanTsIso);
+          } else {
+            row.resolved_at = scanTsIso;
+          }
+          row.status = STATUS_RESOLVED;
+          if (dropouts.has(key)) {
+            row.resolution_src = RESOLUTION_REPO_DROPOUT;
+            dropoutCount += 1;
+          } else {
+            row.resolution_src = RESOLUTION_DISAPPEARED;
+            if (scope === "secrets" && row.removed_at == null) row.removed_at = row.resolved_at;
+            resolvedCount += 1;
+          }
+          observations.push({
+            scan_id: scanId,
+            finding_key: key,
+            present: 0,
+            severity: row.severity,
+            status: STATUS_RESOLVED
+          });
+        }
       }
     }
     return {
@@ -1160,8 +1232,59 @@ var Server = (() => {
         resolved_count: resolvedCount,
         reopened_count: reopenedCount
       },
-      twinStats: folded.stats
+      twinStats: folded.stats,
+      absence: {
+        absent: absentCount,
+        dropouts: dropoutCount,
+        dropoutRepos,
+        resumed: resumedCount
+      }
     };
+  }
+
+  // src/domain/scanCompleteness.ts
+  var DISAPPEARANCE_COMPLETE = "complete";
+  var DEFERRED_PREFIX = "deferred:";
+  function completenessTolerance(n2) {
+    return Math.max(5, Math.ceil(Math.max(0, n2) * 0.01));
+  }
+  function distinctNodes(records) {
+    const ids = /* @__PURE__ */ new Set();
+    let anonymous = 0;
+    for (const r of records) {
+      const raw = r ? r["id"] : null;
+      const id = raw === null || raw === void 0 ? "" : String(raw).trim();
+      if (id === "") anonymous += 1;
+      else ids.add(id);
+    }
+    const distinct = ids.size + anonymous;
+    return { distinct, duplicates: records.length - distinct };
+  }
+  function assessCompleteness(input) {
+    const { distinct, duplicates } = distinctNodes(input.records);
+    const total = input.reportedTotal;
+    const verdict = (reason) => ({
+      reason,
+      distinct,
+      duplicates
+    });
+    if (input.records.length === 0 && input.priorOpen > 0 && total !== 0) return verdict("empty");
+    if (total !== null && total > 0 && input.partialPages === 0 && distinct < total - completenessTolerance(total)) {
+      return verdict("short");
+    }
+    if (duplicates > completenessTolerance(input.records.length)) return verdict("duplicates");
+    return verdict(null);
+  }
+  function disappearanceValue(reason) {
+    return reason === null ? DISAPPEARANCE_COMPLETE : `${DEFERRED_PREFIX}${reason}`;
+  }
+  function readDisappearance(v) {
+    const s2 = v === null || v === void 0 ? "" : String(v).trim();
+    if (s2 === "") return { legacy: true, deferred: false, reason: null };
+    if (s2.startsWith(DEFERRED_PREFIX)) {
+      return { legacy: false, deferred: true, reason: s2.slice(DEFERRED_PREFIX.length) || null };
+    }
+    return { legacy: false, deferred: false, reason: null };
   }
 
   // src/domain/ledgerCore.ts
@@ -1184,18 +1307,29 @@ var Server = (() => {
     const asc = scansAsc(scans, scope);
     return asc.length ? asc[asc.length - 1] : null;
   }
-  function prevScanIdBySeverity(scans, scope) {
-    const remaining = new Set(SEVERITY_ORDER);
-    const mapping = {};
+  function disappearanceWindow(scans, scope) {
     const desc = scansAsc(scans, scope).reverse();
+    if (!desc.length) return null;
+    const remaining = new Set(SEVERITY_ORDER);
+    const bySeverity2 = {};
     for (const r of desc) {
       const sevScope = parseSeverities(r.severities);
+      const deferred = readDisappearance(r.disappearance).deferred;
       const covered = sevScope === null ? [...remaining] : [...remaining].filter((s2) => sevScope.includes(s2));
-      for (const sev2 of covered) mapping[sev2] = r.scan_id;
-      covered.forEach((s2) => remaining.delete(s2));
+      for (const sev2 of covered) {
+        const ids = bySeverity2[sev2];
+        if (ids) ids.push(r.scan_id);
+        else bySeverity2[sev2] = [r.scan_id];
+      }
+      if (!deferred) covered.forEach((s2) => remaining.delete(s2));
       if (!remaining.size) break;
     }
-    return Object.keys(mapping).length ? mapping : null;
+    const fallback = [];
+    for (const r of desc) {
+      fallback.push(r.scan_id);
+      if (!readDisappearance(r.disappearance).deferred) break;
+    }
+    return { bySeverity: bySeverity2, fallback };
   }
   function existingScanDeltas(scans, scanId, scope) {
     const row = scans.find(
@@ -1208,8 +1342,8 @@ var Server = (() => {
       reopened_count: row.reopened_count
     };
   }
-  function reconcileEpisodeCollisions(state, updated, existingLedger, deltas, scanId) {
-    var _a;
+  function reconcileEpisodeCollisions(state, updated, existingLedger, deltas, scanId, absence) {
+    var _a, _b;
     const newKeys = Object.keys(updated).filter((k) => !(k in existingLedger));
     if (!newKeys.length) return;
     const newKeySet = new Set(newKeys);
@@ -1221,8 +1355,16 @@ var Server = (() => {
     }
     for (const [key, episode] of episodeReopens) {
       const row = updated[key];
-      if (row.status === "OPEN") {
-        row.reopened_count = Number((_a = episode.reopened_count) != null ? _a : 0) + 1;
+      if (row.status === "OPEN" && episode.resolution_src === RESOLUTION_REPO_DROPOUT) {
+        row.reopened_count = Number((_a = episode.reopened_count) != null ? _a : 0);
+        if (episode.first_seen !== null && (row.first_seen === null || episode.first_seen < row.first_seen)) {
+          row.first_seen = episode.first_seen;
+        }
+        deltas.new_count -= 1;
+        absence.resumed += 1;
+        episode.superseded_by_scan = scanId;
+      } else if (row.status === "OPEN") {
+        row.reopened_count = Number((_b = episode.reopened_count) != null ? _b : 0) + 1;
         deltas.new_count -= 1;
         deltas.reopened_count += 1;
         episode.superseded_by_scan = scanId;
@@ -1234,8 +1376,11 @@ var Server = (() => {
       }
     }
   }
+  function emptyAbsence() {
+    return { absent: 0, dropouts: 0, dropoutRepos: 0, resumed: 0 };
+  }
   function persistFlatScan(state, records, options) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e, _f, _g;
     const scope = options.scope;
     const scanId = options.scanId || nowIso(options.now);
     const scanTs = scanId;
@@ -1244,12 +1389,18 @@ var Server = (() => {
     const sevScope = parseSeverities(severitiesText);
     const existing = existingScanDeltas(state.scans, scanId, scope);
     if (existing !== null) {
-      return { deltas: existing, observations: [], scanRow: null, twinStats: emptyTwinStats() };
+      return {
+        deltas: existing,
+        observations: [],
+        scanRow: null,
+        twinStats: emptyTwinStats(),
+        absence: emptyAbsence()
+      };
     }
     const prev = latestScan(state.scans, scope);
     const prevScanId = prev ? prev.scan_id : null;
     const prevScanTs = prev ? prev.ts : null;
-    const prevBySev = prevScanId !== null ? prevScanIdBySeverity(state.scans, scope) : null;
+    const window = prevScanId !== null ? disappearanceWindow(state.scans, scope) : null;
     const prefix = `${scope}:`;
     const existingLedger = {};
     const otherScopes = {};
@@ -1257,7 +1408,37 @@ var Server = (() => {
       if (key.startsWith(prefix)) existingLedger[key] = row;
       else otherScopes[key] = row;
     }
-    const { ledger: updated, observations, deltas, twinStats } = reconcile(
+    let reportedTotal = null;
+    let partialPages = null;
+    let duplicates = null;
+    let disappearance = null;
+    let deferDisappearance = false;
+    let detectDropouts = false;
+    if (options.stored) {
+      const verdict = readDisappearance(options.stored.disappearance);
+      reportedTotal = (_c = options.stored.reported_total) != null ? _c : null;
+      partialPages = (_d = options.stored.partial_pages) != null ? _d : null;
+      duplicates = (_e = options.stored.duplicates) != null ? _e : null;
+      disappearance = verdict.legacy ? null : String(options.stored.disappearance).trim();
+      deferDisappearance = verdict.deferred;
+      detectDropouts = !verdict.legacy && !verdict.deferred;
+    } else if (options.completeness) {
+      const inScope = sevScope === null ? null : new Set(sevScope);
+      let priorOpen = 0;
+      for (const row of Object.values(existingLedger)) {
+        if (row.status !== "OPEN") continue;
+        if (inScope !== null && (row.severity === null || !inScope.has(row.severity))) continue;
+        priorOpen += 1;
+      }
+      reportedTotal = options.completeness.reportedTotal;
+      partialPages = options.completeness.partialPages;
+      const verdict = assessCompleteness({ records, reportedTotal, partialPages, priorOpen });
+      duplicates = verdict.duplicates;
+      disappearance = disappearanceValue(verdict.reason);
+      deferDisappearance = verdict.reason !== null;
+      detectDropouts = verdict.reason === null;
+    }
+    const { ledger: updated, observations, deltas, twinStats, absence } = reconcile(
       records,
       existingLedger,
       scanId,
@@ -1268,10 +1449,12 @@ var Server = (() => {
         disappearanceMode,
         prevScanTs,
         scannedSeverities: sevScope,
-        prevScanIdBySeverity: prevBySev
+        disappearanceWindow: window,
+        deferDisappearance,
+        detectDropouts
       }
     );
-    reconcileEpisodeCollisions(state, updated, existingLedger, deltas, scanId);
+    reconcileEpisodeCollisions(state, updated, existingLedger, deltas, scanId, absence);
     const scanRow = {
       scan_id: scanId,
       ts: scanTs,
@@ -1282,18 +1465,26 @@ var Server = (() => {
       new_count: deltas.new_count,
       resolved_count: deltas.resolved_count,
       reopened_count: deltas.reopened_count,
-      raw_ref: (_c = options.rawRef) != null ? _c : null,
-      obs_ref: (_d = options.obsRef) != null ? _d : null,
-      sealed: 0
+      raw_ref: (_f = options.rawRef) != null ? _f : null,
+      obs_ref: (_g = options.obsRef) != null ? _g : null,
+      sealed: 0,
+      reported_total: reportedTotal,
+      partial_pages: partialPages,
+      duplicates,
+      disappearance,
+      // Null where it was not measured: a legacy row never ran the pass, a deferred one ran no
+      // absence at all. A complete scan with no drop-out records a measured 0.
+      dropout_count: detectDropouts ? absence.dropouts : null
     };
     state.scans.push(scanRow);
     state.ledger = { ...otherScopes, ...updated };
-    return { deltas, observations, scanRow, twinStats };
+    return { deltas, observations, scanRow, twinStats, absence };
   }
   function withDerived(row, nowMs, trackingStart) {
     var _a, _b;
     const first = parseTs(row.first_seen);
-    const resolved = parseTs(row.resolved_at);
+    const dropout = isRepoDropout(row);
+    const resolved = dropout ? null : parseTs(row.resolved_at);
     const open = row.status === "OPEN";
     const isSca = row.scope === "sca";
     const fixAvailableAt = isSca ? (_b = (_a = row.fix_date) != null ? _a : row.fix_observed_at) != null ? _b : null : row.first_seen;
@@ -1303,7 +1494,7 @@ var Server = (() => {
     return {
       ...row,
       mttr_days: first !== null && resolved !== null ? (resolved - first) / DAY_MS3 : null,
-      age_days: resolved === null && first !== null ? (nowMs - first) / DAY_MS3 : null,
+      age_days: !dropout && resolved === null && first !== null ? (nowMs - first) / DAY_MS3 : null,
       // MTTR delayed-entry package (BaseRowsOptions.trackingStartByScope's own comment): the
       // DETECTION clock's entry age, relative to `first_seen` — the same origin `mttr_days` /
       // `age_days` above measure from, so `entryDaysFrom`'s one formula applies unchanged.
@@ -1572,6 +1763,7 @@ var Server = (() => {
     return m;
   }
   function tallyRow(m, row, rule) {
+    if (isRepoDropout(row)) return;
     const open = isOpen(row.status);
     switch (classifyRisk(row, rule)) {
       case "high":
@@ -1706,7 +1898,7 @@ var Server = (() => {
       if (options.highRiskOnly && classifyRisk(row, options.rule) !== "high") continue;
       const first = parseTs(row.first_seen);
       if (first === null) continue;
-      parsed.push({ first, resolved: parseTs(row.resolved_at) });
+      parsed.push({ first, resolved: parseTs(row.resolved_at), dropout: isRepoDropout(row) });
     }
     const scanMs = scans.filter((s2) => s2["shape"] !== "grouped").map((s2) => parseTs(s2["ts"])).filter((t) => t !== null);
     const firstScanMs = scanMs.length ? minNum(scanMs) : null;
@@ -1752,7 +1944,9 @@ var Server = (() => {
       for (const p of parsed) {
         if (p.first < start && (p.resolved === null || p.resolved >= start)) openAtStart += 1;
         if (p.first >= start && p.first < end) opened += 1;
-        if (p.resolved !== null && p.resolved >= start && p.resolved < end) closed += 1;
+        if (!p.dropout && p.resolved !== null && p.resolved >= start && p.resolved < end) {
+          closed += 1;
+        }
       }
       const netPct = openAtStart > 0 ? (closed - opened) / openAtStart * 100 : null;
       months.push({
@@ -2556,11 +2750,16 @@ var Server = (() => {
       resolvedAt: parseTs(r["resolved_at"]),
       mttr: mttrOf(r),
       sev: normalizeSeverity(r["severity"]),
-      fixAvail: parseTs(r["fix_available_at"])
+      fixAvail: parseTs(r["fix_available_at"]),
+      // A repository drop-out is open until the register lost sight of it and in NEITHER count
+      // after: closed, but not resolved work (config.ts's RESOLUTION_REPO_DROPOUT).
+      dropout: isRepoDropout(r)
     }));
     const out = [];
     for (const ts of times) {
-      const resolvedMask = parsed.map((r) => r.resolvedAt !== null && r.resolvedAt <= ts.ms);
+      const resolvedMask = parsed.map(
+        (r) => !r.dropout && r.resolvedAt !== null && r.resolvedAt <= ts.ms
+      );
       const openMask = parsed.map(
         (r) => r.first !== null && r.first <= ts.ms && (r.resolvedAt === null || r.resolvedAt > ts.ms) && !(hideNoFix && awaitingFixAsOf(r.first, r.resolvedAt, r.fixAvail, ts.ms))
       );
@@ -2737,6 +2936,7 @@ var Server = (() => {
   function slaDeadlineRows(base, severities, scope) {
     const out = [];
     for (const r of scopeRows(base, severities, scope)) {
+      if (isRepoDropout(r)) continue;
       const actionable = parseTs(r["actionable_from"]);
       const target = SLA_TARGETS[normalizeSeverity(r["severity"])];
       if (actionable === null || target === void 0) continue;
@@ -2795,6 +2995,7 @@ var Server = (() => {
     const parsed = classifiable.map((r) => ({
       first: parseTs(r["first_seen"]),
       resolvedAt: parseTs(r["resolved_at"]),
+      dropout: isRepoDropout(r),
       cls: classifyRisk(r, rule)
     }));
     const secretFirst = secrets.map((r) => parseTs(r["first_seen"]));
@@ -2810,6 +3011,7 @@ var Server = (() => {
         for (const r of parsed) {
           if (r.first === null || r.first > d) continue;
           const remediated = r.resolvedAt !== null && r.resolvedAt <= d;
+          if (remediated && r.dropout) continue;
           counted += 1;
           if (r.cls === "unknown") {
             unknown += 1;
@@ -2912,7 +3114,12 @@ var Server = (() => {
         scanId: row.scan_id,
         scannedSeverities: parseSeverities(row.severities),
         rawRef: row.raw_ref,
-        obsRef: row.obs_ref
+        obsRef: row.obs_ref,
+        // The completeness verdict the LIVE persist reached, re-applied — never re-assessed. The
+        // tenant's total and the partial-page count are not in the archived records, so a replay
+        // that re-ran the gate would have to guess them; reading the stored row is what makes a
+        // delete-and-replay land on the ledger the live sequence wrote.
+        stored: row
       });
       observationsByScan[row.scan_id] = observations;
     }
@@ -3021,7 +3228,10 @@ var Server = (() => {
         scope: r.scope,
         mode: r.mode,
         scanId: r.scan_id,
-        scannedSeverities: parseSeverities(r.severities)
+        scannedSeverities: parseSeverities(r.severities),
+        // Same rule as `replayScans`: the stored verdict, so the checkpoint is the ledger the
+        // live sequence actually reached at the floor.
+        stored: r
       });
     }
     return {
@@ -3040,7 +3250,10 @@ var Server = (() => {
         severity: row.severity,
         first_seen: row.first_seen,
         status: row.status,
-        resolved_at: row.resolved_at
+        resolved_at: row.resolved_at,
+        // `mttrFromLedger` leaves repository drop-outs out of the MTTR figures, so the gate has
+        // to hand it the provenance on both sides or a sealed drop-out would read as a fix.
+        resolution_src: row.resolution_src
       });
     }
     for (const e of state.episodes) {
@@ -3051,7 +3264,8 @@ var Server = (() => {
         severity: e.severity,
         first_seen: e.first_seen,
         status: "RESOLVED",
-        resolved_at: e.resolved_at
+        resolved_at: e.resolved_at,
+        resolution_src: e.resolution_src
       });
     }
     return out;
@@ -3068,6 +3282,7 @@ var Server = (() => {
           scope: r.scope,
           severity: r.severity,
           status: r.status,
+          resolution_src: r.resolution_src,
           has_kev: r.has_kev,
           has_exploit: r.has_exploit,
           epss: r.epss,
@@ -3086,6 +3301,7 @@ var Server = (() => {
         severity: r.severity,
         first_seen: r.first_seen,
         resolved_at: r.resolved_at,
+        resolution_src: r.resolution_src,
         mttr_days: r.mttr_days,
         fix_available_at: r.fix_available_at
       }))
@@ -4132,7 +4348,17 @@ var Server = (() => {
       "reopened_count",
       "raw_ref",
       "obs_ref",
-      "sealed"
+      "sealed",
+      // THE COMPLETENESS RECORD (domain/scanCompleteness.ts), appended last so `ensureHeaders`
+      // adds them to an existing tab without moving a column. `disappearance` is the verdict a
+      // replay reads back — "complete", "deferred:<reason>", or blank on a row written before
+      // the gate, which replays under the old rules. `dropout_count` is the rows closed as
+      // repository drop-outs, which `resolved_count` deliberately does not include.
+      "reported_total",
+      "partial_pages",
+      "duplicates",
+      "disappearance",
+      "dropout_count"
     ],
     [TABS.repos]: [
       "repo_id",
@@ -5302,7 +5528,13 @@ var Server = (() => {
     "resolved_count",
     "reopened_count",
     "severities",
-    "sealed"
+    "sealed",
+    // The completeness verdict and the drop-outs it closed — what the table marks a deferred
+    // scan by, and the count `resolved_count` deliberately leaves out (domain/scanCompleteness.ts).
+    // The other three record columns (reported_total, partial_pages, duplicates) are operator
+    // diagnostics that reach the Data page's error log instead.
+    "disappearance",
+    "dropout_count"
   ];
   function scanRowsSlice(scans) {
     return pickRows(scans, SCAN_ROW_KEYS);
@@ -5540,7 +5772,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "a04eaed1047a" : "dev";
+  var BUILD_ID = true ? "766a266450ce" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
@@ -6106,7 +6338,15 @@ var Server = (() => {
       reopened_count: Number((_g = r["reopened_count"]) != null ? _g : 0),
       raw_ref: s(r, "raw_ref"),
       obs_ref: s(r, "obs_ref"),
-      sealed: r["sealed"] === 1 || r["sealed"] === "1" || r["sealed"] === true ? 1 : 0
+      sealed: r["sealed"] === 1 || r["sealed"] === "1" || r["sealed"] === true ? 1 : 0,
+      // The completeness record. Blank cells stay null — on a row written before these columns
+      // existed that is the LEGACY marker the replay reads (`scanCompleteness.readDisappearance`),
+      // so it must not be coerced to 0 or to "complete" on the way in.
+      reported_total: n(r, "reported_total"),
+      partial_pages: n(r, "partial_pages"),
+      duplicates: n(r, "duplicates"),
+      disappearance: s(r, "disappearance"),
+      dropout_count: n(r, "dropout_count")
     };
   }
   function rowToLedger(r) {
@@ -6296,7 +6536,7 @@ var Server = (() => {
     return tb > ta ? b : a;
   }
   function persistSync(jobId, syncId, perScope) {
-    var _a, _b;
+    var _a, _b, _c, _d, _e, _f, _g;
     const state = loadState();
     const outcomes = [];
     const todo = [];
@@ -6309,7 +6549,8 @@ var Server = (() => {
           deltas: stored,
           total: 0,
           twins: null,
-          written: false
+          written: false,
+          completeness: null
         });
         continue;
       }
@@ -6329,7 +6570,8 @@ var Server = (() => {
         // The syncId, which is also the scan's `ts`. See scanIdFor.
         scanId: syncId,
         scannedSeverities: (_a = entry.scannedSeverities) != null ? _a : null,
-        rawRef: (_b = entry.rawRef) != null ? _b : null
+        rawRef: (_b = entry.rawRef) != null ? _b : null,
+        completeness: (_c = entry.completeness) != null ? _c : null
       });
       outcomes.push({
         scope: entry.scope,
@@ -6337,7 +6579,17 @@ var Server = (() => {
         deltas: out.deltas,
         total: entry.records.length,
         twins: out.twinStats,
-        written: out.scanRow !== null
+        written: out.scanRow !== null,
+        completeness: out.scanRow ? {
+          disappearance: (_d = out.scanRow.disappearance) != null ? _d : null,
+          reported_total: (_e = out.scanRow.reported_total) != null ? _e : null,
+          partial_pages: (_f = out.scanRow.partial_pages) != null ? _f : null,
+          duplicates: (_g = out.scanRow.duplicates) != null ? _g : null,
+          absent: out.absence.absent,
+          dropouts: out.absence.dropouts,
+          dropout_repos: out.absence.dropoutRepos,
+          resumed: out.absence.resumed
+        } : null
       });
       if (out.scanRow) {
         newRows.push(out.scanRow);
@@ -6399,6 +6651,9 @@ var Server = (() => {
       severity: r.severity,
       first_seen: r.first_seen,
       resolved_at: r.resolved_at,
+      // Read by `trend.ts` to keep a repository drop-out out of the resolved count and the SLA
+      // cohort: its resolved_at is lost sight, not a fix.
+      resolution_src: r.resolution_src,
       mttr_days: r.mttr_days,
       actionable_from: r.actionable_from,
       fix_available_at: r.fix_available_at
@@ -6431,6 +6686,7 @@ var Server = (() => {
       status: r.status,
       first_seen: r.first_seen,
       resolved_at: r.resolved_at,
+      resolution_src: r.resolution_src,
       mttr_days: r.mttr_days,
       has_kev: r.has_kev,
       has_exploit: r.has_exploit,
@@ -7603,8 +7859,9 @@ var Server = (() => {
         acc.oldestOpenFirstSeen = firstSeen;
       }
     }
+    const dropout = isRepoDropout(row);
     const moves = [
-      ["resolved", row.resolved_at],
+      ["resolved", dropout ? null : row.resolved_at],
       ["removed", row.removed_at],
       ["rotated", row.rotated_at]
     ];
@@ -7616,7 +7873,7 @@ var Server = (() => {
         acc.movementKind = kind;
       }
     }
-    if (String((_a = row.resolution_src) != null ? _a : "") === RESOLUTION_DISAPPEARED) {
+    if (dropout || String((_a = row.resolution_src) != null ? _a : "") === RESOLUTION_DISAPPEARED) {
       const at = parseTs(row.resolved_at);
       if (at !== null) acc.disappeared.set(at, ((_b = acc.disappeared.get(at)) != null ? _b : 0) + 1);
     }
@@ -7633,9 +7890,11 @@ var Server = (() => {
       }
       const rows = (_a = acc.rowsByScope.get(scope)) != null ? _a : [];
       const newestTs = parseTs(newest.ts);
+      const windowIds = newest.window_ids && newest.window_ids.length ? new Set(newest.window_ids.map(String)) : null;
       for (const row of rows) {
         if (!blank(row.last_scan_id)) {
-          if (!blank(newest.scan_id) && String(row.last_scan_id) === String(newest.scan_id)) {
+          const lastScan = String(row.last_scan_id);
+          if (windowIds !== null ? windowIds.has(lastScan) : !blank(newest.scan_id) && lastScan === String(newest.scan_id)) {
             observed = true;
             break;
           }
@@ -8168,7 +8427,7 @@ var Server = (() => {
       if (inWindow(resolved, sinceMs, untilMs)) {
         const src = String((_a = row.resolution_src) != null ? _a : "").trim().toLowerCase();
         if (src === RESOLUTION_API) observed += 1;
-        else if (src === RESOLUTION_DISAPPEARED) bounded += 1;
+        else if (src === RESOLUTION_DISAPPEARED || src === RESOLUTION_REPO_DROPOUT) bounded += 1;
         else unattributed += 1;
       }
       if (gateSet && isOpen5(row.status) && !gateSet.has(normalizeSeverity(row.severity))) {
@@ -8283,12 +8542,13 @@ var Server = (() => {
         a.hasFoothold = true;
         a.fn += 1;
       }
-      if (high && !open) a.tp += 1;
+      const dropout = isRepoDropout(row);
+      if (high && !open && !dropout) a.tp += 1;
       if (windowStart !== null) {
         const firstMs = parseTs(row.first_seen);
         const resolvedMs = parseTs(row.resolved_at);
         if (firstMs !== null && firstMs >= windowStart) a.opened += 1;
-        if (resolvedMs !== null && resolvedMs >= windowStart) a.closed += 1;
+        if (!dropout && resolvedMs !== null && resolvedMs >= windowStart) a.closed += 1;
         if (firstMs !== null && firstMs < windowStart && (resolvedMs === null || resolvedMs >= windowStart)) {
           a.openAtStart += 1;
         }
@@ -9103,6 +9363,11 @@ var Server = (() => {
         newestMs[scope] = ms;
         byScope3[scope] = { scan_id: s2.scan_id, ts: s2.ts };
       }
+      const scans = loadScanRows();
+      for (const scope of Object.keys(byScope3)) {
+        const window = disappearanceWindow(scans, scope);
+        if (window) byScope3[scope] = { ...byScope3[scope], window_ids: window.fallback };
+      }
       newestScanMemo = { version, byScope: byScope3 };
     }
     return newestScanMemo.byScope;
@@ -9832,7 +10097,10 @@ var Server = (() => {
       // one — worse than a stale number, because it is a silently missing caveat.
       // `slaTargets` joins the key because `triageFunnel`'s `overdue` step (inside
       // `buildRegister`) reads it — see `mttrModel`'s matching comment.
-      "dsRegister2",
+      // "dsRegister2" -> "dsRegister3" (completeness gate): `latestScan` gained the scan row's
+      // completeness record (`disappearance`, `dropout_count`, …), and a row's `resolution_src`
+      // can now read "repo_dropout" — a warm dsRegister2 entry would draw neither.
+      "dsRegister3",
       { ...keyOf(n2), scope, slaTargets: n2.slaTargets },
       () => buildRegister(scope, n2),
       CLOCK_TTL_SEC
@@ -10280,7 +10548,7 @@ var Server = (() => {
   function historyModel(p) {
     const n2 = norm(p);
     return durablyCached(
-      "dsHistory4",
+      "dsHistory5",
       { ...keyOf(n2), mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => buildHistory(n2)
     );
@@ -10788,7 +11056,10 @@ var Server = (() => {
           cursor = page.pageInfo.endCursor;
           progress.pages = paging.pageNumber;
           progress.rows = slim.length;
-          if (page.totalCount !== null) progress.totalCount = page.totalCount;
+          if (page.totalCount !== null) {
+            progress.totalCount = page.totalCount;
+            progress.totalReported = true;
+          }
           if (page.partialErrors.length) {
             progress.partialPages += 1;
             for (const message of page.partialErrors) {
@@ -10859,11 +11130,17 @@ var Server = (() => {
       throw e;
     }
   }
+  function reportedTotalOf(progress) {
+    if (!progress) return null;
+    const n2 = Number(progress.totalCount);
+    if (!Number.isFinite(n2)) return null;
+    return progress.totalReported === true || n2 > 0 ? n2 : null;
+  }
   function finishSync(jobId, params) {
     clearCancel(jobId);
     updateJob(jobId, { phase: "RECONCILING", params_json: JSON.stringify(params) });
     const perScope = params.scopes.map((scope) => {
-      var _a, _b, _c, _d;
+      var _a, _b, _c, _d, _e, _f;
       return {
         scope,
         // The spill IS the projection reconcile is fed; reading it back rather than keeping it in
@@ -10871,7 +11148,12 @@ var Server = (() => {
         records: (_a = readSlim(scanIdFor(params.syncId, scope))) != null ? _a : [],
         mode: "live",
         scannedSeverities: (_b = params.severitiesByScope[scope]) != null ? _b : [],
-        rawRef: (_d = (_c = params.perScope[scope]) == null ? void 0 : _c.rawRef) != null ? _d : null
+        rawRef: (_d = (_c = params.perScope[scope]) == null ? void 0 : _c.rawRef) != null ? _d : null,
+        // What the completeness gate weighs the records against — see domain/scanCompleteness.ts.
+        completeness: {
+          reportedTotal: reportedTotalOf(params.perScope[scope]),
+          partialPages: Number((_f = (_e = params.perScope[scope]) == null ? void 0 : _e.partialPages) != null ? _f : 0) || 0
+        }
       };
     });
     scheduleWatchdog();
@@ -10883,6 +11165,7 @@ var Server = (() => {
     afterPersist(params, outcome);
   }
   function afterPersist(params, outcome) {
+    recordDeferrals(outcome);
     try {
       recordDaily(dailyStats(params, outcome));
     } catch (e) {
@@ -10891,6 +11174,20 @@ var Server = (() => {
     }
     autoCompactIfDue();
     warmAfterSync();
+  }
+  function recordDeferrals(outcome) {
+    var _a, _b, _c, _d;
+    for (const s2 of outcome.scopes) {
+      const c = s2.completeness;
+      const verdict = readDisappearance((_a = c == null ? void 0 : c.disappearance) != null ? _a : null);
+      if (!c || !verdict.deferred) continue;
+      const total = c.reported_total === null ? "no total reported" : `${c.reported_total} reported`;
+      recordError(
+        "syncCompleteness",
+        `${s2.scope} scan of sync ${s2.scan_id} looked incomplete (${(_b = verdict.reason) != null ? _b : "unknown"}: ${s2.total} received, ${total}, ${(_c = c.duplicates) != null ? _c : 0} duplicate(s), ${(_d = c.partial_pages) != null ? _d : 0} partial page(s)). ${c.absent} open finding(s) it did not return were left open; the next complete scan will resolve them.`,
+        "warning"
+      );
+    }
   }
   function warmAfterSync() {
     try {
@@ -10924,7 +11221,11 @@ var Server = (() => {
           total_count: (_d = (_c = params.perScope[s2.scope]) == null ? void 0 : _c.totalCount) != null ? _d : 0,
           // The caveat travels with the figure: a scope whose pages came back PARTIAL has good
           // rows and a suspect count, and a history entry that hid that would be the lie.
-          partial_pages: (_f = (_e = params.perScope[s2.scope]) == null ? void 0 : _e.partialPages) != null ? _f : 0
+          partial_pages: (_f = (_e = params.perScope[s2.scope]) == null ? void 0 : _e.partialPages) != null ? _f : 0,
+          // Whether this scope's absences were adjudicated, and what they amounted to — the absent
+          // share is recorded here and never gated on (domain/scanCompleteness.ts). Null on an
+          // idempotent replay, which assessed nothing.
+          completeness: s2.completeness
         };
       }),
       mttr: mttrFromLedger(

@@ -399,13 +399,26 @@ describe("scanRowsSlice — the columns the table draws (no `shape`, adds `scope
     scan_id: "s1", ts: "2026-08-01T00:00:00Z", scope: "sca", mode: "full", total: 161,
     new_count: 4, resolved_count: 2, reopened_count: 0, severities: "CRITICAL,HIGH",
     sealed: 0, raw_ref: "1AbCdEfGhIjKlMnOpQrStUvWxYz012345", obs_ref: "1ZyXwVuTsRqPoNmLkJ",
+    reported_total: 170, partial_pages: 0, duplicates: 0, disappearance: "deferred:short",
+    dropout_count: null,
   };
 
   it("keeps every column the page reads", () => {
     expect(Object.keys(scanRowsSlice([ROW])[0]!).sort()).toEqual([
+      "disappearance", "dropout_count",
       "mode", "new_count", "reopened_count", "resolved_count", "scan_id",
       "scope", "sealed", "severities", "total", "ts",
     ]);
+  });
+
+  // The completeness verdict ships; the fetch diagnostics behind it do not — they are the
+  // operator's (Data → Recent errors), and the table marks a deferral from the verdict alone.
+  it("ships the completeness verdict and drops the fetch diagnostics", () => {
+    const out = scanRowsSlice([ROW])[0]!;
+    expect(out["disappearance"]).toBe("deferred:short");
+    expect(out).not.toHaveProperty("reported_total");
+    expect(out).not.toHaveProperty("partial_pages");
+    expect(out).not.toHaveProperty("duplicates");
   });
 
   // Drive file ids for the archived pages and the observation set: internal storage addresses

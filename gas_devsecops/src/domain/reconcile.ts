@@ -11,9 +11,22 @@
 //   * Persisting (OPEN)   -> advance last_seen; keep first_seen earliest-known.
 //   * API-resolved        -> resolvedAt present or status in RESOLVED_STATUSES.
 //   * Disappearance       -> was OPEN and present in the immediately previous scan covering
-//                            its severity, absent now -> resolved at the current scan ts.
+//                            its severity (or, after deferred scans, anywhere in the window
+//                            since the last complete one), absent now -> resolved at the
+//                            current scan ts.
 //   * Reopen              -> a RESOLVED finding reappears active -> OPEN again,
 //                            reopened_count++, first_seen reset (a new episode).
+//
+// AND TWO THIS REGISTER ADDS, both about absence that is not remediation:
+//   * Deferral            -> a scan that failed the completeness gate (scanCompleteness.ts)
+//                            lands what it saw and resolves NOTHING by absence; the next
+//                            complete scan adjudicates the whole window since the last
+//                            complete one (`disappearanceWindow`).
+//   * Repository drop-out -> a repository with no node at all in a complete scan, whose
+//                            absent open rows number at least DROPOUT_MIN_OPEN, lost
+//                            coverage rather than its findings: those rows close as
+//                            `repo_dropout` (no MTTR clock, no resolved_count, no removed_at)
+//                            and RESUME their episode if the repository comes back.
 //
 // WHAT THIS PORT CHANGES, and why each change is here rather than in gas/:
 //
@@ -66,9 +79,11 @@
 // columns and for validation_state alike.
 
 import {
+  DROPOUT_MIN_OPEN,
   isOrgWideProject,
   RESOLUTION_API,
   RESOLUTION_DISAPPEARED,
+  RESOLUTION_REPO_DROPOUT,
   RESOLVED_STATUSES,
   STATUS_OPEN,
   STATUS_RESOLVED,
@@ -770,6 +785,39 @@ export interface ReconcileResult {
   deltas: Deltas;
   /** Always present; zeroed for sca/sast, which have no twins to fold. */
   twinStats: TwinStats;
+  /** What the absence side of this scan did — see `AbsenceStats`. */
+  absence: AbsenceStats;
+}
+
+/**
+ * The absence side of one scan, counted apart from `Deltas` because none of it is remediation
+ * a scan row's `resolved_count` should carry.
+ */
+export interface AbsenceStats {
+  /**
+   * OPEN rows this scan WOULD close by absence — in its severity scope, last seen inside the
+   * disappearance window, not returned now. Counted whether or not the scan was deferred, so a
+   * deferral can say how much it held back. Drop-outs are included: they are absent too.
+   */
+  absent: number;
+  /** Of `absent`, the rows closed as repository drop-outs (0 when deferred). */
+  dropouts: number;
+  /** How many repositories those drop-outs came from. */
+  dropoutRepos: number;
+  /** Rows a returning repository brought back from a drop-out, episode resumed. */
+  resumed: number;
+}
+
+/**
+ * The repository a raw node belongs to — the same `repo_id` `attributes` writes, read without
+ * projecting the rest of the node, because the drop-out pass needs it for EVERY node of the
+ * scan (twins included: a credential's REPOSITORY twin names its repository too, and the fold
+ * would otherwise hide it).
+ */
+function repoIdOf(rec: Rec, scope: Scope): string | null {
+  const id = scope === "sca" ? str(rec, "vulnerableAsset.id") : str(rec, "resource.id");
+  const trimmed = id === null ? "" : id.trim();
+  return trimmed === "" ? null : trimmed;
 }
 
 function makeRow(
@@ -893,6 +941,9 @@ export function reconcile(
     prevScanTs = null,
     scannedSeverities = null,
     prevScanIdBySeverity = null,
+    disappearanceWindow = null,
+    deferDisappearance = false,
+    detectDropouts = false,
   } = options;
 
   // Rows are flat scalar records, so a shallow per-row copy preserves the input.
@@ -904,6 +955,7 @@ export function reconcile(
   let newCount = 0;
   let resolvedCount = 0;
   let reopenedCount = 0;
+  let resumedCount = 0;
 
   const scanTsIso = toIso(parseTs(scanTs)) ?? String(scanTs);
 
@@ -972,6 +1024,21 @@ export function reconcile(
       );
       updated[key] = row;
       newCount += 1;
+    } else if (row.status === STATUS_RESOLVED && row.resolution_src === RESOLUTION_REPO_DROPOUT) {
+      // The repository came back. Its findings were never fixed — the register lost sight of
+      // them — so this RESUMES the episode the drop-out interrupted rather than starting a new
+      // one: first_seen stays the earliest known, reopened_count does not move, and nothing a
+      // drop-out never set (removed_at, rotated_at, the fix clock) is reset. Not counted as a
+      // reopen in the deltas either; `absence.resumed` carries it. An API resolution on this
+      // very node still closes it below, as an observed event.
+      row.status = STATUS_OPEN;
+      row.resolved_at = null;
+      row.resolution_src = null;
+      row.first_seen = minIso(row.first_seen, apiFirst) ?? row.first_seen;
+      row.last_seen = scanTsIso;
+      row.last_scan_id = scanId;
+      seedFix(row);
+      resumedCount += 1;
     } else if (row.status === STATUS_RESOLVED && !apiSaysResolved) {
       // Genuine reopen: start a new episode so the next resolution measures THIS episode, not
       // the original. The per-episode clocks reset — the prior episode's vendor fix is
@@ -1067,10 +1134,21 @@ export function reconcile(
     });
   }
 
-  // Disappearance: OPEN findings present in the immediately-previous covering scan but absent
-  // now. Three conditions, each load-bearing — see the severity-scope guard below.
+  // Disappearance: OPEN findings last seen inside the disappearance window and absent now.
+  // Three conditions, each load-bearing — see the severity-scope guard below.
+  let absentCount = 0;
+  let dropoutCount = 0;
+  let dropoutRepos = 0;
   if (prevScanId !== null) {
     const inScope = scannedSeverities !== null ? new Set(scannedSeverities) : null;
+    const windowBySev = new Map<string, Set<string>>();
+    const windowFallback = disappearanceWindow ? new Set(disappearanceWindow.fallback) : null;
+    if (disappearanceWindow) {
+      for (const [sev, ids] of Object.entries(disappearanceWindow.bySeverity)) {
+        windowBySev.set(sev, new Set(ids));
+      }
+    }
+    const absentKeys: string[] = [];
     for (const [key, row] of Object.entries(updated)) {
       if (seen.has(key) || row.status === STATUS_RESOLVED) continue;
       const sevRow = row.severity;
@@ -1081,30 +1159,84 @@ export function reconcile(
         // mass-resolve. Absence of something nobody looked for is not evidence.
         continue;
       }
-      const expectedPrev = (prevScanIdBySeverity ?? {})[sevRow ?? ""] ?? prevScanId;
-      // Only a finding that was in the IMMEDIATELY previous covering scan can be said to have
-      // disappeared from it. A row last seen three scans ago already had its disappearance
-      // adjudicated then; re-resolving it now would push resolved_at forward every run.
-      if (row.last_scan_id !== expectedPrev) continue;
-      if (disappearanceMode === "midpoint" && prevScanTs) {
-        row.resolved_at = midpointIso(prevScanTs, scanTsIso);
+      // Only a finding last seen INSIDE THE WINDOW can be said to have disappeared now. A row
+      // last seen before it already had its disappearance adjudicated; re-resolving it would
+      // push resolved_at forward every run. Without deferred scans the window is exactly the
+      // immediately previous covering scan — gas/'s `expectedPrev`, which is what a caller
+      // that passes no window still gets.
+      if (windowFallback !== null) {
+        const ids = windowBySev.get(sevRow ?? "") ?? windowFallback;
+        if (row.last_scan_id === null || !ids.has(row.last_scan_id)) continue;
       } else {
-        row.resolved_at = scanTsIso;
+        const expectedPrev = (prevScanIdBySeverity ?? {})[sevRow ?? ""] ?? prevScanId;
+        if (row.last_scan_id !== expectedPrev) continue;
       }
-      row.status = STATUS_RESOLVED;
-      row.resolution_src = RESOLUTION_DISAPPEARED;
-      // REMOVED IS NOT ROTATED. A secret leaving the register means the string left HEAD;
-      // the credential is live until validation_state/rotated_at says otherwise, and nothing
-      // here touches either.
-      if (scope === "secrets" && row.removed_at == null) row.removed_at = row.resolved_at;
-      resolvedCount += 1;
-      observations.push({
-        scan_id: scanId,
-        finding_key: key,
-        present: 0,
-        severity: row.severity,
-        status: STATUS_RESOLVED,
-      });
+      absentKeys.push(key);
+    }
+    absentCount = absentKeys.length;
+
+    // REPOSITORY DROP-OUT, decided before anything is resolved. A repository this complete
+    // scan returned NO node for, whose absent open rows number at least DROPOUT_MIN_OPEN, did
+    // not fix them all between two scans — it left coverage (archived, renamed, moved out of
+    // the project scope, a connector that stopped reporting it). Closing those rows as fixes
+    // would publish a mass remediation with an MTTR clock on every one. Below the threshold
+    // the ordinary reading — the last finding or two on a repository got fixed — wins.
+    // A row with no `repo_id` cannot be attributed to a repository and is never a drop-out.
+    const dropouts = new Set<string>();
+    if (detectDropouts && !deferDisappearance && absentKeys.length) {
+      const present = new Set<string>();
+      for (const rec of currentRecords) {
+        const id = repoIdOf(rec, scope);
+        if (id !== null) present.add(id);
+      }
+      const byRepo = new Map<string, string[]>();
+      for (const key of absentKeys) {
+        const repo = (updated[key]!.repo_id ?? "").trim();
+        if (repo === "" || present.has(repo)) continue;
+        const list = byRepo.get(repo);
+        if (list) list.push(key);
+        else byRepo.set(repo, [key]);
+      }
+      for (const keys of byRepo.values()) {
+        if (keys.length < DROPOUT_MIN_OPEN) continue;
+        dropoutRepos += 1;
+        for (const k of keys) dropouts.add(k);
+      }
+    }
+
+    // A DEFERRED scan resolves nothing by absence: it could not prove its absences are real.
+    // The rows stay OPEN with their old last_scan_id, which is still inside the next complete
+    // scan's window, so they are adjudicated there.
+    if (!deferDisappearance) {
+      for (const key of absentKeys) {
+        const row = updated[key]!;
+        if (disappearanceMode === "midpoint" && prevScanTs) {
+          row.resolved_at = midpointIso(prevScanTs, scanTsIso);
+        } else {
+          row.resolved_at = scanTsIso;
+        }
+        row.status = STATUS_RESOLVED;
+        if (dropouts.has(key)) {
+          // Lost sight, not removed: `removed_at` would claim the secret left HEAD, which
+          // nobody observed. Counted apart from resolved_count for the same reason.
+          row.resolution_src = RESOLUTION_REPO_DROPOUT;
+          dropoutCount += 1;
+        } else {
+          row.resolution_src = RESOLUTION_DISAPPEARED;
+          // REMOVED IS NOT ROTATED. A secret leaving the register means the string left
+          // HEAD; the credential is live until validation_state/rotated_at says otherwise,
+          // and nothing here touches either.
+          if (scope === "secrets" && row.removed_at == null) row.removed_at = row.resolved_at;
+          resolvedCount += 1;
+        }
+        observations.push({
+          scan_id: scanId,
+          finding_key: key,
+          present: 0,
+          severity: row.severity,
+          status: STATUS_RESOLVED,
+        });
+      }
     }
   }
 
@@ -1117,5 +1249,11 @@ export function reconcile(
       reopened_count: reopenedCount,
     },
     twinStats: folded.stats,
+    absence: {
+      absent: absentCount,
+      dropouts: dropoutCount,
+      dropoutRepos,
+      resumed: resumedCount,
+    },
   };
 }
