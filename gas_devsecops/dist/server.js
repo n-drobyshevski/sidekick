@@ -5853,7 +5853,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "12ac6e43cd3a" : "dev";
+  var BUILD_ID = true ? "cbbb42233449" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
@@ -6986,15 +6986,18 @@ var Server = (() => {
   var MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
   var warming = false;
   var touched = null;
-  function duringWarm(fn) {
+  function duringWarm(fn, carried) {
     warming = true;
-    touched = /* @__PURE__ */ new Set();
+    touched = new Set(carried != null ? carried : []);
     try {
       return fn();
     } finally {
       warming = false;
       touched = null;
     }
+  }
+  function warmTouched() {
+    return touched ? [...touched] : null;
   }
   var disabled = false;
   function readModelFileName(name, params) {
@@ -7877,7 +7880,10 @@ var Server = (() => {
     REPO_TOP_N: () => REPO_TOP_N,
     SPLIT_NONE: () => SPLIT_NONE2,
     WARM_BUDGET_MS: () => WARM_BUDGET_MS,
+    WARM_CONTINUE_HANDLER: () => WARM_CONTINUE_HANDLER,
+    WARM_START_DELAY_MS: () => WARM_START_DELAY_MS,
     __resetModelMemosForTest: () => __resetModelMemosForTest,
+    continueWarm: () => continueWarm,
     executiveModel: () => executiveModel,
     historyModel: () => historyModel,
     mttrGroupModel: () => mttrGroupModel,
@@ -7887,6 +7893,7 @@ var Server = (() => {
     registerModel: () => registerModel,
     registerRowsModel: () => registerRowsModel,
     reposModel: () => reposModel,
+    scheduleWarm: () => scheduleWarm,
     scopeSummaryModel: () => scopeSummaryModel,
     secretsModel: () => secretsModel,
     signalCoverage: () => signalCoverage,
@@ -10831,14 +10838,17 @@ var Server = (() => {
       // (`api.bootstrapIfWarm`), so it is the one entry every page load reads, and a cold one
       // costs every open a second round trip plus the 6–7 s compute.
       { label: "bootCore", run: () => bootCoreModel() },
-      // The durable four next: they are what the Drive layer exists for, and a budget cut-out
-      // that never reached them would leave the expensive answers cold overnight.
+      // Then the landing page and the page opened next. ORDER IS WHO GETS A WARM PAGE FIRST, not
+      // what survives: the post-sync warm now runs in its own trigger execution after the commit,
+      // so an analyst opening the app while it runs reads whatever it has reached, and a budget
+      // cut-out no longer leaves the tail cold overnight — `continueWarm` resumes it.
+      { label: "executive", run: () => executiveModel(all) },
+      { label: "mttr", run: () => mttrModel(all) },
+      // The durable four: what the Drive layer exists for.
       { label: "history", run: () => historyModel(all) },
       { label: "program", run: () => programModel(all) },
       { label: "repos", run: () => reposModel(all) },
       { label: "storage", run: () => storageModel() },
-      { label: "executive", run: () => executiveModel(all) },
-      { label: "mttr", run: () => mttrModel(all) },
       { label: "mttrSplit", run: () => mttrSplitModel(all) },
       { label: "secrets", run: () => secretsModel(all) }
     ];
@@ -10858,37 +10868,166 @@ var Server = (() => {
     return targets;
   }
   function warmReadModels(budgetMs = WARM_BUDGET_MS) {
+    return warmPass(budgetMs, false);
+  }
+  var WARM_CONTINUE_HANDLER = "trigger_continueWarm";
+  var WARM_PROGRESS_PROP = "WARM_PROGRESS";
+  var WARM_START_DELAY_MS = 1e3;
+  var WARM_BUSY_DELAY_MS = 6e4;
+  var WARM_MAX_HOPS = 6;
+  var WARM_KEEP_LIST_MAX_CHARS = 8e3;
+  function readProgress() {
+    try {
+      const raw = getProp(WARM_PROGRESS_PROP);
+      if (!raw) return null;
+      const p = JSON.parse(raw);
+      if (!p || p.stamp !== currentStamp()) return null;
+      return {
+        stamp: p.stamp,
+        next: Number(p.next) || 0,
+        label: typeof p.label === "string" ? p.label : null,
+        hops: Number(p.hops) || 0,
+        touched: Array.isArray(p.touched) ? p.touched.map(String) : null
+      };
+    } catch (e) {
+      console.warn(`Read-model warm: progress unreadable, starting from the top: ${e}`);
+      return null;
+    }
+  }
+  function writeProgress(p) {
+    let json = JSON.stringify(p);
+    if (json.length > WARM_KEEP_LIST_MAX_CHARS) json = JSON.stringify({ ...p, touched: null });
+    setProp(WARM_PROGRESS_PROP, json);
+  }
+  function clearProgress() {
+    try {
+      deleteProp(WARM_PROGRESS_PROP);
+    } catch (e) {
+      console.warn(`Read-model warm: could not clear the progress record: ${e}`);
+    }
+  }
+  function scheduleWarm(delayMs = WARM_START_DELAY_MS) {
+    try {
+      clearTriggers(WARM_CONTINUE_HANDLER);
+      ScriptApp.newTrigger(WARM_CONTINUE_HANDLER).timeBased().after(delayMs).create();
+      return true;
+    } catch (e) {
+      console.warn(`Read-model warm: could not schedule a warm: ${e}`);
+      recordError("cacheWarm", `Could not schedule a warm: ${e instanceof Error ? e.message : String(e)}`);
+      return false;
+    }
+  }
+  function continueWarm(_e) {
+    try {
+      clearTriggers(WARM_CONTINUE_HANDLER);
+    } catch (e) {
+      console.warn(`Read-model warm: could not clear the fired trigger: ${e}`);
+    }
+    return warmPass(WARM_BUDGET_MS, true);
+  }
+  function warmPass(budgetMs, resume) {
+    var _a, _b, _c, _d;
     const job = activeJob();
+    const prior = readProgress();
     if (job) {
       const reason = `${job.kind} job ${job.job_id} is ${job.phase}`;
       console.log(`Read-model warm: skipped, ${reason}`);
-      return { warmed: 0, skipped: 0, swept: 0, blockedBy: reason, elapsedMs: 0 };
+      const continued2 = resume && chain(prior != null ? prior : freshProgress(), prior, WARM_BUSY_DELAY_MS);
+      return { warmed: 0, skipped: 0, swept: 0, blockedBy: reason, elapsedMs: 0, resumedAt: 0, continued: continued2 };
     }
-    return duringWarm(() => warmInner(budgetMs));
+    const targets = warmTargets();
+    let start = 0;
+    if (resume && prior && prior.next > 0 && ((_a = targets[prior.next]) == null ? void 0 : _a.label) === prior.label) {
+      start = prior.next;
+    }
+    const carried = start > 0 ? prior.touched : [];
+    const hop = duringWarm(() => warmInner(budgetMs, targets, start, carried !== null), carried != null ? carried : []);
+    let continued = false;
+    if (hop.firstSkipped === null) {
+      clearProgress();
+    } else {
+      continued = chain({
+        stamp: currentStamp(),
+        next: hop.firstSkipped,
+        label: (_c = (_b = targets[hop.firstSkipped]) == null ? void 0 : _b.label) != null ? _c : null,
+        hops: (_d = prior == null ? void 0 : prior.hops) != null ? _d : 0,
+        touched: carried === null ? null : hop.touched
+      }, prior, WARM_START_DELAY_MS);
+    }
+    if (hop.skipped) {
+      const msg = `Out of budget after ${hop.warmed} entries, ${hop.skipped} left cold`;
+      console.warn(`Read-model warm: ${msg}${continued ? "; continuing in the next hop" : ""}`);
+      recordError(
+        "cacheWarm",
+        continued ? `${msg}; continuing in the next hop.` : `${msg}.`,
+        continued ? "warning" : "error"
+      );
+    }
+    return {
+      warmed: hop.warmed,
+      skipped: hop.skipped,
+      swept: hop.swept,
+      blockedBy: null,
+      elapsedMs: hop.elapsedMs,
+      resumedAt: start,
+      continued
+    };
   }
-  function warmInner(budgetMs) {
+  function freshProgress() {
+    return { stamp: currentStamp(), next: 0, label: null, hops: 0, touched: [] };
+  }
+  function chain(next, prior, delayMs) {
+    var _a, _b;
+    const hops = ((_a = prior == null ? void 0 : prior.hops) != null ? _a : 0) + 1;
+    try {
+      if (hops > WARM_MAX_HOPS) {
+        console.warn(`Read-model warm: gave up after ${WARM_MAX_HOPS} continuation hops`);
+        recordError("cacheWarm", `Gave up after ${WARM_MAX_HOPS} continuation hops under one data version.`);
+        writeProgress({ ...next, hops: (_b = prior == null ? void 0 : prior.hops) != null ? _b : 0 });
+        return false;
+      }
+      writeProgress({ ...next, hops });
+    } catch (e) {
+      console.warn(`Read-model warm: could not record progress: ${e}`);
+      recordError("cacheWarm", `Could not record warm progress: ${e instanceof Error ? e.message : String(e)}`);
+      return false;
+    }
+    return scheduleWarm(delayMs);
+  }
+  function warmInner(budgetMs, targets, start, sweepable) {
+    var _a;
     const t0 = Date.now();
     let warmed = 0;
     let skipped = 0;
-    for (const target of warmTargets()) {
+    let firstSkipped = null;
+    for (let i = start; i < targets.length; i++) {
+      const target = targets[i];
       if (Date.now() - t0 >= budgetMs) {
         skipped += 1;
+        if (firstSkipped === null) firstSkipped = i;
         continue;
       }
+      const ts = Date.now();
+      let ok = true;
       try {
         target.run();
         warmed += 1;
       } catch (e) {
+        ok = false;
         console.warn(`Read-model warm (${target.label}) failed: ${e}`);
         recordError("cacheWarm", `${target.label}: ${e instanceof Error ? e.message : String(e)}`);
       }
+      console.log(JSON.stringify({ stage: "warm", label: target.label, ms: Date.now() - ts, ok }));
     }
-    if (skipped) {
-      console.warn(`Read-model warm: out of budget after ${warmed} entries, ${skipped} left cold`);
-      recordError("cacheWarm", `Out of budget after ${warmed} entries, ${skipped} left cold.`);
-    }
-    const swept = skipped ? 0 : sweepReadModels();
-    return { warmed, skipped, swept, blockedBy: null, elapsedMs: Date.now() - t0 };
+    const swept = skipped || !sweepable ? 0 : sweepReadModels();
+    return {
+      warmed,
+      skipped,
+      swept,
+      firstSkipped,
+      touched: (_a = warmTouched()) != null ? _a : [],
+      elapsedMs: Date.now() - t0
+    };
   }
 
   // src/server/scanJobs.ts
@@ -11336,15 +11475,11 @@ var Server = (() => {
   }
   function warmAfterSync() {
     try {
-      const report = warmReadModels();
-      if (report.blockedBy) {
-        console.warn(`Post-sync read-model warm did not run: ${report.blockedBy}`);
-        recordError("cacheWarm", `Post-sync warm did not run: ${report.blockedBy}`);
-      } else {
-        console.log(`Post-sync read-model warm: ${report.warmed} warmed, ${report.skipped} cold.`);
+      if (scheduleWarm(WARM_START_DELAY_MS)) {
+        console.log("Post-sync read-model warm: scheduled.");
       }
     } catch (e) {
-      console.warn(`Post-sync read-model warm failed: ${e}`);
+      console.warn(`Post-sync read-model warm could not be scheduled: ${e}`);
       recordError("cacheWarm", e);
     }
   }
@@ -12489,8 +12624,10 @@ var Server = (() => {
       ok("Warm triggers", `${warm} installed (${warmSig})`);
     }
     const oneShots = count([...Object.values(CONTINUE_HANDLERS), ...Object.values(WATCHDOG_HANDLERS)]);
+    const warmOneShots = count([WARM_CONTINUE_HANDLER]);
     const job = activeJob();
-    ok("Pending one-shots", job || !oneShots ? String(oneShots) : `${oneShots} with no sync in flight (each clears itself when it fires)`);
+    const warmNote = warmOneShots ? ` + ${warmOneShots} warm` : "";
+    ok("Pending one-shots", job || !oneShots ? `${oneShots}${warmNote}` : `${oneShots} with no sync in flight (each clears itself when it fires)${warmNote}`);
     const free = TRIGGER_CAP - handlers.length;
     if (free >= (job ? 0 : SYNC_TRIGGER_SLOTS)) ok("Triggers used", `${handlers.length} of ${TRIGGER_CAP}`);
     else bad("Triggers used", `${handlers.length} of ${TRIGGER_CAP} \u2014 no room for a sync's ${SYNC_TRIGGER_SLOTS} one-shots; delete stray triggers in the editor's Triggers panel`);

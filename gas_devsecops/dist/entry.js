@@ -120,7 +120,7 @@ function wizDiagnostic() {
 
 /* ----------------------------------------------------------------- triggers */
 /*
- * THESE FOUR ARE UNGATED, AND THAT IS THE WHOLE POINT.
+ * THESE FIVE ARE UNGATED, AND THAT IS THE WHOLE POINT.
  *
  * An installable trigger runs as the project OWNER with NO ACTIVE USER —
  * `Session.getActiveUser().getEmail()` is "" inside one. `Server.access.denyResult` fails
@@ -131,13 +131,13 @@ function wizDiagnostic() {
  *
  * They are safe ungated because none of them takes an argument that selects what to do. Each
  * is a fixed verb over server-side state — resume the one active job, reap a dead persist, run
- * the scheduled battery, warm the read models — with no filename, no id and no user input
+ * the scheduled battery, warm (or carry on warming) the read models — with no filename, no id and no user input
  * anywhere in the call. `include(filename)` is gated for exactly the opposite reason.
  *
  * THE NAMES ARE FIXED ELSEWHERE AND ARE COPIED HERE, NEVER CHOSEN HERE.
  * `jobsStore.CONTINUE_HANDLERS.sync` / `WATCHDOG_HANDLERS.sync` are what `scanJobs` installs
- * and clears one-shots by, and `setup.ts` installs the standing daily and warm triggers by
- * name. A rename on either side points a live trigger at a function that does not exist, which
+ * and clears one-shots by, `readModels.WARM_CONTINUE_HANDLER` is what the post-sync warm arms,
+ * and `setup.ts` installs the standing daily and warm triggers by name. A rename on either side points a live trigger at a function that does not exist, which
  * fails silently on a schedule.
  */
 
@@ -152,6 +152,9 @@ function trigger_dailySync() { return Server.scanJobs.dailySync(); }
 
 /** setup.ts's three standing warm triggers — precompute the landing-page read models. */
 function trigger_warmReadModels() { return Server.readModels.warmReadModels(); }
+
+/** readModels.WARM_CONTINUE_HANDLER — the post-sync warm, and each hop of one out of budget. */
+function trigger_continueWarm(e) { return Server.readModels.continueWarm(e); }
 
 /**
  * Last resort when a job is wedged: jobs are single-flight, so one non-terminal row with no

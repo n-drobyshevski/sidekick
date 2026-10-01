@@ -15,11 +15,11 @@
 //      simply also now holds a production tenant's pagination token and a Drive file id. The
 //      assertion is over the full `JSON.stringify`, not `Object.keys`, because a raw
 //      `params_json` string would pass a key check while carrying the cursor inside its text.
-//   2. The post-sync warm's ORDERING. `warmReadModels` refuses while `activeJob()` is
-//      non-null, and it works today only because `finishSync` sets `phase: "DONE"` BEFORE
-//      calling `afterPersist`. Moving that update after `afterPersist` reads as a tidy-up and
-//      silently disables the warm forever — every page correct, every sync successful, and the
-//      first load after each sync paying a full recompute with nothing anywhere saying so.
+//   2. The post-sync warm. `afterPersist` ARMS it (`trigger_continueWarm`) rather than running
+//      it inside the sync's lock, and the armed hop refuses while `activeJob()` is non-null. A
+//      sync that stopped arming it — or a hop that never warmed — leaves every page correct,
+//      every sync successful, and the first load after each sync paying a full recompute with
+//      nothing anywhere saying so.
 //   3. The auto-compaction DEFAULT. S7 moved that gate from a Script Property (unset = off) to
 //      `Settings.autoCompact` (default false). The two agree only if the default did not move,
 //      and "the default is false" is a reading of a literal — so this asserts the BEHAVIOUR: a
@@ -30,7 +30,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SCOPES, SLA_TARGETS, type Scope } from "../src/domain/config";
 import { DEFAULT_SETTINGS } from "../src/domain/settingsLogic";
 import type { Rec } from "../src/domain/util";
-import type { WarmReport } from "../src/server/readModels";
 
 interface Row {
   [k: string]: unknown;
@@ -42,8 +41,6 @@ const tables: Record<string, Row[]> = {};
 const props: Record<string, string> = {};
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 
-/** Every warm report `scanJobs.afterPersist` produced, in order. Spec 2 reads this. */
-const warmReports: WarmReport[] = [];
 /** Every `ledgerStore.compactLedger` call. Spec 3 reads this. */
 const compactCalls: Array<{ retentionDays: number | null; dryRun: boolean }> = [];
 /** How many times a script lock was actually acquired. The write-RPC spec reads this. */
@@ -237,29 +234,10 @@ vi.mock("../src/server/readModelStore", () => ({
   durablyPeek: (name: string, params: unknown) =>
     cacheState.store.get(`${name}|${JSON.stringify(params ?? null)}|${cacheState.version}`),
   duringWarm: <T,>(fn: () => T): T => fn(),
+  warmTouched: () => [],
   sweepReadModels: () => 0,
   __resetMemosForTest: () => {},
 }));
-
-/**
- * The REAL warm, wrapped so the spec can read the report `afterPersist` got.
- *
- * `warmReadModels` returns `{blockedBy}` when `activeJob()` is non-null and `{warmed}` when it
- * ran, so the report IS the observation: `blockedBy === null` is the statement that no job was
- * active at the moment the warm was called, measured by the code that has to be right, not by
- * a second copy of the rule in this file.
- */
-vi.mock("../src/server/readModels", async (importOriginal) => {
-  const real = await importOriginal<typeof import("../src/server/readModels")>();
-  return {
-    ...real,
-    warmReadModels: (budgetMs?: number) => {
-      const report = real.warmReadModels(budgetMs);
-      warmReports.push(report);
-      return report;
-    },
-  };
-});
 
 /** The real ledgerStore, with `compactLedger` observed. */
 vi.mock("../src/server/ledgerStore", async (importOriginal) => {
@@ -652,7 +630,6 @@ beforeEach(() => {
   accessState.canEdit = true;
   fetchFails = null;
   lockAcquisitions = 0;
-  warmReports.length = 0;
   compactCalls.length = 0;
   cacheState.version = 1;
   cacheState.store.clear();
@@ -1291,43 +1268,46 @@ describe("the write path", () => {
 //  8. The two inherited-TODO pins
 // --------------------------------------------------------------------------------------- //
 
-describe("the post-sync warm, and the ordering nothing else pins", () => {
+describe("the post-sync warm, armed off the sync's lock", () => {
   /**
-   * THE ONE THAT MATTERS.
-   *
-   * `warmReadModels` no-ops while `jobsStore.activeJob()` is non-null and returns
-   * `{blockedBy}` saying which job stopped it. It runs at all only because `finishSync` sets
-   * `phase: "DONE"` BEFORE calling `afterPersist`, and `activeJob()` returns null for any
-   * terminal phase. Move that update below `afterPersist` — which reads as a tidy-up, since
-   * "finish, then do the chores" is the more natural order — and the warm is disabled forever
-   * with NO symptom: the sync still commits, every figure is still right, and the only
-   * evidence is that the first load after every sync recomputes from cold.
-   *
-   * So both halves are asserted. `blockedBy === null` is the ordering. A non-zero `warmed` is
-   * the proof that the pass did work rather than merely being allowed to.
+   * THE ONE THAT MATTERS. The sync used to warm inline, inside its own script lock — and for a
+   * battery that fits its first hop, inside the "Run sync" RPC — so every write RPC waited out
+   * minutes of compute. It now arms a one-shot and returns. Nothing about the pages says which
+   * happened, so both halves are asserted: the sync computed no warm, and left exactly the one
+   * trigger that will.
    */
-  it("runs with no active job, and actually warms", async () => {
-    await syncedRegister();
-    expect(warmReports).toHaveLength(1);
-    expect(warmReports[0]!.blockedBy).toBeNull();
-    expect(warmReports[0]!.warmed).toBeGreaterThan(0);
-    expect(warmReports[0]!.skipped).toBe(0);
+  it("arms exactly one warm one-shot and warms nothing inline", async () => {
+    const { scanJobs } = await load();
+    expect(scanJobs.startSync().jobId).not.toBeNull();
+    expect(projectTriggers).toEqual(["trigger_continueWarm"]);
+    // The inline warm computed the bootstrap core first; the sync itself never reads it.
+    expect([...cacheState.store.keys()].filter((k) => k.startsWith("dsBootCore"))).toEqual([]);
   });
 
-  it("warms every target the warm list declares", async () => {
+  /**
+   * The armed hop runs once the job is terminal — `finishSync` writes DONE before
+   * `afterPersist`, and `continueWarm` refuses (and re-arms) while `activeJob()` returns a row.
+   * `blockedBy === null` is that ordering; a full `warmed` is the proof that the pass did work
+   * rather than merely being allowed to.
+   */
+  it("fires with no active job, warms every target, and deletes its own trigger", async () => {
     await syncedRegister();
+    const models = await import("../src/server/readModels");
+    const report = models.continueWarm();
+    expect(report.blockedBy).toBeNull();
     // 9 fixed (the bootstrap core + 8 read-models) + one per scope. Spelled as the arithmetic
     // rather than as a literal so adding a scope moves it on its own.
-    expect(warmReports[0]!.warmed).toBe(9 + SCOPES.length);
+    expect(report.warmed).toBe(9 + SCOPES.length);
+    expect(report.skipped).toBe(0);
+    expect(report.continued).toBe(false);
+    expect(projectTriggers).toEqual([]);
   });
 
   it("leaves the bootstrap core warm, so the next doGet inlines it", async () => {
-    // `syncedRegister` drops the cache the post-sync warm filled (every read is a fresh
-    // execution there), so the warm is run again here, as the 4-hourly trigger would.
     const { api } = await syncedRegister();
     expect(api.bootstrapIfWarm().ok).toBe(false);
     const models = await import("../src/server/readModels");
-    models.warmReadModels();
+    models.continueWarm();
     const inline = api.bootstrapIfWarm();
     expect(inline.ok, "the warm must cover the core doGet peeks at").toBe(true);
   });

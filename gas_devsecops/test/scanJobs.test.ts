@@ -580,8 +580,9 @@ describe("one job walks all three scopes and commits once", () => {
     expect(new Set(scanRows().map((r) => r["scan_id"])).size).toBe(1);
 
     expect(jobRow(jobId)["phase"]).toBe("DONE");
-    // The commit landed: both one-shots retired.
-    expect(projectTriggers).toEqual([]);
+    // The commit landed: both of the sync's one-shots retired, and the ONLY trigger left is
+    // the post-sync warm's — armed after the commit rather than run inside the sync's lock.
+    expect(projectTriggers).toEqual(["trigger_continueWarm"]);
   });
 
   it("gives every scope its own Drive archive under the shared syncId", async () => {

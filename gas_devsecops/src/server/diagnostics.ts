@@ -8,6 +8,7 @@
 import { SCOPES } from "../domain/config";
 import { getProp, hasWizCredentials, PROP_KEYS, projectScope, resolveWizAuthMode } from "./props";
 import { activeJob, CONTINUE_HANDLERS, isStaleJob, WATCHDOG_HANDLERS } from "./jobsStore";
+import { WARM_CONTINUE_HANDLER } from "./readModels";
 import {
   DAILY_SYNC_HANDLER,
   dailySyncSchedule,
@@ -143,15 +144,20 @@ export function deploymentDiagnostic(): string {
 
   // The transient pair a sync arms and clears around itself. Left over with no sync in flight
   // they are harmless — each clears itself when it fires and finds no job — but they still
-  // hold quota until then.
+  // hold quota until then. The warm's one-shot is counted beside them but apart: it is pending
+  // with no sync in flight by design (armed by the commit, fired a second later, or the next
+  // hop of a warm out of budget), so it never makes the pair look stray.
   const oneShots = count([...Object.values(CONTINUE_HANDLERS), ...Object.values(WATCHDOG_HANDLERS)]);
+  const warmOneShots = count([WARM_CONTINUE_HANDLER]);
   const job = activeJob();
+  const warmNote = warmOneShots ? ` + ${warmOneShots} warm` : "";
   ok("Pending one-shots", job || !oneShots
-    ? String(oneShots)
-    : `${oneShots} with no sync in flight (each clears itself when it fires)`);
+    ? `${oneShots}${warmNote}`
+    : `${oneShots} with no sync in flight (each clears itself when it fires)${warmNote}`);
 
   // Apps Script's per-project cap. A sync holds up to two one-shots (continuation + watchdog);
-  // with no slot free, a sync that outruns one execution cannot arm its next hop.
+  // with no slot free, a sync that outruns one execution cannot arm its next hop. The warm's
+  // one-shot needs no slot of its own: the commit clears the pair before it arms the warm.
   const free = TRIGGER_CAP - handlers.length;
   if (free >= (job ? 0 : SYNC_TRIGGER_SLOTS)) ok("Triggers used", `${handlers.length} of ${TRIGGER_CAP}`);
   else bad("Triggers used", `${handlers.length} of ${TRIGGER_CAP} — no room for a sync's `

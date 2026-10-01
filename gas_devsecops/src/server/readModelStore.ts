@@ -73,9 +73,15 @@ let warming = false;
 /** What the current warm has actually touched — the sweep's keep-list. See `sweepReadModels`. */
 let touched: Set<string> | null = null;
 
-export function duringWarm<T>(fn: () => T): T {
+/**
+ * Run `fn` as (one hop of) a warm. `carried` seeds the keep-list with what earlier hops of the
+ * same resumable pass touched (`readModels.continueWarm`): a hop that resumes part-way down the
+ * target list never calls the models before it, so without the seed its sweep would trash
+ * every one of their files.
+ */
+export function duringWarm<T>(fn: () => T, carried?: readonly string[]): T {
   warming = true;
-  touched = new Set<string>();
+  touched = new Set<string>(carried ?? []);
   try {
     return fn();
   } finally {
@@ -84,6 +90,11 @@ export function duringWarm<T>(fn: () => T): T {
     // stale keep-list from the last one.
     touched = null;
   }
+}
+
+/** The keep-list so far, for a hop that has to hand it to the next one; null outside a warm. */
+export function warmTouched(): string[] | null {
+  return touched ? [...touched] : null;
 }
 
 /**

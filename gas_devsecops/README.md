@@ -322,7 +322,8 @@ about at least two of them, and the clock is the product.
    sync hour plus three staggered read-model warms, all pinned to Europe/Paris — and records
    their schedule as a signature so a second `setup()` on an unchanged schedule adds nothing
    rather than accumulating duplicates against the 20-trigger quota. Budget: 4 standing + up
-   to 2 transient (continuation and watchdog) = 6 of 20.
+   to 3 transient (a sync's continuation and watchdog, and the post-sync warm's one-shot
+   `trigger_continueWarm`) = 7 of 20.
 
    **Run `setup()` as the account that deploys the web app.** The manifest sets
    `executeAs: USER_DEPLOYING`, so every RPC — including a Settings save that moves the sync

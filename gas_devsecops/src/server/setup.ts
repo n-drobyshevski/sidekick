@@ -8,10 +8,12 @@
 //
 // TRIGGER QUOTA, STATED ONCE SO A FUTURE ADDITION HAS SOMETHING TO CHECK AGAINST. Apps Script
 // caps a project at 20 triggers total. This file installs 4 STANDING ones (1 daily sync + 3
-// warm passes, below) and leaves room for the 2 TRANSIENT ones `scanJobs.ts` installs and
+// warm passes, below) and leaves room for 3 TRANSIENT ones: the 2 `scanJobs.ts` installs and
 // tears down around a single in-flight sync (`jobsStore.CONTINUE_HANDLERS.sync` /
 // `WATCHDOG_HANDLERS.sync` — one continuation hop, one watchdog, cleared together on every
-// terminal transition). 4 + 2 = 6 of 20, with 14 of headroom for whatever Phase 2 adds next.
+// terminal transition), and the 1 warm one-shot `readModels.ts` arms after a commit or for the
+// next hop of a pass out of budget (`WARM_CONTINUE_HANDLER` — at most one pending, deleted by
+// the execution it fires). 4 + 3 = 7 of 20, with 13 of headroom for whatever Phase 2 adds next.
 // The daily sync's own execution time is small next to what it is measured against: Apps
 // Script gives a project roughly 6 hours of trigger runtime a day, and one full sync across
 // its continuation hops totals on the order of 2 minutes of that.

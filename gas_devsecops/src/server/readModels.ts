@@ -224,13 +224,14 @@ import {
   previousSeverityCounts,
 } from "./ledgerStore";
 import { latestHistory, listHistory } from "./historyStore";
-import { activeJob } from "./jobsStore";
+import { activeJob, clearTriggers } from "./jobsStore";
 import * as errorLog from "./errorLog";
 import { cellCount, gridSize, TAB_HEADERS, TABS } from "./sheetsDb";
 import { BASE_FILTER_WORDS, SCA_FETCH_HAS_FIX } from "./wizQueries";
 import { loadSettings } from "./settingsStore";
-import { cached, dataVersion } from "./serverCache";
-import { durablyCached, duringWarm, sweepReadModels } from "./readModelStore";
+import { cached, currentStamp, dataVersion } from "./serverCache";
+import { deleteProp, getProp, setProp } from "./props";
+import { durablyCached, duringWarm, sweepReadModels, warmTouched } from "./readModelStore";
 import { distinctScopes } from "../../../gas_shared/domain/scopedAccess";
 import {
   buildSplit, informativeSplits, scopeSummaryOf, type ScopeSplitRow,
@@ -2910,6 +2911,10 @@ export interface WarmReport {
   /** Set when the pass did not run at all. */
   blockedBy: string | null;
   elapsedMs: number;
+  /** Index into the target list this hop started at — 0 for a fresh pass. */
+  resumedAt: number;
+  /** Whether a `trigger_continueWarm` hop was armed to carry on from here. */
+  continued: boolean;
 }
 
 /**
@@ -3010,14 +3015,17 @@ function warmTargets(): { label: string; run: () => unknown }[] {
     // (`api.bootstrapIfWarm`), so it is the one entry every page load reads, and a cold one
     // costs every open a second round trip plus the 6–7 s compute.
     { label: "bootCore", run: () => bootCoreModel() },
-    // The durable four next: they are what the Drive layer exists for, and a budget cut-out
-    // that never reached them would leave the expensive answers cold overnight.
+    // Then the landing page and the page opened next. ORDER IS WHO GETS A WARM PAGE FIRST, not
+    // what survives: the post-sync warm now runs in its own trigger execution after the commit,
+    // so an analyst opening the app while it runs reads whatever it has reached, and a budget
+    // cut-out no longer leaves the tail cold overnight — `continueWarm` resumes it.
+    { label: "executive", run: () => executiveModel(all) },
+    { label: "mttr", run: () => mttrModel(all) },
+    // The durable four: what the Drive layer exists for.
     { label: "history", run: () => historyModel(all) },
     { label: "program", run: () => programModel(all) },
     { label: "repos", run: () => reposModel(all) },
     { label: "storage", run: () => storageModel() },
-    { label: "executive", run: () => executiveModel(all) },
-    { label: "mttr", run: () => mttrModel(all) },
     { label: "mttrSplit", run: () => mttrSplitModel(all) },
     { label: "secrets", run: () => secretsModel(all) },
   ];
@@ -3041,7 +3049,9 @@ function warmTargets(): { label: string; run: () => unknown }[] {
 }
 
 /**
- * Precompute the read-models the landing pages open with.
+ * Precompute the read-models the landing pages open with — `trigger_warmReadModels`, the three
+ * standing passes a day. A FRESH PASS from the top of the list; one that runs out of budget
+ * hands the rest to `continueWarm` (see `warmPass`).
  *
  * SKIPPED ENTIRELY WHILE A JOB IS IN FLIGHT, and the reason is correctness rather than
  * politeness. `activeJob()` is single-flight across kinds, so one check covers scan, compact
@@ -3049,47 +3059,271 @@ function warmTargets(): { label: string; run: () => unknown }[] {
  * unreachable — waste — but worse, a PERSISTING job is part-way through a wholesale
  * `overwrite`, so a warm reading the ledger then would cache a TORN read under the pre-bump
  * version and serve it for the rest of that window. A caller that wants a post-scan warm must
- * therefore run it once the job row has reached a terminal phase, not from inside the job.
+ * therefore run it once the job row has reached a terminal phase, not from inside the job —
+ * which is what `scheduleWarm` is for.
  *
  * BUDGETED, because a killed execution warms nothing and reports nothing: every entry it had
  * already computed is still cached, the ones it never reached stay cold, and there is no line
  * anywhere saying which. Stopping at the budget and returning "warmed N, N left cold" degrades
  * instead of failing. Every entry is guarded so one failure never aborts the rest.
  *
- * THE SWEEP IS SKIPPED AFTER A BUDGET CUT-OUT. The keep-list is what the warm actually
+ * THE SWEEP RUNS ONLY AT THE END OF A COMPLETE PASS. The keep-list is what the warm actually
  * touched; short by whatever never ran, it would trash live entries and rewrite them next pass.
+ * A pass spread over several hops carries its keep-list from hop to hop (`WarmProgress`).
  */
 export function warmReadModels(budgetMs: number = WARM_BUDGET_MS): WarmReport {
+  return warmPass(budgetMs, false);
+}
+
+// --------------------------------------------------------------------------------------- //
+//  The warm chain: off the sync's lock, resumable across executions
+// --------------------------------------------------------------------------------------- //
+//
+// THE POST-SYNC WARM USED TO RUN INLINE at the tail of `scanJobs.afterPersist` — inside the
+// sync's script lock and, for a battery that fits its first hop, inside the "Run sync" RPC. A
+// cold warm is minutes of compute, so every write RPC waited behind it and the job card sat on
+// DONE while the request was still open. `afterPersist` now only arms a one-shot
+// (`scheduleWarm`) and returns; the warm runs in that trigger's own execution, unlocked, like
+// the standing passes always have. THE TRADE IS UNCHANGED, merely moved: an analyst who opens a
+// page in the second or so before the trigger fires computes it cold, exactly as one who opened
+// it while the inline warm held the lock did.
+//
+// Ported from gas/'s `continueWarm` (api.ts), with one difference: gas/ re-runs the list from
+// the top on every hop and relies on L1 hits to make the warmed prefix cheap; this RESUMES from
+// the first target the last hop did not reach, recorded in `WARM_PROGRESS`, because the clock
+// models here carry a one-hour TTL and the prefix is not always still in L1 to be cheap.
+
+/**
+ * The one-shot handler — ITS OWN NAME, never the standing `setup.WARM_HANDLER`. setup()
+ * reconciles the standing set by counting triggers under that name against
+ * `WARM_TRIGGER_COUNT`; a one-shot sharing it would make a correct install read as four and be
+ * torn down and rebuilt, and `clearTriggers` here would delete the three standing passes.
+ * dist/entry.js's `trigger_continueWarm` delegates to `continueWarm`.
+ */
+export const WARM_CONTINUE_HANDLER = "trigger_continueWarm";
+/** Script Property holding the in-flight pass's `WarmProgress`. */
+const WARM_PROGRESS_PROP = "WARM_PROGRESS";
+/** After the commit — the sync's execution only needs to have returned its lock. */
+export const WARM_START_DELAY_MS = 1_000;
+/** A job in flight blocks the warm; a hop that finds one waits this long and tries again. */
+const WARM_BUSY_DELAY_MS = 60_000;
+/**
+ * Every hop warms at least the first target it reaches, so a chain always makes progress — but
+ * a target that alone outlasts the execution cap would kill every hop at the same place. This
+ * bounds that, per cache stamp; a completed pass resets it.
+ */
+const WARM_MAX_HOPS = 6;
+/** Under the 9 KB Script Property cap, with room for the rest of the record. */
+const WARM_KEEP_LIST_MAX_CHARS = 8_000;
+
+/**
+ * Where a pass spread over several hops stands. KEYED BY THE CACHE STAMP (`currentStamp()` —
+ * DATA_VERSION plus the config stamp, what every cache key carries): a commit between hops
+ * makes every entry the earlier hops warmed unreachable, so a record under another stamp is
+ * ignored and the pass starts again from the top.
+ */
+interface WarmProgress {
+  stamp: string;
+  /** Index of the first target the last hop did not reach. */
+  next: number;
+  /**
+   * That target's label. The list is not fixed — the scoped roster can change between hops —
+   * and a label that no longer sits at `next` restarts the pass rather than skipping a target.
+   */
+  label: string | null;
+  /** Continuation hops armed under this stamp. */
+  hops: number;
+  /** The keep-list so far; null when it outgrew the property, which forfeits this pass's sweep. */
+  touched: string[] | null;
+}
+
+function readProgress(): WarmProgress | null {
+  try {
+    const raw = getProp(WARM_PROGRESS_PROP);
+    if (!raw) return null;
+    const p = JSON.parse(raw) as Partial<WarmProgress>;
+    if (!p || p.stamp !== currentStamp()) return null;
+    return {
+      stamp: p.stamp,
+      next: Number(p.next) || 0,
+      label: typeof p.label === "string" ? p.label : null,
+      hops: Number(p.hops) || 0,
+      touched: Array.isArray(p.touched) ? p.touched.map(String) : null,
+    };
+  } catch (e) {
+    console.warn(`Read-model warm: progress unreadable, starting from the top: ${e}`);
+    return null;
+  }
+}
+
+function writeProgress(p: WarmProgress): void {
+  let json = JSON.stringify(p);
+  if (json.length > WARM_KEEP_LIST_MAX_CHARS) json = JSON.stringify({ ...p, touched: null });
+  setProp(WARM_PROGRESS_PROP, json);
+}
+
+function clearProgress(): void {
+  try {
+    deleteProp(WARM_PROGRESS_PROP);
+  } catch (e) {
+    // Only bounds a chain; a stale record is ignored the moment the stamp moves.
+    console.warn(`Read-model warm: could not clear the progress record: ${e}`);
+  }
+}
+
+/**
+ * Arm the one-shot that runs `continueWarm` in `delayMs`. At most one is ever pending — any
+ * earlier one is cleared first, so a second sync committing before the first's warm fired
+ * leaves one trigger, not two, against the 20-trigger quota. Best effort: a failed schedule
+ * costs a cold first load, never the commit that asked for it. Returns whether it armed.
+ */
+export function scheduleWarm(delayMs: number = WARM_START_DELAY_MS): boolean {
+  try {
+    clearTriggers(WARM_CONTINUE_HANDLER);
+    ScriptApp.newTrigger(WARM_CONTINUE_HANDLER).timeBased().after(delayMs).create();
+    return true;
+  } catch (e) {
+    console.warn(`Read-model warm: could not schedule a warm: ${e}`);
+    errorLog.recordError("cacheWarm", `Could not schedule a warm: ${e instanceof Error ? e.message : String(e)}`);
+    return false;
+  }
+}
+
+/**
+ * Trigger target (`trigger_continueWarm`): the post-sync warm, and every continuation of a pass
+ * that ran out of budget. Resumes the pass recorded under the current stamp, or starts one.
+ *
+ * DELETES ITS OWN FIRED TRIGGER FIRST, as `scanJobs.continueJob` does: a one-shot that has
+ * fired still counts against the 20-trigger quota until it is deleted.
+ */
+export function continueWarm(_e?: unknown): WarmReport {
+  try {
+    clearTriggers(WARM_CONTINUE_HANDLER);
+  } catch (e) {
+    console.warn(`Read-model warm: could not clear the fired trigger: ${e}`);
+  }
+  return warmPass(WARM_BUDGET_MS, true);
+}
+
+/**
+ * One hop. `resume` is the difference between the two entry points: a continuation picks up at
+ * the recorded target and re-arms when a job blocks it; a standing pass starts at the top and
+ * simply skips (the job it found will arm its own warm when it commits).
+ */
+function warmPass(budgetMs: number, resume: boolean): WarmReport {
   const job = activeJob();
+  const prior = readProgress();
   if (job) {
     const reason = `${job.kind} job ${job.job_id} is ${job.phase}`;
     console.log(`Read-model warm: skipped, ${reason}`);
-    return { warmed: 0, skipped: 0, swept: 0, blockedBy: reason, elapsedMs: 0 };
+    const continued = resume && chain(prior ?? freshProgress(), prior, WARM_BUSY_DELAY_MS);
+    return { warmed: 0, skipped: 0, swept: 0, blockedBy: reason, elapsedMs: 0, resumedAt: 0, continued };
   }
-  return duringWarm(() => warmInner(budgetMs));
+  const targets = warmTargets();
+  let start = 0;
+  if (resume && prior && prior.next > 0 && targets[prior.next]?.label === prior.label) {
+    start = prior.next;
+  }
+  // A resumed hop whose earlier hops' keep-list was dropped cannot sweep safely.
+  const carried = start > 0 ? prior!.touched : [];
+  const hop = duringWarm(() => warmInner(budgetMs, targets, start, carried !== null), carried ?? []);
+  let continued = false;
+  if (hop.firstSkipped === null) {
+    clearProgress();
+  } else {
+    continued = chain({
+      stamp: currentStamp(),
+      next: hop.firstSkipped,
+      label: targets[hop.firstSkipped]?.label ?? null,
+      hops: prior?.hops ?? 0,
+      touched: carried === null ? null : hop.touched,
+    }, prior, WARM_START_DELAY_MS);
+  }
+  if (hop.skipped) {
+    const msg = `Out of budget after ${hop.warmed} entries, ${hop.skipped} left cold`;
+    console.warn(`Read-model warm: ${msg}${continued ? "; continuing in the next hop" : ""}`);
+    errorLog.recordError(
+      "cacheWarm",
+      continued ? `${msg}; continuing in the next hop.` : `${msg}.`,
+      continued ? "warning" : "error",
+    );
+  }
+  return {
+    warmed: hop.warmed, skipped: hop.skipped, swept: hop.swept, blockedBy: null,
+    elapsedMs: hop.elapsedMs, resumedAt: start, continued,
+  };
 }
 
-function warmInner(budgetMs: number): WarmReport {
+function freshProgress(): WarmProgress {
+  return { stamp: currentStamp(), next: 0, label: null, hops: 0, touched: [] };
+}
+
+/**
+ * Record `next` and arm its hop, unless this stamp has used its `WARM_MAX_HOPS`. The hop count
+ * is the PRIOR record's under the same stamp, so a standing pass that runs out of budget does
+ * not reset a chain that already gave up. Returns whether a hop was armed.
+ */
+function chain(next: WarmProgress, prior: WarmProgress | null, delayMs: number): boolean {
+  const hops = (prior?.hops ?? 0) + 1;
+  try {
+    if (hops > WARM_MAX_HOPS) {
+      console.warn(`Read-model warm: gave up after ${WARM_MAX_HOPS} continuation hops`);
+      errorLog.recordError("cacheWarm", `Gave up after ${WARM_MAX_HOPS} continuation hops under one data version.`);
+      writeProgress({ ...next, hops: prior?.hops ?? 0 });
+      return false;
+    }
+    writeProgress({ ...next, hops });
+  } catch (e) {
+    console.warn(`Read-model warm: could not record progress: ${e}`);
+    errorLog.recordError("cacheWarm", `Could not record warm progress: ${e instanceof Error ? e.message : String(e)}`);
+    return false;
+  }
+  return scheduleWarm(delayMs);
+}
+
+interface HopResult {
+  warmed: number;
+  skipped: number;
+  swept: number;
+  /** Index of the first target this hop did not reach; null when it reached the end. */
+  firstSkipped: number | null;
+  /** The keep-list after this hop, carried to the next one. */
+  touched: string[];
+  elapsedMs: number;
+}
+
+function warmInner(
+  budgetMs: number,
+  targets: { label: string; run: () => unknown }[],
+  start: number,
+  sweepable: boolean,
+): HopResult {
   const t0 = Date.now();
   let warmed = 0;
   let skipped = 0;
-  for (const target of warmTargets()) {
+  let firstSkipped: number | null = null;
+  for (let i = start; i < targets.length; i++) {
+    const target = targets[i]!;
     if (Date.now() - t0 >= budgetMs) {
       skipped += 1;
+      if (firstSkipped === null) firstSkipped = i;
       continue;
     }
+    const ts = Date.now();
+    let ok = true;
     try {
       target.run();
       warmed += 1;
     } catch (e) {
+      ok = false;
       console.warn(`Read-model warm (${target.label}) failed: ${e}`);
       errorLog.recordError("cacheWarm", `${target.label}: ${e instanceof Error ? e.message : String(e)}`);
     }
+    // One line per target: what a cold post-sync warm actually spends, entry by entry.
+    console.log(JSON.stringify({ stage: "warm", label: target.label, ms: Date.now() - ts, ok }));
   }
-  if (skipped) {
-    console.warn(`Read-model warm: out of budget after ${warmed} entries, ${skipped} left cold`);
-    errorLog.recordError("cacheWarm", `Out of budget after ${warmed} entries, ${skipped} left cold.`);
-  }
-  const swept = skipped ? 0 : sweepReadModels();
-  return { warmed, skipped, swept, blockedBy: null, elapsedMs: Date.now() - t0 };
+  const swept = skipped || !sweepable ? 0 : sweepReadModels();
+  return {
+    warmed, skipped, swept, firstSkipped, touched: warmTouched() ?? [], elapsedMs: Date.now() - t0,
+  };
 }

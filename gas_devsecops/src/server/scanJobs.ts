@@ -751,37 +751,36 @@ function recordDeferrals(outcome: ledgerStore.PersistOutcome): void {
 }
 
 /**
- * The post-sync read-model warm — LAST, and the position is load-bearing twice over.
+ * The post-sync read-model warm — ARMED HERE, RUN ELSEWHERE, and LAST.
+ *
+ * NOT INLINE. A cold warm is minutes of compute, and this runs inside the sync's script lock —
+ * for a battery that fits its first hop, inside the "Run sync" RPC itself — so every write RPC
+ * waited behind it. `readModels.scheduleWarm` arms a one-shot (`trigger_continueWarm`) and
+ * returns; the warm runs in that trigger's own execution, resumable across hops
+ * (`readModels.continueWarm`).
  *
  * AFTER `autoCompactIfDue`, because a compaction bumps DATA_VERSION again and every cache key
- * is built from it: warming first would compute the whole set under a version nothing can
- * reach a moment later, paying for it and warming nothing.
+ * is built from it. The trigger's execution reads the version afresh, so this is now about the
+ * trigger seeing the final version rather than about wasted compute — but arming it before a
+ * chore that can still move the version is the wrong order whichever way it runs.
  *
- * AFTER `updateJob(jobId, {phase: "DONE"})` IN `finishSync`, WHICH IS WHY THIS IS CALLED FROM
- * `afterPersist` AND NOT FROM INSIDE THE COMMIT. `warmReadModels` refuses outright while
+ * THE DONE ORDERING STILL MATTERS. `warmReadModels`/`continueWarm` refuse while
  * `jobsStore.activeJob()` returns a row — a PERSISTING job is part-way through a wholesale
- * `overwrite`, so a warm reading the ledger then would cache a TORN read under the pre-bump
- * version and serve it for the rest of the window. `activeJob()` returns null for any terminal
- * phase, so the DONE update above is the only thing that lets this run at all. MOVING THAT
- * UPDATE BELOW `afterPersist` LOOKS TIDIER AND SILENTLY DISABLES THE WARM FOREVER — the sync
- * still succeeds, the pages are still correct, and the only symptom is that the first analyst
- * load after every sync pays the full recompute. `test/api.test.ts`'s "the post-sync warm runs
- * with no active job" case is what stands between that edit and production.
+ * `overwrite`, and a warm reading the ledger then would cache a TORN read. `finishSync` writes
+ * DONE before calling `afterPersist`, so by the time the one-shot fires the job is terminal. A
+ * hop that does find a job in flight re-arms a minute later rather than giving up.
  *
  * BEST EFFORT, like every other chore here: the sync is already committed and a cold cache is
- * not a reason to report a successful commit as a failure.
+ * not a reason to report a successful commit as a failure. `scheduleWarm` records its own
+ * failure in the error log.
  */
 function warmAfterSync(): void {
   try {
-    const report = readModels.warmReadModels();
-    if (report.blockedBy) {
-      console.warn(`Post-sync read-model warm did not run: ${report.blockedBy}`);
-      errorLog.recordError("cacheWarm", `Post-sync warm did not run: ${report.blockedBy}`);
-    } else {
-      console.log(`Post-sync read-model warm: ${report.warmed} warmed, ${report.skipped} cold.`);
+    if (readModels.scheduleWarm(readModels.WARM_START_DELAY_MS)) {
+      console.log("Post-sync read-model warm: scheduled.");
     }
   } catch (e) {
-    console.warn(`Post-sync read-model warm failed: ${e}`);
+    console.warn(`Post-sync read-model warm could not be scheduled: ${e}`);
     errorLog.recordError("cacheWarm", e);
   }
 }

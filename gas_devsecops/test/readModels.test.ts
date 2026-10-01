@@ -81,6 +81,17 @@ const H = vi.hoisted(() => ({
   history: [] as { date: string; stats: unknown }[],
   /** Which historyStore reader each model reached for, in order — "list" or "latest". */
   historyReads: [] as string[],
+  /** Script Properties (`props.getProp`/`setProp`/`deleteProp`) — the warm chain's progress. */
+  props: {} as Record<string, string>,
+  /** Pending one-shot handler names (`ScriptApp`), and every `after(ms)` one was armed with. */
+  triggers: [] as string[],
+  triggerDelays: [] as number[],
+  /** The fake keep-list `duringWarm` seeds and `durablyCached` adds to; null outside a warm. */
+  touched: null as Set<string> | null,
+  /** The `carried` keep-list each `duringWarm` call was seeded with. */
+  carried: [] as string[][],
+  /** Advanced by this many ms whenever `storageModel` computes — a slow target, by hand. */
+  storageCostMs: 0,
 }));
 
 function memo(name: string, params: unknown, compute: () => unknown): unknown {
@@ -98,23 +109,49 @@ vi.mock("../src/server/serverCache", () => ({
     return memo(name, params, compute);
   },
   dataVersion: () => H.version,
+  currentStamp: () => `stamp:${H.version}`,
 }));
+
+vi.mock("../src/server/props", async (orig) => {
+  const actual = await orig<typeof import("../src/server/props")>();
+  return {
+    ...actual,
+    getProp: (k: string) => H.props[k] ?? null,
+    setProp: (k: string, v: string) => { H.props[k] = v; },
+    deleteProp: (k: string) => { delete H.props[k]; },
+  };
+});
+
+vi.stubGlobal("ScriptApp", {
+  newTrigger: (handler: string) => ({
+    timeBased: () => ({
+      after: (ms: number) => ({
+        create: () => { H.triggers.push(handler); H.triggerDelays.push(ms); },
+      }),
+    }),
+  }),
+});
 
 vi.mock("../src/server/readModelStore", () => ({
   durablyCached: (name: string, params: unknown, compute: () => unknown, ttl?: number) => {
     H.cacheCalls.push({
       name, layer: "durablyCached", params, ...(ttl === undefined ? {} : { ttl }),
     });
+    if (H.touched) H.touched.add(name);
     return memo(name, params, compute);
   },
-  duringWarm: <T,>(fn: () => T): T => {
+  duringWarm: <T,>(fn: () => T, carried?: readonly string[]): T => {
     H.warmDepth += 1;
+    H.carried.push([...(carried ?? [])]);
+    H.touched = new Set(carried ?? []);
     try {
       return fn();
     } finally {
       H.warmDepth -= 1;
+      H.touched = null;
     }
   },
+  warmTouched: () => (H.touched ? [...H.touched] : null),
   sweepReadModels: () => {
     H.swept += 1;
     return 3;
@@ -166,6 +203,9 @@ vi.mock("../src/server/historyStore", () => ({
 
 vi.mock("../src/server/jobsStore", () => ({
   activeJob: () => H.activeJobRow,
+  clearTriggers: (handler: string) => {
+    H.triggers = H.triggers.filter((h) => h !== handler);
+  },
 }));
 
 // `norm()` reads the view-project scope off `settingsStore.loadSettings()`. Mocked, rather
@@ -186,6 +226,7 @@ vi.mock("../src/server/sheetsDb", async (orig) => {
     ...actual,
     cellCount: () => {
       H.cellCountCalls += 1;
+      if (H.storageCostMs) vi.setSystemTime(Date.now() + H.storageCostMs);
       if (H.cellCountThrows) throw new Error("spreadsheet unavailable");
       return 400_000;
     },
@@ -203,6 +244,8 @@ import {
   reposModel,
   secretsModel,
   signalCoverage,
+  continueWarm,
+  scheduleWarm,
   storageModel,
   warmReadModels,
 } from "../src/server/readModels";
@@ -382,6 +425,12 @@ beforeEach(() => {
   H.excludeEndOfLifeFromMttr = undefined;
   H.history = [{ date: "2026-03-01", stats: { open: 5 } }];
   H.historyReads.length = 0;
+  for (const k of Object.keys(H.props)) delete H.props[k];
+  H.triggers = [];
+  H.triggerDelays.length = 0;
+  H.touched = null;
+  H.carried.length = 0;
+  H.storageCostMs = 0;
   seed();
   __resetModelMemosForTest();
   vi.stubGlobal("console", { ...console, warn: () => {}, log: () => {} });
@@ -1753,6 +1802,128 @@ describe("warmReadModels", () => {
     expect(report.warmed).toBe(11); // storage failed; the other eleven landed
     expect(report.skipped).toBe(0);
     expect(H.swept).toBe(1);
+  });
+
+  // The landing page and the page opened next come straight after the core: the post-sync warm
+  // runs while analysts may already be loading pages, so order is who gets a warm page first.
+  it("warms the core, then Executive, then MTTR, before the durable four", () => {
+    warmReadModels();
+    const first = (name: string) => H.cacheCalls.findIndex((c) => c.name === name);
+    expect(first("dsBootCore1")).toBe(0);
+    expect(first("dsBootCore1")).toBeLessThan(first("dsExecutive3"));
+    expect(first("dsExecutive3")).toBeLessThan(first("dsMttr6"));
+    expect(first("dsMttr6")).toBeLessThan(first("dsHistory6"));
+    expect(first("dsStorage1")).toBeLessThan(first("dsMttrSplit2"));
+  });
+
+  it("logs one {stage:\"warm\"} line per target it ran", () => {
+    const lines: string[] = [];
+    vi.stubGlobal("console", { ...console, warn: () => {}, log: (m: unknown) => lines.push(String(m)) });
+    H.cellCountThrows = true;
+    warmReadModels();
+    const warm = lines.filter((l) => l.startsWith("{")).map((l) => JSON.parse(l) as Record<string, unknown>)
+      .filter((l) => l["stage"] === "warm");
+    expect(warm).toHaveLength(12);
+    expect(warm[0]).toMatchObject({ stage: "warm", label: "bootCore", ok: true });
+    expect(warm.find((l) => l["label"] === "storage")).toMatchObject({ ok: false });
+    for (const l of warm) expect(typeof l["ms"]).toBe("number");
+  });
+});
+
+// --------------------------------------------------------------------------------------- //
+//  The warm chain — a pass out of budget carries on in a one-shot, from where it stopped
+// --------------------------------------------------------------------------------------- //
+
+describe("the resumable warm chain", () => {
+  const PROGRESS = "WARM_PROGRESS";
+  const progress = () => JSON.parse(H.props[PROGRESS]!) as Record<string, unknown>;
+
+  /** A pass that spends its budget on `storage` (the 7th target) and leaves the last five. */
+  function cutAtStorage(): ReturnType<typeof warmReadModels> {
+    H.store.clear(); // cold, so `storage` computes (and costs) every time
+    H.storageCostMs = 10_000;
+    const report = warmReadModels(1_000);
+    H.storageCostMs = 0;
+    return report;
+  }
+
+  it("records where it stopped and arms ONE continuation, without sweeping", () => {
+    const report = cutAtStorage();
+    expect(report).toMatchObject({ warmed: 7, skipped: 5, swept: 0, resumedAt: 0, continued: true });
+    expect(H.swept).toBe(0);
+    expect(H.triggers).toEqual(["trigger_continueWarm"]);
+    expect(progress()).toMatchObject({ stamp: "stamp:v1", next: 7, label: "mttrSplit", hops: 1 });
+    // The keep-list so far travels with it: the durable entries this hop touched.
+    expect(progress()["touched"]).toEqual(expect.arrayContaining(["dsBootCore1", "dsStorage1"]));
+  });
+
+  it("resumes at the first target it did not reach, carries the keep-list, and sweeps at the end", () => {
+    cutAtStorage();
+    const callsBefore = H.cacheCalls.length;
+    const report = continueWarm();
+    expect(report).toMatchObject({ warmed: 5, skipped: 0, resumedAt: 7, continued: false });
+    // Nothing before the resume point was asked for again.
+    const second = H.cacheCalls.slice(callsBefore).map((c) => c.name);
+    expect(second).not.toContain("dsBootCore1");
+    expect(second).not.toContain("dsStorage1");
+    // The sweep ran with the FIRST hop's keep-list seeded in — a sweep over this hop's touches
+    // alone would trash the core and the durable four.
+    expect(H.swept).toBe(1);
+    expect(H.carried.at(-1)).toEqual(expect.arrayContaining(["dsBootCore1", "dsHistory6", "dsStorage1"]));
+    // Its own fired trigger is gone, no new one armed, and the record cleared.
+    expect(H.triggers).toEqual([]);
+    expect(H.props[PROGRESS]).toBeUndefined();
+  });
+
+  it("starts from the top when the record is under another data version", () => {
+    cutAtStorage();
+    H.version = "v2"; // a commit landed between hops
+    const report = continueWarm();
+    expect(report.resumedAt).toBe(0);
+    expect(report.warmed).toBe(12);
+    expect(H.carried.at(-1)).toEqual([]);
+  });
+
+  it("starts from the top when the target list moved under the record", () => {
+    cutAtStorage();
+    H.props[PROGRESS] = JSON.stringify({ ...progress(), label: "scoped:someone-removed" });
+    expect(continueWarm().resumedAt).toBe(0);
+  });
+
+  it("re-arms a minute later when a job is in flight, and computes nothing", () => {
+    H.activeJobRow = { job_id: "job-1", kind: "sync", phase: "FETCHING" };
+    const report = continueWarm();
+    expect(report.blockedBy).toContain("job-1");
+    expect(report.continued).toBe(true);
+    expect(H.cacheCalls).toEqual([]);
+    expect(H.triggers).toEqual(["trigger_continueWarm"]);
+    expect(H.triggerDelays.at(-1)).toBe(60_000);
+  });
+
+  it("a STANDING pass blocked by a job does not re-arm — the job's commit arms its own warm", () => {
+    H.activeJobRow = { job_id: "job-1", kind: "sync", phase: "FETCHING" };
+    expect(warmReadModels().continued).toBe(false);
+    expect(H.triggers).toEqual([]);
+  });
+
+  it("gives up after six continuation hops under one data version", () => {
+    for (let hop = 1; hop <= 6; hop++) {
+      expect(cutAtStorage().continued, `hop ${hop}`).toBe(true);
+    }
+    H.triggers = [];
+    expect(cutAtStorage().continued).toBe(false);
+    expect(H.triggers).toEqual([]);
+    // A completed pass resets the count.
+    warmReadModels();
+    expect(H.props[PROGRESS]).toBeUndefined();
+    expect(cutAtStorage().continued).toBe(true);
+  });
+
+  it("scheduleWarm keeps at most one pending one-shot", () => {
+    expect(scheduleWarm()).toBe(true);
+    expect(scheduleWarm()).toBe(true);
+    expect(H.triggers).toEqual(["trigger_continueWarm"]);
+    expect(H.triggerDelays).toEqual([1_000, 1_000]);
   });
 });
 

@@ -302,4 +302,17 @@ describe("deploymentDiagnostic's trigger read-out", () => {
     expect(lineOf(out, "Pending one-shots")).toMatch(/2 with no sync in flight/);
     expect(lineOf(out, "Triggers used")).toMatch(/FAIL.*19 of 20/);
   });
+
+  // The post-sync warm's one-shot is pending with no sync in flight BY DESIGN — counted, named,
+  // and never what makes the sync's pair read as stray.
+  it("counts the warm's one-shot apart from the sync's pair", async () => {
+    const { dailySyncSchedule, warmTriggerSchedule } = await import("../src/server/setup");
+    triggers.handlers = [...SETUP_INSTALLS, "trigger_continueWarm"];
+    props.WARM_TRIGGER_SCHEDULE = warmTriggerSchedule();
+    props.DAILY_SYNC_SCHEDULE = dailySyncSchedule(DEFAULT_SETTINGS.syncSchedule);
+    const out = await run();
+    expect(lineOf(out, "Pending one-shots")).toMatch(/OK.*: 0 \+ 1 warm$/);
+    expect(lineOf(out, "Warm triggers")).toMatch(/OK.*3 installed/);
+    expect(lineOf(out, "Triggers used")).toContain("5 of 20");
+  });
 });
