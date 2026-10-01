@@ -92,11 +92,14 @@ const H = vi.hoisted(() => ({
   carried: [] as string[][],
   /** Advanced by this many ms whenever `storageModel` computes — a slow target, by hand. */
   storageCostMs: 0,
+  /** Every model compute fails, each with its own message — Drive down for the whole pass. */
+  allThrow: false,
 }));
 
 function memo(name: string, params: unknown, compute: () => unknown): unknown {
   const k = `${name}|${JSON.stringify(params ?? null)}|${H.version}`;
   if (H.store.has(k)) return H.store.get(k);
+  if (H.allThrow) throw new Error(`Drive unavailable reading ${name}`);
   H.computeDepths.push(H.warmDepth);
   const v = compute();
   H.store.set(k, v);
@@ -431,6 +434,7 @@ beforeEach(() => {
   H.touched = null;
   H.carried.length = 0;
   H.storageCostMs = 0;
+  H.allThrow = false;
   seed();
   __resetModelMemosForTest();
   vi.stubGlobal("console", { ...console, warn: () => {}, log: () => {} });
@@ -1856,6 +1860,21 @@ describe("warmReadModels", () => {
     expect(warm.find((l) => l["label"] === "storage")).toMatchObject({ ok: false });
     for (const l of warm) expect(typeof l["ms"]).toBe("number");
   });
+
+  // The recent-errors ring holds 25 entries. A systemic fault fails every target with its own
+  // message, and one entry per target evicted the sync failure that caused it: the first
+  // failure is recorded in full, the rest in one summary.
+  it("records a pass where every target fails as two entries, not one per target", () => {
+    H.allThrow = true;
+    const report = warmReadModels();
+    expect(report.warmed).toBe(0);
+    const logged = JSON.parse(H.props["RECENT_ERRORS"] ?? "[]") as Array<Record<string, unknown>>;
+    expect(logged.map((e) => [e["op"], e["message"]]).reverse()).toEqual([
+      ["cacheWarm", "bootCore: Drive unavailable reading dsBootCore1"],
+      ["cacheWarm", "12 of 12 warm targets failed: bootCore, executive, mttr, history, program, " +
+        "repos, storage, mttrSplit, … (+4 more)."],
+    ]);
+  });
 });
 
 // --------------------------------------------------------------------------------------- //
@@ -1926,6 +1945,36 @@ describe("the resumable warm chain", () => {
     expect(H.cacheCalls).toEqual([]);
     expect(H.triggers).toEqual(["trigger_continueWarm"]);
     expect(H.triggerDelays.at(-1)).toBe(60_000);
+  });
+
+  // A post-sync warm queued behind a backfill or purge waits a minute at a time. Those waits
+  // used to spend the six hops, so any job longer than six minutes made the warm give up —
+  // with a "continuation hops" message about a budget it never ran out of.
+  it("waits out a job longer than six minutes without spending its hops, and keeps its place", () => {
+    cutAtStorage();
+    H.activeJobRow = { job_id: "job-1", kind: "backfill", phase: "RUNNING" };
+    for (let wait = 1; wait <= 30; wait++) {
+      expect(continueWarm().continued, `wait ${wait}`).toBe(true);
+      expect(H.triggerDelays.at(-1)).toBe(60_000);
+    }
+    expect(progress()).toMatchObject({ next: 7, label: "mttrSplit", hops: 1, busy: 30 });
+    expect(H.props["RECENT_ERRORS"]).toBeUndefined();
+    H.activeJobRow = null;
+    expect(continueWarm()).toMatchObject({ warmed: 5, resumedAt: 7, continued: false });
+  });
+
+  it("gives up on a job that outlasts four hours of waits, naming the job, once", () => {
+    H.activeJobRow = { job_id: "purge-1", kind: "purge", phase: "PURGING" };
+    for (let wait = 1; wait <= 240; wait++) continueWarm();
+    expect(H.props["RECENT_ERRORS"]).toBeUndefined();
+    H.triggers = [];
+    expect(continueWarm().continued).toBe(false);
+    expect(H.triggers).toEqual([]);
+    const logged = JSON.parse(H.props["RECENT_ERRORS"] ?? "[]") as Array<Record<string, unknown>>;
+    expect(logged.map((e) => e["message"])).toEqual([
+      "Gave up after 240 one-minute waits deferred behind purge job purge-1 (PURGING); " +
+        "the next scheduled warm picks it up.",
+    ]);
   });
 
   it("a STANDING pass blocked by a job does not re-arm — the job's commit arms its own warm", () => {

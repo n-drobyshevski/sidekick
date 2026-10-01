@@ -4445,9 +4445,22 @@ const WARM_BUSY_DELAY_MS = 60_000;
 // — but an entry that alone outlasts the execution cap would kill each hop at the same place.
 // The cap bounds that, per cache stamp; a completed pass resets it.
 const WARM_MAX_HOPS = 6;
+// Waiting on a job is NOT a budget hop and has its own counter: a backfill or purge routinely
+// outlasts six one-minute waits, and charging those to WARM_MAX_HOPS gave up on the post-scan
+// warm (and the support-group refresh queued for it) behind any job longer than six minutes.
+// Four hours of waits, the gap between standing warms — which pick up whatever this leaves. Per
+// stamp, like the hop count, so a job that commits as it goes restarts it with each commit.
+const WARM_MAX_BUSY_WAITS = 240;
+// The failures one summary entry names before it elides the rest (the ring caps a message at
+// 500 characters anyway).
+const WARM_FAILURES_LISTED = 8;
 
 function warmHopsKey(): string {
   return "warmHops:" + currentStamp();
+}
+
+function warmBusyKey(): string {
+  return "warmBusy:" + currentStamp();
 }
 
 function scheduleWarmContinuation(delayMs: number): void {
@@ -4466,6 +4479,30 @@ function scheduleWarmContinuation(delayMs: number): void {
     armWarm(delayMs);
   } catch (e) {
     console.warn(`Cache warm: could not schedule a continuation: ${e}`);
+  }
+}
+
+/**
+ * Re-arm a continuation that found `job` in flight, counted against WARM_MAX_BUSY_WAITS rather
+ * than the budget hops. Recorded only when it finally gives up — each wait is the chain working.
+ */
+function deferWarm(job: { kind: string; job_id: string; phase: string }): void {
+  try {
+    const cache = CacheService.getScriptCache();
+    const key = warmBusyKey();
+    const waits = Number(cache.get(key) ?? "0") + 1;
+    if (waits > WARM_MAX_BUSY_WAITS) {
+      const msg =
+        `Gave up after ${WARM_MAX_BUSY_WAITS} one-minute waits deferred behind ${job.kind} job ` +
+        `${job.job_id} (${job.phase}); the next scheduled warm picks it up.`;
+      console.warn(`Cache warm: ${msg}`);
+      errorLog.recordError("cacheWarm", msg);
+      return;
+    }
+    cache.put(key, String(waits), 21_600);
+    armWarm(WARM_BUSY_DELAY_MS);
+  } catch (e) {
+    console.warn(`Cache warm: could not schedule a deferred continuation: ${e}`);
   }
 }
 
@@ -4529,8 +4566,13 @@ export function continueWarm(_e?: unknown): void {
   const job = activeJob();
   if (job) {
     console.log(`Cache warm: continuation deferred, ${job.kind} job ${job.job_id} is ${job.phase}`);
-    scheduleWarmContinuation(WARM_BUSY_DELAY_MS);
+    deferWarm(job);
     return;
+  }
+  try {
+    CacheService.getScriptCache().remove(warmBusyKey());
+  } catch (_e) {
+    // Bounds the waits only; a stale count expires with its six-hour TTL.
   }
   warmAfterChores();
 }
@@ -4550,6 +4592,16 @@ function warmAfterChores(): void {
   warmReadModels(Math.max(0, WARM_BUDGET_MS - (Date.now() - t0)));
 }
 
+/** "N of M warm targets failed: a, b ×2, …" — a pass's failures, as one error-log entry. */
+function warmFailureSummary(failed: readonly string[], attempted: number): string {
+  const counts = new Map<string, number>();
+  for (const label of failed) counts.set(label, (counts.get(label) ?? 0) + 1);
+  const names = [...counts].map(([label, n]) => (n > 1 ? `${label} ×${n}` : label));
+  const listed = names.slice(0, WARM_FAILURES_LISTED).join(", ");
+  const more = names.length - WARM_FAILURES_LISTED;
+  return `${failed.length} of ${attempted} warm targets failed: ${listed}${more > 0 ? `, … (+${more} more)` : ""}.`;
+}
+
 /** Returns how many entries the budget left cold (0 = the pass completed). */
 function warmReadModelsInner(budgetMs: number): number {
   const t0 = Date.now();
@@ -4562,6 +4614,7 @@ function warmReadModelsInner(budgetMs: number): number {
   // logging "warmed N of M" degrades instead of failing; `warmReadModels` then schedules a
   // continuation, and on that hop the entries already warmed are L1 hits that cost next to
   // nothing, so the budget goes to what this pass could not reach.
+  const failed: string[] = [];
   const warm = (label: string, fn: () => unknown) => {
     if (Date.now() - t0 >= budgetMs) { skipped += 1; return; }
     const ts = Date.now();
@@ -4572,8 +4625,13 @@ function warmReadModelsInner(budgetMs: number): number {
     } catch (e) {
       ok = false;
       console.warn(`Cache warm (${label}) failed: ${e}`);
-      // One entry per target that failed, so the in-app list names which read model went cold.
-      errorLog.recordError("cacheWarm", `${label}: ${e instanceof Error ? e.message : String(e)}`);
+      // The FIRST failure in full; the rest are named in one summary at the end of the pass.
+      // One entry per target let a systemic fault (Drive down, every target failing with its
+      // own message) fill the 25-slot ring and evict the scan failure that caused it.
+      if (!failed.length) {
+        errorLog.recordError("cacheWarm", `${label}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      failed.push(label);
     }
     // One line per target: what a cold warm actually spends, entry by entry. A continuation
     // hop's L1 hits show up here as near-zero lines, which is how a re-run prefix reads.
@@ -4629,6 +4687,9 @@ function warmReadModelsInner(budgetMs: number): number {
   // Scoped viewers last: each is one person's landing page, where everything above is the
   // landing page of every full user. A cut-out here costs one viewer a cold first open.
   warmScopedViews(warm);
+  if (failed.length > 1) {
+    errorLog.recordError("cacheWarm", warmFailureSummary(failed, warmed + failed.length));
+  }
   if (skipped) {
     console.warn(`Cache warm: ran out of budget after ${warmed} entries, ${skipped} left cold`);
   }

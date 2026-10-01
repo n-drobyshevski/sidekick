@@ -6719,7 +6719,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "486532d60341" : "dev";
+  var BUILD_ID = true ? "071bd61fce6e" : "dev";
   var CACHE_EPOCH = "3";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
@@ -14201,8 +14201,13 @@ var Server = (() => {
   var WARM_CONTINUE_DELAY_MS = 1e3;
   var WARM_BUSY_DELAY_MS = 6e4;
   var WARM_MAX_HOPS = 6;
+  var WARM_MAX_BUSY_WAITS = 240;
+  var WARM_FAILURES_LISTED = 8;
   function warmHopsKey() {
     return "warmHops:" + currentStamp();
+  }
+  function warmBusyKey() {
+    return "warmBusy:" + currentStamp();
   }
   function scheduleWarmContinuation(delayMs) {
     var _a;
@@ -14219,6 +14224,24 @@ var Server = (() => {
       armWarm(delayMs);
     } catch (e) {
       console.warn(`Cache warm: could not schedule a continuation: ${e}`);
+    }
+  }
+  function deferWarm(job) {
+    var _a;
+    try {
+      const cache = CacheService.getScriptCache();
+      const key = warmBusyKey();
+      const waits = Number((_a = cache.get(key)) != null ? _a : "0") + 1;
+      if (waits > WARM_MAX_BUSY_WAITS) {
+        const msg = `Gave up after ${WARM_MAX_BUSY_WAITS} one-minute waits deferred behind ${job.kind} job ${job.job_id} (${job.phase}); the next scheduled warm picks it up.`;
+        console.warn(`Cache warm: ${msg}`);
+        recordError("cacheWarm", msg);
+        return;
+      }
+      cache.put(key, String(waits), 21600);
+      armWarm(WARM_BUSY_DELAY_MS);
+    } catch (e) {
+      console.warn(`Cache warm: could not schedule a deferred continuation: ${e}`);
     }
   }
   function armWarm(delayMs) {
@@ -14255,8 +14278,12 @@ var Server = (() => {
     const job = activeJob();
     if (job) {
       console.log(`Cache warm: continuation deferred, ${job.kind} job ${job.job_id} is ${job.phase}`);
-      scheduleWarmContinuation(WARM_BUSY_DELAY_MS);
+      deferWarm(job);
       return;
+    }
+    try {
+      CacheService.getScriptCache().remove(warmBusyKey());
+    } catch (_e2) {
     }
     warmAfterChores();
   }
@@ -14267,10 +14294,20 @@ var Server = (() => {
     }
     warmReadModels(Math.max(0, WARM_BUDGET_MS - (Date.now() - t0)));
   }
+  function warmFailureSummary(failed, attempted) {
+    var _a;
+    const counts = /* @__PURE__ */ new Map();
+    for (const label of failed) counts.set(label, ((_a = counts.get(label)) != null ? _a : 0) + 1);
+    const names = [...counts].map(([label, n]) => n > 1 ? `${label} \xD7${n}` : label);
+    const listed = names.slice(0, WARM_FAILURES_LISTED).join(", ");
+    const more = names.length - WARM_FAILURES_LISTED;
+    return `${failed.length} of ${attempted} warm targets failed: ${listed}${more > 0 ? `, \u2026 (+${more} more)` : ""}.`;
+  }
   function warmReadModelsInner(budgetMs) {
     const t0 = Date.now();
     let warmed = 0;
     let skipped = 0;
+    const failed = [];
     const warm = (label, fn) => {
       if (Date.now() - t0 >= budgetMs) {
         skipped += 1;
@@ -14284,7 +14321,10 @@ var Server = (() => {
       } catch (e) {
         ok = false;
         console.warn(`Cache warm (${label}) failed: ${e}`);
-        recordError("cacheWarm", `${label}: ${e instanceof Error ? e.message : String(e)}`);
+        if (!failed.length) {
+          recordError("cacheWarm", `${label}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+        failed.push(label);
       }
       console.log(JSON.stringify({ stage: "warm", label, ms: Date.now() - ts, ok }));
     };
@@ -14314,6 +14354,9 @@ var Server = (() => {
     warm("scanHistory", () => cachedScanHistoryData());
     warm("storageStats", () => cachedStorageStatsData());
     warmScopedViews(warm);
+    if (failed.length > 1) {
+      recordError("cacheWarm", warmFailureSummary(failed, warmed + failed.length));
+    }
     if (skipped) {
       console.warn(`Cache warm: ran out of budget after ${warmed} entries, ${skipped} left cold`);
     }

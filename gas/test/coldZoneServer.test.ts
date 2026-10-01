@@ -40,6 +40,10 @@ const H = vi.hoisted(() => ({
   keys: [] as { ns: string; params: Rec }[],
   // When set, the cold-zone compute fails the way a Drive service error makes it fail.
   coldThrows: false,
+  // When set, EVERY durable entry fails, each with its own message — Drive down for the pass.
+  allThrow: false,
+  // What `activeJob()` answers: a job in flight blocks the warm.
+  activeJob: null as null | { kind: string; job_id: string; phase: string },
   // Operation labels `errorLog.recordError` was handed this run.
   recorded: [] as string[],
   // And each one as `op: message`, for the specs that read what was said.
@@ -66,7 +70,10 @@ vi.mock("../src/server/sheetsDb", () => ({
 // let one spec's clock answer the next spec's question.
 vi.mock("../src/server/serverCache", () => ({
   BUILD_ID: "test",
-  cached: (_ns: string, _params: unknown, compute: () => unknown) => compute(),
+  cached: (ns: string, _params: unknown, compute: () => unknown) => {
+    if (H.allThrow) throw new Error(`Drive unavailable reading ${ns}`);
+    return compute();
+  },
   currentStamp: () => "stamp-" + H.version,
   dataVersion: () => String(H.version),
 }));
@@ -76,6 +83,7 @@ vi.mock("../src/server/readModelStore", () => ({
   durablyCached: (ns: string, params: unknown, compute: () => unknown) => {
     H.keys.push({ ns, params: params as Rec });
     if (ns === "coldZone1" && H.coldThrows) throw new Error("Erreur liée à un service : Drive");
+    if (H.allThrow) throw new Error(`Drive unavailable reading ${ns}`);
     return compute();
   },
   durablyPeek: (ns: string) => H.peek.get(ns),
@@ -83,6 +91,10 @@ vi.mock("../src/server/readModelStore", () => ({
   sweepReadModels: () => 0,
 }));
 
+vi.mock("../src/server/jobsStore", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/server/jobsStore")>()),
+  activeJob: () => H.activeJob,
+}));
 vi.mock("../src/server/ledgerStore", () => ({
   loadBaseRows: () => H.base.map((r) => ({ ...r })),
   readBaseRows: () => H.base.map((r) => ({ ...r })),
@@ -196,6 +208,8 @@ beforeEach(() => {
   H.version += 1;
   H.keys.length = 0;
   H.coldThrows = false;
+  H.allThrow = false;
+  H.activeJob = null;
   H.recorded.length = 0;
   H.recordedLines.length = 0;
   H.peek.clear();
@@ -646,6 +660,42 @@ describe("a warm that runs out of budget", () => {
       "cacheWarm: Gave up after 6 continuation hops under one data version.",
     ]);
   });
+
+  // A post-scan warm queued behind a backfill or purge waits a minute at a time. Those waits
+  // used to spend the six budget hops, so any job longer than six minutes made the warm give
+  // up — with a "continuation hops" message about a budget it never ran out of — and left the
+  // queued support-group refresh for the next standing warm.
+  it("waits out a job longer than six minutes without spending its budget hops", () => {
+    H.activeJob = { kind: "backfill", job_id: "bf-1", phase: "RUNNING" };
+    for (let i = 0; i < 30; i++) {
+      continueWarm();
+      expect(triggers, `wait ${i + 1}`).toEqual([{ handler: "trigger_continueWarm", after: 60_000 }]);
+    }
+    expect(H.recorded).toEqual([]);
+    expect(H.keys).toEqual([]);
+    H.activeJob = null;
+    continueWarm();
+    expect(H.keys.length).toBeGreaterThan(0);
+    // The six budget hops are all still there (what that pass recorded is this file's partial
+    // ledgerStore fake, not the chain).
+    H.recordedLines.length = 0;
+    for (let i = 0; i < 6; i++) warmReadModels(0);
+    expect(triggers).toHaveLength(1);
+    expect(H.recordedLines.filter((l) => l.includes("Gave up"))).toEqual([]);
+  });
+
+  it("gives up on a job that outlasts four hours of waits, naming the job, once", () => {
+    H.activeJob = { kind: "purge", job_id: "purge-1", phase: "PURGING" };
+    for (let i = 0; i < 240; i++) continueWarm();
+    expect(H.recorded).toEqual([]);
+    triggers = [];
+    continueWarm();
+    expect(triggers).toEqual([]);
+    expect(H.recordedLines).toEqual([
+      "cacheWarm: Gave up after 240 one-minute waits deferred behind purge job purge-1 " +
+        "(PURGING); the next scheduled warm picks it up.",
+    ]);
+  });
 });
 
 // --------------------------------------------------------------------------------------- //
@@ -730,6 +780,20 @@ describe("a warm target that fails", () => {
     // The entries after it were still computed, to the last in the warm order: one failure
     // never aborts the pass.
     expect(H.keys.at(-1)?.ns).toMatch(/^storageStats/);
+  });
+
+  // The ring holds 25 entries. A systemic fault fails every target with its own message, and one
+  // entry per target evicted the scan failure that caused it: the first failure is recorded in
+  // full, the rest in one summary.
+  it("records a pass where every target fails as two entries, not one per target", () => {
+    H.allThrow = true;
+    warmReadModels();
+    // (`bootstrap` is the RPC, which records its own failure under "api" and returns.)
+    expect(H.recordedLines.filter((l) => l.startsWith("cacheWarm"))).toEqual([
+      "cacheWarm: mttr: Drive unavailable reading mttr12",
+      "cacheWarm: 26 of 27 warm targets failed: mttr ×2, mttrByDomain ×2, execWeekTrend ×2, " +
+        "execSevCounts ×2, insights ×2, coldZone ×2, mttrTrend ×2, program ×2, … (+6 more).",
+    ]);
   });
 });
 

@@ -5981,7 +5981,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "1de831a8cb92" : "dev";
+  var BUILD_ID = true ? "fd1b3574daf0" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
@@ -11052,6 +11052,8 @@ var Server = (() => {
   var WARM_START_DELAY_MS = 1e3;
   var WARM_BUSY_DELAY_MS = 6e4;
   var WARM_MAX_HOPS = 6;
+  var WARM_MAX_BUSY_WAITS = 240;
+  var WARM_FAILURES_LISTED = 8;
   var WARM_KEEP_LIST_MAX_CHARS = 8e3;
   function readProgress() {
     try {
@@ -11064,6 +11066,7 @@ var Server = (() => {
         next: Number(p.next) || 0,
         label: typeof p.label === "string" ? p.label : null,
         hops: Number(p.hops) || 0,
+        busy: Number(p.busy) || 0,
         touched: Array.isArray(p.touched) ? p.touched.map(String) : null
       };
     } catch (e) {
@@ -11109,7 +11112,7 @@ var Server = (() => {
     if (job) {
       const reason = `${job.kind} job ${job.job_id} is ${job.phase}`;
       console.log(`Read-model warm: skipped, ${reason}`);
-      const continued2 = resume && chain(prior != null ? prior : freshProgress(), prior, WARM_BUSY_DELAY_MS);
+      const continued2 = resume && waitBehind(job, prior != null ? prior : freshProgress());
       return { warmed: 0, skipped: 0, swept: 0, blockedBy: reason, elapsedMs: 0, resumedAt: 0, continued: continued2 };
     }
     const targets = warmTargets();
@@ -11128,6 +11131,7 @@ var Server = (() => {
         next: hop.firstSkipped,
         label: (_c = (_b = targets[hop.firstSkipped]) == null ? void 0 : _b.label) != null ? _c : null,
         hops: (_d = prior == null ? void 0 : prior.hops) != null ? _d : 0,
+        busy: 0,
         touched: carried === null ? null : hop.touched
       }, prior, WARM_START_DELAY_MS);
     }
@@ -11147,7 +11151,33 @@ var Server = (() => {
     };
   }
   function freshProgress() {
-    return { stamp: currentStamp(), next: 0, label: null, hops: 0, touched: [] };
+    return { stamp: currentStamp(), next: 0, label: null, hops: 0, busy: 0, touched: [] };
+  }
+  function waitBehind(job, progress) {
+    const busy = progress.busy + 1;
+    try {
+      if (busy > WARM_MAX_BUSY_WAITS) {
+        const msg = `Gave up after ${WARM_MAX_BUSY_WAITS} one-minute waits deferred behind ${job.kind} job ${job.job_id} (${job.phase}); the next scheduled warm picks it up.`;
+        console.warn(`Read-model warm: ${msg}`);
+        recordError("cacheWarm", msg);
+        return false;
+      }
+      writeProgress({ ...progress, busy });
+    } catch (e) {
+      console.warn(`Read-model warm: could not record progress: ${e}`);
+      recordError("cacheWarm", `Could not record warm progress: ${e instanceof Error ? e.message : String(e)}`);
+      return false;
+    }
+    return scheduleWarm(WARM_BUSY_DELAY_MS);
+  }
+  function warmFailureSummary(failed, attempted) {
+    var _a;
+    const counts = /* @__PURE__ */ new Map();
+    for (const label of failed) counts.set(label, ((_a = counts.get(label)) != null ? _a : 0) + 1);
+    const names = [...counts].map(([label, n2]) => n2 > 1 ? `${label} \xD7${n2}` : label);
+    const listed = names.slice(0, WARM_FAILURES_LISTED).join(", ");
+    const more = names.length - WARM_FAILURES_LISTED;
+    return `${failed.length} of ${attempted} warm targets failed: ${listed}${more > 0 ? `, \u2026 (+${more} more)` : ""}.`;
   }
   function chain(next, prior, delayMs) {
     var _a, _b;
@@ -11173,6 +11203,7 @@ var Server = (() => {
     let warmed = 0;
     let skipped = 0;
     let firstSkipped = null;
+    const failed = [];
     for (let i = start; i < targets.length; i++) {
       const target = targets[i];
       if (Date.now() - t0 >= budgetMs) {
@@ -11188,9 +11219,15 @@ var Server = (() => {
       } catch (e) {
         ok = false;
         console.warn(`Read-model warm (${target.label}) failed: ${e}`);
-        recordError("cacheWarm", `${target.label}: ${e instanceof Error ? e.message : String(e)}`);
+        if (!failed.length) {
+          recordError("cacheWarm", `${target.label}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+        failed.push(target.label);
       }
       console.log(JSON.stringify({ stage: "warm", label: target.label, ms: Date.now() - ts, ok }));
+    }
+    if (failed.length > 1) {
+      recordError("cacheWarm", warmFailureSummary(failed, warmed + failed.length));
     }
     const swept = skipped || !sweepable ? 0 : sweepReadModels();
     return {
