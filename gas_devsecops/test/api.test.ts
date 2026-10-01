@@ -1151,8 +1151,21 @@ describe("getRecentErrors", () => {
     expect((api.getRegisterPage({ scope: "nope" }) as unknown as Rec)["ok"]).toBe(false);
     const errors = ((api.getRecentErrors({}) as unknown as Rec)["data"] as Rec)["errors"] as Rec[];
     expect(errors.map((e) => e["source"])).toEqual(["server", "job"]);
-    expect(errors[0]).toMatchObject({ kind: "api", scope: null, phase: null, job_id: null });
+    expect(errors[0]).toMatchObject({ kind: "api", level: "error", scope: null, phase: null, job_id: null });
+    expect(errors[1]).toMatchObject({ source: "job", level: "error" });
     expect(String(errors[0]!["error"])).toMatch(/needs a scope/);
+  });
+
+  // The completeness gate's deferral is a sync that SUCCEEDED and still owes the operator a
+  // sentence — not a failure, and the Data page must be able to tell the two apart.
+  it("carries a server entry's warning level through, rather than listing it as an error", async () => {
+    const { api } = await syncedRegister();
+    const errorLog = await import("../src/server/errorLog");
+    errorLog.recordError("syncCompleteness", "sca scan looked incomplete", "warning");
+    const errors = ((api.getRecentErrors({}) as unknown as Rec)["data"] as Rec)["errors"] as Rec[];
+    expect(errors).toEqual([expect.objectContaining({
+      source: "server", level: "warning", kind: "syncCompleteness", error: "sca scan looked incomplete",
+    })]);
   });
 
   it("does not record a busy refusal — contention, not a fault", async () => {

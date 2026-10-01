@@ -44,7 +44,7 @@ import {
 } from "../src/client/js/pages/history.js";
 import {
   cellsSummary, compactionView, confirmedAction, currentlyScoped, deletableScans, ledgerSummary,
-  errorSourceLabel, recentErrorsView, tabCellsView,
+  errorLevel, errorSourceLabel, recentErrorsView, tabCellsView,
 } from "../src/client/js/pages/data.js";
 
 const REPOS_SRC = readFileSync(new URL("../src/client/js/pages/repos.js", import.meta.url), "utf8");
@@ -1846,6 +1846,20 @@ describe("data: getRecentErrors' scope note is surfaced, not implied", () => {
     expect(v.serverCount).toBe(2);
     expect(recentErrorsView({ errors: [{ source: "job" }] }).serverCount).toBe(0);
     expect(recentErrorsView(null).serverCount).toBe(0);
+  });
+
+  it("errorLevel reads only an explicit warning as one — every other row is an error", () => {
+    expect(errorLevel({ source: "server", level: "warning" })).toBe("warning");
+    expect(errorLevel({ source: "server", level: "error" })).toBe("error");
+    expect(errorLevel({ source: "job", level: "error" })).toBe("error");
+    expect(errorLevel({ source: "server" })).toBe("error"); // a server predating `level`
+    expect(errorLevel(null)).toBe("error");
+  });
+
+  it("the render path draws a warning as a warn pill, apart from an error", () => {
+    const fn = DATA_SRC.slice(DATA_SRC.indexOf("function renderErrors"));
+    const body = fn.slice(0, fn.indexOf("\n  }\n"));
+    expect(body).toMatch(/errorLevel\(r\) === "warning"[\s\S]*class: "pill warn"[\s\S]*class: "pill bad"/);
   });
 
   it("errorSourceLabel names both sources, and reads a source-less row as a job", () => {

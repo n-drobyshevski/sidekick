@@ -30,13 +30,15 @@ const MAX_ENTRIES = 25;
 const MAX_MESSAGE_LEN = 500;
 // Script Properties cap a single value at ~9 KB. 25 long messages can exceed that, so the
 // serialized blob is trimmed (oldest first) to stay under this ceiling — otherwise setProperty
-// throws and recordError silently drops the write, defeating the whole log.
-const MAX_BLOB_CHARS = 8500;
+// throws and recordError silently drops the write, defeating the whole log. MEASURED IN UTF-8
+// BYTES, the unit the quota counts, not in string length: a localized exception message
+// (Cyrillic is two bytes a character) fit a character ceiling at nearly twice the quota.
+const MAX_BLOB_BYTES = 8500;
 
 export interface ErrorEntry {
   ts: string; // ISO-Z of when it was recorded
   op: string; // operation label, e.g. "cacheWarm", "autoCompact", "api"
-  kind: string; // error kind — "error" for every entry this register records today
+  kind: string; // "error", or "warning" for a condition that is not a fault (shown as such)
   message: string; // the error message, truncated
 }
 
@@ -44,6 +46,24 @@ export interface ErrorEntry {
 // only (module state does not outlive an Apps Script execution). A WeakSet, so it pins nothing;
 // a primitive throw cannot be held and is simply never deduplicated.
 const alreadyRecorded = new WeakSet<object>();
+
+/**
+ * The UTF-8 encoded length of `s`, without encoding it. A surrogate pair is one four-byte code
+ * point; a lone surrogate counts as the three-byte replacement character it is written as.
+ */
+export function utf8ByteLength(s: string): number {
+  let n = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 0x80) n += 1;
+    else if (c < 0x800) n += 2;
+    else if (c >= 0xd800 && c <= 0xdbff && (s.charCodeAt(i + 1) & 0xfc00) === 0xdc00) {
+      n += 4;
+      i++;
+    } else n += 3;
+  }
+  return n;
+}
 
 function truncate(s: string): string {
   return s.length > MAX_MESSAGE_LEN ? s.slice(0, MAX_MESSAGE_LEN) + "…" : s;
@@ -100,7 +120,7 @@ export function recordError(op: string, err: unknown, kind = "error", now?: numb
     const next = [entry, ...recentErrors()].slice(0, MAX_ENTRIES);
     // Trim oldest-first until the blob fits a Script Property (always keep the just-added one).
     let blob = JSON.stringify(next);
-    while (next.length > 1 && blob.length > MAX_BLOB_CHARS) {
+    while (next.length > 1 && utf8ByteLength(blob) > MAX_BLOB_BYTES) {
       next.pop();
       blob = JSON.stringify(next);
     }

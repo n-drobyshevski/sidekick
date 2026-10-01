@@ -3328,11 +3328,11 @@ function warmPass(budgetMs: number, resume: boolean): WarmReport {
   if (hop.skipped) {
     const msg = `Out of budget after ${hop.warmed} entries, ${hop.skipped} left cold`;
     console.warn(`Read-model warm: ${msg}${continued ? "; continuing in the next hop" : ""}`);
-    errorLog.recordError(
-      "cacheWarm",
-      continued ? `${msg}; continuing in the next hop.` : `${msg}.`,
-      continued ? "warning" : "error",
-    );
+    // A hand-off to an armed hop is the warm WORKING — every budgeted pass makes one — so it
+    // stays out of the 25-slot recent-errors ring, where it used to evict real failures. Only
+    // a pass that ends with targets cold is recorded: the hop cap, or a hop that could not be
+    // armed (`chain` and `scheduleWarm` record their own cause beside this).
+    if (!continued) errorLog.recordError("cacheWarm", `${msg}.`);
   }
   return {
     warmed: hop.warmed, skipped: hop.skipped, swept: hop.swept, blockedBy: null,

@@ -1947,6 +1947,19 @@ describe("the resumable warm chain", () => {
     expect(cutAtStorage().continued).toBe(true);
   });
 
+  // The recent-errors ring holds 25 entries. A budgeted hand-off is routine — every cold warm
+  // makes one — so recording it as a warning filled the ring and evicted real failures.
+  it("records nothing for a hand-off to an armed hop, and records the give-up", () => {
+    const logged = () => JSON.parse(H.props["RECENT_ERRORS"] ?? "[]") as Array<Record<string, unknown>>;
+    for (let hop = 1; hop <= 6; hop++) cutAtStorage();
+    expect(logged()).toEqual([]);
+    expect(cutAtStorage().continued).toBe(false);
+    expect(logged().map((e) => [e["op"], e["kind"], e["message"]])).toEqual([
+      ["cacheWarm", "error", "Out of budget after 7 entries, 5 left cold."],
+      ["cacheWarm", "error", "Gave up after 6 continuation hops under one data version."],
+    ]);
+  });
+
   it("scheduleWarm keeps at most one pending one-shot", () => {
     expect(scheduleWarm()).toBe(true);
     expect(scheduleWarm()).toBe(true);

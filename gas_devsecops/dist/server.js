@@ -4051,8 +4051,21 @@ var Server = (() => {
   var KEY = "RECENT_ERRORS";
   var MAX_ENTRIES = 25;
   var MAX_MESSAGE_LEN = 500;
-  var MAX_BLOB_CHARS = 8500;
+  var MAX_BLOB_BYTES = 8500;
   var alreadyRecorded = /* @__PURE__ */ new WeakSet();
+  function utf8ByteLength(s2) {
+    let n2 = 0;
+    for (let i = 0; i < s2.length; i++) {
+      const c = s2.charCodeAt(i);
+      if (c < 128) n2 += 1;
+      else if (c < 2048) n2 += 2;
+      else if (c >= 55296 && c <= 56319 && (s2.charCodeAt(i + 1) & 64512) === 56320) {
+        n2 += 4;
+        i++;
+      } else n2 += 3;
+    }
+    return n2;
+  }
   function truncate(s2) {
     return s2.length > MAX_MESSAGE_LEN ? s2.slice(0, MAX_MESSAGE_LEN) + "\u2026" : s2;
   }
@@ -4091,7 +4104,7 @@ var Server = (() => {
       const entry = { ts: nowIso(now), op, kind, message: truncate(message) };
       const next = [entry, ...recentErrors()].slice(0, MAX_ENTRIES);
       let blob = JSON.stringify(next);
-      while (next.length > 1 && blob.length > MAX_BLOB_CHARS) {
+      while (next.length > 1 && utf8ByteLength(blob) > MAX_BLOB_BYTES) {
         next.pop();
         blob = JSON.stringify(next);
       }
@@ -5918,7 +5931,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "f870f6e98dcd" : "dev";
+  var BUILD_ID = true ? "87575c17010a" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
@@ -11046,11 +11059,7 @@ var Server = (() => {
     if (hop.skipped) {
       const msg = `Out of budget after ${hop.warmed} entries, ${hop.skipped} left cold`;
       console.warn(`Read-model warm: ${msg}${continued ? "; continuing in the next hop" : ""}`);
-      recordError(
-        "cacheWarm",
-        continued ? `${msg}; continuing in the next hop.` : `${msg}.`,
-        continued ? "warning" : "error"
-      );
+      if (!continued) recordError("cacheWarm", `${msg}.`);
     }
     return {
       warmed: hop.warmed,
@@ -12511,6 +12520,7 @@ var Server = (() => {
       const limit = Number.isFinite(raw) && raw > 0 ? Math.min(Math.floor(raw), RECENT_ERROR_LIMIT) : RECENT_ERROR_LIMIT;
       const jobErrors = listJobs().filter((j) => j.error !== null && j.error !== "").map((j) => ({
         source: "job",
+        level: "error",
         job_id: j.job_id,
         kind: j.kind,
         phase: j.phase,
@@ -12521,6 +12531,7 @@ var Server = (() => {
       }));
       const serverErrors = recentErrors().map((e) => ({
         source: "server",
+        level: e.kind === "warning" ? "warning" : "error",
         job_id: null,
         kind: e.op,
         phase: null,
@@ -12534,7 +12545,7 @@ var Server = (() => {
         errors,
         // The panel must be able to say what it is NOT showing.
         covers: "jobs+server",
-        note: "Failed sync jobs, and the last 25 failures recorded on the server \u2014 RPCs that threw and background chores. A request refused because a write was already running is not recorded."
+        note: "Failed sync jobs, and the last 25 failures and warnings recorded on the server \u2014 RPCs that threw and background chores. A request refused because a write was already running is not recorded."
       };
     });
   }

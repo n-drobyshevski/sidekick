@@ -4,7 +4,7 @@
 // addition: a thrown value is recorded at most once per execution (`markRecorded`).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { clearErrors, markRecorded, recentErrors, recordError } from "../src/server/errorLog";
+import { clearErrors, markRecorded, recentErrors, recordError, utf8ByteLength } from "../src/server/errorLog";
 
 const propStore = new Map<string, string>();
 
@@ -67,6 +67,35 @@ describe("errorLog", () => {
     expect(raw.length).toBeLessThanOrEqual(8500);
     // Even after trimming, the just-added (newest) entry is always retained.
     expect(recentErrors()[0].message.startsWith("x")).toBe(true);
+  });
+
+  // The quota counts UTF-8 bytes. Localized exception text is two bytes a character, so a
+  // character ceiling let the blob reach nearly twice the quota: setProperty threw, the throw
+  // was swallowed, and the log silently stopped recording.
+  it("keeps a localized (Cyrillic) blob under the cap in BYTES, and keeps recording", () => {
+    const QUOTA = 9 * 1024;
+    vi.stubGlobal("PropertiesService", {
+      getScriptProperties: () => ({
+        getProperty: (k: string) => propStore.get(k) ?? null,
+        setProperty: (k: string, v: string) => {
+          if (Buffer.byteLength(k + v, "utf8") > QUOTA) throw new Error("Argument too large");
+          propStore.set(k, v);
+        },
+        deleteProperty: (k: string) => {
+          propStore.delete(k);
+        },
+      }),
+    });
+    for (let i = 0; i < 25; i++) recordError("api", `Ошибка ${i}: ` + "ж".repeat(480), "error", i);
+    const raw = propStore.get("RECENT_ERRORS")!;
+    expect(Buffer.byteLength(raw, "utf8")).toBeLessThanOrEqual(8500);
+    expect(recentErrors()[0].message.startsWith("Ошибка 24:")).toBe(true);
+  });
+
+  it("utf8ByteLength agrees with the encoder", () => {
+    for (const s of ["", "ascii", "Ошибка", "日本語", "emoji 😀 pair", "lone \ud800 high", "lone \udc00 low", "end \ud83d"]) {
+      expect(utf8ByteLength(s)).toBe(Buffer.byteLength(s, "utf8"));
+    }
   });
 
   it("clearErrors empties the log", () => {

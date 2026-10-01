@@ -169,6 +169,13 @@ export function errorSourceLabel(source) {
   return String(source);
 }
 
+/** A row's level. "warning" only when the server said so — a sync whose absences the
+ *  completeness gate held back is not a failure. A job row, or a row from a server that
+ *  predates the field, is an error, which is what every row used to be. */
+export function errorLevel(row) {
+  return row && row.level === "warning" ? "warning" : "error";
+}
+
 /**
  * The one chokepoint every destructive control on this page runs through: `action` is never
  * invoked unless `confirm` resolves true. Exported so a test can substitute both without a
@@ -600,6 +607,9 @@ export async function renderData(host, _params, ctx) {
     errorsHost.append(dataTable({
       columns: [
         { key: "at", label: "When", cell: (r) => fmtDateTime(r.at) },
+        { key: "level", label: "Level", cell: (r) => (errorLevel(r) === "warning"
+          ? el("span", { class: "pill warn" }, "Warning")
+          : el("span", { class: "pill bad" }, "Error")) },
         { key: "source", label: "Source", cell: (r) => errorSourceLabel(r.source) },
         { key: "kind", label: "Operation", cell: (r) => r.kind || absentText },
         { key: "scope", label: "Register", cell: (r) => r.scope || absentText },

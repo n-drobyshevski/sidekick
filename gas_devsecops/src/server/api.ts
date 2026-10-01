@@ -1537,7 +1537,7 @@ const RECENT_ERROR_LIMIT = 50;
 
 /**
  * The recent server-side failures, newest first, from TWO SOURCES merged into one row shape
- * `{source, at, kind, scope, phase, error}`:
+ * `{source, level, at, kind, scope, phase, error}`:
  *
  *   * `source: "job"` — the `jobs` tab's `error` column, which every terminal transition,
  *     `reclaimIfStale` and `recoverIfNeeded` write. A failed sync hop records its failure HERE
@@ -1547,6 +1547,10 @@ const RECENT_ERROR_LIMIT = 50;
  *     serves this endpoint from: RPCs that threw, the post-commit chores, the read-model warm
  *     and its durable level, the repository-tag map, the daily trigger. `kind` is the
  *     operation label it was recorded under; `scope` and `phase` are null.
+ *
+ * `level` is "error" or "warning". A job row is always an error; a server row carries the kind
+ * it was recorded with, so a condition that is not a fault — a sync whose absences were held
+ * back by the completeness gate — reads as a warning on the Data page, not as a failure.
  *
  * WHAT IT STILL DOES NOT COVER, stated rather than hidden: a "busy" refusal (a write already
  * holds the lock — contention, not a fault), a not-authorized one (the deployment cannot make
@@ -1566,6 +1570,7 @@ export function getRecentErrors(p?: unknown): ApiResult {
       .filter((j) => j.error !== null && j.error !== "")
       .map((j) => ({
         source: "job",
+        level: "error",
         job_id: j.job_id,
         kind: j.kind as string,
         phase: j.phase as string | null,
@@ -1576,6 +1581,7 @@ export function getRecentErrors(p?: unknown): ApiResult {
       }));
     const serverErrors = errorLog.recentErrors().map((e) => ({
       source: "server",
+      level: e.kind === "warning" ? "warning" : "error",
       job_id: null,
       kind: e.op,
       phase: null,
@@ -1591,9 +1597,9 @@ export function getRecentErrors(p?: unknown): ApiResult {
       errors,
       // The panel must be able to say what it is NOT showing.
       covers: "jobs+server",
-      note: "Failed sync jobs, and the last 25 failures recorded on the server — RPCs that "
-        + "threw and background chores. A request refused because a write was already running "
-        + "is not recorded.",
+      note: "Failed sync jobs, and the last 25 failures and warnings recorded on the server — "
+        + "RPCs that threw and background chores. A request refused because a write was already "
+        + "running is not recorded.",
     };
   });
 }
