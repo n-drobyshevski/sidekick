@@ -212,16 +212,33 @@ export function deleteScansCore(
       `missing, so the ledger can't be rebuilt.`,
   );
 
-  // Rebuild: sealed scans rows stay; the checkpoint's ledger (minus keys already in
-  // resolved_episodes) seeds vuln_ledger; supersessions reset (post-floor survivors
-  // re-derive them during replay).
+  // Rebuild: sealed scans rows stay; the checkpoint's ledger (minus keys a standing episode
+  // answers for) seeds vuln_ledger; supersessions the replay will re-derive reset.
+  //
+  // ONLY THOSE. A supersession is re-derived when the scan that wrote it is replayed — an
+  // unsealed survivor. One written by a SEALED scan never is: a later compaction baked that
+  // scan into the checkpoint, so the replay starts after it. Reset anyway, the superseded
+  // episode stood again beside the episode (or live row) that replaced it, and every genuine
+  // reopen of a sealed resolution that a second compaction also sealed was counted twice — or,
+  // still open at the second floor, lost its live row. So it is kept, and its key is NOT left
+  // out of the seed: the checkpoint's row for it is the lifecycle that superseded the episode.
+  // (The old reset-all assumed one compaction, where no superseding scan is sealed yet.)
+  const sealedScans = new Set(survivors.filter((r) => r.sealed).map((r) => r.scan_id));
   const rebuilt: LedgerState = {
     scans: survivors.filter((r) => r.sealed).map((r) => ({ ...r })),
     ledger: {},
-    episodes: state.episodes.map((e) => ({ ...e, superseded_by_scan: null })),
+    episodes: state.episodes.map((e) => ({
+      ...e,
+      superseded_by_scan:
+        e.superseded_by_scan !== null && sealedScans.has(e.superseded_by_scan)
+          ? e.superseded_by_scan
+          : null,
+    })),
   };
   if (checkpoint !== null) {
-    const episodeKeys = new Set(state.episodes.map((e) => e.vuln_key));
+    const episodeKeys = new Set(
+      rebuilt.episodes.filter((e) => e.superseded_by_scan === null).map((e) => e.vuln_key),
+    );
     for (const row of checkpoint.ledger ?? []) {
       if (!episodeKeys.has(row.vuln_key)) rebuilt.ledger[row.vuln_key] = { ...row };
     }

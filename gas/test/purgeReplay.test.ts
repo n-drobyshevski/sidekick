@@ -145,8 +145,8 @@ describe("severity purge survives a scan deletion", () => {
 });
 
 describe("episode prune survives a scan deletion", () => {
-  // deleteScansCore seeds the rebuilt ledger from the checkpoint MINUS the keys present in
-  // resolved_episodes (maintenance.ts:216-220). So removing an episode row un-masks its
+  // deleteScansCore seeds the rebuilt ledger from the checkpoint MINUS the keys a standing
+  // (non-superseded) resolved_episodes row answers for. So removing an episode row un-masks its
   // checkpoint entry — the pruned lifecycle returns as a live RESOLVED vuln_ledger row. This
   // is the non-obvious half of an operation that reads as inert.
   function setup() {

@@ -3885,13 +3885,19 @@ var Server = (() => {
       readPayload,
       (scanId) => `Cannot delete: the archived payload for surviving scan ${scanId} is missing, so the ledger can't be rebuilt.`
     );
+    const sealedScans = new Set(survivors.filter((r) => r.sealed).map((r) => r.scan_id));
     const rebuilt = {
       scans: survivors.filter((r) => r.sealed).map((r) => ({ ...r })),
       ledger: {},
-      episodes: state.episodes.map((e) => ({ ...e, superseded_by_scan: null }))
+      episodes: state.episodes.map((e) => ({
+        ...e,
+        superseded_by_scan: e.superseded_by_scan !== null && sealedScans.has(e.superseded_by_scan) ? e.superseded_by_scan : null
+      }))
     };
     if (checkpoint !== null) {
-      const episodeKeys = new Set(state.episodes.map((e) => e.vuln_key));
+      const episodeKeys = new Set(
+        rebuilt.episodes.filter((e) => e.superseded_by_scan === null).map((e) => e.vuln_key)
+      );
       for (const row of (_a = checkpoint.ledger) != null ? _a : []) {
         if (!episodeKeys.has(row.vuln_key)) rebuilt.ledger[row.vuln_key] = { ...row };
       }
@@ -6506,7 +6512,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "4ecc3301646f" : "dev";
+  var BUILD_ID = true ? "ac706610ed93" : "dev";
   var CACHE_EPOCH = "3";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
