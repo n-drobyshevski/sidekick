@@ -1,0 +1,79 @@
+# The same gates a contributor runs by hand, on every push and pull request that touches them.
+#
+#   apps    — each GAS app's own `npm ci && npm run check` (typecheck, lint incl. gas_shared,
+#             vitest, checkDistFresh). checkDistFresh rebuilds dist/ and diffs it against HEAD,
+#             so a commit whose dist/ was not rebuilt fails here. It needs only the checked-out
+#             commit, not history, and nothing here needs credentials or a Wiz tenant.
+#   pytest  — the root suite (os_vulns.py's client spec). Installs requirements.txt only:
+#             `pip install .` would fail, pyproject.toml's [project] carries a non-standard
+#             `wiz_sdk` key.
+#
+# `check`, not `check:exact`: the per-file-isolation run is what `npm run push` gates a deploy
+# on, and is the slower of the two.
+name: CI
+
+on:
+  push:
+    paths:
+      - "gas*/**"
+      - "os_vulns.py"
+      - "tests/**"
+      - "pyproject.toml"
+      - "requirements.txt"
+      - ".github/workflows/ci.yml"
+  pull_request:
+    paths:
+      - "gas*/**"
+      - "os_vulns.py"
+      - "tests/**"
+      - "pyproject.toml"
+      - "requirements.txt"
+      - ".github/workflows/ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apps:
+    name: ${{ matrix.app }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [gas, gas_ai, gas_devsecops, gas_hub]
+    defaults:
+      run:
+        working-directory: ${{ matrix.app }}
+    env:
+      # Pinned rather than inherited: the suites are run and verified under UTC, and some of
+      # them format calendar days; a runner's default zone is not a promise.
+      TZ: UTC
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ${{ matrix.app }}/package-lock.json
+      # `lint:shared` runs eslint over gas_shared/ from THIS app's node_modules, so one install
+      # per app covers the shared package too.
+      - run: npm ci
+      - run: npm run check
+
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - run: pip install -r requirements.txt
+      - run: pytest
