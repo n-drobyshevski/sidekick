@@ -20,10 +20,9 @@ import {
 export { SG_DOMAIN_REASONS, type SgDomainOverride } from "../../../gas_shared/domain/sgDomainOverrides";
 
 /**
- * Default hour-of-day (0-23, script-local — Europe/Paris per the manifest) the daily sync
- * trigger is requested to fire at. `server/setup.ts` imports this rather than hardcoding its
- * own literal, so the installed trigger and this field's default can never drift apart even
- * though (see `syncSchedule` below) setup() does not read the field yet.
+ * Default hour-of-day (0-23, Europe/Paris — `server/setup.ts`'s `TRIGGER_TZ`) the daily sync
+ * trigger fires at: what `syncSchedule` cleans to when unset, and so what a fresh setup()
+ * installs.
  */
 export const DEFAULT_SYNC_HOUR = 5;
 
@@ -181,17 +180,15 @@ export interface Settings {
   /** Show routes flagged experimental in the nav. */
   showExperimental: boolean;
   /**
-   * Hour-of-day (0-23, script-local) the daily sync trigger is requested to fire at.
+   * Hour-of-day (0-23, Europe/Paris — `server/setup.ts`'s `TRIGGER_TZ`, pinned on the trigger
+   * rather than inherited from the manifest) the daily sync trigger fires at.
    *
-   * STILL CAPTURED AND NOT WIRED, and S7 looked at it and left it on purpose. The blocker is
-   * NOT the Sheets read an earlier revision of this comment named — `setup()` calls
-   * `ensureTabs` before its trigger block, so the tab exists and an empty one cleans to this
-   * same default. It is the RECONCILE: the daily trigger is deduplicated by handler name alone,
-   * so a setting read once at install and never again would let an operator change the hour,
-   * watch setup() report "already installed", and keep firing at the old time. Converging needs
-   * a recorded signature the way `warmTriggerSchedule()` has one, which means a new
-   * `PROP_KEYS` entry and a `test/setup.test.ts` case. `server/setup.ts` carries the full
-   * statement of this beside `DAILY_SYNC_HOUR`.
+   * WIRED. setup() installs the trigger at this hour, and `api.putSettings` reinstalls it when a
+   * save moves the hour — best-effort: a failed reinstall never fails the save, it is recorded
+   * in the recent-errors log. Both go through `setup.reconcileDailySyncTrigger`, which records
+   * the installed hour as a signature (`PROP_KEYS.dailySyncSchedule`) because a ClockTrigger
+   * cannot report its own hour; `deploymentDiagnostic()` flags a recorded hour that is not this
+   * one. Apps Script fires an `atHour` trigger somewhere inside that hour, not on it.
    */
   syncSchedule: number;
   /**

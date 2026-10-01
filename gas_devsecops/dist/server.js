@@ -3951,6 +3951,11 @@ var Server = (() => {
     // from one an older deployment left behind. Written by setup(), read by setup() and by
     // deploymentDiagnostic().
     warmTriggerSchedule: "WARM_TRIGGER_SCHEDULE",
+    // The daily sync trigger's counterpart: `${tz}|${hour}` as setup.dailySyncSchedule() builds
+    // it, for the hour `Settings.syncSchedule` asked for. Written by setup.reconcileDailySyncTrigger
+    // (from setup() and from a Settings save that moves the hour), read by it and by
+    // deploymentDiagnostic(), which flags a recorded hour that is not the saved one.
+    dailySyncSchedule: "DAILY_SYNC_SCHEDULE",
     /**
      * When a real token exchange plus a real query last succeeded.
      *
@@ -5843,7 +5848,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "ee0062621222" : "dev";
+  var BUILD_ID = true ? "bd467396b068" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
@@ -11488,6 +11493,80 @@ var Server = (() => {
     return result;
   }
 
+  // src/server/setup.ts
+  var DAILY_SYNC_HANDLER = "trigger_dailySync";
+  var TRIGGER_TZ = "Europe/Paris";
+  var WARM_HANDLER = "trigger_warmReadModels";
+  var WARM_READY_BY_HOURS = [9, 13, 17];
+  var WARM_TRIGGER_HOURS = WARM_READY_BY_HOURS.map((h) => (h + 23) % 24);
+  var WARM_TRIGGER_NEAR_MINUTE = 30;
+  var WARM_TRIGGER_COUNT = WARM_TRIGGER_HOURS.length;
+  function warmTriggerSchedule() {
+    return `${TRIGGER_TZ}|${WARM_TRIGGER_HOURS.join(",")}@${WARM_TRIGGER_NEAR_MINUTE}`;
+  }
+  function dailySyncSchedule(hour) {
+    return `${TRIGGER_TZ}|${hour}`;
+  }
+  function reconcileDailySyncTrigger(hour) {
+    const existing = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === DAILY_SYNC_HANDLER);
+    const want = dailySyncSchedule(hour);
+    if (existing.length === 1 && getProp(PROP_KEYS.dailySyncSchedule) === want) {
+      return `Daily sync trigger: already installed (${hour}:00 ${TRIGGER_TZ})`;
+    }
+    ScriptApp.newTrigger(DAILY_SYNC_HANDLER).timeBased().everyDays(1).atHour(hour).inTimezone(TRIGGER_TZ).create();
+    for (const t of existing) ScriptApp.deleteTrigger(t);
+    setProp(PROP_KEYS.dailySyncSchedule, want);
+    return `Daily sync trigger: installed (${hour}:00 ${TRIGGER_TZ})` + (existing.length ? ` (replaced ${existing.length})` : "");
+  }
+  function setup() {
+    const notes = [];
+    let ssId = getProp(PROP_KEYS.ledgerSpreadsheetId);
+    let ss;
+    if (ssId) {
+      ss = SpreadsheetApp.openById(ssId);
+      notes.push(`Ledger: reusing ${ssId}`);
+    } else {
+      ss = SpreadsheetApp.create("Wiz Sidekick DevSecOps \u2014 ledger");
+      ssId = ss.getId();
+      setProp(PROP_KEYS.ledgerSpreadsheetId, ssId);
+      notes.push(`Ledger: created ${ssId}`);
+    }
+    ensureTabs(ss);
+    notes.push("Tabs: ensured (headers appended where missing)");
+    let folderId = getProp(PROP_KEYS.archiveFolderId);
+    if (!folderId) {
+      folderId = DriveApp.createFolder("Wiz Sidekick DevSecOps \u2014 archive").getId();
+      setProp(PROP_KEYS.archiveFolderId, folderId);
+      notes.push(`Archive: created ${folderId}`);
+    } else {
+      notes.push(`Archive: reusing ${folderId}`);
+    }
+    if (!getProp(PROP_KEYS.wizAuthUrl)) setProp(PROP_KEYS.wizAuthUrl, DEFAULT_WIZ_AUTH_URL);
+    if (!getProp(PROP_KEYS.allowedUsers)) {
+      const owner = Session.getEffectiveUser().getEmail();
+      if (owner) {
+        setProp(PROP_KEYS.allowedUsers, owner);
+        notes.push(`Access: seeded ALLOWED_USERS with ${owner}`);
+      }
+    }
+    notes.push(reconcileDailySyncTrigger(loadSettings().syncSchedule));
+    const warmExisting = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === WARM_HANDLER);
+    const wantSchedule = warmTriggerSchedule();
+    if (warmExisting.length === WARM_TRIGGER_HOURS.length && getProp(PROP_KEYS.warmTriggerSchedule) === wantSchedule) {
+      notes.push(`Warm triggers: already installed (${wantSchedule})`);
+    } else {
+      for (const t of warmExisting) ScriptApp.deleteTrigger(t);
+      for (const hour of WARM_TRIGGER_HOURS) {
+        ScriptApp.newTrigger(WARM_HANDLER).timeBased().everyDays(1).atHour(hour).nearMinute(WARM_TRIGGER_NEAR_MINUTE).inTimezone(TRIGGER_TZ).create();
+      }
+      setProp(PROP_KEYS.warmTriggerSchedule, wantSchedule);
+      notes.push(
+        `Warm triggers: installed ${WARM_TRIGGER_HOURS.length}x daily, warm by ${WARM_READY_BY_HOURS.map((h) => `${h}:00`).join(", ")} ${TRIGGER_TZ}` + (warmExisting.length ? ` (replaced ${warmExisting.length})` : "")
+      );
+    }
+    return notes.join("\n");
+  }
+
   // src/server/api.ts
   function run(fn, label = "api") {
     try {
@@ -11729,7 +11808,18 @@ var Server = (() => {
     var _a;
     const patch = { ...(_a = p.settings) != null ? _a : {} };
     delete patch["supportGroupDomains"];
-    return mutate(() => saveSettings(withSettings(loadSettings(), patch)), "putSettings");
+    return mutate(() => {
+      const before = loadSettings().syncSchedule;
+      const saved = saveSettings(withSettings(loadSettings(), patch));
+      if (saved.syncSchedule !== before) {
+        try {
+          reconcileDailySyncTrigger(saved.syncSchedule);
+        } catch (e) {
+          recordError("syncHourTrigger", e);
+        }
+      }
+      return saved;
+    }, "putSettings");
   }
   function saveSupportGroupDomain(p) {
     var _a, _b, _c;
@@ -12261,73 +12351,6 @@ var Server = (() => {
     return HtmlService.createHtmlOutput(welcomeHtml(email, continueUrl, accountChooserUrl())).setTitle(PRODUCT).addMetaTag("viewport", "width=device-width, initial-scale=1");
   }
 
-  // src/server/setup.ts
-  var DAILY_SYNC_HANDLER = "trigger_dailySync";
-  var DAILY_SYNC_HOUR = DEFAULT_SYNC_HOUR;
-  var WARM_HANDLER = "trigger_warmReadModels";
-  var WARM_READY_BY_HOURS = [9, 13, 17];
-  var WARM_TRIGGER_HOURS = WARM_READY_BY_HOURS.map((h) => (h + 23) % 24);
-  var WARM_TRIGGER_NEAR_MINUTE = 30;
-  var WARM_TRIGGER_COUNT = WARM_TRIGGER_HOURS.length;
-  var WARM_TRIGGER_TZ = "Europe/Paris";
-  function warmTriggerSchedule() {
-    return `${WARM_TRIGGER_TZ}|${WARM_TRIGGER_HOURS.join(",")}@${WARM_TRIGGER_NEAR_MINUTE}`;
-  }
-  function setup() {
-    const notes = [];
-    let ssId = getProp(PROP_KEYS.ledgerSpreadsheetId);
-    let ss;
-    if (ssId) {
-      ss = SpreadsheetApp.openById(ssId);
-      notes.push(`Ledger: reusing ${ssId}`);
-    } else {
-      ss = SpreadsheetApp.create("Wiz Sidekick DevSecOps \u2014 ledger");
-      ssId = ss.getId();
-      setProp(PROP_KEYS.ledgerSpreadsheetId, ssId);
-      notes.push(`Ledger: created ${ssId}`);
-    }
-    ensureTabs(ss);
-    notes.push("Tabs: ensured (headers appended where missing)");
-    let folderId = getProp(PROP_KEYS.archiveFolderId);
-    if (!folderId) {
-      folderId = DriveApp.createFolder("Wiz Sidekick DevSecOps \u2014 archive").getId();
-      setProp(PROP_KEYS.archiveFolderId, folderId);
-      notes.push(`Archive: created ${folderId}`);
-    } else {
-      notes.push(`Archive: reusing ${folderId}`);
-    }
-    if (!getProp(PROP_KEYS.wizAuthUrl)) setProp(PROP_KEYS.wizAuthUrl, DEFAULT_WIZ_AUTH_URL);
-    if (!getProp(PROP_KEYS.allowedUsers)) {
-      const owner = Session.getEffectiveUser().getEmail();
-      if (owner) {
-        setProp(PROP_KEYS.allowedUsers, owner);
-        notes.push(`Access: seeded ALLOWED_USERS with ${owner}`);
-      }
-    }
-    const dailyExisting = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === DAILY_SYNC_HANDLER);
-    if (!dailyExisting.length) {
-      ScriptApp.newTrigger(DAILY_SYNC_HANDLER).timeBased().everyDays(1).atHour(DAILY_SYNC_HOUR).create();
-      notes.push(`Daily sync trigger: installed (${DAILY_SYNC_HOUR}:00 script-local)`);
-    } else {
-      notes.push("Daily sync trigger: already installed");
-    }
-    const warmExisting = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === WARM_HANDLER);
-    const wantSchedule = warmTriggerSchedule();
-    if (warmExisting.length === WARM_TRIGGER_HOURS.length && getProp(PROP_KEYS.warmTriggerSchedule) === wantSchedule) {
-      notes.push(`Warm triggers: already installed (${wantSchedule})`);
-    } else {
-      for (const t of warmExisting) ScriptApp.deleteTrigger(t);
-      for (const hour of WARM_TRIGGER_HOURS) {
-        ScriptApp.newTrigger(WARM_HANDLER).timeBased().everyDays(1).atHour(hour).nearMinute(WARM_TRIGGER_NEAR_MINUTE).inTimezone(WARM_TRIGGER_TZ).create();
-      }
-      setProp(PROP_KEYS.warmTriggerSchedule, wantSchedule);
-      notes.push(
-        `Warm triggers: installed ${WARM_TRIGGER_HOURS.length}x daily, warm by ${WARM_READY_BY_HOURS.map((h) => `${h}:00`).join(", ")} ${WARM_TRIGGER_TZ}` + (warmExisting.length ? ` (replaced ${warmExisting.length})` : "")
-      );
-    }
-    return notes.join("\n");
-  }
-
   // src/server/diagnostics.ts
   function reporter() {
     const lines = [];
@@ -12384,9 +12407,17 @@ var Server = (() => {
     const handlers = ScriptApp.getProjectTriggers().map((t) => t.getHandlerFunction());
     const count = (names) => handlers.filter((h) => names.includes(h)).length;
     const daily = count([DAILY_SYNC_HANDLER]);
-    if (daily === 1) ok("Daily sync trigger", "installed");
-    else if (daily) bad("Daily sync trigger", `${daily} installed, expected 1 \u2014 the sync runs ${daily}x a day`);
-    else bad("Daily sync trigger", "not installed \u2014 run setup()");
+    const dailySig = getProp(PROP_KEYS.dailySyncSchedule);
+    const wantDaily = dailySyncSchedule(s2.syncSchedule);
+    if (daily > 1) {
+      bad("Daily sync trigger", `${daily} installed, expected 1 \u2014 the sync runs ${daily}x a day`);
+    } else if (!daily) {
+      bad("Daily sync trigger", "not installed \u2014 run setup()");
+    } else if (dailySig !== wantDaily) {
+      bad("Daily sync trigger", `schedule ${dailySig != null ? dailySig : "(unrecorded)"} is not the saved sync hour's ${wantDaily} \u2014 run setup() as the deploying account`);
+    } else {
+      ok("Daily sync trigger", `installed (${dailySig})`);
+    }
     const warm = count([WARM_HANDLER]);
     const warmSig = getProp(PROP_KEYS.warmTriggerSchedule);
     if (warm !== WARM_TRIGGER_COUNT) {

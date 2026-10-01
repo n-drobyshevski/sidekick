@@ -318,10 +318,21 @@ about at least two of them, and the clock is the product.
 3. `npm run push`
 4. In the Apps Script editor, run `setup()` once. It creates the ledger spreadsheet and the
    Drive archive folder, ensures every tab and header, and seeds `ALLOWED_USERS` with the
-   owner. It also installs the standing triggers — one daily sync plus three staggered
-   read-model warms — and records their schedule as a signature so a second `setup()` on an
-   unchanged schedule adds nothing rather than accumulating duplicates against the 20-trigger
-   quota. Budget: 4 standing + up to 2 transient (continuation and watchdog) = 6 of 20.
+   owner. It also installs the standing triggers — one daily sync at Settings → System's
+   sync hour plus three staggered read-model warms, all pinned to Europe/Paris — and records
+   their schedule as a signature so a second `setup()` on an unchanged schedule adds nothing
+   rather than accumulating duplicates against the 20-trigger quota. Budget: 4 standing + up
+   to 2 transient (continuation and watchdog) = 6 of 20.
+
+   **Run `setup()` as the account that deploys the web app.** The manifest sets
+   `executeAs: USER_DEPLOYING`, so every RPC — including a Settings save that moves the sync
+   hour, which reinstalls the daily trigger on the spot — runs as the deploying account, and
+   installable triggers belong to the account that created them: `getProjectTriggers()` lists
+   only the running account's. A `setup()` run by another editor installs a daily trigger the
+   web app can neither see nor move, and the next hour change adds a second one beside it.
+   A reinstall that fails on save keeps the saved hour and lands in Data → Recent errors;
+   `deploymentDiagnostic()` flags the trigger's recorded hour against the saved one until a
+   `setup()` run converges them.
 5. Set `WIZ_API_TOKEN`, or `WIZ_CLIENT_ID` + `WIZ_CLIENT_SECRET`, in Project Settings. Then
    open Settings → System and press **Test connection**: `hasCredentials` only means three
    Script Properties are non-empty, and the button is what turns that into a token exchange

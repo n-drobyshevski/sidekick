@@ -11,6 +11,7 @@
 // needing it actually runs. A diagnostic that only reads Script Properties authorizes nothing.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_SETTINGS } from "../src/domain/settingsLogic";
 
 const props = vi.hoisted(() => ({}));
 const http = vi.hoisted(() => ({ replies: [], throwWith: null }));
@@ -245,11 +246,12 @@ describe("deploymentDiagnostic's trigger read-out", () => {
   const lineOf = (out, label) => out.split("\n").find((l) => l.includes(`${label}:`)) ?? "";
 
   it("passes a deployment exactly as setup() leaves it", async () => {
-    const { warmTriggerSchedule } = await import("../src/server/setup");
+    const { dailySyncSchedule, warmTriggerSchedule } = await import("../src/server/setup");
     triggers.handlers = [...SETUP_INSTALLS];
     props.WARM_TRIGGER_SCHEDULE = warmTriggerSchedule();
+    props.DAILY_SYNC_SCHEDULE = dailySyncSchedule(DEFAULT_SETTINGS.syncSchedule);
     const out = await run();
-    expect(lineOf(out, "Daily sync trigger")).toMatch(/^\s+OK\s/);
+    expect(lineOf(out, "Daily sync trigger")).toMatch(/^\s+OK\s.*Europe\/Paris\|5/);
     expect(lineOf(out, "Warm triggers")).toMatch(/^\s+OK\s.*3 installed/);
     expect(lineOf(out, "Pending one-shots")).toContain(": 0");
     expect(lineOf(out, "Triggers used")).toContain("4 of 20");
@@ -268,6 +270,27 @@ describe("deploymentDiagnostic's trigger read-out", () => {
     triggers.handlers = [...SETUP_INSTALLS];
     props.WARM_TRIGGER_SCHEDULE = "Europe/Paris|7,11,15@0";
     expect(lineOf(await run(), "Warm triggers")).toMatch(/FAIL.*Europe\/Paris\|7,11,15@0/);
+  });
+
+  it("fails a daily trigger whose recorded hour is not the saved sync hour", async () => {
+    // A Settings save moves the trigger best-effort; when that reinstall failed, this line is
+    // where the stale hour shows. Settings are the defaults here (an empty tab), so 5:00.
+    triggers.handlers = [...SETUP_INSTALLS];
+    props.DAILY_SYNC_SCHEDULE = "Europe/Paris|14";
+    const line = lineOf(await run(), "Daily sync trigger");
+    expect(line).toMatch(/FAIL.*Europe\/Paris\|14.*Europe\/Paris\|5/);
+    expect(line).toMatch(/run setup\(\) as the deploying account/);
+  });
+
+  it("fails a daily trigger installed before the hour was recorded", async () => {
+    triggers.handlers = [...SETUP_INSTALLS];
+    expect(lineOf(await run(), "Daily sync trigger")).toMatch(/FAIL.*\(unrecorded\)/);
+  });
+
+  it("fails two daily triggers before it looks at the hour", async () => {
+    triggers.handlers = [...SETUP_INSTALLS, "trigger_dailySync"];
+    props.DAILY_SYNC_SCHEDULE = "Europe/Paris|5";
+    expect(lineOf(await run(), "Daily sync trigger")).toMatch(/FAIL.*2 installed, expected 1/);
   });
 
   it("counts leftover one-shots and fails when no sync could arm its own", async () => {

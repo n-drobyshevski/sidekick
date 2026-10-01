@@ -1514,15 +1514,22 @@ export async function renderSettings(host, params, ctx) {
     });
     const scheduleRow = settingRow({
       label: "Daily sync hour", htmlFor: scheduleId,
-      description: `Hour of day (0-23), script-local. An out-of-range value falls back to the `
-        + `default (${DEFAULT_SYNC_HOUR}:00) on save rather than being rejected.`,
+      description: `Hour of day (0-23), Europe/Paris. Saving a new hour moves the daily sync `
+        + `trigger straight away. An out-of-range value falls back to the default `
+        + `(${DEFAULT_SYNC_HOUR}:00) on save rather than being rejected.`,
       control: el("div", {}, scheduleInput, scheduleError),
     });
+    // What a save does to the trigger, and what the operator sees when that part fails — the
+    // reinstall is best-effort on the server (api.putSettings), so the save itself never fails
+    // over it and this is the only place the page says where the failure goes instead.
     const scheduleCaveat = disclosure(
-      "Why a saved hour might not move the trigger yet",
-      el("p", {}, "The installed daily trigger is deduplicated by its name alone, not by this "
-        + "value, so changing the hour after first install can leave the trigger firing at the "
-        + "old time until that reconciliation ships."),
+      "If a saved hour does not move the trigger",
+      el("p", {}, "Saving a different hour reinstalls the daily sync trigger at that hour, "
+        + "Europe/Paris time; Apps Script runs it somewhere within the hour, not on it. The "
+        + "reinstall never blocks the save: if it fails, the hour is still saved, the failure is "
+        + "listed under Data → Recent errors, and deploymentDiagnostic() reports the trigger's "
+        + "hour against the saved one until running setup() from the Apps Script editor — as "
+        + "the account that deployed the web app — puts it right."),
     );
 
     const autoCompactSwitch = switchToggle({

@@ -10,6 +10,7 @@ import { getProp, hasWizCredentials, PROP_KEYS, projectScope, resolveWizAuthMode
 import { activeJob, CONTINUE_HANDLERS, isStaleJob, WATCHDOG_HANDLERS } from "./jobsStore";
 import {
   DAILY_SYNC_HANDLER,
+  dailySyncSchedule,
   WARM_HANDLER,
   WARM_TRIGGER_COUNT,
   warmTriggerSchedule,
@@ -110,10 +111,22 @@ export function deploymentDiagnostic(): string {
   const count = (names: ReadonlyArray<string | undefined>) =>
     handlers.filter((h) => names.includes(h)).length;
 
+  // Count, then the recorded hour against the SAVED one: Settings → System's sync hour moves
+  // the trigger on save, best-effort, so a reinstall that failed (or a deployment whose
+  // setup() predates the signature) leaves a trigger firing at an hour nobody chose.
   const daily = count([DAILY_SYNC_HANDLER]);
-  if (daily === 1) ok("Daily sync trigger", "installed");
-  else if (daily) bad("Daily sync trigger", `${daily} installed, expected 1 — the sync runs ${daily}x a day`);
-  else bad("Daily sync trigger", "not installed — run setup()");
+  const dailySig = getProp(PROP_KEYS.dailySyncSchedule);
+  const wantDaily = dailySyncSchedule(s.syncSchedule);
+  if (daily > 1) {
+    bad("Daily sync trigger", `${daily} installed, expected 1 — the sync runs ${daily}x a day`);
+  } else if (!daily) {
+    bad("Daily sync trigger", "not installed — run setup()");
+  } else if (dailySig !== wantDaily) {
+    bad("Daily sync trigger", `schedule ${dailySig ?? "(unrecorded)"} is not the saved sync hour's `
+      + `${wantDaily} — run setup() as the deploying account`);
+  } else {
+    ok("Daily sync trigger", `installed (${dailySig})`);
+  }
 
   // Count AND signature, the two things setup() reconciles on: three triggers on a schedule
   // this build no longer asks for pass a count check and still warm at the wrong hours.

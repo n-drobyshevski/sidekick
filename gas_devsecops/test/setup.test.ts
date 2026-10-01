@@ -1,4 +1,4 @@
-// setup()'s trigger battery: one daily sync, three staggered warm passes.
+// setup()'s trigger battery: one daily sync at the saved hour, three staggered warm passes.
 //
 // PORTED FROM gas/test/setup.test.ts, adapted to this register's handler names
 // (trigger_dailySync / trigger_warmReadModels — scanJobs.ts's dailySync/watchdogSync/
@@ -25,6 +25,12 @@ const deleted: string[] = [];
 let installed: string[] = [];
 
 vi.mock("../src/server/sheetsDb", () => ({ ensureTabs: () => {} }));
+// setup() installs the daily trigger at the SAVED hour. The settings tab is the store's
+// business, not this file's — the stub hands back whatever hour a spec sets.
+const settings = vi.hoisted(() => ({ syncSchedule: 5 }));
+vi.mock("../src/server/settingsStore", () => ({
+  loadSettings: () => ({ syncSchedule: settings.syncSchedule }),
+}));
 
 vi.stubGlobal("SpreadsheetApp", {
   create: () => ({ getId: () => "ss-1" }),
@@ -84,6 +90,7 @@ beforeEach(() => {
   built.length = 0;
   deleted.length = 0;
   installed = [];
+  settings.syncSchedule = 5;
   vi.resetModules();
 });
 
@@ -202,6 +209,7 @@ describe("changing the schedule reinstalls once, not additively", () => {
 
   it("does not touch the daily trigger while reconciling the warm set", async () => {
     installed = [DAILY, WARM];
+    props["DAILY_SYNC_SCHEDULE"] = "Europe/Paris|5"; // the daily trigger is already current
     const { setup } = await load();
     setup();
     expect(deleted).toEqual([WARM]);
@@ -222,6 +230,115 @@ describe("changing the schedule reinstalls once, not additively", () => {
       const { setup } = await load();
       expect(() => setup()).toThrow(/quota/);
       expect(props["WARM_TRIGGER_SCHEDULE"]).toBeUndefined();
+    } finally {
+      (globalThis as { ScriptApp: { newTrigger: unknown } }).ScriptApp.newTrigger = real;
+    }
+  });
+});
+
+describe("the daily sync trigger follows Settings.syncSchedule", () => {
+  // The daily trigger used to be deduplicated by handler name alone, so a changed hour could
+  // never reach it. Like the warm set it now converges on a recorded signature
+  // (`DAILY_SYNC_SCHEDULE`, `${tz}|${hour}`) — and the properties below are the warm set's:
+  // fresh installs honour it, a legacy unsigned trigger is replaced exactly once, a second run
+  // is a no-op, a moved hour reinstalls once rather than adding a second trigger.
+
+  it("installs a fresh deployment at the saved hour, pinned to Europe/Paris", async () => {
+    settings.syncSchedule = 14;
+    const { setup, dailySyncSchedule } = await load();
+    const report = setup();
+    expect(dailyBuilds()).toEqual([{ handler: DAILY, days: 1, hour: 14, tz: "Europe/Paris" }]);
+    expect(props["DAILY_SYNC_SCHEDULE"]).toBe(dailySyncSchedule(14));
+    expect(props["DAILY_SYNC_SCHEDULE"]).toBe("Europe/Paris|14");
+    expect(report).toMatch(/daily sync trigger: installed \(14:00 Europe\/Paris\)/i);
+  });
+
+  it("uses the same timezone the warm triggers are pinned to", async () => {
+    const { setup, TRIGGER_TZ } = await load();
+    setup();
+    expect(dailyBuilds()[0].tz).toBe(TRIGGER_TZ);
+    for (const b of warmBuilds()) expect(b.tz).toBe(TRIGGER_TZ);
+  });
+
+  it("replaces a legacy daily trigger with no recorded signature exactly once", async () => {
+    // A deployment from before the signature: one daily trigger, no DAILY_SYNC_SCHEDULE. It may
+    // well fire at the right hour, but nothing can tell — so it is rebuilt once, and the
+    // property written then is what makes the next run leave it alone.
+    installed = [DAILY];
+    const { setup } = await load();
+    const first = setup();
+    expect(deleted.filter((h) => h === DAILY)).toEqual([DAILY]);
+    expect(dailyBuilds()).toHaveLength(1);
+    expect(installed.filter((h) => h === DAILY)).toHaveLength(1);
+    expect(first).toMatch(/daily sync trigger: installed .*\(replaced 1\)/i);
+
+    built.length = 0;
+    deleted.length = 0;
+    const second = setup();
+    expect(dailyBuilds()).toEqual([]);
+    expect(deleted).toEqual([]);
+    expect(second).toMatch(/daily sync trigger: already installed/i);
+  });
+
+  it("a second setup() at an unchanged hour builds and deletes nothing", async () => {
+    settings.syncSchedule = 7;
+    const { setup } = await load();
+    setup();
+    built.length = 0;
+    deleted.length = 0;
+    setup();
+    expect(built).toEqual([]);
+    expect(deleted).toEqual([]);
+    expect(installed.filter((h) => h === DAILY)).toHaveLength(1);
+  });
+
+  it("a changed hour reinstalls the daily trigger exactly once, and leaves the warm set", async () => {
+    const { setup } = await load();
+    setup();
+    built.length = 0;
+    deleted.length = 0;
+    settings.syncSchedule = 22;
+    setup();
+    expect(deleted).toEqual([DAILY]);
+    expect(dailyBuilds().map((b) => b.hour)).toEqual([22]);
+    expect(warmBuilds()).toEqual([]);
+    expect(installed.filter((h) => h === DAILY)).toHaveLength(1);
+    expect(props["DAILY_SYNC_SCHEDULE"]).toBe("Europe/Paris|22");
+
+    built.length = 0;
+    deleted.length = 0;
+    setup(); // and converged: the next run is a no-op again
+    expect(built).toEqual([]);
+    expect(deleted).toEqual([]);
+  });
+
+  it("collapses duplicate daily triggers into one even when the signature matches", async () => {
+    // Two triggers under the handler run the sync twice a day; a matching signature does not
+    // make that correct, so the count is part of the no-op test.
+    installed = [DAILY, DAILY];
+    props["DAILY_SYNC_SCHEDULE"] = "Europe/Paris|5";
+    const { reconcileDailySyncTrigger } = await load();
+    reconcileDailySyncTrigger(5);
+    expect(deleted).toEqual([DAILY, DAILY]);
+    expect(installed.filter((h) => h === DAILY)).toHaveLength(1);
+  });
+
+  it("keeps the old trigger and leaves the signature unwritten when create() throws", async () => {
+    const real = (globalThis as { ScriptApp: { newTrigger: unknown } }).ScriptApp.newTrigger;
+    (globalThis as { ScriptApp: { newTrigger: unknown } }).ScriptApp.newTrigger = (h: string) => {
+      const b = (real as (h: string) => Record<string, (x?: unknown) => unknown>)(h);
+      b["create"] = () => { throw new Error("quota"); };
+      return b;
+    };
+    try {
+      installed = [DAILY];
+      const { reconcileDailySyncTrigger } = await load();
+      expect(() => reconcileDailySyncTrigger(9)).toThrow(/quota/);
+      expect(props["DAILY_SYNC_SCHEDULE"]).toBeUndefined();
+      // Created before the old one is deleted: a failed create leaves the register syncing at
+      // the old hour, not not syncing at all.
+      expect(deleted).toEqual([]);
+      expect(installed).toEqual([DAILY]);
     } finally {
       (globalThis as { ScriptApp: { newTrigger: unknown } }).ScriptApp.newTrigger = real;
     }

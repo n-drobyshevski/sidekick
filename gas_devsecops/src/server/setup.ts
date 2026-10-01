@@ -17,46 +17,28 @@
 // its continuation hops totals on the order of 2 minutes of that.
 //
 // setup() is idempotent by RECONCILING against a recorded signature, not by "install once and
-// never look again" — see warmScheduleSignature() below for why a signature is the only way to
+// never look again" — see warmTriggerSchedule() and dailySyncSchedule() below
+// for why a signature is the only way to
 // tell a correctly-scheduled set of triggers from a stale one, and why a naive dedupe-by-count
 // would leave a changed schedule installed forever.
 
-import { DEFAULT_SYNC_HOUR } from "../domain/settingsLogic";
 import { DEFAULT_WIZ_AUTH_URL, getProp, PROP_KEYS, setProp } from "./props";
+import { loadSettings } from "./settingsStore";
 import { ensureTabs } from "./sheetsDb";
 
 // Exported for diagnostics.ts, which counts installed triggers by these names — a copy there
 // once checked a handler this file never installs and reported FAIL on every healthy deploy.
 export const DAILY_SYNC_HANDLER = "trigger_dailySync";
-/*
- * THE DAILY HOUR IS STILL THE DEFAULT, NOT `Settings.syncSchedule`, AND S7 LEFT IT THAT WAY
- * DELIBERATELY. Recording the reasoning so the next package inherits a decision rather than a
- * bare TODO.
- *
- * Reading the setting is the easy half and it is safe: `ensureTabs(ss)` runs above the trigger
- * block, so the `settings` tab exists by the time `loadSettings()` would be called, and an
- * empty tab cleans to `DEFAULT_SETTINGS` — i.e. to this same constant. The ordering hazard the
- * field's own doc comment names is real but survivable.
- *
- * THE HARD HALF IS THE RECONCILE, and without it the wiring is worse than nothing. The daily
- * trigger is deduplicated BY HANDLER NAME ONLY (below): once one exists, setup() never touches
- * it again. So reading the setting on a fresh install and then never re-reading it would let an
- * operator change the hour, see setup() report "already installed", and keep firing at the old
- * time — a setting that looks wired and is not, which is strictly more misleading than one that
- * is openly unread. Making it converge needs what the warm set has: a recorded signature
- * (`warmTriggerSchedule()` and `PROP_KEYS.warmTriggerSchedule`) to tell a correct trigger from
- * a stale one. That means a new key in `props.ts` and a case in `test/setup.test.ts`, neither
- * of which is S7's file — and a half-wire with no test is the shape of change this file's
- * header exists to prevent.
- *
- * Until then the constant is IMPORTED rather than re-literaled, so the hour installed here and
- * the default a reader sees in Settings cannot silently drift apart.
- *
- * TODO(next): add `PROP_KEYS.dailySyncSchedule`, fold the chosen hour into a signature the way
- * `warmTriggerSchedule()` does, read `loadSettings().syncSchedule` here, and pin the reinstall
- * in `test/setup.test.ts`.
- */
-const DAILY_SYNC_HOUR = DEFAULT_SYNC_HOUR;
+
+// Pinned rather than inherited from the manifest's `timeZone`, for EVERY clock trigger this
+// file installs — the daily sync and the warm set alike. A project re-created with
+// `clasp create` gets whatever timezone the CLI defaults to, and `atHour` follows the SCRIPT
+// timezone unless told otherwise — so an uninherited schedule could silently fire on another
+// continent's working day while `gas_shared/ui/format.js`'s `DISPLAY_TZ` kept rendering
+// Europe/Paris. Naming it here makes the two agree by construction; the manifest (dist/
+// appsscript.json) happens to already say Europe/Paris too, so this is belt-and-braces, not a
+// second answer. It is also the timezone the Settings page's "Daily sync hour" means.
+export const TRIGGER_TZ = "Europe/Paris";
 
 export const WARM_HANDLER = "trigger_warmReadModels";
 
@@ -82,14 +64,6 @@ const WARM_TRIGGER_NEAR_MINUTE = 30;
 /** How many warm triggers a correct install has — what diagnostics.ts counts against. */
 export const WARM_TRIGGER_COUNT = WARM_TRIGGER_HOURS.length;
 
-// Pinned rather than inherited from the manifest's `timeZone`. A project re-created with
-// `clasp create` gets whatever timezone the CLI defaults to, and `atHour` follows the SCRIPT
-// timezone unless told otherwise — so an uninherited schedule could silently fire on another
-// continent's working day while `client/js/ui/format.js`'s `DISPLAY_TZ` kept rendering
-// Europe/Paris. Naming it here makes the two agree by construction; the manifest (dist/
-// appsscript.json) happens to already say Europe/Paris too, so this is belt-and-braces, not a
-// second answer.
-const WARM_TRIGGER_TZ = "Europe/Paris";
 
 /**
  * What is installed, as one comparable string. A ClockTrigger exposes its handler function and
@@ -100,7 +74,61 @@ const WARM_TRIGGER_TZ = "Europe/Paris";
  * on a stale schedule forever with nothing on screen to show for it.
  */
 export function warmTriggerSchedule(): string {
-  return `${WARM_TRIGGER_TZ}|${WARM_TRIGGER_HOURS.join(",")}@${WARM_TRIGGER_NEAR_MINUTE}`;
+  return `${TRIGGER_TZ}|${WARM_TRIGGER_HOURS.join(",")}@${WARM_TRIGGER_NEAR_MINUTE}`;
+}
+
+/**
+ * The daily sync's counterpart to `warmTriggerSchedule()`, for the same reason: a ClockTrigger
+ * cannot say what hour it fires at, so the hour has to be recorded beside it
+ * (`PROP_KEYS.dailySyncSchedule`) for a changed `Settings.syncSchedule` to be told apart from
+ * the trigger already installed.
+ */
+export function dailySyncSchedule(hour: number): string {
+  return `${TRIGGER_TZ}|${hour}`;
+}
+
+/**
+ * Make the installed daily sync trigger fire at `hour` (0-23, `TRIGGER_TZ`), returning the line
+ * setup() prints. A no-op when exactly one trigger exists under the handler and the recorded
+ * signature already names this hour; otherwise one is created and every trigger previously
+ * under the handler deleted — the warm set's rebuild-the-whole-set, for its reason: a trigger
+ * installed before the signature existed (no property at all) looks identical to a correct
+ * one, so it is replaced once and the property written then is what makes every later run a
+ * no-op.
+ *
+ * CREATE BEFORE DELETE, unlike the warm set. A missed warm pass costs one cold page load; a
+ * daily trigger deleted and then not recreated (quota, a transient ScriptApp error) stops the
+ * register syncing at all, silently. Created first, a failure leaves the old trigger firing at
+ * the old hour, which deploymentDiagnostic() names; the list of old ones is read before the
+ * create, so the new trigger is never in it.
+ *
+ * Called from setup() and from `api.putSettings` when a save moves the hour. THE TRIGGERS IT
+ * SEES ARE THE RUNNING ACCOUNT'S: `getProjectTriggers()` lists the current user's triggers on
+ * this project only. The web app executes as the deploying account (`executeAs:
+ * USER_DEPLOYING` in appsscript.json), so a save from Settings reconciles that account's
+ * trigger — which is why the README has setup() run as that same account. Run as anyone else,
+ * setup() would install a second daily trigger the web app can neither see nor move.
+ */
+export function reconcileDailySyncTrigger(hour: number): string {
+  const existing = ScriptApp.getProjectTriggers()
+    .filter((t) => t.getHandlerFunction() === DAILY_SYNC_HANDLER);
+  const want = dailySyncSchedule(hour);
+  if (existing.length === 1 && getProp(PROP_KEYS.dailySyncSchedule) === want) {
+    return `Daily sync trigger: already installed (${hour}:00 ${TRIGGER_TZ})`;
+  }
+  ScriptApp.newTrigger(DAILY_SYNC_HANDLER)
+    .timeBased()
+    .everyDays(1)
+    .atHour(hour)
+    .inTimezone(TRIGGER_TZ)
+    .create();
+  for (const t of existing) ScriptApp.deleteTrigger(t);
+  // LAST, as for the warm set: a create() that throws leaves the property stale (or absent),
+  // so the next setup() — or deploymentDiagnostic(), which compares it to the saved setting —
+  // sees the mismatch instead of a schedule recorded as installed that never was.
+  setProp(PROP_KEYS.dailySyncSchedule, want);
+  return `Daily sync trigger: installed (${hour}:00 ${TRIGGER_TZ})` +
+    (existing.length ? ` (replaced ${existing.length})` : "");
 }
 
 export function setup(): string {
@@ -146,21 +174,10 @@ export function setup(): string {
     }
   }
 
-  // Daily sync trigger — deduplicated by handler name. There is only ever one of these, so
-  // (unlike the warm set below) presence is the whole question; nothing about a single daily
-  // trigger needs a recorded signature to tell "correct" from "stale".
-  const dailyExisting = ScriptApp.getProjectTriggers()
-    .filter((t) => t.getHandlerFunction() === DAILY_SYNC_HANDLER);
-  if (!dailyExisting.length) {
-    ScriptApp.newTrigger(DAILY_SYNC_HANDLER)
-      .timeBased()
-      .everyDays(1)
-      .atHour(DAILY_SYNC_HOUR)
-      .create();
-    notes.push(`Daily sync trigger: installed (${DAILY_SYNC_HOUR}:00 script-local)`);
-  } else {
-    notes.push("Daily sync trigger: already installed");
-  }
+  // Daily sync trigger — at the SAVED hour, reconciled against its recorded signature. Read
+  // here, after ensureTabs(), so the settings tab exists; an empty one cleans to
+  // DEFAULT_SYNC_HOUR, which is what a fresh install gets.
+  notes.push(reconcileDailySyncTrigger(loadSettings().syncSchedule));
 
   // Read-model warm triggers — reconciled against the recorded signature, not merely
   // deduplicated by count. A set of 3 triggers on a schedule this file no longer asks for
@@ -183,7 +200,7 @@ export function setup(): string {
         .everyDays(1)
         .atHour(hour)
         .nearMinute(WARM_TRIGGER_NEAR_MINUTE)
-        .inTimezone(WARM_TRIGGER_TZ)
+        .inTimezone(TRIGGER_TZ)
         .create();
     }
     // LAST, so a create() that throws part-way through leaves the property stale and the next
@@ -191,7 +208,7 @@ export function setup(): string {
     setProp(PROP_KEYS.warmTriggerSchedule, wantSchedule);
     notes.push(
       `Warm triggers: installed ${WARM_TRIGGER_HOURS.length}x daily, warm by ` +
-      `${WARM_READY_BY_HOURS.map((h) => `${h}:00`).join(", ")} ${WARM_TRIGGER_TZ}` +
+      `${WARM_READY_BY_HOURS.map((h) => `${h}:00`).join(", ")} ${TRIGGER_TZ}` +
       (warmExisting.length ? ` (replaced ${warmExisting.length})` : ""),
     );
   }

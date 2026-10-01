@@ -971,3 +971,23 @@ describe("confirmDialog and the settingsModel gates are real imports, not just r
     expect(CODE).toMatch(/import\s*\{[^}]*\bvalidateDraft\b[^}]*\}\s*from\s*"\.\.\/settingsModel\.js"/);
   });
 });
+
+describe("the sync-hour copy says what a save now does to the trigger", () => {
+  // The caveat used to say the trigger was deduplicated by name and a changed hour would not
+  // reach it "until that reconciliation ships". It has shipped (api.putSettings reinstalls the
+  // trigger, setup.reconcileDailySyncTrigger), so the copy must describe that instead — and
+  // where a failed reinstall goes, since the save itself no longer fails over it.
+  it("no longer claims the hour cannot move the trigger", () => {
+    expect(SRC).not.toMatch(/until that reconciliation ships/);
+    expect(SRC).not.toMatch(/deduplicated by its name alone/);
+    expect(SRC).not.toMatch(/Why a saved hour might not move the trigger yet/);
+  });
+
+  it("names the timezone, the reinstall, and where a failure lands", () => {
+    expect(SRC).toMatch(/Hour of day \(0-23\), Europe\/Paris\. Saving a new hour moves the daily sync/);
+    expect(SRC).toMatch(/reinstalls the daily sync trigger at that hour/);
+    expect(SRC).toMatch(/Data → Recent errors/);
+    expect(SRC).toMatch(/deploymentDiagnostic\(\)/);
+    expect(SRC).toMatch(/the account that deployed the web app/);
+  });
+});

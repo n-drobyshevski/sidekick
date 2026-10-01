@@ -64,6 +64,11 @@ export const PROP_KEYS = {
   // from one an older deployment left behind. Written by setup(), read by setup() and by
   // deploymentDiagnostic().
   warmTriggerSchedule: "WARM_TRIGGER_SCHEDULE",
+  // The daily sync trigger's counterpart: `${tz}|${hour}` as setup.dailySyncSchedule() builds
+  // it, for the hour `Settings.syncSchedule` asked for. Written by setup.reconcileDailySyncTrigger
+  // (from setup() and from a Settings save that moves the hour), read by it and by
+  // deploymentDiagnostic(), which flags a recorded hour that is not the saved one.
+  dailySyncSchedule: "DAILY_SYNC_SCHEDULE",
   /**
    * When a real token exchange plus a real query last succeeded.
    *

@@ -213,7 +213,7 @@ describe("the S6 battery settings", () => {
     expect(DEFAULT_SETTINGS.retentionDays).toBe(DEFAULT_RETENTION_DAYS);
   });
 
-  it("default the sync hour to DEFAULT_SYNC_HOUR, the same constant setup.ts installs", () => {
+  it("default the sync hour to DEFAULT_SYNC_HOUR, what a fresh setup() installs", () => {
     expect(DEFAULT_SETTINGS.syncSchedule).toBe(DEFAULT_SYNC_HOUR);
   });
 
@@ -886,5 +886,25 @@ describe("supportGroupDomains — the admin overrides, cleaned on every read", (
     expect(s.supportGroupDomains.version).toBe(3);
     expect(s.supportGroupDomains.items.map((o) => [o.group, o.domain, o.reason]))
       .toEqual([["CS-A", "SAP", "wrong_tag"]]);
+  });
+});
+
+describe("syncSchedule's field doc matches what the server does with it", () => {
+  // The field was documented "STILL CAPTURED AND NOT WIRED" while setup() installed a fixed
+  // hour. It is wired now (setup() and api.putSettings both reconcile the trigger to it), and a
+  // doc that still said otherwise would send the next reader looking for a gap that is closed.
+  const SRC = readFileSync(new URL("../src/domain/settingsLogic.ts", import.meta.url), "utf8");
+  const doc = SRC.slice(0, SRC.indexOf("  syncSchedule: number;"));
+  const fieldDoc = doc.slice(doc.lastIndexOf("/**"));
+
+  it("says WIRED and names the reconcile, not the old blocker", () => {
+    expect(fieldDoc).not.toMatch(/NOT WIRED/);
+    expect(fieldDoc).toMatch(/WIRED\./);
+    expect(fieldDoc).toMatch(/reconcileDailySyncTrigger/);
+    expect(fieldDoc).toMatch(/api\.putSettings/);
+  });
+
+  it("names the timezone the trigger is pinned to", () => {
+    expect(fieldDoc).toMatch(/Europe\/Paris/);
   });
 });

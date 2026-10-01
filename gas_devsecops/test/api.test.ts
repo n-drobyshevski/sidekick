@@ -65,6 +65,9 @@ const drive = {
 };
 
 let projectTriggers: string[] = [];
+/** Every clock trigger built (the daily sync reinstall), and a fault to make create() throw. */
+const clockBuilds: Array<{ handler: string; hour?: number; tz?: string }> = [];
+let clockCreateFails: Error | null = null;
 /** Edits a fake-tenant node before the sync sees it. Reset per test; the CSV spec sets it. */
 let tamperNode: ((scope: Scope, n: Rec) => void) | null = null;
 
@@ -408,15 +411,32 @@ vi.stubGlobal("ScriptApp", {
     const i = projectTriggers.indexOf(t.getHandlerFunction());
     if (i >= 0) projectTriggers.splice(i, 1);
   },
-  newTrigger: (handler: string) => ({
-    timeBased: () => ({
-      after: () => ({
-        create: () => {
-          projectTriggers.push(handler);
-        },
+  newTrigger: (handler: string) => {
+    // Two chains reach this stub: scanJobs' one-shots (`timeBased().after(ms)`) and the daily
+    // sync reinstall a moved sync hour causes (`timeBased().everyDays(1).atHour(h).inTimezone(tz)`).
+    // The clock chain records what reached it, and `clockCreateFails` makes its create() throw.
+    const rec: { handler: string; hour?: number; tz?: string } = { handler };
+    const clock = {
+      everyDays: () => clock,
+      atHour: (h: number) => { rec.hour = h; return clock; },
+      inTimezone: (tz: string) => { rec.tz = tz; return clock; },
+      create: () => {
+        if (clockCreateFails) throw clockCreateFails;
+        clockBuilds.push(rec);
+        projectTriggers.push(handler);
+      },
+    };
+    return {
+      timeBased: () => ({
+        after: () => ({
+          create: () => {
+            projectTriggers.push(handler);
+          },
+        }),
+        everyDays: clock.everyDays,
       }),
-    }),
-  }),
+    };
+  },
 });
 
 vi.stubGlobal("HtmlService", {
@@ -622,6 +642,8 @@ beforeEach(() => {
   for (const k of Object.keys(drive.named)) delete drive.named[k];
   drive.snapshot = null;
   projectTriggers = [];
+  clockBuilds.length = 0;
+  clockCreateFails = null;
   tamperNode = null;
   externalLockHold = false;
   accessState.canEdit = true;
@@ -1411,6 +1433,56 @@ describe("putSettings merges a patch over the currently-loaded settings", () => 
     // one line the perturbation removes.
     const saved = api.putSettings({ settings: { autoCompact: true } }) as unknown as Rec;
     expect(saved["ok"]).toBe(true);
+  });
+});
+
+describe("putSettings moves the daily sync trigger when the hour changes", () => {
+  // setup() installs the daily trigger at the saved hour; a save that moves the hour reinstalls
+  // it on the spot (setup.reconcileDailySyncTrigger), best-effort — the save is the operator's
+  // intent and stands whatever the trigger service says.
+  it("reinstalls the trigger once, at the new hour, pinned to Europe/Paris", async () => {
+    projectTriggers = ["trigger_dailySync"];
+    props["DAILY_SYNC_SCHEDULE"] = "Europe/Paris|5";
+    const { api } = await load();
+    const res = api.putSettings({ settings: { syncSchedule: 14 } }) as unknown as Rec;
+    expect(res["ok"], String(res["error"])).toBe(true);
+    expect((res["data"] as Rec)["syncSchedule"]).toBe(14);
+    expect(clockBuilds).toEqual([{ handler: "trigger_dailySync", hour: 14, tz: "Europe/Paris" }]);
+    expect(projectTriggers.filter((h) => h === "trigger_dailySync")).toHaveLength(1);
+    expect(props["DAILY_SYNC_SCHEDULE"]).toBe("Europe/Paris|14");
+  });
+
+  it("leaves the trigger alone when a save does not move the hour", async () => {
+    projectTriggers = ["trigger_dailySync"];
+    props["DAILY_SYNC_SCHEDULE"] = "Europe/Paris|5";
+    const { api } = await load();
+    const res = api.putSettings({ settings: { autoCompact: true } }) as unknown as Rec;
+    expect(res["ok"]).toBe(true);
+    expect(clockBuilds).toEqual([]);
+    expect(projectTriggers).toEqual(["trigger_dailySync"]);
+  });
+
+  it("keeps the save when the reinstall fails, and records the failure", async () => {
+    projectTriggers = ["trigger_dailySync"];
+    props["DAILY_SYNC_SCHEDULE"] = "Europe/Paris|5";
+    clockCreateFails = new Error("Too many triggers");
+    const { api } = await load();
+    const res = api.putSettings({ settings: { syncSchedule: 9 } }) as unknown as Rec;
+    expect(res["ok"], String(res["error"])).toBe(true);
+    expect((res["data"] as Rec)["syncSchedule"]).toBe(9);
+    const settings = await import("../src/server/settingsStore");
+    settings.resetSettingsMemo();
+    expect(settings.loadSettings().syncSchedule).toBe(9);
+    // The signature still names the OLD hour — what deploymentDiagnostic() compares against
+    // the saved setting to say the trigger did not follow.
+    expect(props["DAILY_SYNC_SCHEDULE"]).toBe("Europe/Paris|5");
+    // And the old trigger is still there: created-before-deleted, so a failed reinstall leaves
+    // the register syncing at the old hour rather than not syncing at all.
+    expect(projectTriggers).toEqual(["trigger_dailySync"]);
+    const { recentErrors } = await import("../src/server/errorLog");
+    expect(recentErrors()).toEqual([
+      expect.objectContaining({ op: "syncHourTrigger", message: "Too many triggers" }),
+    ]);
   });
 });
 
