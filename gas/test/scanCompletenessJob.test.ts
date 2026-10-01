@@ -69,7 +69,7 @@ vi.mock("../src/server/ledgerStore", () => ({
   latestFlatScanRow: () => H.scanRows[H.scanRows.length - 1] ?? null,
   loadScanRows: () => H.scanRows,
 }));
-vi.mock("../src/server/api", () => ({ warmReadModels: () => {} }));
+vi.mock("../src/server/api", () => ({ scheduleWarm: () => true }));
 vi.mock("../src/server/errorLog", () => ({
   recordError: (...args: unknown[]) => { H.recorded.push(args); },
 }));

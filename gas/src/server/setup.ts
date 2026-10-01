@@ -7,6 +7,15 @@
 // and installs the daily scan trigger. Wiz credentials must be set by hand — setup()
 // never touches secrets: WIZ_API_URL, WIZ_PROJECT_ID_V2, and either WIZ_API_TOKEN (a
 // raw bearer token) or WIZ_CLIENT_ID/WIZ_CLIENT_SECRET (OAuth client-credentials).
+//
+// TRIGGER QUOTA, STATED ONCE SO A FUTURE ADDITION HAS SOMETHING TO CHECK AGAINST. Apps Script
+// caps a project at 20 triggers total. This file installs 4 STANDING ones (1 daily scan + 3
+// warm passes, below) and leaves room for the TRANSIENT one-shots, each of which deletes itself
+// when it fires: 1 job continuation at a time (`jobsStore.CONTINUE_HANDLERS` — jobs are
+// single-flight across kinds, and a scan's watchdog shares `trigger_continueScan` with its
+// hops, cleared on every terminal transition), and 1 warm one-shot (`api.WARM_CONTINUE_HANDLER`
+// — the post-scan warm scanJobs arms after DONE, or the next hop of a pass out of budget; at
+// most one pending, since each arming clears the last). 4 + 2 = 6 of 20.
 
 import { ownerEmail } from "./access";
 import { ensureFolders } from "./archiveStore";

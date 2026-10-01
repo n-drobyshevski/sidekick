@@ -7,7 +7,7 @@
 // record spill file, so the next hop resumes exactly where this one stopped.
 
 import { parseSeverities } from "../domain/compaction";
-// Namespace import used only at runtime (afterPersist → api.warmReadModels), never at module
+// Namespace import used only at runtime (handOffAfterScan → api.scheduleWarm), never at module
 // eval — api.ts imports this module back, so a value used during evaluation would be a TDZ
 // risk; a runtime call sees the fully-initialized live binding.
 import * as api from "./api";
@@ -36,7 +36,7 @@ import {
 } from "./jobsStore";
 import * as ledgerStore from "./ledgerStore";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
-import { deleteProp, getProp, hasWizCredentials, setProp } from "./props";
+import { deleteProp, getProp, hasWizCredentials, PROP_KEYS, setProp } from "./props";
 import { SAMPLE_FLAT, SAMPLE_GROUPED } from "./sampleData";
 import * as settingsStore from "./settingsStore";
 import * as supportGroups from "./supportGroups";
@@ -58,6 +58,9 @@ const DELTA_OVERLAP_MINUTES = 15;
 // take it means something is genuinely executing. One second (what this used to be) is inside
 // the noise of an unrelated read, which turned incidental contention into a dead Stop button.
 const FORCE_STOP_LOCK_MS = 10_000;
+// The queued support-group refresh's write waits this long for the lock. Short: it runs in a
+// warm hop, whose budget it spends, and a busy ledger only defers it to the next pass.
+const SG_REFRESH_LOCK_MS = 20_000;
 
 // Cancel is signalled through a Script Property (lock-free) rather than the jobs tab:
 // a running hop holds the mutation lock for its whole duration, so a lock-bound write
@@ -402,6 +405,8 @@ function dryRunScan(options: { incremental?: boolean; sampleShape?: string }): S
     rawRef: archive.scanFolder(scanId).getId(),
   });
   afterPersist(slim);
+  // Off the lock even here: a dry run commits inside the "Run scan" RPC itself.
+  handOffAfterScan();
   return { jobId: null, message: "Dry-run scan saved." };
 }
 
@@ -618,6 +623,9 @@ function finishScan(
   // A Stop pressed after finishScan's clearCancel above (i.e. during the persist) would
   // otherwise leave its CANCEL_ property behind for good.
   clearCancel(jobId);
+  // AFTER DONE AND AFTER THE WATCHDOG IS GONE: the warm this arms refuses while a job is
+  // active, and nothing of it runs in this execution.
+  handOffAfterScan();
 }
 
 /**
@@ -666,9 +674,14 @@ function loadBaselineSlim(baselineScanId: string): Rec[] | null {
   return nodes.length ? nodes.map(slimRecord) : null;
 }
 
-/** MTTR snapshot + support-group refresh + auto-compaction after a persist (never breaks a scan). */
+/**
+ * The chores that must land before the job reads DONE: the MTTR snapshot and auto-compaction
+ * (never breaks a scan). Both write, so both stay inside the scan's lock, and both run while the
+ * job is still PERSISTING so a standing warm (api.warmReadModelsScheduled), which refuses while
+ * a job is active, cannot read the ledger between them. Everything slow and read-only is handed
+ * off to a trigger afterwards — see `handOffAfterScan`.
+ */
 function afterPersist(records: Rec[]): void {
-  refreshSupportGroupsAfterScan();
   try {
     const { perSev, overall } = calculateMttr(records);
     const median = overall.mttr_median;
@@ -690,14 +703,37 @@ function afterPersist(records: Rec[]): void {
     errorLog.recordError("mttrSnapshot", e);
   }
   autoCompactIfDue();
-  // Warm the landing-view read-models LAST, against the now-final DATA_VERSION (any
-  // auto-compaction above bumped it again), so the first analyst load after this scan hits a
-  // warm cache instead of recomputing on the interactive path. The scan is already committed;
-  // this reuses the state + frame already loaded in this execution and never breaks a scan.
+}
+
+/**
+ * The post-scan work that must NOT run inside the scan: the read-model warm and the support-group
+ * refresh. ARMED HERE, RUN IN `trigger_continueWarm` (api.continueWarm).
+ *
+ * Both used to run inline in afterPersist — inside the scan's script lock, before DONE, with the
+ * watchdog still armed, and for a scan that finishes in its first hop (or a dry run) inside the
+ * "Run scan" RPC itself. The warm is minutes of compute and the refresh is a Wiz graphSearch, so
+ * every write RPC waited behind them and the job card sat on "Saving" meanwhile. Now the caller
+ * writes DONE and clears the watchdog first, and this only leaves a note and arms one trigger.
+ *
+ * LAST, after auto-compaction, because a compaction bumps DATA_VERSION and the warm must see
+ * the final one. The refresh runs at the head of that hop, before any entry is warmed, for the
+ * same reason: it bumps the version too. Never breaks a scan — both halves are best effort and
+ * `api.scheduleWarm` records its own failure.
+ */
+function handOffAfterScan(): void {
+  // Gated on credentials, so dry-run scans (which have none) skip it, as they always did.
+  if (hasWizCredentials()) {
+    try {
+      setProp(PROP_KEYS.supportGroupRefreshPending, nowIso());
+    } catch (e) {
+      console.warn(`Could not queue the post-scan support-group refresh: ${e}`);
+      errorLog.recordError("supportGroupRefresh", e);
+    }
+  }
   try {
-    api.warmReadModels();
+    if (api.scheduleWarm()) console.log("Post-scan read-model warm: scheduled.");
   } catch (e) {
-    console.warn(`Cache warming after scan failed: ${e}`);
+    console.warn(`Post-scan read-model warm could not be scheduled: ${e}`);
     errorLog.recordError("cacheWarm", e);
   }
 }
@@ -717,17 +753,51 @@ function autoCompactIfDue(): void {
 }
 
 /**
- * Refresh the subscription → Support Group map after a live scan (best-effort). Gated on
- * credentials, so dry-run scans (which have none) skip it. Never breaks a scan — a failed
- * graphSearch just leaves the previous map in place. Runs inside the scan's lock already.
+ * The support-group refresh a scan queued (`handOffAfterScan`), run at the head of a warm pass
+ * (api.continueWarm / warmReadModelsScheduled) — never inside the scan. Returns whether the map
+ * was rewritten, so the caller can drop its frame memo.
+ *
+ * THE WIZ CALL TAKES NO LOCK; ONLY THE WRITE DOES. The graphSearch is the slow half and reads
+ * nothing of the ledger. The write (a tab overwrite + a DATA_VERSION bump, possibly a settings
+ * save) is a mutation like any other, so it takes the script lock for its own few seconds.
+ *
+ * One attempt per queued scan, as before: a failed graphSearch leaves the previous map in place
+ * and is recorded. A lock that stays busy is not a failure — the note stays queued and the next
+ * warm pass tries again.
  */
-function refreshSupportGroupsAfterScan(): void {
-  if (!hasWizCredentials()) return;
+export function runPendingSupportGroupRefresh(): boolean {
+  let pending: string | null;
   try {
-    supportGroups.refreshSupportGroups();
+    pending = getProp(PROP_KEYS.supportGroupRefreshPending);
   } catch (e) {
+    console.warn(`Could not read the queued support-group refresh: ${e}`);
+    return false;
+  }
+  if (!pending) return false;
+  if (!hasWizCredentials()) {
+    deleteProp(PROP_KEYS.supportGroupRefreshPending);
+    return false;
+  }
+  try {
+    const { map } = supportGroups.fetchSupportGroups();
+    withScriptLock(() => {
+      settingsStore.setSupportGroupMap(map);
+      deleteProp(PROP_KEYS.supportGroupRefreshPending);
+    }, SG_REFRESH_LOCK_MS);
+    return true;
+  } catch (e) {
+    if (e instanceof LedgerBusyError) {
+      console.warn(`Support-group refresh after scan: ledger busy, left queued: ${e}`);
+      return false;
+    }
     console.warn(`Support-group refresh after scan failed: ${e}`);
     errorLog.recordError("supportGroupRefresh", e);
+    try {
+      deleteProp(PROP_KEYS.supportGroupRefreshPending);
+    } catch (_e) {
+      // Left queued, it is retried by the next pass — the outcome this failure already had.
+    }
+    return false;
   }
 }
 

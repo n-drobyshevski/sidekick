@@ -28,7 +28,9 @@ const globals = new Set([...entry.matchAll(/^function\s+(\w+)\s*\(/gm)].map((m) 
 const forwarded = new Set([...entry.matchAll(/timedApi_\("(\w+)"/g)].map((m) => m[1]!));
 
 // Exported from api.ts but deliberately not RPCs — called server-side only.
-const NOT_RPCS = new Set(["warmReadModels", "warmReadModelsScheduled", "continueWarm", "bootstrapIfWarm"]);
+const NOT_RPCS = new Set([
+  "warmReadModels", "warmReadModelsScheduled", "continueWarm", "scheduleWarm", "bootstrapIfWarm",
+]);
 
 describe("every trigger handler named in src/ exists in entry.js", () => {
   // The bug this catches: a trigger installed against a handler that only exists inside the

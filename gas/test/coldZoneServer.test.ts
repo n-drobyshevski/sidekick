@@ -46,6 +46,10 @@ const H = vi.hoisted(() => ({
   recordedLines: [] as string[],
   // What `durablyPeek` finds stored, by namespace — empty means every entry is cold.
   peek: new Map<string, unknown>(),
+  // What the warm hop did before warming, in order (the queued refresh, the frame memo drop).
+  order: [] as string[],
+  // What the queued support-group refresh reports: whether it rewrote the map.
+  sgRefreshed: false,
 }));
 
 // Sheets/Drive never load: this file is about the read model, and api.ts's import graph reaches
@@ -85,7 +89,18 @@ vi.mock("../src/server/ledgerStore", () => ({
   loadScanRows: () => H.scans.map((r) => ({ ...r })),
   latestFlatScanRow: () => null,
 }));
-vi.mock("../src/server/findings", () => ({ currentScan: () => null, distinct: () => [] }));
+vi.mock("../src/server/findings", () => ({
+  currentScan: () => null, distinct: () => [], invalidateFrameMemo: () => { H.order.push("frameMemo"); },
+}));
+// The queued post-scan support-group refresh, observed: the warm hop must run it before it
+// warms anything, because it bumps DATA_VERSION.
+vi.mock("../src/server/scanJobs", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/server/scanJobs")>()),
+  runPendingSupportGroupRefresh: () => {
+    H.order.push(`sgRefresh@${H.keys.length}`);
+    return H.sgRefreshed;
+  },
+}));
 vi.mock("../src/server/settingsStore", () => ({
   getShowNoFix: () => true,
   getIncludeEol: () => true,
@@ -124,7 +139,9 @@ vi.mock("../src/server/errorLog", () => ({
   recentErrors: () => [],
 }));
 
-import { bootstrapIfWarm, getColdZonePage, getExecutivePage, warmReadModels } from "../src/server/api";
+import {
+  bootstrapIfWarm, continueWarm, getColdZonePage, getExecutivePage, warmReadModels,
+} from "../src/server/api";
 
 // --------------------------------------------------------------------------------------- //
 //  Fixture
@@ -628,6 +645,73 @@ describe("a warm that runs out of budget", () => {
     expect(H.recordedLines).toEqual([
       "cacheWarm: Gave up after 6 continuation hops under one data version.",
     ]);
+  });
+});
+
+// --------------------------------------------------------------------------------------- //
+//  The post-scan hop
+// --------------------------------------------------------------------------------------- //
+//
+// scanJobs no longer warms inside the scan: it arms `trigger_continueWarm` (`scheduleWarm`) and
+// queues its support-group refresh for the same hop. The hop deletes its own fired trigger,
+// runs the queued refresh FIRST (it bumps DATA_VERSION), then warms.
+describe("the post-scan warm hop", () => {
+  type Trig = { handler: string; after: number };
+  let triggers: Trig[];
+
+  beforeEach(() => {
+    triggers = [];
+    H.order = [];
+    H.sgRefreshed = false;
+    vi.stubGlobal("ScriptApp", {
+      newTrigger: (handler: string) => ({
+        timeBased: () => ({ after: (after: number) => ({ create: () => { triggers.push({ handler, after }); } }) }),
+      }),
+      getProjectTriggers: () => triggers.map((t) => ({ getHandlerFunction: () => t.handler, t })),
+      deleteTrigger: (x: { t: Trig }) => { triggers = triggers.filter((t) => t !== x.t); },
+    });
+    vi.stubGlobal("CacheService", {
+      getScriptCache: () => ({ get: () => null, put: () => {}, remove: () => {} }),
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  it("scheduleWarm arms exactly one one-shot, replacing any pending one", async () => {
+    const { scheduleWarm } = await import("../src/server/api");
+    expect(scheduleWarm()).toBe(true);
+    expect(scheduleWarm()).toBe(true);
+    expect(triggers).toEqual([{ handler: "trigger_continueWarm", after: 1_000 }]);
+  });
+
+  it("deletes its own trigger, runs the queued refresh before any entry, then warms", () => {
+    triggers.push({ handler: "trigger_continueWarm", after: 1_000 }); // the one that fired
+    H.sgRefreshed = true;
+    continueWarm();
+    expect(H.order).toEqual(["sgRefresh@0", "frameMemo"]);
+    expect(H.keys.length).toBeGreaterThan(0);
+    expect(triggers).toEqual([]);
+  });
+
+  it("keeps the frame memo when the refresh had nothing to do", () => {
+    continueWarm();
+    expect(H.order).toEqual(["sgRefresh@0"]);
+  });
+
+  it("logs one {stage:\"warm\"} timing line per target, failures included", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    H.coldThrows = true;
+    warmReadModels();
+    const lines = log.mock.calls
+      .map((c) => String(c[0]))
+      .filter((l) => l.startsWith("{")).map((l) => JSON.parse(l) as Rec)
+      .filter((l) => l["stage"] === "warm");
+    expect(lines.length).toBeGreaterThan(10);
+    for (const l of lines) {
+      expect(Object.keys(l).sort()).toEqual(["label", "ms", "ok", "stage"]);
+      expect(typeof l["ms"]).toBe("number");
+    }
+    expect(lines.filter((l) => l["ok"] === false).map((l) => l["label"])).toContain("coldZone");
+    expect(lines.find((l) => l["label"] === "bootstrap")?.["ok"]).toBe(true);
   });
 });
 

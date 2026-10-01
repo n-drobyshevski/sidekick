@@ -4410,11 +4410,11 @@ function defaultGroupingKeys(): string[] {
  * Precompute the derived read-models the landing pages open with, so the first analyst load
  * after a scan hits a warm cache instead of paying the full recompute on the interactive path.
  *
- * Every mutation calls bumpDataVersion(), so all cross-request caches go cold after a scan;
- * this runs at the tail of afterPersist (scanJobs), once DATA_VERSION is final (after any
- * auto-compaction), inside the scan job's own execution — the state + current-scan frame are
- * already loaded there, so warming reuses them. Best-effort: every entry is guarded so one
- * failure never aborts the rest or the scan, and the whole thing is a no-op on cache errors.
+ * Every mutation calls bumpDataVersion(), so all cross-request caches go cold after a scan.
+ * The post-scan pass runs in its OWN trigger execution (`trigger_continueWarm`, armed by
+ * `scheduleWarm` at the tail of scanJobs.afterPersist once DATA_VERSION is final), never inside
+ * the scan's lock — see `scheduleWarm` for why. Best-effort: every entry is guarded so one
+ * failure never aborts the rest, and the whole thing is a no-op on cache errors.
  *
  * Scope: whole-register only (a specific domain / Support group stays cold — acceptable),
  * for the current show-no-fix state, at both the severity scopes the pages request — the
@@ -4432,9 +4432,11 @@ function defaultGroupingKeys(): string[] {
 const WARM_BUDGET_MS = 270_000;
 
 // A pass that runs out of budget hands the rest to a one-shot trigger instead of leaving it cold
-// until the next scheduled fire, four hours away. Its OWN handler name, for the reason
-// backfillJobs gives: a shared one would let each clear the other's pending hop.
-const WARM_CONTINUE_HANDLER = "trigger_continueWarm";
+// until the next scheduled fire, four hours away; the post-scan warm arms the same one-shot.
+// Its OWN handler name, for the reason backfillJobs gives: a shared one would let each clear the
+// other's pending hop — and sharing setup.ts's standing WARM_TRIGGER_HANDLER would make a
+// correct install count four standing warms and be torn down. Exported for the diagnostic.
+export const WARM_CONTINUE_HANDLER = "trigger_continueWarm";
 const WARM_CONTINUE_DELAY_MS = 1_000;
 // A job in flight blocks the warm (see warmReadModelsScheduled); a continuation that finds one
 // waits this long and tries again rather than giving up on the entries it was scheduled for.
@@ -4461,10 +4463,42 @@ function scheduleWarmContinuation(delayMs: number): void {
       return;
     }
     cache.put(key, String(hops), 21_600);
-    clearTriggers(WARM_CONTINUE_HANDLER);
-    ScriptApp.newTrigger(WARM_CONTINUE_HANDLER).timeBased().after(delayMs).create();
+    armWarm(delayMs);
   } catch (e) {
     console.warn(`Cache warm: could not schedule a continuation: ${e}`);
+  }
+}
+
+/** The one pending `trigger_continueWarm`: any earlier one is cleared first, so never two. */
+function armWarm(delayMs: number): void {
+  clearTriggers(WARM_CONTINUE_HANDLER);
+  ScriptApp.newTrigger(WARM_CONTINUE_HANDLER).timeBased().after(delayMs).create();
+}
+
+/**
+ * Arm the post-scan warm — `scanJobs.afterPersist` calls this instead of warming.
+ *
+ * NOT INLINE. The warm used to run at the tail of afterPersist, inside the scan's script lock
+ * and, for a scan that finishes in its first hop (or a dry run), inside the "Run scan" RPC
+ * itself — so every write RPC, and the operator's own request, waited out minutes of compute
+ * while the job row still read PERSISTING and the watchdog kept firing. The scan now commits,
+ * writes DONE, clears its watchdog, and arms this one-shot; the warm runs in that trigger's own
+ * execution, unlocked, as the standing passes always have. The cost is that the warm can no
+ * longer reuse the state and frame the scan had loaded: it reads them again.
+ *
+ * A FRESH PASS, NOT A CONTINUATION, so it leaves the hop counter alone (the commit moved the
+ * cache stamp, so a counter left by an earlier chain is not this pass's anyway). Best effort: a
+ * failed schedule costs a cold first load, never the commit that asked for it, and is recorded
+ * because nothing else would say why the pages are cold. Returns whether it armed.
+ */
+export function scheduleWarm(delayMs: number = WARM_CONTINUE_DELAY_MS): boolean {
+  try {
+    armWarm(delayMs);
+    return true;
+  } catch (e) {
+    console.warn(`Cache warm: could not schedule the post-scan warm: ${e}`);
+    errorLog.recordError("cacheWarm", `Could not schedule a warm: ${e instanceof Error ? e.message : String(e)}`);
+    return false;
   }
 }
 
@@ -4481,7 +4515,11 @@ export function warmReadModels(budgetMs = WARM_BUDGET_MS): void {
   }
 }
 
-/** `trigger_continueWarm` in dist/entry.js: the next hop of a warm that ran out of budget. */
+/**
+ * `trigger_continueWarm` in dist/entry.js: the post-scan warm (`scheduleWarm`), and the next hop
+ * of a warm that ran out of budget. Deletes its own fired trigger first — a one-shot that has
+ * fired still counts against the 20-trigger quota until it is deleted.
+ */
 export function continueWarm(_e?: unknown): void {
   try {
     clearTriggers(WARM_CONTINUE_HANDLER);
@@ -4494,7 +4532,22 @@ export function continueWarm(_e?: unknown): void {
     scheduleWarmContinuation(WARM_BUSY_DELAY_MS);
     return;
   }
-  warmReadModels();
+  warmAfterChores();
+}
+
+/**
+ * A warm pass, after the support-group refresh a scan left pending (scanJobs.
+ * runPendingSupportGroupRefresh). FIRST, because the refresh bumps DATA_VERSION: a warm before
+ * it would compute every entry under a version nothing reads a moment later. Its time comes out
+ * of the pass's budget, so the two together stay inside one execution.
+ */
+function warmAfterChores(): void {
+  const t0 = Date.now();
+  if (scanJobs.runPendingSupportGroupRefresh()) {
+    // Support-group map changed → the frame's memoized _supportGroup attachment is stale.
+    findings.invalidateFrameMemo();
+  }
+  warmReadModels(Math.max(0, WARM_BUDGET_MS - (Date.now() - t0)));
 }
 
 /** Returns how many entries the budget left cold (0 = the pass completed). */
@@ -4511,14 +4564,20 @@ function warmReadModelsInner(budgetMs: number): number {
   // nothing, so the budget goes to what this pass could not reach.
   const warm = (label: string, fn: () => unknown) => {
     if (Date.now() - t0 >= budgetMs) { skipped += 1; return; }
+    const ts = Date.now();
+    let ok = true;
     try {
       fn();
       warmed += 1;
     } catch (e) {
+      ok = false;
       console.warn(`Cache warm (${label}) failed: ${e}`);
       // One entry per target that failed, so the in-app list names which read model went cold.
       errorLog.recordError("cacheWarm", `${label}: ${e instanceof Error ? e.message : String(e)}`);
     }
+    // One line per target: what a cold warm actually spends, entry by entry. A continuation
+    // hop's L1 hits show up here as near-zero lines, which is how a re-run prefix reads.
+    console.log(JSON.stringify({ stage: "warm", label, ms: Date.now() - ts, ok }));
   };
 
   // ORDER IS PRIORITY, because the budget can run out. Measured on a real register right after a
@@ -4613,7 +4672,8 @@ export function warmReadModelsScheduled(): void {
     console.log(`Cache warm: skipped, ${job.kind} job ${job.job_id} is ${job.phase}`);
     return;
   }
-  warmReadModels();
+  // Also picks up a support-group refresh whose post-scan one-shot never fired.
+  warmAfterChores();
 }
 
 /**

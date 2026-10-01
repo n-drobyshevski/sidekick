@@ -82,7 +82,7 @@ vi.mock("../src/server/ledgerStore", () => ({
   loadScanRows: () => [],
 }));
 
-vi.mock("../src/server/api", () => ({ warmReadModels: () => {} }));
+vi.mock("../src/server/api", () => ({ scheduleWarm: () => true }));
 vi.mock("../src/server/errorLog", () => ({ recordError: () => {} }));
 vi.mock("../src/server/frameCore", () => ({
   buildFrame: () => ({}),

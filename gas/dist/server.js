@@ -36,6 +36,7 @@ var Server = (() => {
   // src/server/api.ts
   var api_exports = {};
   __export(api_exports, {
+    WARM_CONTINUE_HANDLER: () => WARM_CONTINUE_HANDLER,
     backfillEpisodeTags: () => backfillEpisodeTags2,
     bootstrap: () => bootstrap,
     bootstrapIfWarm: () => bootstrapIfWarm,
@@ -95,6 +96,7 @@ var Server = (() => {
     saveScoped: () => saveScoped,
     saveSettings: () => saveSettings2,
     saveSupportGroupDomain: () => saveSupportGroupDomain,
+    scheduleWarm: () => scheduleWarm,
     setAutoCompact: () => setAutoCompact2,
     setIncludeEol: () => setIncludeEol2,
     setRetention: () => setRetention,
@@ -5918,7 +5920,11 @@ var Server = (() => {
     // The warm schedule setup() last installed. A ClockTrigger exposes no hour, minute or
     // timezone, so this is the only way a later edit to the schedule can be detected and
     // reconciled rather than silently ignored on an existing deployment.
-    warmTriggerSchedule: "WARM_TRIGGER_SCHEDULE"
+    warmTriggerSchedule: "WARM_TRIGGER_SCHEDULE",
+    // A support-group refresh a scan queued for the next warm hop (scanJobs.handOffAfterScan →
+    // runPendingSupportGroupRefresh), so the Wiz call runs outside the scan's lock. Set to the
+    // time it was queued; deleted once it has run.
+    supportGroupRefreshPending: "SUPPORT_GROUP_REFRESH_PENDING"
   };
   var DEFAULT_WIZ_AUTH_URL = "https://auth.app.wiz.io/oauth/token";
   var DEFAULT_SUPPORT_GROUP_TAG_KEY = "Wiz/provisioning";
@@ -6697,7 +6703,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "9d1ff5d00e18" : "dev";
+  var BUILD_ID = true ? "d62bb2f0adbb" : "dev";
   var CACHE_EPOCH = "3";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
@@ -10413,6 +10419,7 @@ var Server = (() => {
     dailyScan: () => dailyScan,
     jobStatus: () => jobStatus,
     resetStuckJob: () => resetStuckJob,
+    runPendingSupportGroupRefresh: () => runPendingSupportGroupRefresh,
     slimRecord: () => slimRecord,
     startScan: () => startScan
   });
@@ -10448,6 +10455,7 @@ var Server = (() => {
   var CONTINUE_HANDLER3 = "trigger_continueScan";
   var DELTA_OVERLAP_MINUTES = 15;
   var FORCE_STOP_LOCK_MS = 1e4;
+  var SG_REFRESH_LOCK_MS = 2e4;
   var ScanCancelled = class extends Error {
   };
   var cancelKey = (jobId) => `CANCEL_${jobId}`;
@@ -10701,6 +10709,7 @@ var Server = (() => {
       rawRef: scanFolder(scanId).getId()
     });
     afterPersist(slim);
+    handOffAfterScan();
     return { jobId: null, message: "Dry-run scan saved." };
   }
   function step3(job, budgetMs = BUDGET_MS3) {
@@ -10852,6 +10861,7 @@ var Server = (() => {
     updateJob(jobId, { phase: "DONE" });
     clearContinuationTriggers3();
     clearCancel(jobId);
+    handOffAfterScan();
   }
   function recordDeferral(outcome) {
     var _a, _b, _c, _d, _e, _f;
@@ -10885,7 +10895,6 @@ var Server = (() => {
   }
   function afterPersist(records) {
     var _a, _b;
-    refreshSupportGroupsAfterScan();
     try {
       const { perSev, overall } = calculateMttr(records);
       const median2 = overall.mttr_median;
@@ -10907,10 +10916,20 @@ var Server = (() => {
       recordError("mttrSnapshot", e);
     }
     autoCompactIfDue();
+  }
+  function handOffAfterScan() {
+    if (hasWizCredentials()) {
+      try {
+        setProp(PROP_KEYS.supportGroupRefreshPending, nowIso());
+      } catch (e) {
+        console.warn(`Could not queue the post-scan support-group refresh: ${e}`);
+        recordError("supportGroupRefresh", e);
+      }
+    }
     try {
-      warmReadModels();
+      if (scheduleWarm()) console.log("Post-scan read-model warm: scheduled.");
     } catch (e) {
-      console.warn(`Cache warming after scan failed: ${e}`);
+      console.warn(`Post-scan read-model warm could not be scheduled: ${e}`);
       recordError("cacheWarm", e);
     }
   }
@@ -10925,13 +10944,38 @@ var Server = (() => {
       recordError("autoCompact", e);
     }
   }
-  function refreshSupportGroupsAfterScan() {
-    if (!hasWizCredentials()) return;
+  function runPendingSupportGroupRefresh() {
+    let pending;
     try {
-      refreshSupportGroups();
+      pending = getProp(PROP_KEYS.supportGroupRefreshPending);
     } catch (e) {
+      console.warn(`Could not read the queued support-group refresh: ${e}`);
+      return false;
+    }
+    if (!pending) return false;
+    if (!hasWizCredentials()) {
+      deleteProp(PROP_KEYS.supportGroupRefreshPending);
+      return false;
+    }
+    try {
+      const { map } = fetchSupportGroups();
+      withScriptLock(() => {
+        setSupportGroupMap(map);
+        deleteProp(PROP_KEYS.supportGroupRefreshPending);
+      }, SG_REFRESH_LOCK_MS);
+      return true;
+    } catch (e) {
+      if (e instanceof LedgerBusyError) {
+        console.warn(`Support-group refresh after scan: ledger busy, left queued: ${e}`);
+        return false;
+      }
       console.warn(`Support-group refresh after scan failed: ${e}`);
       recordError("supportGroupRefresh", e);
+      try {
+        deleteProp(PROP_KEYS.supportGroupRefreshPending);
+      } catch (_e) {
+      }
+      return false;
     }
   }
   function scheduleContinuation3(delayMs = CONTINUE_DELAY_MS3) {
@@ -14111,10 +14155,23 @@ var Server = (() => {
         return;
       }
       cache.put(key, String(hops), 21600);
-      clearTriggers(WARM_CONTINUE_HANDLER);
-      ScriptApp.newTrigger(WARM_CONTINUE_HANDLER).timeBased().after(delayMs).create();
+      armWarm(delayMs);
     } catch (e) {
       console.warn(`Cache warm: could not schedule a continuation: ${e}`);
+    }
+  }
+  function armWarm(delayMs) {
+    clearTriggers(WARM_CONTINUE_HANDLER);
+    ScriptApp.newTrigger(WARM_CONTINUE_HANDLER).timeBased().after(delayMs).create();
+  }
+  function scheduleWarm(delayMs = WARM_CONTINUE_DELAY_MS) {
+    try {
+      armWarm(delayMs);
+      return true;
+    } catch (e) {
+      console.warn(`Cache warm: could not schedule the post-scan warm: ${e}`);
+      recordError("cacheWarm", `Could not schedule a warm: ${e instanceof Error ? e.message : String(e)}`);
+      return false;
     }
   }
   function warmReadModels(budgetMs = WARM_BUDGET_MS) {
@@ -14140,7 +14197,14 @@ var Server = (() => {
       scheduleWarmContinuation(WARM_BUSY_DELAY_MS);
       return;
     }
-    warmReadModels();
+    warmAfterChores();
+  }
+  function warmAfterChores() {
+    const t0 = Date.now();
+    if (runPendingSupportGroupRefresh()) {
+      invalidateFrameMemo();
+    }
+    warmReadModels(Math.max(0, WARM_BUDGET_MS - (Date.now() - t0)));
   }
   function warmReadModelsInner(budgetMs) {
     const t0 = Date.now();
@@ -14151,13 +14215,17 @@ var Server = (() => {
         skipped += 1;
         return;
       }
+      const ts = Date.now();
+      let ok = true;
       try {
         fn();
         warmed += 1;
       } catch (e) {
+        ok = false;
         console.warn(`Cache warm (${label}) failed: ${e}`);
         recordError("cacheWarm", `${label}: ${e instanceof Error ? e.message : String(e)}`);
       }
+      console.log(JSON.stringify({ stage: "warm", label, ms: Date.now() - ts, ok }));
     };
     warm("bootstrap", () => bootstrap());
     const display = getDisplaySeverities2();
@@ -14197,7 +14265,7 @@ var Server = (() => {
       console.log(`Cache warm: skipped, ${job.kind} job ${job.job_id} is ${job.phase}`);
       return;
     }
-    warmReadModels();
+    warmAfterChores();
   }
   function saveHubUrl(p) {
     return run(() => {
