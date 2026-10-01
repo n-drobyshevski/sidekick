@@ -1303,7 +1303,7 @@ var Server = (() => {
     };
   }
 
-  // src/domain/scanCompleteness.ts
+  // ../gas_shared/domain/scanCompleteness.ts
   var DISAPPEARANCE_COMPLETE = "complete";
   var DEFERRED_PREFIX = "deferred:";
   function completenessTolerance(n2) {
@@ -4072,12 +4072,11 @@ var Server = (() => {
     ) !== null;
   }
 
-  // src/server/errorLog.ts
+  // ../gas_shared/server/errorLog.ts
   var KEY = "RECENT_ERRORS";
   var MAX_ENTRIES = 25;
   var MAX_MESSAGE_LEN = 500;
   var MAX_BLOB_BYTES = 8500;
-  var alreadyRecorded = /* @__PURE__ */ new WeakSet();
   function utf8ByteLength(s2) {
     let n2 = 0;
     for (let i = 0; i < s2.length; i++) {
@@ -4094,52 +4093,73 @@ var Server = (() => {
   function truncate(s2) {
     return s2.length > MAX_MESSAGE_LEN ? s2.slice(0, MAX_MESSAGE_LEN) + "\u2026" : s2;
   }
-  function recentErrors() {
-    const raw = getProp(KEY);
-    if (!raw) return [];
-    try {
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      return parsed.filter((e) => Boolean(e) && typeof e === "object" && !Array.isArray(e)).map((e) => {
-        var _a, _b, _c, _d;
-        return {
-          ts: String((_a = e["ts"]) != null ? _a : ""),
-          op: String((_b = e["op"]) != null ? _b : "api"),
-          kind: String((_c = e["kind"]) != null ? _c : "error"),
-          message: String((_d = e["message"]) != null ? _d : "")
-        };
-      });
-    } catch {
-      return [];
-    }
+  function isoSeconds(now) {
+    const ms = now != null ? now : Date.now();
+    return new Date(Math.floor(ms / 1e3) * 1e3).toISOString().replace(".000Z", "Z");
   }
-  function markRecorded(err) {
-    try {
-      if (err !== null && typeof err === "object") alreadyRecorded.add(err);
-    } catch {
-    }
-  }
-  function recordError(op, err, kind = "error", now) {
-    try {
-      if (err !== null && typeof err === "object") {
-        if (alreadyRecorded.has(err)) return;
-        alreadyRecorded.add(err);
+  function createErrorLog(props) {
+    const alreadyRecorded = /* @__PURE__ */ new WeakSet();
+    function recentErrors2() {
+      const raw = props.get(KEY);
+      if (!raw) return [];
+      try {
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return [];
+        return parsed.filter(
+          (e) => Boolean(e) && typeof e === "object" && !Array.isArray(e)
+        ).map((e) => {
+          var _a, _b, _c, _d;
+          return {
+            ts: String((_a = e["ts"]) != null ? _a : ""),
+            op: String((_b = e["op"]) != null ? _b : "api"),
+            kind: String((_c = e["kind"]) != null ? _c : "error"),
+            message: String((_d = e["message"]) != null ? _d : "")
+          };
+        });
+      } catch {
+        return [];
       }
-      const message = err instanceof Error ? err.message : typeof err === "string" ? err : String(err);
-      const entry = { ts: nowIso(now), op, kind, message: truncate(message) };
-      const next = [entry, ...recentErrors()].slice(0, MAX_ENTRIES);
-      let blob = JSON.stringify(next);
-      while (next.length > 1 && utf8ByteLength(blob) > MAX_BLOB_BYTES) {
-        next.pop();
-        blob = JSON.stringify(next);
-      }
-      setProp(KEY, blob);
-    } catch {
     }
+    function markRecorded2(err) {
+      try {
+        if (err !== null && typeof err === "object") alreadyRecorded.add(err);
+      } catch {
+      }
+    }
+    function recordError2(op, err, kind = "error", now) {
+      try {
+        if (err !== null && typeof err === "object") {
+          if (alreadyRecorded.has(err)) return;
+          alreadyRecorded.add(err);
+        }
+        const message = err instanceof Error ? err.message : typeof err === "string" ? err : String(err);
+        const entry = { ts: isoSeconds(now), op, kind, message: truncate(message) };
+        const next = [entry, ...recentErrors2()].slice(0, MAX_ENTRIES);
+        let blob = JSON.stringify(next);
+        while (next.length > 1 && utf8ByteLength(blob) > MAX_BLOB_BYTES) {
+          next.pop();
+          blob = JSON.stringify(next);
+        }
+        props.set(KEY, blob);
+      } catch {
+      }
+    }
+    function clearErrors2() {
+      props.delete(KEY);
+    }
+    return { recentErrors: recentErrors2, recordError: recordError2, markRecorded: markRecorded2, clearErrors: clearErrors2 };
   }
-  function clearErrors() {
-    deleteProp(KEY);
-  }
+
+  // src/server/errorLog.ts
+  var log = createErrorLog({
+    get: (key) => getProp(key),
+    set: (key, value) => setProp(key, value),
+    delete: (key) => deleteProp(key)
+  });
+  var recentErrors = log.recentErrors;
+  var recordError = log.recordError;
+  var markRecorded = log.markRecorded;
+  var clearErrors = log.clearErrors;
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -4508,10 +4528,10 @@ var Server = (() => {
       "raw_ref",
       "obs_ref",
       "sealed",
-      // THE COMPLETENESS RECORD (domain/scanCompleteness.ts), appended last so `ensureHeaders`
-      // adds them to an existing tab without moving a column. `disappearance` is the verdict a
-      // replay reads back — "complete", "deferred:<reason>", or blank on a row written before
-      // the gate, which replays under the old rules. `dropout_count` is the rows closed as
+      // THE COMPLETENESS RECORD (gas_shared/domain/scanCompleteness.ts), appended last so
+      // `ensureHeaders` adds them to an existing tab without moving a column. `disappearance` is the
+      // verdict a replay reads back — "complete", "deferred:<reason>", or blank on a row written
+      // before the gate, which replays under the old rules. `dropout_count` is the rows closed as
       // repository drop-outs, which `resolved_count` deliberately does not include.
       "reported_total",
       "partial_pages",
@@ -5718,7 +5738,8 @@ var Server = (() => {
     "severities",
     "sealed",
     // The completeness verdict and the drop-outs it closed — what the table marks a deferred
-    // scan by, and the count `resolved_count` deliberately leaves out (domain/scanCompleteness.ts).
+    // scan by, and the count `resolved_count` deliberately leaves out
+    // (gas_shared/domain/scanCompleteness.ts).
     // The other three record columns (reported_total, partial_pages, duplicates) are operator
     // diagnostics that reach the Data page's error log instead.
     "disappearance",
@@ -5960,7 +5981,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "d23dd129a0ec" : "dev";
+  var BUILD_ID = true ? "fd1b3574daf0" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
@@ -11031,6 +11052,8 @@ var Server = (() => {
   var WARM_START_DELAY_MS = 1e3;
   var WARM_BUSY_DELAY_MS = 6e4;
   var WARM_MAX_HOPS = 6;
+  var WARM_MAX_BUSY_WAITS = 240;
+  var WARM_FAILURES_LISTED = 8;
   var WARM_KEEP_LIST_MAX_CHARS = 8e3;
   function readProgress() {
     try {
@@ -11043,6 +11066,7 @@ var Server = (() => {
         next: Number(p.next) || 0,
         label: typeof p.label === "string" ? p.label : null,
         hops: Number(p.hops) || 0,
+        busy: Number(p.busy) || 0,
         touched: Array.isArray(p.touched) ? p.touched.map(String) : null
       };
     } catch (e) {
@@ -11088,7 +11112,7 @@ var Server = (() => {
     if (job) {
       const reason = `${job.kind} job ${job.job_id} is ${job.phase}`;
       console.log(`Read-model warm: skipped, ${reason}`);
-      const continued2 = resume && chain(prior != null ? prior : freshProgress(), prior, WARM_BUSY_DELAY_MS);
+      const continued2 = resume && waitBehind(job, prior != null ? prior : freshProgress());
       return { warmed: 0, skipped: 0, swept: 0, blockedBy: reason, elapsedMs: 0, resumedAt: 0, continued: continued2 };
     }
     const targets = warmTargets();
@@ -11107,6 +11131,7 @@ var Server = (() => {
         next: hop.firstSkipped,
         label: (_c = (_b = targets[hop.firstSkipped]) == null ? void 0 : _b.label) != null ? _c : null,
         hops: (_d = prior == null ? void 0 : prior.hops) != null ? _d : 0,
+        busy: 0,
         touched: carried === null ? null : hop.touched
       }, prior, WARM_START_DELAY_MS);
     }
@@ -11126,7 +11151,33 @@ var Server = (() => {
     };
   }
   function freshProgress() {
-    return { stamp: currentStamp(), next: 0, label: null, hops: 0, touched: [] };
+    return { stamp: currentStamp(), next: 0, label: null, hops: 0, busy: 0, touched: [] };
+  }
+  function waitBehind(job, progress) {
+    const busy = progress.busy + 1;
+    try {
+      if (busy > WARM_MAX_BUSY_WAITS) {
+        const msg = `Gave up after ${WARM_MAX_BUSY_WAITS} one-minute waits deferred behind ${job.kind} job ${job.job_id} (${job.phase}); the next scheduled warm picks it up.`;
+        console.warn(`Read-model warm: ${msg}`);
+        recordError("cacheWarm", msg);
+        return false;
+      }
+      writeProgress({ ...progress, busy });
+    } catch (e) {
+      console.warn(`Read-model warm: could not record progress: ${e}`);
+      recordError("cacheWarm", `Could not record warm progress: ${e instanceof Error ? e.message : String(e)}`);
+      return false;
+    }
+    return scheduleWarm(WARM_BUSY_DELAY_MS);
+  }
+  function warmFailureSummary(failed, attempted) {
+    var _a;
+    const counts = /* @__PURE__ */ new Map();
+    for (const label of failed) counts.set(label, ((_a = counts.get(label)) != null ? _a : 0) + 1);
+    const names = [...counts].map(([label, n2]) => n2 > 1 ? `${label} \xD7${n2}` : label);
+    const listed = names.slice(0, WARM_FAILURES_LISTED).join(", ");
+    const more = names.length - WARM_FAILURES_LISTED;
+    return `${failed.length} of ${attempted} warm targets failed: ${listed}${more > 0 ? `, \u2026 (+${more} more)` : ""}.`;
   }
   function chain(next, prior, delayMs) {
     var _a, _b;
@@ -11152,6 +11203,7 @@ var Server = (() => {
     let warmed = 0;
     let skipped = 0;
     let firstSkipped = null;
+    const failed = [];
     for (let i = start; i < targets.length; i++) {
       const target = targets[i];
       if (Date.now() - t0 >= budgetMs) {
@@ -11167,9 +11219,15 @@ var Server = (() => {
       } catch (e) {
         ok = false;
         console.warn(`Read-model warm (${target.label}) failed: ${e}`);
-        recordError("cacheWarm", `${target.label}: ${e instanceof Error ? e.message : String(e)}`);
+        if (!failed.length) {
+          recordError("cacheWarm", `${target.label}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+        failed.push(target.label);
       }
       console.log(JSON.stringify({ stage: "warm", label: target.label, ms: Date.now() - ts, ok }));
+    }
+    if (failed.length > 1) {
+      recordError("cacheWarm", warmFailureSummary(failed, warmed + failed.length));
     }
     const swept = skipped || !sweepable ? 0 : sweepReadModels();
     return {
@@ -11585,7 +11643,8 @@ var Server = (() => {
         mode: "live",
         scannedSeverities: (_b = params.severitiesByScope[scope]) != null ? _b : [],
         rawRef: (_d = (_c = params.perScope[scope]) == null ? void 0 : _c.rawRef) != null ? _d : null,
-        // What the completeness gate weighs the records against — see domain/scanCompleteness.ts.
+        // What the completeness gate weighs the records against — see
+        // gas_shared/domain/scanCompleteness.ts.
         completeness: {
           reportedTotal: reportedTotalOf(params.perScope[scope]),
           partialPages: Number((_f = (_e = params.perScope[scope]) == null ? void 0 : _e.partialPages) != null ? _f : 0) || 0
@@ -11655,8 +11714,8 @@ var Server = (() => {
           // rows and a suspect count, and a history entry that hid that would be the lie.
           partial_pages: (_f = (_e = params.perScope[s2.scope]) == null ? void 0 : _e.partialPages) != null ? _f : 0,
           // Whether this scope's absences were adjudicated, and what they amounted to — the absent
-          // share is recorded here and never gated on (domain/scanCompleteness.ts). Null on an
-          // idempotent replay, which assessed nothing.
+          // share is recorded here and never gated on (gas_shared/domain/scanCompleteness.ts). Null
+          // on an idempotent replay, which assessed nothing.
           completeness: s2.completeness
         };
       }),
@@ -11826,6 +11885,23 @@ var Server = (() => {
     return result;
   }
 
+  // ../gas_shared/server/dailyTrigger.ts
+  function dailyTriggerSignature(tz, hour) {
+    return `${tz}|${hour}`;
+  }
+  function reconcileDailyTrigger(spec) {
+    const { handler, tz, hour, label } = spec;
+    const existing = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === handler);
+    const want = dailyTriggerSignature(tz, hour);
+    if (existing.length === 1 && spec.getSignature() === want) {
+      return `${label}: already installed (${hour}:00 ${tz})`;
+    }
+    ScriptApp.newTrigger(handler).timeBased().everyDays(1).atHour(hour).inTimezone(tz).create();
+    for (const t of existing) ScriptApp.deleteTrigger(t);
+    spec.setSignature(want);
+    return `${label}: installed (${hour}:00 ${tz})` + (existing.length ? ` (replaced ${existing.length})` : "");
+  }
+
   // src/server/setup.ts
   var DAILY_SYNC_HANDLER = "trigger_dailySync";
   var TRIGGER_TZ = "Europe/Paris";
@@ -11838,18 +11914,17 @@ var Server = (() => {
     return `${TRIGGER_TZ}|${WARM_TRIGGER_HOURS.join(",")}@${WARM_TRIGGER_NEAR_MINUTE}`;
   }
   function dailySyncSchedule(hour) {
-    return `${TRIGGER_TZ}|${hour}`;
+    return dailyTriggerSignature(TRIGGER_TZ, hour);
   }
   function reconcileDailySyncTrigger(hour) {
-    const existing = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === DAILY_SYNC_HANDLER);
-    const want = dailySyncSchedule(hour);
-    if (existing.length === 1 && getProp(PROP_KEYS.dailySyncSchedule) === want) {
-      return `Daily sync trigger: already installed (${hour}:00 ${TRIGGER_TZ})`;
-    }
-    ScriptApp.newTrigger(DAILY_SYNC_HANDLER).timeBased().everyDays(1).atHour(hour).inTimezone(TRIGGER_TZ).create();
-    for (const t of existing) ScriptApp.deleteTrigger(t);
-    setProp(PROP_KEYS.dailySyncSchedule, want);
-    return `Daily sync trigger: installed (${hour}:00 ${TRIGGER_TZ})` + (existing.length ? ` (replaced ${existing.length})` : "");
+    return reconcileDailyTrigger({
+      handler: DAILY_SYNC_HANDLER,
+      tz: TRIGGER_TZ,
+      hour,
+      label: "Daily sync trigger",
+      getSignature: () => getProp(PROP_KEYS.dailySyncSchedule),
+      setSignature: (sig) => setProp(PROP_KEYS.dailySyncSchedule, sig)
+    });
   }
   function setup() {
     const notes = [];

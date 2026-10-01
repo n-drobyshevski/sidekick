@@ -3,7 +3,7 @@
 // Drive scan archives.
 //
 // Why the archive walk exists at all: the ledger is DERIVED state. `deleteScansCore`
-// (domain/maintenance.ts:170) rebuilds `vuln_ledger` from the checkpoint plus a replay of the
+// (domain/maintenance.ts) rebuilds `vuln_ledger` from the checkpoint plus a replay of the
 // surviving `scans/<id>/page-*.json.gz` archives. So a purge that stops at the tabs is undone
 // the first time an operator deletes a scan from Scan History — the rows come back, silently,
 // long after the operator watched the count drop. Rewriting the archives is what makes the

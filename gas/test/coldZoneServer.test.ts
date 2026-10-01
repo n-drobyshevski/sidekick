@@ -40,10 +40,20 @@ const H = vi.hoisted(() => ({
   keys: [] as { ns: string; params: Rec }[],
   // When set, the cold-zone compute fails the way a Drive service error makes it fail.
   coldThrows: false,
+  // When set, EVERY durable entry fails, each with its own message — Drive down for the pass.
+  allThrow: false,
+  // What `activeJob()` answers: a job in flight blocks the warm.
+  activeJob: null as null | { kind: string; job_id: string; phase: string },
   // Operation labels `errorLog.recordError` was handed this run.
   recorded: [] as string[],
+  // And each one as `op: message`, for the specs that read what was said.
+  recordedLines: [] as string[],
   // What `durablyPeek` finds stored, by namespace — empty means every entry is cold.
   peek: new Map<string, unknown>(),
+  // What the warm hop did before warming, in order (the queued refresh, the frame memo drop).
+  order: [] as string[],
+  // What the queued support-group refresh reports: whether it rewrote the map.
+  sgRefreshed: false,
 }));
 
 // Sheets/Drive never load: this file is about the read model, and api.ts's import graph reaches
@@ -60,7 +70,10 @@ vi.mock("../src/server/sheetsDb", () => ({
 // let one spec's clock answer the next spec's question.
 vi.mock("../src/server/serverCache", () => ({
   BUILD_ID: "test",
-  cached: (_ns: string, _params: unknown, compute: () => unknown) => compute(),
+  cached: (ns: string, _params: unknown, compute: () => unknown) => {
+    if (H.allThrow) throw new Error(`Drive unavailable reading ${ns}`);
+    return compute();
+  },
   currentStamp: () => "stamp-" + H.version,
   dataVersion: () => String(H.version),
 }));
@@ -70,6 +83,7 @@ vi.mock("../src/server/readModelStore", () => ({
   durablyCached: (ns: string, params: unknown, compute: () => unknown) => {
     H.keys.push({ ns, params: params as Rec });
     if (ns === "coldZone1" && H.coldThrows) throw new Error("Erreur liée à un service : Drive");
+    if (H.allThrow) throw new Error(`Drive unavailable reading ${ns}`);
     return compute();
   },
   durablyPeek: (ns: string) => H.peek.get(ns),
@@ -77,13 +91,28 @@ vi.mock("../src/server/readModelStore", () => ({
   sweepReadModels: () => 0,
 }));
 
+vi.mock("../src/server/jobsStore", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/server/jobsStore")>()),
+  activeJob: () => H.activeJob,
+}));
 vi.mock("../src/server/ledgerStore", () => ({
   loadBaseRows: () => H.base.map((r) => ({ ...r })),
   readBaseRows: () => H.base.map((r) => ({ ...r })),
   loadScanRows: () => H.scans.map((r) => ({ ...r })),
   latestFlatScanRow: () => null,
 }));
-vi.mock("../src/server/findings", () => ({ currentScan: () => null, distinct: () => [] }));
+vi.mock("../src/server/findings", () => ({
+  currentScan: () => null, distinct: () => [], invalidateFrameMemo: () => { H.order.push("frameMemo"); },
+}));
+// The queued post-scan support-group refresh, observed: the warm hop must run it before it
+// warms anything, because it bumps DATA_VERSION.
+vi.mock("../src/server/scanJobs", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/server/scanJobs")>()),
+  runPendingSupportGroupRefresh: () => {
+    H.order.push(`sgRefresh@${H.keys.length}`);
+    return H.sgRefreshed;
+  },
+}));
 vi.mock("../src/server/settingsStore", () => ({
   getShowNoFix: () => true,
   getIncludeEol: () => true,
@@ -115,11 +144,16 @@ vi.mock("../src/server/bizDomains", () => ({
   attachBizDomains: (rows: Rec[]) => { for (const r of rows) r["_bizDomain"] = ""; },
 }));
 vi.mock("../src/server/errorLog", () => ({
-  recordError: (op: string) => { H.recorded.push(op); },
+  recordError: (op: string, e: unknown) => {
+    H.recorded.push(op);
+    H.recordedLines.push(`${op}: ${e instanceof Error ? e.message : String(e)}`);
+  },
   recentErrors: () => [],
 }));
 
-import { bootstrapIfWarm, getColdZonePage, getExecutivePage, warmReadModels } from "../src/server/api";
+import {
+  bootstrapIfWarm, continueWarm, getColdZonePage, getExecutivePage, warmReadModels,
+} from "../src/server/api";
 
 // --------------------------------------------------------------------------------------- //
 //  Fixture
@@ -174,7 +208,10 @@ beforeEach(() => {
   H.version += 1;
   H.keys.length = 0;
   H.coldThrows = false;
+  H.allThrow = false;
+  H.activeJob = null;
   H.recorded.length = 0;
+  H.recordedLines.length = 0;
   H.peek.clear();
   H.ruleVersion = 0;
   H.cold = { mode: "fixed", coldAfterDays: 90, targetSharePct: 20, floorDays: 14 };
@@ -611,6 +648,152 @@ describe("a warm that runs out of budget", () => {
     triggers = [];
     warmReadModels(0);
     expect(triggers).toEqual([]);
+  });
+
+  // Giving up leaves the rest cold until the next scheduled fire. That used to be a
+  // console.warn only, in an execution transcript nobody opens; now the in-app list says so.
+  it("records giving up in the error log, once", () => {
+    for (let i = 0; i < 6; i++) warmReadModels(0);
+    expect(H.recorded).toEqual([]); // a hop that continues is not a fault
+    warmReadModels(0);
+    expect(H.recordedLines).toEqual([
+      "cacheWarm: Gave up after 6 continuation hops under one data version.",
+    ]);
+  });
+
+  // A post-scan warm queued behind a backfill or purge waits a minute at a time. Those waits
+  // used to spend the six budget hops, so any job longer than six minutes made the warm give
+  // up — with a "continuation hops" message about a budget it never ran out of — and left the
+  // queued support-group refresh for the next standing warm.
+  it("waits out a job longer than six minutes without spending its budget hops", () => {
+    H.activeJob = { kind: "backfill", job_id: "bf-1", phase: "RUNNING" };
+    for (let i = 0; i < 30; i++) {
+      continueWarm();
+      expect(triggers, `wait ${i + 1}`).toEqual([{ handler: "trigger_continueWarm", after: 60_000 }]);
+    }
+    expect(H.recorded).toEqual([]);
+    expect(H.keys).toEqual([]);
+    H.activeJob = null;
+    continueWarm();
+    expect(H.keys.length).toBeGreaterThan(0);
+    // The six budget hops are all still there (what that pass recorded is this file's partial
+    // ledgerStore fake, not the chain).
+    H.recordedLines.length = 0;
+    for (let i = 0; i < 6; i++) warmReadModels(0);
+    expect(triggers).toHaveLength(1);
+    expect(H.recordedLines.filter((l) => l.includes("Gave up"))).toEqual([]);
+  });
+
+  it("gives up on a job that outlasts four hours of waits, naming the job, once", () => {
+    H.activeJob = { kind: "purge", job_id: "purge-1", phase: "PURGING" };
+    for (let i = 0; i < 240; i++) continueWarm();
+    expect(H.recorded).toEqual([]);
+    triggers = [];
+    continueWarm();
+    expect(triggers).toEqual([]);
+    expect(H.recordedLines).toEqual([
+      "cacheWarm: Gave up after 240 one-minute waits deferred behind purge job purge-1 " +
+        "(PURGING); the next scheduled warm picks it up.",
+    ]);
+  });
+});
+
+// --------------------------------------------------------------------------------------- //
+//  The post-scan hop
+// --------------------------------------------------------------------------------------- //
+//
+// scanJobs no longer warms inside the scan: it arms `trigger_continueWarm` (`scheduleWarm`) and
+// queues its support-group refresh for the same hop. The hop deletes its own fired trigger,
+// runs the queued refresh FIRST (it bumps DATA_VERSION), then warms.
+describe("the post-scan warm hop", () => {
+  type Trig = { handler: string; after: number };
+  let triggers: Trig[];
+
+  beforeEach(() => {
+    triggers = [];
+    H.order = [];
+    H.sgRefreshed = false;
+    vi.stubGlobal("ScriptApp", {
+      newTrigger: (handler: string) => ({
+        timeBased: () => ({ after: (after: number) => ({ create: () => { triggers.push({ handler, after }); } }) }),
+      }),
+      getProjectTriggers: () => triggers.map((t) => ({ getHandlerFunction: () => t.handler, t })),
+      deleteTrigger: (x: { t: Trig }) => { triggers = triggers.filter((t) => t !== x.t); },
+    });
+    vi.stubGlobal("CacheService", {
+      getScriptCache: () => ({ get: () => null, put: () => {}, remove: () => {} }),
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  it("scheduleWarm arms exactly one one-shot, replacing any pending one", async () => {
+    const { scheduleWarm } = await import("../src/server/api");
+    expect(scheduleWarm()).toBe(true);
+    expect(scheduleWarm()).toBe(true);
+    expect(triggers).toEqual([{ handler: "trigger_continueWarm", after: 1_000 }]);
+  });
+
+  it("deletes its own trigger, runs the queued refresh before any entry, then warms", () => {
+    triggers.push({ handler: "trigger_continueWarm", after: 1_000 }); // the one that fired
+    H.sgRefreshed = true;
+    continueWarm();
+    expect(H.order).toEqual(["sgRefresh@0", "frameMemo"]);
+    expect(H.keys.length).toBeGreaterThan(0);
+    expect(triggers).toEqual([]);
+  });
+
+  it("keeps the frame memo when the refresh had nothing to do", () => {
+    continueWarm();
+    expect(H.order).toEqual(["sgRefresh@0"]);
+  });
+
+  it("logs one {stage:\"warm\"} timing line per target, failures included", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    H.coldThrows = true;
+    warmReadModels();
+    const lines = log.mock.calls
+      .map((c) => String(c[0]))
+      .filter((l) => l.startsWith("{")).map((l) => JSON.parse(l) as Rec)
+      .filter((l) => l["stage"] === "warm");
+    expect(lines.length).toBeGreaterThan(10);
+    for (const l of lines) {
+      expect(Object.keys(l).sort()).toEqual(["label", "ms", "ok", "stage"]);
+      expect(typeof l["ms"]).toBe("number");
+    }
+    expect(lines.filter((l) => l["ok"] === false).map((l) => l["label"])).toContain("coldZone");
+    expect(lines.find((l) => l["label"] === "bootstrap")?.["ok"]).toBe(true);
+  });
+});
+
+describe("a warm target that fails", () => {
+  beforeEach(() => {
+    vi.stubGlobal("CacheService", {
+      getScriptCache: () => ({ get: () => null, put: () => {}, remove: () => {} }),
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  it("is recorded under its own label, and the rest of the pass still runs", () => {
+    H.coldThrows = true;
+    warmReadModels();
+    expect(H.recordedLines).toContain("cacheWarm: coldZone: Erreur liée à un service : Drive");
+    // The entries after it were still computed, to the last in the warm order: one failure
+    // never aborts the pass.
+    expect(H.keys.at(-1)?.ns).toMatch(/^storageStats/);
+  });
+
+  // The ring holds 25 entries. A systemic fault fails every target with its own message, and one
+  // entry per target evicted the scan failure that caused it: the first failure is recorded in
+  // full, the rest in one summary.
+  it("records a pass where every target fails as two entries, not one per target", () => {
+    H.allThrow = true;
+    warmReadModels();
+    // (`bootstrap` is the RPC, which records its own failure under "api" and returns.)
+    expect(H.recordedLines.filter((l) => l.startsWith("cacheWarm"))).toEqual([
+      "cacheWarm: mttr: Drive unavailable reading mttr12",
+      "cacheWarm: 26 of 27 warm targets failed: mttr ×2, mttrByDomain ×2, execWeekTrend ×2, " +
+        "execSevCounts ×2, insights ×2, coldZone ×2, mttrTrend ×2, program ×2, … (+6 more).",
+    ]);
   });
 });
 

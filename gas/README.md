@@ -23,7 +23,7 @@ GAS-first and are covered by hand-written vitest specs instead of fixture parity
 | Pure domain logic | `src/domain/`                                              | severity, vuln_key identity (sha1), MTTR/SLA metrics (pandas-interpolation quantiles), reconcile, domain rules, trend, compaction, **ledgerCore/maintenance** (in-memory persist/delete/checkpoint machinery), **program** (P2P coverage / efficiency / capacity)                                              |
 | Storage           | `src/server/`                                              | `sheetsDb` (header-mapped tabs), `archiveStore` (Drive gzip JSON), `ledgerStore` (commit-record writes + journals), `settingsStore`, `historyStore`, `jobsStore`                                                                                                                                               |
 | Wiz client        | `src/server/wizClient.ts`                                  | OAuth client-credentials + GraphQL on UrlFetchApp; `wizQuery.ts` is generated verbatim from `os_vulns.py`                                                                                                                                                                                                      |
-| Support groups    | `src/server/supportGroups.ts` + `wizSubscriptionsQuery.ts` | graphSearch over subscriptions tagged `Wiz/provisioning`; builds a subscription→group map (versioned settings blob) joined onto findings as `_supportGroup`. Refreshed after each scan and via `api_refreshSupportGroups`. `wizSubscriptionsQuery.ts` is **hand-written** (unlike the generated `wizQuery.ts`) |
+| Support groups    | `src/server/supportGroups.ts` + `wizSubscriptionsQuery.ts` | graphSearch over subscriptions tagged `Wiz/provisioning`; builds a subscription→group map (versioned settings blob) joined onto findings as `_supportGroup`. Refreshed after each live scan (queued for the post-scan warm hop, so the Wiz call runs outside the scan's lock) and via `api_refreshSupportGroups`. `wizSubscriptionsQuery.ts` is **hand-written** (unlike the generated `wizQuery.ts`) |
 | Scan jobs         | `src/server/scanJobs.ts`                                   | resumable page walk (6-min limit) via one-shot trigger continuation                                                                                                                                                                                                                                            |
 | Web app           | `src/client/`                                              | hash-routed SPA served by `doGet`; Chart.js 4 bundled into `js_app.html` (no CDN); DESIGN.md system in `styles.css`                                                                                                                                                                                            |
 
@@ -378,15 +378,16 @@ The MTTR page's primary numbers come from a **Kaplan–Meier** survival estimate
 
 ### Present, unobserved, and what each figure is allowed to count
 
-A finding this register stopped seeing is not resolved — `coldZone.ts` refuses to infer a
-fix from silence, and that refusal stands. It is also not live exposure, so the figures
-draw a line the population does not:
+An asset this register stopped seeing is not remediated — `coldZone.ts` refuses to infer a
+fix from silence, and that refusal stands. Its open findings are also not live exposure, so
+the figures draw a line the population does not:
 
 - **`BaseRow.observed`** is true when the row reached the newest scan **of its own
   severity** (`ledgerCore.rowReachesScan`, the same predicate `coldZone.isObserved` uses —
   one definition, because two would drift). A severity with no scan on record is
   undecidable and counts as observed: never accuse an asset of vanishing on the strength
-  of a scan that never looked.
+  of a scan that never looked. When that newest scan was **deferred** (below), any scan back
+  to the last complete one counts, for the same reason.
 - **`seen_age_days`** is how long a row was open while we could still see it.
 - **Counts include everything open; figures that measure elapsed time do not.** The
   triage funnel, tier counts and severity totals count every open finding. Age buckets,
@@ -401,6 +402,24 @@ draw a line the population does not:
   the front door decides who is "late".
 - Every page states which population it means — `N present · M unobserved since <date>` —
   and all of it disappears when nothing is unobserved.
+
+### Absence only resolves a finding when the scan was complete
+
+A finding the newest scan did not return is closed **by disappearance**
+(`resolution_src: "disappeared"`) — but only if that scan can be trusted to say what is
+missing. Each live full scan is checked first (`gas_shared/domain/scanCompleteness.ts`, the
+gate `gas_devsecops/` runs too): no rows while open findings exist (unless Wiz itself reported
+a total of 0), fewer distinct rows than Wiz's own total minus `max(5, 1%)` (only when no page
+came back with GraphQL errors beside its rows), or more repeated rows than `max(5, 1%)`. A scan
+that fails is still saved, and everything it did see lands, but it is **deferred**: nothing it
+missed is resolved, Settings → Recent errors carries a warning saying how many open findings
+were held, and Scan history marks the row. The next complete scan resolves everything missed
+since the last complete one (`ledgerCore.disappearanceWindow`). A quick refresh merges a delta
+into its baseline, so it inherits the baseline's verdict instead of being judged on its own. A
+walk that reaches `MAX_PAGES` with the cursor still reporting more now fails the scan rather
+than saving a truncated register. The verdict is stored on the scan row, so deleting a scan
+and replaying the rest, compaction's checkpoint and a bundle import all reach the ledger the
+live sequence did; rows saved before the gate carry no verdict and count as complete.
 
 ### What the ledger actually holds (measured 2026-09-23)
 
@@ -608,7 +627,7 @@ breakdown is — never a stored ledger column), how long since anything on it la
 - **`unobserved`** — a fact about the scanner. It stopped returning the asset at all.
 
 `unobserved` is tested **first**, and the order is load-bearing: `reconcile` resolves a
-finding that drops out of the newest scan **by disappearance**
+finding that drops out of the newest complete scan **by disappearance**
 (`resolution_src: "disappeared"`), so an asset the scanner has simply lost sight of looks,
 for one scan, exactly like it was mass-remediated. Reading that as warmth would reward
 losing coverage — the single worst thing this page could do — so an unobserved asset is
@@ -902,9 +921,14 @@ and the result reports the true zero rather than claiming a reclaim.
 2. Create an Apps Script project (`clasp create --type webapp` or use an existing
    script id) and put its id in `.clasp.json`.
 3. `npx clasp login`, then `npm run push` (builds and pushes `dist/`).
-4. In the GAS editor, run **`setup()`** once. It creates the "Wiz Sidekick OS Ledger"
-   spreadsheet, the `wiz-sidekick` Drive folder skeleton, the daily scan trigger
-   (05:00 UTC), and records their ids in Script Properties.
+4. In the GAS editor, run **`setup()`** once, as the account the web app executes as. It
+   creates the "Wiz Sidekick OS Ledger" spreadsheet, the `wiz-sidekick` Drive folder skeleton,
+   the daily scan trigger (05:00 Europe/Paris, pinned on the trigger) and the three warm
+   triggers, and records their ids and schedules in Script Properties. Safe to re-run: the
+   triggers are reconciled against the recorded schedule (`DAILY_TRIGGER_SCHEDULE`,
+   `WARM_TRIGGER_SCHEDULE`), so a re-run is a no-op, and the first one after an upgrade
+   replaces a daily trigger installed before the signature existed, once, and collapses any
+   duplicates.
 5. Set the remaining Script Properties by hand (never committed anywhere):
    - `WIZ_API_URL` — your tenant GraphQL endpoint, e.g. `https://api.<region>.app.wiz.io/graphql`
    - Authentication — pick **one**:
@@ -955,6 +979,17 @@ and the result reports the true zero rather than claiming a reclaim.
    Accept it, then check that the daily scan trigger still fires afterwards — a scope change
    is the one thing that can quietly suspend an installable trigger with nothing surfacing in
    the UI to say so.
+7. In the GAS editor, run **`deploymentDiagnostic()`** after the first deploy, after every
+   `setup()` run, and whenever the deployment misbehaves. It prints (to the Execution log) one
+   `OK`/`FAIL` line per check: the ledger spreadsheet and archive folder, Wiz credentials
+   present, the allowlist, exactly one daily scan trigger on this build's recorded schedule,
+   three warm triggers on theirs, the pending one-shots by handler (scan hop / watchdog,
+   backfill, purge, and the post-scan warm — a job's hop with no job in flight is flagged as
+   stray), a queued support-group refresh, the job in flight, and the trigger count against
+   Apps Script's 20. It makes no network call — `wizDiagnostic()` (below) tests the Wiz path.
+   After a scan, the Execution log shows one `{"stage":"warm","label":…,"ms":…,"ok":…}` line per
+   read model the post-scan warm computed, in the `trigger_continueWarm` execution rather than
+   the scan's.
 
 ## Troubleshooting Wiz connectivity
 

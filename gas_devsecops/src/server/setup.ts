@@ -25,6 +25,7 @@
 // would leave a changed schedule installed forever.
 
 import { DEFAULT_WIZ_AUTH_URL, getProp, PROP_KEYS, setProp } from "./props";
+import { dailyTriggerSignature, reconcileDailyTrigger } from "../../../gas_shared/server/dailyTrigger";
 import { loadSettings } from "./settingsStore";
 import { ensureTabs } from "./sheetsDb";
 
@@ -86,23 +87,14 @@ export function warmTriggerSchedule(): string {
  * the trigger already installed.
  */
 export function dailySyncSchedule(hour: number): string {
-  return `${TRIGGER_TZ}|${hour}`;
+  return dailyTriggerSignature(TRIGGER_TZ, hour);
 }
 
 /**
  * Make the installed daily sync trigger fire at `hour` (0-23, `TRIGGER_TZ`), returning the line
- * setup() prints. A no-op when exactly one trigger exists under the handler and the recorded
- * signature already names this hour; otherwise one is created and every trigger previously
- * under the handler deleted — the warm set's rebuild-the-whole-set, for its reason: a trigger
- * installed before the signature existed (no property at all) looks identical to a correct
- * one, so it is replaced once and the property written then is what makes every later run a
- * no-op.
- *
- * CREATE BEFORE DELETE, unlike the warm set. A missed warm pass costs one cold page load; a
- * daily trigger deleted and then not recreated (quota, a transient ScriptApp error) stops the
- * register syncing at all, silently. Created first, a failure leaves the old trigger firing at
- * the old hour, which deploymentDiagnostic() names; the list of old ones is read before the
- * create, so the new trigger is never in it.
+ * setup() prints. The reconcile itself — no-op on a matching signature, create before delete,
+ * duplicates collapsed, signature written last — is `gas_shared/server/dailyTrigger.ts`, shared
+ * with gas/'s daily scan; this binds the handler, the timezone and the property.
  *
  * Called from setup() and from `api.putSettings` when the recorded signature does not name the
  * saved hour. THE TRIGGERS IT SEES ARE THE RUNNING ACCOUNT'S: `getProjectTriggers()` lists the
@@ -113,25 +105,14 @@ export function dailySyncSchedule(hour: number): string {
  * move.
  */
 export function reconcileDailySyncTrigger(hour: number): string {
-  const existing = ScriptApp.getProjectTriggers()
-    .filter((t) => t.getHandlerFunction() === DAILY_SYNC_HANDLER);
-  const want = dailySyncSchedule(hour);
-  if (existing.length === 1 && getProp(PROP_KEYS.dailySyncSchedule) === want) {
-    return `Daily sync trigger: already installed (${hour}:00 ${TRIGGER_TZ})`;
-  }
-  ScriptApp.newTrigger(DAILY_SYNC_HANDLER)
-    .timeBased()
-    .everyDays(1)
-    .atHour(hour)
-    .inTimezone(TRIGGER_TZ)
-    .create();
-  for (const t of existing) ScriptApp.deleteTrigger(t);
-  // LAST, as for the warm set: a create() that throws leaves the property stale (or absent),
-  // so the next setup() — or deploymentDiagnostic(), which compares it to the saved setting —
-  // sees the mismatch instead of a schedule recorded as installed that never was.
-  setProp(PROP_KEYS.dailySyncSchedule, want);
-  return `Daily sync trigger: installed (${hour}:00 ${TRIGGER_TZ})` +
-    (existing.length ? ` (replaced ${existing.length})` : "");
+  return reconcileDailyTrigger({
+    handler: DAILY_SYNC_HANDLER,
+    tz: TRIGGER_TZ,
+    hour,
+    label: "Daily sync trigger",
+    getSignature: () => getProp(PROP_KEYS.dailySyncSchedule),
+    setSignature: (sig) => setProp(PROP_KEYS.dailySyncSchedule, sig),
+  });
 }
 
 export function setup(): string {

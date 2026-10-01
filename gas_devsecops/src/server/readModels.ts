@@ -3229,6 +3229,15 @@ const WARM_BUSY_DELAY_MS = 60_000;
  * bounds that, per cache stamp; a completed pass resets it.
  */
 const WARM_MAX_HOPS = 6;
+/**
+ * Waiting on a job is not a budget hop and has its own count: a backfill or purge routinely
+ * outlasts six one-minute waits, and charging those to `WARM_MAX_HOPS` gave up on the post-sync
+ * warm behind any job longer than six minutes. Four hours of waits — the gap between standing
+ * warms, which pick up whatever this leaves. Per stamp, like the hops.
+ */
+const WARM_MAX_BUSY_WAITS = 240;
+/** The failures one summary entry names before it elides the rest. */
+const WARM_FAILURES_LISTED = 8;
 /** Under the 9 KB Script Property cap, with room for the rest of the record. */
 const WARM_KEEP_LIST_MAX_CHARS = 8_000;
 
@@ -3249,6 +3258,8 @@ interface WarmProgress {
   label: string | null;
   /** Continuation hops armed under this stamp. */
   hops: number;
+  /** One-minute waits behind a job in flight since the last hop that ran; not hops. */
+  busy: number;
   /** The keep-list so far; null when it outgrew the property, which forfeits this pass's sweep. */
   touched: string[] | null;
 }
@@ -3264,6 +3275,7 @@ function readProgress(): WarmProgress | null {
       next: Number(p.next) || 0,
       label: typeof p.label === "string" ? p.label : null,
       hops: Number(p.hops) || 0,
+      busy: Number(p.busy) || 0,
       touched: Array.isArray(p.touched) ? p.touched.map(String) : null,
     };
   } catch (e) {
@@ -3332,7 +3344,7 @@ function warmPass(budgetMs: number, resume: boolean): WarmReport {
   if (job) {
     const reason = `${job.kind} job ${job.job_id} is ${job.phase}`;
     console.log(`Read-model warm: skipped, ${reason}`);
-    const continued = resume && chain(prior ?? freshProgress(), prior, WARM_BUSY_DELAY_MS);
+    const continued = resume && waitBehind(job, prior ?? freshProgress());
     return { warmed: 0, skipped: 0, swept: 0, blockedBy: reason, elapsedMs: 0, resumedAt: 0, continued };
   }
   const targets = warmTargets();
@@ -3352,6 +3364,7 @@ function warmPass(budgetMs: number, resume: boolean): WarmReport {
       next: hop.firstSkipped,
       label: targets[hop.firstSkipped]?.label ?? null,
       hops: prior?.hops ?? 0,
+      busy: 0,
       touched: carried === null ? null : hop.touched,
     }, prior, WARM_START_DELAY_MS);
   }
@@ -3371,7 +3384,45 @@ function warmPass(budgetMs: number, resume: boolean): WarmReport {
 }
 
 function freshProgress(): WarmProgress {
-  return { stamp: currentStamp(), next: 0, label: null, hops: 0, touched: [] };
+  return { stamp: currentStamp(), next: 0, label: null, hops: 0, busy: 0, touched: [] };
+}
+
+/**
+ * Re-arm a continuation that found a job in flight, a minute out, keeping its place. Counted
+ * against `WARM_MAX_BUSY_WAITS`, never the hops, and recorded only if it finally gives up —
+ * each wait is the chain working. Returns whether a hop was armed.
+ */
+function waitBehind(
+  job: { kind: string; job_id: string; phase: string },
+  progress: WarmProgress,
+): boolean {
+  const busy = progress.busy + 1;
+  try {
+    if (busy > WARM_MAX_BUSY_WAITS) {
+      const msg =
+        `Gave up after ${WARM_MAX_BUSY_WAITS} one-minute waits deferred behind ${job.kind} job ` +
+        `${job.job_id} (${job.phase}); the next scheduled warm picks it up.`;
+      console.warn(`Read-model warm: ${msg}`);
+      errorLog.recordError("cacheWarm", msg);
+      return false;
+    }
+    writeProgress({ ...progress, busy });
+  } catch (e) {
+    console.warn(`Read-model warm: could not record progress: ${e}`);
+    errorLog.recordError("cacheWarm", `Could not record warm progress: ${e instanceof Error ? e.message : String(e)}`);
+    return false;
+  }
+  return scheduleWarm(WARM_BUSY_DELAY_MS);
+}
+
+/** "N of M warm targets failed: a, b ×2, …" — a hop's failures, as one error-log entry. */
+function warmFailureSummary(failed: readonly string[], attempted: number): string {
+  const counts = new Map<string, number>();
+  for (const label of failed) counts.set(label, (counts.get(label) ?? 0) + 1);
+  const names = [...counts].map(([label, n]) => (n > 1 ? `${label} ×${n}` : label));
+  const listed = names.slice(0, WARM_FAILURES_LISTED).join(", ");
+  const more = names.length - WARM_FAILURES_LISTED;
+  return `${failed.length} of ${attempted} warm targets failed: ${listed}${more > 0 ? `, … (+${more} more)` : ""}.`;
 }
 
 /**
@@ -3418,6 +3469,7 @@ function warmInner(
   let warmed = 0;
   let skipped = 0;
   let firstSkipped: number | null = null;
+  const failed: string[] = [];
   for (let i = start; i < targets.length; i++) {
     const target = targets[i]!;
     if (Date.now() - t0 >= budgetMs) {
@@ -3433,10 +3485,19 @@ function warmInner(
     } catch (e) {
       ok = false;
       console.warn(`Read-model warm (${target.label}) failed: ${e}`);
-      errorLog.recordError("cacheWarm", `${target.label}: ${e instanceof Error ? e.message : String(e)}`);
+      // The FIRST failure in full; the rest are named in one summary after the loop. One entry
+      // per target let a systemic fault (Drive down, every target failing with its own message)
+      // fill the 25-slot ring and evict the sync failure that caused it.
+      if (!failed.length) {
+        errorLog.recordError("cacheWarm", `${target.label}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      failed.push(target.label);
     }
     // One line per target: what a cold post-sync warm actually spends, entry by entry.
     console.log(JSON.stringify({ stage: "warm", label: target.label, ms: Date.now() - ts, ok }));
+  }
+  if (failed.length > 1) {
+    errorLog.recordError("cacheWarm", warmFailureSummary(failed, warmed + failed.length));
   }
   const swept = skipped || !sweepable ? 0 : sweepReadModels();
   return {

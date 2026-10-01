@@ -261,3 +261,30 @@ export function kmSparkCaption(points) {
   }
   return anchorDate ? caption + " — as of " + fmtDate(anchorDate) : caption;
 }
+
+// ---------------------------------------------------------------------------------------
+// THE SAVED SCANS TABLE'S DEFERRAL MARKER.
+
+/**
+ * What a scan's completeness verdict means, in the words the table's marker carries. The stored
+ * value is `"deferred:<reason>"` (gas_shared/domain/scanCompleteness.ts); a blank or "complete"
+ * value is no deferral, and a reason this client was never taught still reads as deferred —
+ * the generic sentence is true of every reason. Ported from gas_devsecops's history.js.
+ */
+const DEFER_WHY = {
+  empty: "it returned nothing while the register still held open findings",
+  short: "it returned fewer findings than Wiz reported",
+  duplicates: "it returned the same findings more than once",
+};
+
+export function deferralOf(disappearance) {
+  const raw = typeof disappearance === "string" ? disappearance.trim() : "";
+  if (!raw.startsWith("deferred:")) return null;
+  const reason = raw.slice("deferred:".length);
+  const why = DEFER_WHY[reason] || "it looked incomplete";
+  return {
+    reason,
+    help: [`This scan was saved, but ${why}. Nothing it missed was resolved — the next `
+      + "complete scan resolves those findings."],
+  };
+}

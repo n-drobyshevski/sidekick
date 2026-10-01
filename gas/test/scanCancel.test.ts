@@ -82,7 +82,7 @@ vi.mock("../src/server/ledgerStore", () => ({
   loadScanRows: () => [],
 }));
 
-vi.mock("../src/server/api", () => ({ warmReadModels: () => {} }));
+vi.mock("../src/server/api", () => ({ scheduleWarm: () => true }));
 vi.mock("../src/server/errorLog", () => ({ recordError: () => {} }));
 vi.mock("../src/server/frameCore", () => ({
   buildFrame: () => ({}),
@@ -96,7 +96,7 @@ vi.mock("../src/server/settingsStore", () => ({
 }));
 vi.mock("../src/server/supportGroups", () => ({ refreshSupportGroups: () => {} }));
 vi.mock("../src/server/wizClient", () => ({
-  fetchPage: () => ({ nodes: [], endCursor: null, hasNextPage: false, totalCount: 0 }),
+  fetchPage: () => ({ nodes: [], endCursor: null, hasNextPage: false, totalCount: 0, partialErrors: [] }),
   MAX_PAGES: 1000,
   WizDeltaFilterError: class WizDeltaFilterError extends Error {},
 }));

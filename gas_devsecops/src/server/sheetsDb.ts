@@ -179,10 +179,10 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // addresses, never client-facing.
     "scan_id", "ts", "scope", "mode", "severities", "total",
     "new_count", "resolved_count", "reopened_count", "raw_ref", "obs_ref", "sealed",
-    // THE COMPLETENESS RECORD (domain/scanCompleteness.ts), appended last so `ensureHeaders`
-    // adds them to an existing tab without moving a column. `disappearance` is the verdict a
-    // replay reads back — "complete", "deferred:<reason>", or blank on a row written before
-    // the gate, which replays under the old rules. `dropout_count` is the rows closed as
+    // THE COMPLETENESS RECORD (gas_shared/domain/scanCompleteness.ts), appended last so
+    // `ensureHeaders` adds them to an existing tab without moving a column. `disappearance` is the
+    // verdict a replay reads back — "complete", "deferred:<reason>", or blank on a row written
+    // before the gate, which replays under the old rules. `dropout_count` is the rows closed as
     // repository drop-outs, which `resolved_count` deliberately does not include.
     "reported_total", "partial_pages", "duplicates", "disappearance", "dropout_count",
   ],

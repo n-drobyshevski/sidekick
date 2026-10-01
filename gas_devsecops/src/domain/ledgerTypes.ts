@@ -233,10 +233,10 @@ export interface ScanRow {
   obs_ref: string | null;
   sealed: 0 | 1;
 
-  // THE COMPLETENESS RECORD (domain/scanCompleteness.ts). Optional because a row written before
-  // these columns existed carries none of them, and that absence is meaningful rather than a
-  // gap: a blank `disappearance` is a LEGACY scan — complete, and replayed under the rules it
-  // was written under. Every live scan written since carries all five.
+  // THE COMPLETENESS RECORD (gas_shared/domain/scanCompleteness.ts). Optional because a row written
+  // before these columns existed carries none of them, and that absence is meaningful rather than a
+  // gap: a blank `disappearance` is a LEGACY scan — complete, and replayed under the rules it was
+  // written under. Every live scan written since carries all five.
   /** The tenant's own total for the query; null when it reported none. */
   reported_total?: number | null;
   /** Pages that came back with GraphQL errors beside their nodes. */

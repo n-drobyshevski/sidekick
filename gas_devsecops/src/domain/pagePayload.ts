@@ -219,7 +219,8 @@ const SCAN_ROW_KEYS = [
   "scan_id", "ts", "scope", "mode", "total",
   "new_count", "resolved_count", "reopened_count", "severities", "sealed",
   // The completeness verdict and the drop-outs it closed — what the table marks a deferred
-  // scan by, and the count `resolved_count` deliberately leaves out (domain/scanCompleteness.ts).
+  // scan by, and the count `resolved_count` deliberately leaves out
+  // (gas_shared/domain/scanCompleteness.ts).
   // The other three record columns (reported_total, partial_pages, duplicates) are operator
   // diagnostics that reach the Data page's error log instead.
   "disappearance", "dropout_count",

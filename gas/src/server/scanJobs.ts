@@ -7,7 +7,7 @@
 // record spill file, so the next hop resumes exactly where this one stopped.
 
 import { parseSeverities } from "../domain/compaction";
-// Namespace import used only at runtime (afterPersist → api.warmReadModels), never at module
+// Namespace import used only at runtime (handOffAfterScan → api.scheduleWarm), never at module
 // eval — api.ts imports this module back, so a value used during evaluation would be a TDZ
 // risk; a runtime call sees the fully-initialized live binding.
 import * as api from "./api";
@@ -36,11 +36,15 @@ import {
 } from "./jobsStore";
 import * as ledgerStore from "./ledgerStore";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
-import { deleteProp, getProp, hasWizCredentials, setProp } from "./props";
+import { deleteProp, getProp, hasWizCredentials, PROP_KEYS, setProp } from "./props";
 import { SAMPLE_FLAT, SAMPLE_GROUPED } from "./sampleData";
 import * as settingsStore from "./settingsStore";
 import * as supportGroups from "./supportGroups";
-import { fetchPage, MAX_PAGES, WizDeltaFilterError } from "./wizClient";
+import { fetchPage, MAX_PAGES, WizDeltaFilterError, WizQueryError } from "./wizClient";
+import {
+  distinctNodes,
+  readDisappearance,
+} from "../../../gas_shared/domain/scanCompleteness";
 
 const BUDGET_MS = 270_000; // 4.5 min of a 6-min execution (continuation hops)
 const FIRST_STEP_BUDGET_MS = 45_000; // keep the "Run scan" RPC snappy; rest via trigger
@@ -54,6 +58,9 @@ const DELTA_OVERLAP_MINUTES = 15;
 // take it means something is genuinely executing. One second (what this used to be) is inside
 // the noise of an unrelated read, which turned incidental contention into a dead Stop button.
 const FORCE_STOP_LOCK_MS = 10_000;
+// The queued support-group refresh's write waits this long for the lock. Short: it runs in a
+// warm hop, whose budget it spends, and a busy ledger only defers it to the next pass.
+const SG_REFRESH_LOCK_MS = 20_000;
 
 // Cancel is signalled through a Script Property (lock-free) rather than the jobs tab:
 // a running hop holds the mutation lock for its whole duration, so a lock-bound write
@@ -398,6 +405,8 @@ function dryRunScan(options: { incremental?: boolean; sampleShape?: string }): S
     rawRef: archive.scanFolder(scanId).getId(),
   });
   afterPersist(slim);
+  // Off the lock even here: a dry run commits inside the "Run scan" RPC itself.
+  handOffAfterScan();
   return { jobId: null, message: "Dry-run scan saved." };
 }
 
@@ -415,6 +424,10 @@ function step(job: JobRow, budgetMs = BUDGET_MS): void {
   let page = job.page;
   let findings = job.findings_so_far;
   let totalCount = job.total_count;
+  // The fetch's own account of itself, carried across hops on the job row for the completeness
+  // gate the persist runs (gas_shared/domain/scanCompleteness.ts).
+  let totalReported = job.total_reported === true;
+  let partialPages = job.partial_pages ?? 0;
 
   try {
     for (;;) {
@@ -437,11 +450,42 @@ function step(job: JobRow, budgetMs = BUDGET_MS): void {
       page += 1;
       findings += result.nodes.length;
       cursor = result.endCursor;
-      // totalCount arrives only on page 0; keep it once seen so the UI can show a %.
-      if (result.totalCount !== null) totalCount = result.totalCount;
-      updateJob(job.job_id, { cursor, page, findings_so_far: findings, total_count: totalCount });
+      // totalCount arrives only on page 0; keep it once seen so the UI can show a % — and so
+      // the completeness gate can compare the scan against it.
+      if (result.totalCount !== null) {
+        totalCount = result.totalCount;
+        totalReported = true;
+      }
+      if (result.partialErrors.length) {
+        // Recorded beside the rows, never fatal — the nodes are good and the count is suspect
+        // (wizClient.PageResult). The count goes on the scan row, the messages to the
+        // execution log.
+        partialPages += 1;
+        console.warn(JSON.stringify({
+          stage: "partialPage", scanId, page: pageName, errors: result.partialErrors.slice(0, 3),
+        }));
+      }
+      updateJob(job.job_id, {
+        cursor,
+        page,
+        findings_so_far: findings,
+        total_count: totalCount,
+        total_reported: totalReported,
+        partial_pages: partialPages,
+      });
 
-      if (!result.hasNextPage || page >= MAX_PAGES) break;
+      if (!result.hasNextPage) break;
+      // MAX_PAGES THROWS. Stopping the walk quietly here — what this loop used to do — handed
+      // the ledger a truncated register that looked complete, and every finding past the last
+      // page resolved by disappearance. It is a backstop against a cursor that never ends, not
+      // an expectation (1,000 pages is up to 500k findings), so the scan fails instead.
+      if (page >= MAX_PAGES) {
+        throw new WizQueryError(
+          `Wiz walk reached MAX_PAGES (${MAX_PAGES}) and the cursor still reports more. ` +
+            "Refusing to truncate silently — a partial register that looks complete is worse " +
+            "than a failed scan.",
+        );
+      }
       if (Date.now() - started > budgetMs) {
         archive.writeSlimRecords(scanId, slim);
         archive.writePageRuns(scanId, pageRuns);
@@ -453,7 +497,7 @@ function step(job: JobRow, budgetMs = BUDGET_MS): void {
     archive.writeSlimRecords(scanId, slim);
     archive.writePageRuns(scanId, pageRuns);
     updateJob(job.job_id, { phase: "RECONCILING" });
-    finishScan(job.job_id, scanId, params, slim);
+    finishScan(job.job_id, scanId, params, slim, fetchAccount(totalCount, totalReported, partialPages));
   } catch (e) {
     if (e instanceof ScanCancelled) {
       finalizeCancel(job);
@@ -474,16 +518,48 @@ function step(job: JobRow, budgetMs = BUDGET_MS): void {
       phase: "FAILED",
       error: e == null ? "Scan failed." : String(e).slice(0, 1000),
     });
+    // This entry is the failure's record — this register's recent-errors list reads the log
+    // alone, not the jobs tab, so it is recorded here rather than only marked as devsecops
+    // does. Recording also marks the thrown value, so `api.run()` (the first hop runs inside
+    // `runScan`) skips it as it passes on the way out instead of listing it a second time.
     errorLog.recordError("scan", e);
     throw e;
   }
 }
 
-function finishScan(jobId: string, scanId: string, params: ScanParams, slim: Rec[]): void {
+/** What the fetch said about itself: the tenant's total (null when never reported), partial pages. */
+interface FetchAccount {
+  reportedTotal: number | null;
+  partialPages: number;
+}
+
+/**
+ * The fetch account off the job row's fields. A total of 0 counts as REPORTED only when the row
+ * says so — a job started before `total_reported` existed reads 0 as "not reported", which
+ * defers an empty scan rather than letting it resolve the register.
+ */
+function fetchAccount(totalCount: number, totalReported: boolean, partialPages: number): FetchAccount {
+  const n = Number(totalCount);
+  const reportedTotal = Number.isFinite(n) && (totalReported || n > 0) ? n : null;
+  return { reportedTotal, partialPages: Number(partialPages) || 0 };
+}
+
+function finishScan(
+  jobId: string,
+  scanId: string,
+  params: ScanParams,
+  slim: Rec[],
+  fetched: FetchAccount,
+): void {
   // Past FETCHING the scan finishes (seconds) rather than cancelling; drop any pending
   // Stop request so its flag can't outlive the job.
   clearCancel(jobId);
   let records = slim;
+  // The completeness gate's input — see ledgerCore.PersistFlatOptions. A full scan is assessed
+  // on its own records; an incremental one inherits its baseline's verdict, because its
+  // records are the baseline's plus a delta.
+  let completeness: ledgerStore.PersistFlatOptionsArg["completeness"] = null;
+  let incremental: ledgerStore.PersistFlatOptionsArg["incremental"] = null;
   if (params.incremental) {
     if (!slim.length) {
       // Nothing changed: no scan row, no snapshot — the badge baseline stays put.
@@ -499,6 +575,16 @@ function finishScan(jobId: string, scanId: string, params: ScanParams, slim: Rec
       });
       return;
     }
+    const baselineRow = ledgerStore
+      .loadScanRows()
+      .find((s) => s.scan_id === params.baselineScanId);
+    incremental = {
+      baselineDisappearance: baselineRow?.disappearance ?? null,
+      partialPages: fetched.partialPages,
+      // Measured on the DELTA as fetched: the merge below keys by vulnKey, so the merged set
+      // can hold no repeat to count.
+      duplicates: distinctNodes(slim).duplicates,
+    };
     records = mergeNodes(baselineSlim, slim);
     // The merged set becomes the scan's replayable payload (page-0001..N).
     let pageNo = 1;
@@ -510,6 +596,7 @@ function finishScan(jobId: string, scanId: string, params: ScanParams, slim: Rec
     writeFrameSafely(scanId, records, (i) => Math.floor(i / 500) + 1);
   } else {
     writeFrameSafely(scanId, records, pageOfFromRuns(archive.readPageRuns(scanId), records.length));
+    completeness = fetched;
   }
 
   updateJob(jobId, { phase: "PERSISTING", scan_id: scanId });
@@ -520,19 +607,59 @@ function finishScan(jobId: string, scanId: string, params: ScanParams, slim: Rec
   // fires shortly after, finds the job still PERSISTING with the lock free, and rolls it back
   // from the journal. Cleared below the moment the write lands.
   scheduleContinuation();
-  ledgerStore.persistFlatScan(records, {
+  const outcome = ledgerStore.persistFlatScan(records, {
     mode: params.mode,
     scanId,
     scannedSeverities: params.severities,
     rawRef: archive.scanFolder(scanId).getId(),
     jobId,
+    completeness,
+    incremental,
   });
+  recordDeferral(outcome);
   afterPersist(records);
   updateJob(jobId, { phase: "DONE" });
   clearContinuationTriggers(); // the commit record landed — retire the watchdog
   // A Stop pressed after finishScan's clearCancel above (i.e. during the persist) would
   // otherwise leave its CANCEL_ property behind for good.
   clearCancel(jobId);
+  // AFTER DONE AND AFTER THE WATCHDOG IS GONE: the warm this arms refuses while a job is
+  // active, and nothing of it runs in this execution.
+  handOffAfterScan();
+}
+
+/**
+ * A deferred scan is a scan that SUCCEEDED and still owes the operator a sentence: its absences
+ * were held back, so the register's open count is carrying findings this scan could not
+ * confirm. That goes in the error log (Settings → Recent errors) as a warning, because the job
+ * row records DONE and nothing else on the server would say it. Best effort, like every chore
+ * after the commit.
+ */
+function recordDeferral(outcome: ledgerStore.PersistOutcome): void {
+  try {
+    const row = outcome.scanRow;
+    const verdict = readDisappearance(row?.disappearance ?? null);
+    if (!row || !verdict.deferred) return;
+    const reported = row.reported_total ?? null;
+    const total = reported === null ? "no total reported" : `${reported} reported`;
+    const held = `${outcome.absent} open finding(s) it did not return were left open; the next `
+      + "complete scan will resolve them.";
+    errorLog.recordError(
+      "scanCompleteness",
+      // A quick refresh is not judged on its own records (ledgerCore.PersistFlatOptions); it
+      // inherited the deferral, and saying "looked incomplete" of it would send the operator
+      // after a delta that was fine.
+      row.mode.includes("incremental")
+        ? `Quick refresh ${row.scan_id} was built on a deferred scan `
+          + `(${verdict.reason ?? "unknown"}), so it was deferred too. ${held}`
+        : `Scan ${row.scan_id} looked incomplete (${verdict.reason ?? "unknown"}: `
+          + `${row.total} received, ${total}, ${row.duplicates ?? 0} duplicate(s), `
+          + `${row.partial_pages ?? 0} partial page(s)). ${held}`,
+      "warning",
+    );
+  } catch (e) {
+    console.warn(`Recording a deferred scan failed: ${e}`);
+  }
 }
 
 function loadBaselineSlim(baselineScanId: string): Rec[] | null {
@@ -547,9 +674,14 @@ function loadBaselineSlim(baselineScanId: string): Rec[] | null {
   return nodes.length ? nodes.map(slimRecord) : null;
 }
 
-/** MTTR snapshot + support-group refresh + auto-compaction after a persist (never breaks a scan). */
+/**
+ * The chores that must land before the job reads DONE: the MTTR snapshot and auto-compaction
+ * (never breaks a scan). Both write, so both stay inside the scan's lock, and both run while the
+ * job is still PERSISTING so a standing warm (api.warmReadModelsScheduled), which refuses while
+ * a job is active, cannot read the ledger between them. Everything slow and read-only is handed
+ * off to a trigger afterwards — see `handOffAfterScan`.
+ */
 function afterPersist(records: Rec[]): void {
-  refreshSupportGroupsAfterScan();
   try {
     const { perSev, overall } = calculateMttr(records);
     const median = overall.mttr_median;
@@ -571,14 +703,37 @@ function afterPersist(records: Rec[]): void {
     errorLog.recordError("mttrSnapshot", e);
   }
   autoCompactIfDue();
-  // Warm the landing-view read-models LAST, against the now-final DATA_VERSION (any
-  // auto-compaction above bumped it again), so the first analyst load after this scan hits a
-  // warm cache instead of recomputing on the interactive path. The scan is already committed;
-  // this reuses the state + frame already loaded in this execution and never breaks a scan.
+}
+
+/**
+ * The post-scan work that must NOT run inside the scan: the read-model warm and the support-group
+ * refresh. ARMED HERE, RUN IN `trigger_continueWarm` (api.continueWarm).
+ *
+ * Both used to run inline in afterPersist — inside the scan's script lock, before DONE, with the
+ * watchdog still armed, and for a scan that finishes in its first hop (or a dry run) inside the
+ * "Run scan" RPC itself. The warm is minutes of compute and the refresh is a Wiz graphSearch, so
+ * every write RPC waited behind them and the job card sat on "Saving" meanwhile. Now the caller
+ * writes DONE and clears the watchdog first, and this only leaves a note and arms one trigger.
+ *
+ * LAST, after auto-compaction, because a compaction bumps DATA_VERSION and the warm must see
+ * the final one. The refresh runs at the head of that hop, before any entry is warmed, for the
+ * same reason: it bumps the version too. Never breaks a scan — both halves are best effort and
+ * `api.scheduleWarm` records its own failure.
+ */
+function handOffAfterScan(): void {
+  // Gated on credentials, so dry-run scans (which have none) skip it, as they always did.
+  if (hasWizCredentials()) {
+    try {
+      setProp(PROP_KEYS.supportGroupRefreshPending, nowIso());
+    } catch (e) {
+      console.warn(`Could not queue the post-scan support-group refresh: ${e}`);
+      errorLog.recordError("supportGroupRefresh", e);
+    }
+  }
   try {
-    api.warmReadModels();
+    if (api.scheduleWarm()) console.log("Post-scan read-model warm: scheduled.");
   } catch (e) {
-    console.warn(`Cache warming after scan failed: ${e}`);
+    console.warn(`Post-scan read-model warm could not be scheduled: ${e}`);
     errorLog.recordError("cacheWarm", e);
   }
 }
@@ -598,17 +753,62 @@ function autoCompactIfDue(): void {
 }
 
 /**
- * Refresh the subscription → Support Group map after a live scan (best-effort). Gated on
- * credentials, so dry-run scans (which have none) skip it. Never breaks a scan — a failed
- * graphSearch just leaves the previous map in place. Runs inside the scan's lock already.
+ * The support-group refresh a scan queued (`handOffAfterScan`), run at the head of a warm pass
+ * (api.continueWarm / warmReadModelsScheduled) — never inside the scan. Returns whether the map
+ * was rewritten, so the caller can drop its frame memo.
+ *
+ * THE WIZ CALL TAKES NO LOCK; ONLY THE WRITE DOES. The graphSearch is the slow half and reads
+ * nothing of the ledger. The write (a tab overwrite + a DATA_VERSION bump, possibly a settings
+ * save) is a mutation like any other, so it takes the script lock for its own few seconds.
+ *
+ * One attempt per queued scan, as before: a failed graphSearch leaves the previous map in place
+ * and is recorded. A lock that stays busy is not a failure — the note stays queued and the next
+ * warm pass tries again.
+ *
+ * THE NOTE IS READ AGAIN UNDER THE LOCK. Two warm passes (the post-scan hop and a standing fire)
+ * can both find it and both fetch; only the first to the lock writes. The second finds the note
+ * gone and stops — its write would bump DATA_VERSION again and throw away whatever the first
+ * pass's warm had already computed, for the same map. A note that CHANGED meanwhile was queued by
+ * a newer scan: the map is written and that note left for its own pass.
  */
-function refreshSupportGroupsAfterScan(): void {
-  if (!hasWizCredentials()) return;
+export function runPendingSupportGroupRefresh(): boolean {
+  let pending: string | null;
   try {
-    supportGroups.refreshSupportGroups();
+    pending = getProp(PROP_KEYS.supportGroupRefreshPending);
   } catch (e) {
+    console.warn(`Could not read the queued support-group refresh: ${e}`);
+    return false;
+  }
+  if (!pending) return false;
+  if (!hasWizCredentials()) {
+    deleteProp(PROP_KEYS.supportGroupRefreshPending);
+    return false;
+  }
+  try {
+    const { map } = supportGroups.fetchSupportGroups();
+    return withScriptLock(() => {
+      const still = getProp(PROP_KEYS.supportGroupRefreshPending);
+      if (!still) {
+        console.log("Support-group refresh after scan: another pass already wrote it.");
+        return false;
+      }
+      settingsStore.setSupportGroupMap(map);
+      if (still === pending) deleteProp(PROP_KEYS.supportGroupRefreshPending);
+      return true;
+    }, SG_REFRESH_LOCK_MS);
+  } catch (e) {
+    if (e instanceof LedgerBusyError) {
+      console.warn(`Support-group refresh after scan: ledger busy, left queued: ${e}`);
+      return false;
+    }
     console.warn(`Support-group refresh after scan failed: ${e}`);
     errorLog.recordError("supportGroupRefresh", e);
+    try {
+      deleteProp(PROP_KEYS.supportGroupRefreshPending);
+    } catch (_e) {
+      // Left queued, it is retried by the next pass — the outcome this failure already had.
+    }
+    return false;
   }
 }
 
@@ -641,7 +841,13 @@ export function continueJob(_e?: unknown): void {
       } else if (job.phase === "RECONCILING") {
         const params = JSON.parse(job.params_json ?? "{}") as ScanParams;
         const slim = (archive.readSlimRecords(job.scan_id!) as Rec[]) ?? [];
-        finishScan(job.job_id, job.scan_id!, params, slim);
+        finishScan(
+          job.job_id,
+          job.scan_id!,
+          params,
+          slim,
+          fetchAccount(job.total_count, job.total_reported === true, job.partial_pages ?? 0),
+        );
       } else if (job.phase === "PERSISTING" || job.phase === "REPLAYING") {
         // The watchdog finishScan arms before the write. Reaching it means that execution
         // died mid-persist: recoverIfNeeded() restores the ledger from the journal, or closes

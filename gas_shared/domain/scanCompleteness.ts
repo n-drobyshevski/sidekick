@@ -10,10 +10,14 @@
 // is DEFERRED rather than refused: its rows still land (new findings, persisting ones, API
 // resolutions — everything the scan positively saw), but nothing is resolved by its absences.
 // The next complete scan adjudicates them instead, across the whole window since the last
-// complete one (`ledgerCore.disappearanceWindow`). The verdict is stored on the scan row
-// (`disappearance`), so a replay re-applies it rather than re-assessing inputs it no longer
+// complete one (each app's `ledgerCore.disappearanceWindow`). The verdict is stored on the scan
+// row (`disappearance`), so a replay re-applies it rather than re-assessing inputs it no longer
 // has: the tenant's reported total and the partial-page count are facts of the fetch, not of
 // the records.
+//
+// SHARED BY gas/ AND gas_devsecops/. This module is the pure verdict and its stored encoding;
+// the window over each app's scan log, and the reconcile guard that reads it, stay in each app
+// because their ScanRow and ledger shapes differ (gas_devsecops keys everything by scope).
 //
 // THREE REASONS, first match wins:
 //
@@ -22,24 +26,26 @@
 //               measurement that everything is gone, and the scan resolves as usual.
 //   short       the tenant reported a total, every page came back whole, and the scan holds
 //               fewer distinct nodes than the total minus the tolerance. ONLY when
-//               `partialPages === 0`: a page carrying GraphQL errors has a suspect count
-//               (wizClient.ts), and SAST returns one on every run (PROBE_FINDINGS.md §12.3), so
+//               `partialPages === 0`: a page carrying GraphQL errors has a suspect count, and
+//               gas_devsecops's SAST returns one on every run (its PROBE_FINDINGS.md §12.3), so
 //               comparing against it would defer every SAST scan forever.
 //   duplicates  more repeated nodes than the tolerance — a cursor that walked rows twice has
 //               almost certainly skipped others it cannot name.
 //
 // THE ABSENT SHARE IS RECORDED AND NEVER A GATE. How many open rows a scan would close is
 // exactly what a real remediation wave or a narrowed project scope moves; gating on it would
-// refuse the good news and the honest news alike. The repository drop-out rule
-// (`reconcile.ts`) is what answers the one large absence that is not remediation.
+// refuse the good news and the honest news alike. (gas_devsecops answers the one large absence
+// that is not remediation — a repository leaving coverage — with its own drop-out rule in its
+// reconcile.ts; gas/ has none, by decision.)
 //
-// "DISTINCT" COUNTS NODE IDS, NOT LEDGER KEYS. The tenant's total counts nodes, and on secrets
-// several nodes legitimately share one ledger key (the twin fold — PROBE_FINDINGS.md §12.2:
-// 1,931 nodes, 1,324 keys). Counting keys would read every secrets scan as a third short and as
-// 607 duplicates. A Wiz node `id` is unique per node on all three connections (§9.5), so a
-// repeated id is a node the cursor returned twice, whatever the scope.
+// "DISTINCT" COUNTS NODE IDS, NOT LEDGER KEYS. The tenant's total counts nodes, and on
+// gas_devsecops's secrets several nodes legitimately share one ledger key (the twin fold —
+// its PROBE_FINDINGS.md §12.2: 1,931 nodes, 1,324 keys). Counting keys would read every secrets
+// scan as a third short and as 607 duplicates. A Wiz node `id` is unique per node on every
+// connection these registers read, so a repeated id is a node the cursor returned twice. On
+// gas/ the two counts agree: its ledger key is `id:<id>` for every node that carries one.
 
-import type { Rec } from "./util";
+type Rec = Record<string, unknown>;
 
 /** The stored verdict of a complete scan. A null column is a LEGACY row: complete, old rules. */
 export const DISAPPEARANCE_COMPLETE = "complete";
@@ -73,7 +79,7 @@ export interface CompletenessInput {
   reportedTotal: number | null;
   /** Pages that came back carrying GraphQL errors beside their nodes. */
   partialPages: number;
-  /** OPEN ledger rows of this scope inside this scan's severity scope. */
+  /** OPEN ledger rows (of this scope, where the app has scopes) inside this scan's severity scope. */
   priorOpen: number;
 }
 
@@ -112,7 +118,7 @@ export function disappearanceValue(reason: DeferReason | null): string {
 
 /**
  * Read a stored `disappearance` cell. Blank is a LEGACY row — written before the gate existed,
- * complete by definition, and replayed under the rules it was written under (no drop-out pass).
+ * complete by definition, and replayed under the rules it was written under.
  */
 export function readDisappearance(v: unknown): {
   legacy: boolean;

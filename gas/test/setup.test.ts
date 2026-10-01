@@ -1,4 +1,4 @@
-// The warm-trigger schedule.
+// The trigger schedule setup() reconciles: the warm set, and (at the end) the daily scan.
 //
 // TWO THINGS ARE PINNED HERE AND THEY FAIL DIFFERENTLY. The first is the builder chain: a
 // ClockTriggerBuilder method that does not exist throws at setup() time, and because dev/boot.js
@@ -241,10 +241,88 @@ describe("setup reconciles the installed schedule", () => {
 
   it("leaves the daily scan trigger alone while rebuilding the warm set", async () => {
     installed = ["trigger_dailyScan", WARM];
+    props.DAILY_TRIGGER_SCHEDULE = "Europe/Paris|5"; // the daily trigger is already current
     const { setup } = await load();
     setup();
     expect(deleted).toEqual([WARM]);
     expect(installed).toContain("trigger_dailyScan");
     expect(built.some((b) => b.handler === "trigger_dailyScan")).toBe(false);
+  });
+});
+
+// The daily scan trigger. It used to be deduplicated by handler name alone, with no timezone,
+// so ANY trigger under the name counted as done: one from before the timezone was pinned kept
+// the script's timezone forever, and two kept firing two full scans a day. It is reconciled now
+// against a recorded `${tz}|${hour}` signature (gas_shared/server/dailyTrigger.ts, whose own
+// contract runs from test/shared.test.js); these pin what setup() does with it.
+describe("setup reconciles the daily scan trigger", () => {
+  const DAILY = "trigger_dailyScan";
+  const dailyBuilds = () => built.filter((b) => b.handler === DAILY);
+
+  it("a fresh install pins 05:00 Europe/Paris and records the signature", async () => {
+    const { setup, dailyScanSchedule } = await load();
+    const report = setup();
+    expect(dailyBuilds()).toEqual([{ handler: DAILY, days: 1, hour: 5, tz: "Europe/Paris" }]);
+    expect(props.DAILY_TRIGGER_SCHEDULE).toBe("Europe/Paris|5");
+    expect(props.DAILY_TRIGGER_SCHEDULE).toBe(dailyScanSchedule());
+    expect(report).toMatch(/daily trigger: installed \(5:00 Europe\/Paris\)/);
+  });
+
+  it("replaces a legacy unsigned trigger exactly once", async () => {
+    installed = [DAILY];
+    const { setup } = await load();
+    const first = setup();
+    expect(deleted.filter((h) => h === DAILY)).toEqual([DAILY]);
+    expect(dailyBuilds()).toHaveLength(1);
+    expect(installed.filter((h) => h === DAILY)).toHaveLength(1);
+    expect(first).toMatch(/daily trigger: installed .*\(replaced 1\)/);
+    built.length = 0;
+    deleted.length = 0;
+    const second = setup();
+    expect(dailyBuilds()).toEqual([]);
+    expect(deleted).toEqual([]);
+    expect(second).toMatch(/daily trigger: already installed/);
+  });
+
+  it("collapses duplicates to one", async () => {
+    installed = [DAILY, DAILY];
+    props.DAILY_TRIGGER_SCHEDULE = "Europe/Paris|5"; // even under a current signature
+    const { setup } = await load();
+    setup();
+    expect(installed.filter((h) => h === DAILY)).toHaveLength(1);
+    expect(deleted.filter((h) => h === DAILY)).toHaveLength(2);
+  });
+
+  it("is a no-op on a second setup()", async () => {
+    const { setup } = await load();
+    setup();
+    built.length = 0;
+    deleted.length = 0;
+    setup();
+    expect(built).toEqual([]);
+    expect(deleted).toEqual([]);
+    expect(installed.filter((h) => h === DAILY)).toHaveLength(1);
+  });
+
+  it("a failed create keeps the old trigger and leaves the signature unwritten", async () => {
+    // Create before delete: a daily trigger deleted and not recreated would stop scanning
+    // altogether, silently. The old one keeps firing; the next setup() tries again.
+    installed = [DAILY];
+    const real = (globalThis as { ScriptApp: { newTrigger: unknown } }).ScriptApp.newTrigger;
+    (globalThis as { ScriptApp: { newTrigger: unknown } }).ScriptApp.newTrigger = (h: string) => {
+      const b = (real as (h: string) => Record<string, (x?: unknown) => unknown>)(h);
+      const create = b.create;
+      b.create = () => { if (h === DAILY) throw new Error("quota"); return create(); };
+      return b;
+    };
+    try {
+      const { setup } = await load();
+      expect(() => setup()).toThrow(/quota/);
+      expect(installed).toEqual([DAILY]);
+      expect(deleted).toEqual([]);
+      expect(props.DAILY_TRIGGER_SCHEDULE).toBeUndefined();
+    } finally {
+      (globalThis as { ScriptApp: { newTrigger: unknown } }).ScriptApp.newTrigger = real;
+    }
   });
 });

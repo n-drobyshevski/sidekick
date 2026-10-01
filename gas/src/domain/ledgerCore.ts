@@ -5,10 +5,28 @@
 // LedgerState (this module, fully unit-testable) and lets server/ledgerStore.ts read
 // and write that state wholesale at the edges. The algorithms — reconcile invocation,
 // prev-scan maps, episode collisions, replay ordering — are line-for-line ports.
+//
+// ONE ADDITION THE PYTHON NEVER HAD: the completeness gate before disappearance
+// (gas_shared/domain/scanCompleteness.ts). `persistFlatScan` assesses each live scan, stores the
+// verdict on its scan row, and a deferred scan resolves nothing by absence; the next complete
+// scan resolves across `disappearanceWindow`. A register that never deferred resolves exactly
+// as the port always did.
 
+import {
+  assessCompleteness,
+  DISAPPEARANCE_COMPLETE,
+  disappearanceValue,
+  readDisappearance,
+} from "../../../gas_shared/domain/scanCompleteness";
 import { DISAPPEARANCE_RESOLUTION, REMEDIATION_ROLLOUT_ISO, SEVERITY_ORDER } from "./config";
 import { parseSeverities, serializeSeverities } from "./compaction";
-import { reconcile, type Deltas, type LedgerRow, type Observation } from "./reconcile";
+import {
+  reconcile,
+  type Deltas,
+  type DisappearanceWindow,
+  type LedgerRow,
+  type Observation,
+} from "./reconcile";
 import { normalizeSeverity } from "./severity";
 import { nowIso, parseTs, present, toIso, type Rec } from "./util";
 
@@ -27,6 +45,19 @@ export interface ScanRow {
   obs_ref: string | null;
   severities: string | null; // serializeSeverities text
   sealed: 0 | 1;
+
+  // THE COMPLETENESS RECORD (gas_shared/domain/scanCompleteness.ts). Optional because a row
+  // written before these columns existed carries none of them, and that absence is meaningful
+  // rather than a gap: a blank `disappearance` is a LEGACY scan — complete, and replayed under
+  // the rules it was written under. Every live scan written since carries the verdict.
+  /** The tenant's own total for the query; null when it reported none (and on incrementals). */
+  reported_total?: number | null;
+  /** Pages that came back with GraphQL errors beside their nodes. */
+  partial_pages?: number | null;
+  /** Nodes the cursor returned more than once (by Wiz `id`). */
+  duplicates?: number | null;
+  /** "complete", "deferred:<reason>", or blank for a legacy row. Replay reads it back. */
+  disappearance?: string | null;
 }
 
 export interface EpisodeRow {
@@ -100,6 +131,10 @@ export function latestScan(scans: ScanRow[]): ScanRow | null {
  * {severity: scan_id} of the most recent prior scan whose scope covered it — the
  * per-severity disappearance guard (ledger._prev_scan_id_by_severity). null when no
  * scans exist.
+ *
+ * `persistFlatScan` no longer reads this — it reads `disappearanceWindow`, below, which is this
+ * map with deferred scans added. It stays as the one-scan special case the window reduces to,
+ * and the shape `test/fixtures/reconcile.json` hands reconcile through `prevScanIdBySeverity`.
  */
 export function prevScanIdBySeverity(scans: ScanRow[]): Record<string, string> | null {
   const remaining = new Set<string>(SEVERITY_ORDER);
@@ -115,10 +150,63 @@ export function prevScanIdBySeverity(scans: ScanRow[]): Record<string, string> |
   return Object.keys(mapping).length ? mapping : null;
 }
 
+/**
+ * The scans a row may have last been seen in for its absence from the NEXT scan to resolve it —
+ * `prevScanIdBySeverity` generalised over deferred scans. null when there are no scans.
+ *
+ * Per severity: walking the log newest-first, every scan covering the severity joins the
+ * window, and the walk stops at the first COMPLETE one. A deferred scan resolved nothing by
+ * absence (gas_shared/domain/scanCompleteness.ts), so what it failed to see is still waiting on
+ * a verdict — and so is what it DID see, if the next scan misses it. Both are in the window;
+ * nothing older is, because the newest complete covering scan already adjudicated everything
+ * before it.
+ *
+ * A legacy row (blank `disappearance`) is complete, and so is a grouped scan (which writes no
+ * verdict), exactly as `prevScanIdBySeverity` counted both. With no deferred scan in the log
+ * every window is the one scan `prevScanIdBySeverity` names and `fallback` is `latestScan`, so a
+ * register that never deferred resolves exactly as it did before the gate existed.
+ *
+ * `fallback` answers a severity the map does not name — the role `prevScanId` plays in
+ * reconcile's `?? prevScanId` — and is coverage-blind: the newest scans back to the newest
+ * complete one.
+ */
+export function disappearanceWindow(scans: ScanRow[]): DisappearanceWindow | null {
+  const desc = scansAsc(scans).reverse();
+  if (!desc.length) return null;
+  const remaining = new Set<string>(SEVERITY_ORDER);
+  const bySeverity: Record<string, string[]> = {};
+  for (const r of desc) {
+    const scope = parseSeverities(r.severities);
+    const deferred = readDisappearance(r.disappearance).deferred;
+    const covered = scope === null ? [...remaining] : [...remaining].filter((s) => scope.includes(s));
+    for (const sev of covered) {
+      const ids = bySeverity[sev];
+      if (ids) ids.push(r.scan_id);
+      else bySeverity[sev] = [r.scan_id];
+    }
+    if (!deferred) covered.forEach((s) => remaining.delete(s));
+    if (!remaining.size) break;
+  }
+  const fallback: string[] = [];
+  for (const r of desc) {
+    fallback.push(r.scan_id);
+    if (!readDisappearance(r.disappearance).deferred) break;
+  }
+  return { bySeverity, fallback };
+}
+
 /** The newest FLAT scan that covered one severity — what `rowReachesScan` tests a row against. */
 export interface NewestScan {
   scan_id: string | null;
   ts: string | number | Date | null;
+  /**
+   * Present only when that newest scan was DEFERRED: the severity's flat scans back to the
+   * newest COMPLETE one (`newestFlatScanBySeverity`). A deferred scan came back short, empty or
+   * repeating, so it proved nothing about what it missed — a row last seen anywhere in this
+   * window is still observed. Absent, the test is `scan_id` alone, which is the same thing
+   * whenever the newest scan is complete.
+   */
+  window_ids?: readonly string[];
 }
 
 /**
@@ -127,9 +215,11 @@ export interface NewestScan {
  *
  * `last_scan_id` is authoritative when present: an exact match against `newest.scan_id` is a
  * sighting, anything else is not — and a blank `newest.scan_id` cannot match anything, so an
- * id-less "newest" never counts as a match by id. A BLANK `last_scan_id` — an older, imported or
- * compacted row that never recorded one — falls back to `last_seen >= newest.ts`, because the
- * sighting can still be dated even without an id to compare.
+ * id-less "newest" never counts as a match by id. When the newest scan was DEFERRED the match
+ * widens to any scan of `newest.window_ids` (see `NewestScan`). A BLANK `last_scan_id` — an
+ * older, imported or compacted row that never recorded one — falls back to
+ * `last_seen >= newest.ts`, because the sighting can still be dated even without an id to
+ * compare.
  *
  * THIS IS THE ROW-LEVEL CORE ONLY. It says nothing about what "no `newest` at all" (a severity
  * with no covering flat scan) should mean — that is undecidable and it is the CALLER's call,
@@ -144,6 +234,9 @@ export function rowReachesScan(
   newest: NewestScan,
 ): boolean {
   if (present(row.last_scan_id)) {
+    if (newest.window_ids && newest.window_ids.length) {
+      return newest.window_ids.includes(String(row.last_scan_id));
+    }
     return present(newest.scan_id) && String(row.last_scan_id) === String(newest.scan_id);
   }
   const newestTs = parseTs(newest.ts);
@@ -179,18 +272,31 @@ export function rowReachesScan(
  */
 export function newestFlatScanBySeverity(
   scans: ScanRow[],
-): Record<string, { scan_id: string; ts: string }> {
+): Record<string, { scan_id: string; ts: string; window_ids?: string[] }> {
   const remaining = new Set<string>(SEVERITY_ORDER);
-  const out: Record<string, { scan_id: string; ts: string }> = {};
+  const out: Record<string, { scan_id: string; ts: string; window_ids?: string[] }> = {};
+  const windows: Record<string, string[]> = {};
   const desc = scansAsc(scans.filter((s) => s.shape === "flat")).reverse();
   for (const r of desc) {
     const scope = parseSeverities(r.severities);
     const covered = scope === null
       ? [...remaining]
       : [...remaining].filter((s) => scope.includes(s));
-    for (const sev of covered) out[sev] = { scan_id: r.scan_id, ts: r.ts };
-    covered.forEach((s) => remaining.delete(s));
+    for (const sev of covered) {
+      if (!out[sev]) out[sev] = { scan_id: r.scan_id, ts: r.ts };
+      const ids = windows[sev];
+      if (ids) ids.push(r.scan_id);
+      else windows[sev] = [r.scan_id];
+    }
+    // THE SAME WINDOW `disappearanceWindow` WALKS, over flat scans: a severity whose newest
+    // covering scan was deferred stays open until a complete one is reached, so an asset that
+    // scan merely missed is not read as gone. Attached only when it is wider than the newest
+    // scan alone, so a register that never deferred gets the map it always got.
+    if (!readDisappearance(r.disappearance).deferred) covered.forEach((s) => remaining.delete(s));
     if (!remaining.size) break;
+  }
+  for (const [sev, ids] of Object.entries(windows)) {
+    if (ids.length > 1) out[sev]!.window_ids = ids;
   }
   return out;
 }
@@ -261,6 +367,45 @@ export interface PersistFlatOptions {
   rawRef?: string | null;
   obsRef?: string | null;
   now?: number;
+  /**
+   * LIVE, FULL SCAN: the fetch's own account of itself. When given, the completeness gate runs
+   * (gas_shared/domain/scanCompleteness.ts) and its verdict is written to the scan row.
+   */
+  completeness?: { reportedTotal: number | null; partialPages: number } | null;
+  /**
+   * LIVE, INCREMENTAL SCAN: the records are the baseline scan's merged with a delta
+   * (`transform.mergeNodes`), so every finding the baseline returned is present and the gate
+   * has nothing of its own to judge — the delta's count is not this register's total, and a
+   * short delta cannot make a merged set short. The scan INHERITS the baseline's verdict
+   * instead: a merged set built on a deferred baseline carries that baseline's gaps, and
+   * resolving across the window from it would close exactly what the baseline failed to see.
+   * `partialPages` and `duplicates` are the delta fetch's, recorded because they are measured.
+   */
+  incremental?: {
+    baselineDisappearance: string | null;
+    partialPages: number;
+    duplicates: number;
+  } | null;
+  /**
+   * REPLAY: a stored scan row's completeness record, re-applied rather than re-assessed — the
+   * tenant's total and the partial-page count are facts of the original fetch that the archived
+   * records cannot reproduce. A blank `disappearance` is a legacy row and replays under the old
+   * rules. Wins over `completeness` and `incremental` when given.
+   */
+  stored?: Pick<ScanRow, "reported_total" | "partial_pages" | "duplicates" | "disappearance">
+    | null;
+}
+
+export interface PersistFlatResult {
+  deltas: Deltas;
+  observations: Observation[];
+  scanRow: ScanRow | null;
+  /**
+   * OPEN rows this scan would close by absence — in its severity scope, last seen inside the
+   * disappearance window, not returned now. Counted whether or not the scan was deferred, so a
+   * deferral can say how much it held back. 0 on an idempotent no-op.
+   */
+  absent: number;
 }
 
 /**
@@ -272,7 +417,7 @@ export function persistFlatScan(
   state: LedgerState,
   records: Rec[],
   options: PersistFlatOptions,
-): { deltas: Deltas; observations: Observation[]; scanRow: ScanRow | null } {
+): PersistFlatResult {
   const scanId = options.scanId || nowIso(options.now);
   const scanTs = scanId;
   const disappearanceMode = options.disappearanceMode ?? DISAPPEARANCE_RESOLUTION;
@@ -280,15 +425,59 @@ export function persistFlatScan(
   const scope = parseSeverities(severitiesText); // canonical, or null for unscoped
 
   const existing = existingScanDeltas(state.scans, scanId);
-  if (existing !== null) return { deltas: existing, observations: [], scanRow: null };
+  if (existing !== null) return { deltas: existing, observations: [], scanRow: null, absent: 0 };
 
   const prev = latestScan(state.scans);
   const prevScanId = prev ? prev.scan_id : null;
   const prevScanTs = prev ? prev.ts : null;
-  const prevBySev = prevScanId !== null ? prevScanIdBySeverity(state.scans) : null;
+  const window = prevScanId !== null ? disappearanceWindow(state.scans) : null;
   const existingLedger = state.ledger;
 
-  const { ledger: updated, observations, deltas } = reconcile(
+  // THE COMPLETENESS DECISION — made once, at live persist, and stored; a replay reads it back.
+  // Four cases, and the last is the one that keeps old registers byte-stable:
+  //   stored        replay of a saved row: its verdict and its record, verbatim
+  //   completeness  a live full scan: assess and record
+  //   incremental   a live merged scan: inherit the baseline's verdict (see the option)
+  //   neither       a legacy caller (the dry-run sample): no gate, every new column null
+  let reportedTotal: number | null = null;
+  let partialPages: number | null = null;
+  let duplicates: number | null = null;
+  let disappearance: string | null = null;
+  let deferDisappearance = false;
+  if (options.stored) {
+    const verdict = readDisappearance(options.stored.disappearance);
+    reportedTotal = options.stored.reported_total ?? null;
+    partialPages = options.stored.partial_pages ?? null;
+    duplicates = options.stored.duplicates ?? null;
+    disappearance = verdict.legacy ? null : String(options.stored.disappearance).trim();
+    deferDisappearance = verdict.deferred;
+  } else if (options.completeness) {
+    // "empty" asks whether the register holds anything this scan could have resolved — the
+    // OPEN rows inside its severity scope.
+    const inScope = scope === null ? null : new Set(scope);
+    let priorOpen = 0;
+    for (const row of Object.values(existingLedger)) {
+      if (row.status !== "OPEN") continue;
+      if (inScope !== null && (row.severity === null || !inScope.has(row.severity))) continue;
+      priorOpen += 1;
+    }
+    reportedTotal = options.completeness.reportedTotal;
+    partialPages = options.completeness.partialPages;
+    const verdict = assessCompleteness({ records, reportedTotal, partialPages, priorOpen });
+    duplicates = verdict.duplicates;
+    disappearance = disappearanceValue(verdict.reason);
+    deferDisappearance = verdict.reason !== null;
+  } else if (options.incremental) {
+    const base = readDisappearance(options.incremental.baselineDisappearance);
+    partialPages = options.incremental.partialPages;
+    duplicates = options.incremental.duplicates;
+    disappearance = base.deferred
+      ? String(options.incremental.baselineDisappearance).trim()
+      : DISAPPEARANCE_COMPLETE;
+    deferDisappearance = base.deferred;
+  }
+
+  const { ledger: updated, observations, deltas, absent } = reconcile(
     records,
     existingLedger,
     scanId,
@@ -298,7 +487,8 @@ export function persistFlatScan(
       disappearanceMode,
       prevScanTs,
       scannedSeverities: scope,
-      prevScanIdBySeverity: prevBySev,
+      disappearanceWindow: window,
+      deferDisappearance,
     },
   );
 
@@ -317,10 +507,14 @@ export function persistFlatScan(
     obs_ref: options.obsRef ?? null,
     severities: severitiesText,
     sealed: 0,
+    reported_total: reportedTotal,
+    partial_pages: partialPages,
+    duplicates,
+    disappearance,
   };
   state.scans.push(scanRow);
   state.ledger = updated;
-  return { deltas, observations, scanRow };
+  return { deltas, observations, scanRow, absent };
 }
 
 export interface PersistGroupedOptions {

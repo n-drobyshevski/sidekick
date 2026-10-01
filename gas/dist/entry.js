@@ -32,6 +32,15 @@ function setup() { Server.access.assertAllowed("setup"); return Server.setup(); 
 // Gated: it's secret-adjacent (validates the Wiz credential) even though it never prints it.
 function wizDiagnostic() { Server.access.assertAllowed("wizDiagnostic"); return Server.wizDiagnostic(); }
 
+// Deployment check — run from the GAS editor after a deploy or a setup(): ledger + archive,
+// allowlist, the daily and warm triggers against their recorded schedules, pending one-shots
+// by handler, and the 20-trigger budget. Makes no network call (wizDiagnostic does that).
+// Gated like its sibling: it reads the allowlist and the job state.
+function deploymentDiagnostic() {
+  Server.access.assertAllowed("deploymentDiagnostic");
+  return Server.deploymentDiagnostic();
+}
+
 // Last-resort recovery for a job the web app can't reach: rolls a killed mid-write back from
 // its journal, deletes every continuation trigger, and forces whatever survives to FAILED so
 // scanning is unblocked (jobs are single-flight across kinds). Reports what it cleared to the
@@ -60,7 +69,9 @@ function trigger_continuePurge(e) { Server.purge.continuePurge(e); }
 // setup() three times across the working day (warm by 09:00, 13:00 and 17:00 Europe/Paris)
 // rather than round the clock — see setup.ts for why the fires are an hour early.
 function trigger_warmReadModels() { Server.api.warmReadModelsScheduled(); }
-// The next hop of a warm that ran out of its budget — one-shot, scheduled by the warm itself.
+// One-shot (api.WARM_CONTINUE_HANDLER): the post-scan warm, which scanJobs arms after the scan
+// writes DONE rather than warming inside its lock, and the next hop of a warm that ran out of
+// its budget.
 function trigger_continueWarm(e) { Server.api.continueWarm(e); }
 
 // google.script.run API surface — thin delegators so the client can call api_* by name.

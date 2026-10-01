@@ -24,6 +24,7 @@ var Server = (() => {
     access: () => access_exports,
     api: () => api_exports,
     backfill: () => backfillJobs_exports,
+    deploymentDiagnostic: () => deploymentDiagnostic,
     doGet: () => doGet,
     include: () => include,
     jobs: () => scanJobs_exports,
@@ -36,6 +37,7 @@ var Server = (() => {
   // src/server/api.ts
   var api_exports = {};
   __export(api_exports, {
+    WARM_CONTINUE_HANDLER: () => WARM_CONTINUE_HANDLER,
     backfillEpisodeTags: () => backfillEpisodeTags2,
     bootstrap: () => bootstrap,
     bootstrapIfWarm: () => bootstrapIfWarm,
@@ -95,6 +97,7 @@ var Server = (() => {
     saveScoped: () => saveScoped,
     saveSettings: () => saveSettings2,
     saveSupportGroupDomain: () => saveSupportGroupDomain,
+    scheduleWarm: () => scheduleWarm,
     setAutoCompact: () => setAutoCompact2,
     setIncludeEol: () => setIncludeEol2,
     setRetention: () => setRetention,
@@ -1180,6 +1183,51 @@ var Server = (() => {
     return summarize(work, opts.now);
   }
 
+  // ../gas_shared/domain/scanCompleteness.ts
+  var DISAPPEARANCE_COMPLETE = "complete";
+  var DEFERRED_PREFIX = "deferred:";
+  function completenessTolerance(n) {
+    return Math.max(5, Math.ceil(Math.max(0, n) * 0.01));
+  }
+  function distinctNodes(records) {
+    const ids = /* @__PURE__ */ new Set();
+    let anonymous = 0;
+    for (const r of records) {
+      const raw = r ? r["id"] : null;
+      const id = raw === null || raw === void 0 ? "" : String(raw).trim();
+      if (id === "") anonymous += 1;
+      else ids.add(id);
+    }
+    const distinct2 = ids.size + anonymous;
+    return { distinct: distinct2, duplicates: records.length - distinct2 };
+  }
+  function assessCompleteness(input) {
+    const { distinct: distinct2, duplicates } = distinctNodes(input.records);
+    const total = input.reportedTotal;
+    const verdict = (reason) => ({
+      reason,
+      distinct: distinct2,
+      duplicates
+    });
+    if (input.records.length === 0 && input.priorOpen > 0 && total !== 0) return verdict("empty");
+    if (total !== null && total > 0 && input.partialPages === 0 && distinct2 < total - completenessTolerance(total)) {
+      return verdict("short");
+    }
+    if (duplicates > completenessTolerance(input.records.length)) return verdict("duplicates");
+    return verdict(null);
+  }
+  function disappearanceValue(reason) {
+    return reason === null ? DISAPPEARANCE_COMPLETE : `${DEFERRED_PREFIX}${reason}`;
+  }
+  function readDisappearance(v) {
+    const s = v === null || v === void 0 ? "" : String(v).trim();
+    if (s === "") return { legacy: true, deferred: false, reason: null };
+    if (s.startsWith(DEFERRED_PREFIX)) {
+      return { legacy: false, deferred: true, reason: s.slice(DEFERRED_PREFIX.length) || null };
+    }
+    return { legacy: false, deferred: false, reason: null };
+  }
+
   // src/domain/compaction.ts
   var CHECKPOINT_VERSION = 1;
   function serializeSeverities(sevs) {
@@ -1402,12 +1450,14 @@ var Server = (() => {
     if (iso !== null) row.published_date = iso;
   }
   function reconcile(currentRecords, existingLedger, scanId, scanTs, prevScanId, options = {}) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
     const {
       disappearanceMode = "scan_ts",
       prevScanTs = null,
       scannedSeverities = null,
-      prevScanIdBySeverity: prevScanIdBySeverity2 = null
+      prevScanIdBySeverity = null,
+      disappearanceWindow: disappearanceWindow2 = null,
+      deferDisappearance = false
     } = options;
     const updated = {};
     for (const [key, row] of Object.entries(existingLedger)) updated[key] = { ...row };
@@ -1484,16 +1534,31 @@ var Server = (() => {
         status: row.status
       });
     }
+    let absent = 0;
     if (prevScanId !== null) {
       const scope = scannedSeverities !== null ? new Set(scannedSeverities) : null;
+      const windowBySev = /* @__PURE__ */ new Map();
+      const windowFallback = disappearanceWindow2 ? new Set(disappearanceWindow2.fallback) : null;
+      if (disappearanceWindow2) {
+        for (const [sev2, ids] of Object.entries(disappearanceWindow2.bySeverity)) {
+          windowBySev.set(sev2, new Set(ids));
+        }
+      }
       for (const [key, row] of Object.entries(updated)) {
         if (seen2.has(key) || row.status === "RESOLVED") continue;
         const sevRow = row.severity;
         if (scope !== null && (sevRow === null || !scope.has(sevRow))) {
           continue;
         }
-        const expectedPrev = (_m = (prevScanIdBySeverity2 != null ? prevScanIdBySeverity2 : {})[sevRow != null ? sevRow : ""]) != null ? _m : prevScanId;
-        if (row.last_scan_id !== expectedPrev) continue;
+        if (windowFallback !== null) {
+          const ids = (_m = windowBySev.get(sevRow != null ? sevRow : "")) != null ? _m : windowFallback;
+          if (row.last_scan_id === null || !ids.has(row.last_scan_id)) continue;
+        } else {
+          const expectedPrev = (_n = (prevScanIdBySeverity != null ? prevScanIdBySeverity : {})[sevRow != null ? sevRow : ""]) != null ? _n : prevScanId;
+          if (row.last_scan_id !== expectedPrev) continue;
+        }
+        absent += 1;
+        if (deferDisappearance) continue;
         if (disappearanceMode === "midpoint" && prevScanTs) {
           row.resolved_at = midpointIso(prevScanTs, scanTsIso);
         } else {
@@ -1518,7 +1583,8 @@ var Server = (() => {
         new_count: newCount,
         resolved_count: resolvedCount,
         reopened_count: reopenedCount
-      }
+      },
+      absent
     };
   }
 
@@ -1539,21 +1605,35 @@ var Server = (() => {
     const asc = scansAsc(scans);
     return asc.length ? asc[asc.length - 1] : null;
   }
-  function prevScanIdBySeverity(scans) {
-    const remaining = new Set(SEVERITY_ORDER);
-    const mapping = {};
+  function disappearanceWindow(scans) {
     const desc = scansAsc(scans).reverse();
+    if (!desc.length) return null;
+    const remaining = new Set(SEVERITY_ORDER);
+    const bySeverity = {};
     for (const r of desc) {
       const scope = parseSeverities(r.severities);
+      const deferred = readDisappearance(r.disappearance).deferred;
       const covered = scope === null ? [...remaining] : [...remaining].filter((s) => scope.includes(s));
-      for (const sev2 of covered) mapping[sev2] = r.scan_id;
-      covered.forEach((s) => remaining.delete(s));
+      for (const sev2 of covered) {
+        const ids = bySeverity[sev2];
+        if (ids) ids.push(r.scan_id);
+        else bySeverity[sev2] = [r.scan_id];
+      }
+      if (!deferred) covered.forEach((s) => remaining.delete(s));
       if (!remaining.size) break;
     }
-    return Object.keys(mapping).length ? mapping : null;
+    const fallback = [];
+    for (const r of desc) {
+      fallback.push(r.scan_id);
+      if (!readDisappearance(r.disappearance).deferred) break;
+    }
+    return { bySeverity, fallback };
   }
   function rowReachesScan(row, newest) {
     if (present(row.last_scan_id)) {
+      if (newest.window_ids && newest.window_ids.length) {
+        return newest.window_ids.includes(String(row.last_scan_id));
+      }
       return present(newest.scan_id) && String(row.last_scan_id) === String(newest.scan_id);
     }
     const newestTs = parseTs(newest.ts);
@@ -1563,13 +1643,22 @@ var Server = (() => {
   function newestFlatScanBySeverity(scans) {
     const remaining = new Set(SEVERITY_ORDER);
     const out = {};
+    const windows = {};
     const desc = scansAsc(scans.filter((s) => s.shape === "flat")).reverse();
     for (const r of desc) {
       const scope = parseSeverities(r.severities);
       const covered = scope === null ? [...remaining] : [...remaining].filter((s) => scope.includes(s));
-      for (const sev2 of covered) out[sev2] = { scan_id: r.scan_id, ts: r.ts };
-      covered.forEach((s) => remaining.delete(s));
+      for (const sev2 of covered) {
+        if (!out[sev2]) out[sev2] = { scan_id: r.scan_id, ts: r.ts };
+        const ids = windows[sev2];
+        if (ids) ids.push(r.scan_id);
+        else windows[sev2] = [r.scan_id];
+      }
+      if (!readDisappearance(r.disappearance).deferred) covered.forEach((s) => remaining.delete(s));
       if (!remaining.size) break;
+    }
+    for (const [sev2, ids] of Object.entries(windows)) {
+      if (ids.length > 1) out[sev2].window_ids = ids;
     }
     return out;
   }
@@ -1608,20 +1697,53 @@ var Server = (() => {
     }
   }
   function persistFlatScan(state, records, options) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e, _f, _g;
     const scanId = options.scanId || nowIso(options.now);
     const scanTs = scanId;
     const disappearanceMode = (_a = options.disappearanceMode) != null ? _a : DISAPPEARANCE_RESOLUTION;
     const severitiesText = serializeSeverities((_b = options.scannedSeverities) != null ? _b : null);
     const scope = parseSeverities(severitiesText);
     const existing = existingScanDeltas(state.scans, scanId);
-    if (existing !== null) return { deltas: existing, observations: [], scanRow: null };
+    if (existing !== null) return { deltas: existing, observations: [], scanRow: null, absent: 0 };
     const prev = latestScan(state.scans);
     const prevScanId = prev ? prev.scan_id : null;
     const prevScanTs = prev ? prev.ts : null;
-    const prevBySev = prevScanId !== null ? prevScanIdBySeverity(state.scans) : null;
+    const window = prevScanId !== null ? disappearanceWindow(state.scans) : null;
     const existingLedger = state.ledger;
-    const { ledger: updated, observations, deltas } = reconcile(
+    let reportedTotal = null;
+    let partialPages = null;
+    let duplicates = null;
+    let disappearance = null;
+    let deferDisappearance = false;
+    if (options.stored) {
+      const verdict = readDisappearance(options.stored.disappearance);
+      reportedTotal = (_c = options.stored.reported_total) != null ? _c : null;
+      partialPages = (_d = options.stored.partial_pages) != null ? _d : null;
+      duplicates = (_e = options.stored.duplicates) != null ? _e : null;
+      disappearance = verdict.legacy ? null : String(options.stored.disappearance).trim();
+      deferDisappearance = verdict.deferred;
+    } else if (options.completeness) {
+      const inScope = scope === null ? null : new Set(scope);
+      let priorOpen = 0;
+      for (const row of Object.values(existingLedger)) {
+        if (row.status !== "OPEN") continue;
+        if (inScope !== null && (row.severity === null || !inScope.has(row.severity))) continue;
+        priorOpen += 1;
+      }
+      reportedTotal = options.completeness.reportedTotal;
+      partialPages = options.completeness.partialPages;
+      const verdict = assessCompleteness({ records, reportedTotal, partialPages, priorOpen });
+      duplicates = verdict.duplicates;
+      disappearance = disappearanceValue(verdict.reason);
+      deferDisappearance = verdict.reason !== null;
+    } else if (options.incremental) {
+      const base = readDisappearance(options.incremental.baselineDisappearance);
+      partialPages = options.incremental.partialPages;
+      duplicates = options.incremental.duplicates;
+      disappearance = base.deferred ? String(options.incremental.baselineDisappearance).trim() : DISAPPEARANCE_COMPLETE;
+      deferDisappearance = base.deferred;
+    }
+    const { ledger: updated, observations, deltas, absent } = reconcile(
       records,
       existingLedger,
       scanId,
@@ -1631,7 +1753,8 @@ var Server = (() => {
         disappearanceMode,
         prevScanTs,
         scannedSeverities: scope,
-        prevScanIdBySeverity: prevBySev
+        disappearanceWindow: window,
+        deferDisappearance
       }
     );
     reconcileEpisodeCollisions(state, updated, existingLedger, deltas, scanId);
@@ -1644,14 +1767,18 @@ var Server = (() => {
       new_count: deltas.new_count,
       resolved_count: deltas.resolved_count,
       reopened_count: deltas.reopened_count,
-      raw_ref: (_c = options.rawRef) != null ? _c : null,
-      obs_ref: (_d = options.obsRef) != null ? _d : null,
+      raw_ref: (_f = options.rawRef) != null ? _f : null,
+      obs_ref: (_g = options.obsRef) != null ? _g : null,
       severities: severitiesText,
-      sealed: 0
+      sealed: 0,
+      reported_total: reportedTotal,
+      partial_pages: partialPages,
+      duplicates,
+      disappearance
     };
     state.scans.push(scanRow);
     state.ledger = updated;
-    return { deltas, observations, scanRow };
+    return { deltas, observations, scanRow, absent };
   }
   function persistGroupedScan(state, nodes, options) {
     var _a, _b;
@@ -3815,7 +3942,12 @@ var Server = (() => {
           scanId: row.scan_id,
           scannedSeverities: parseSeverities(row.severities),
           rawRef: row.raw_ref,
-          obsRef: row.obs_ref
+          obsRef: row.obs_ref,
+          // The completeness verdict the LIVE persist reached, re-applied — never re-assessed. The
+          // tenant's total and the partial-page count are not in the archived records, so a replay
+          // that re-ran the gate would have to guess them; reading the stored row is what makes a
+          // delete-and-replay land on the ledger the live sequence wrote.
+          stored: row
         });
         observationsByScan[row.scan_id] = observations;
       }
@@ -3885,13 +4017,19 @@ var Server = (() => {
       readPayload,
       (scanId) => `Cannot delete: the archived payload for surviving scan ${scanId} is missing, so the ledger can't be rebuilt.`
     );
+    const sealedScans = new Set(survivors.filter((r) => r.sealed).map((r) => r.scan_id));
     const rebuilt = {
       scans: survivors.filter((r) => r.sealed).map((r) => ({ ...r })),
       ledger: {},
-      episodes: state.episodes.map((e) => ({ ...e, superseded_by_scan: null }))
+      episodes: state.episodes.map((e) => ({
+        ...e,
+        superseded_by_scan: e.superseded_by_scan !== null && sealedScans.has(e.superseded_by_scan) ? e.superseded_by_scan : null
+      }))
     };
     if (checkpoint !== null) {
-      const episodeKeys = new Set(state.episodes.map((e) => e.vuln_key));
+      const episodeKeys = new Set(
+        rebuilt.episodes.filter((e) => e.superseded_by_scan === null).map((e) => e.vuln_key)
+      );
       for (const row of (_a = checkpoint.ledger) != null ? _a : []) {
         if (!episodeKeys.has(row.vuln_key)) rebuilt.ledger[row.vuln_key] = { ...row };
       }
@@ -3928,7 +4066,10 @@ var Server = (() => {
         persistFlatScan(tmp, recordsFromPayload(payload), {
           mode: r.mode,
           scanId: r.scan_id,
-          scannedSeverities: scope
+          scannedSeverities: scope,
+          // Same rule as `replayScans`: the stored verdict, so the checkpoint is the ledger the
+          // live sequence actually reached at the floor.
+          stored: r
         });
       } else if (payload === null) {
         reinsertScanRow(tmp, r);
@@ -4310,8 +4451,22 @@ var Server = (() => {
       raw_ref: null,
       obs_ref: null,
       severities: str(r["severities"]),
-      sealed: 1
+      sealed: 1,
+      // The completeness record, when the bundle carries one (a GAS export since the gate;
+      // migrate.py's never does). An imported scan is never replayed, but the NEWEST imported
+      // one bounds the disappearance window the first replayed scan resolves against — a
+      // deferred import read back as complete would resolve less than the live register did.
+      // Blank stays null: that is the legacy marker, not a value to coerce.
+      reported_total: numOrNull(r["reported_total"]),
+      partial_pages: numOrNull(r["partial_pages"]),
+      duplicates: numOrNull(r["duplicates"]),
+      disappearance: str(r["disappearance"])
     };
+  }
+  function numOrNull(v) {
+    if (v === null || v === void 0 || v === "") return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
   }
   function coerceLedger(r) {
     var _a, _b;
@@ -4519,7 +4674,11 @@ var Server = (() => {
     "resolved_count",
     "reopened_count",
     "severities",
-    "sealed"
+    "sealed",
+    "reported_total",
+    "partial_pages",
+    "duplicates",
+    "disappearance"
   ];
   var BUNDLE_EPISODE_COLUMNS = [
     "vuln_key",
@@ -5304,7 +5463,11 @@ var Server = (() => {
     "resolved_count",
     "reopened_count",
     "severities",
-    "sealed"
+    "sealed",
+    // The completeness verdict — what the table marks a deferred scan by
+    // (gas_shared/domain/scanCompleteness.ts). The other three record columns (reported_total,
+    // partial_pages, duplicates) are operator diagnostics that reach the error log instead.
+    "disappearance"
   ];
   function scanRowsSlice(scans) {
     return pickRows(scans, SCAN_ROW_KEYS);
@@ -5644,6 +5807,84 @@ var Server = (() => {
     return { ledger, episodes: decodeRows(s.episodeTable, s.strings) };
   }
 
+  // ../gas_shared/server/errorLog.ts
+  var KEY = "RECENT_ERRORS";
+  var MAX_ENTRIES = 25;
+  var MAX_MESSAGE_LEN = 500;
+  var MAX_BLOB_BYTES = 8500;
+  function utf8ByteLength(s) {
+    let n = 0;
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      if (c < 128) n += 1;
+      else if (c < 2048) n += 2;
+      else if (c >= 55296 && c <= 56319 && (s.charCodeAt(i + 1) & 64512) === 56320) {
+        n += 4;
+        i++;
+      } else n += 3;
+    }
+    return n;
+  }
+  function truncate(s) {
+    return s.length > MAX_MESSAGE_LEN ? s.slice(0, MAX_MESSAGE_LEN) + "\u2026" : s;
+  }
+  function isoSeconds(now) {
+    const ms = now != null ? now : Date.now();
+    return new Date(Math.floor(ms / 1e3) * 1e3).toISOString().replace(".000Z", "Z");
+  }
+  function createErrorLog(props) {
+    const alreadyRecorded = /* @__PURE__ */ new WeakSet();
+    function recentErrors2() {
+      const raw = props.get(KEY);
+      if (!raw) return [];
+      try {
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return [];
+        return parsed.filter(
+          (e) => Boolean(e) && typeof e === "object" && !Array.isArray(e)
+        ).map((e) => {
+          var _a, _b, _c, _d;
+          return {
+            ts: String((_a = e["ts"]) != null ? _a : ""),
+            op: String((_b = e["op"]) != null ? _b : "api"),
+            kind: String((_c = e["kind"]) != null ? _c : "error"),
+            message: String((_d = e["message"]) != null ? _d : "")
+          };
+        });
+      } catch {
+        return [];
+      }
+    }
+    function markRecorded2(err) {
+      try {
+        if (err !== null && typeof err === "object") alreadyRecorded.add(err);
+      } catch {
+      }
+    }
+    function recordError2(op, err, kind = "error", now) {
+      try {
+        if (err !== null && typeof err === "object") {
+          if (alreadyRecorded.has(err)) return;
+          alreadyRecorded.add(err);
+        }
+        const message = err instanceof Error ? err.message : typeof err === "string" ? err : String(err);
+        const entry = { ts: isoSeconds(now), op, kind, message: truncate(message) };
+        const next = [entry, ...recentErrors2()].slice(0, MAX_ENTRIES);
+        let blob = JSON.stringify(next);
+        while (next.length > 1 && utf8ByteLength(blob) > MAX_BLOB_BYTES) {
+          next.pop();
+          blob = JSON.stringify(next);
+        }
+        props.set(KEY, blob);
+      } catch {
+      }
+    }
+    function clearErrors2() {
+      props.delete(KEY);
+    }
+    return { recentErrors: recentErrors2, recordError: recordError2, markRecorded: markRecorded2, clearErrors: clearErrors2 };
+  }
+
   // src/server/props.ts
   var PROP_KEYS = {
     wizApiToken: "WIZ_API_TOKEN",
@@ -5680,7 +5921,18 @@ var Server = (() => {
     // The warm schedule setup() last installed. A ClockTrigger exposes no hour, minute or
     // timezone, so this is the only way a later edit to the schedule can be detected and
     // reconciled rather than silently ignored on an existing deployment.
-    warmTriggerSchedule: "WARM_TRIGGER_SCHEDULE"
+    warmTriggerSchedule: "WARM_TRIGGER_SCHEDULE",
+    // The daily scan trigger's counterpart: `${tz}|${hour}` as setup.dailyScanSchedule() builds
+    // it. Written last by setup.reconcileDailyScanTrigger, so a failed create leaves it stale and
+    // the next setup() (or deploymentDiagnostic) sees the mismatch.
+    dailyTriggerSchedule: "DAILY_TRIGGER_SCHEDULE",
+    // A support-group refresh a scan queued for the next warm hop (scanJobs.handOffAfterScan →
+    // runPendingSupportGroupRefresh), so the Wiz call runs outside the scan's lock. Set to the
+    // time it was queued; deleted once it has run.
+    supportGroupRefreshPending: "SUPPORT_GROUP_REFRESH_PENDING",
+    // The support-group map cache's generation (settingsStore.ts): moved by setSupportGroupMap,
+    // the map tab's only writer, so a scan's DATA_VERSION bump no longer forces a re-read of it.
+    supportGroupMapGen: "SUPPORT_GROUP_MAP_GEN"
   };
   var DEFAULT_WIZ_AUTH_URL = "https://auth.app.wiz.io/oauth/token";
   var DEFAULT_SUPPORT_GROUP_TAG_KEY = "Wiz/provisioning";
@@ -5714,62 +5966,15 @@ var Server = (() => {
   }
 
   // src/server/errorLog.ts
-  var KEY = "RECENT_ERRORS";
-  var MAX_ENTRIES = 25;
-  var MAX_MESSAGE_LEN = 500;
-  var MAX_BLOB_BYTES = 8500;
-  function utf8ByteLength(s) {
-    let n = 0;
-    for (let i = 0; i < s.length; i++) {
-      const c = s.charCodeAt(i);
-      if (c < 128) n += 1;
-      else if (c < 2048) n += 2;
-      else if (c >= 55296 && c <= 56319 && (s.charCodeAt(i + 1) & 64512) === 56320) {
-        n += 4;
-        i++;
-      } else n += 3;
-    }
-    return n;
-  }
-  function truncate(s) {
-    return s.length > MAX_MESSAGE_LEN ? s.slice(0, MAX_MESSAGE_LEN) + "\u2026" : s;
-  }
-  function recentErrors() {
-    const raw = getProp(KEY);
-    if (!raw) return [];
-    try {
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      return parsed.filter((e) => Boolean(e) && typeof e === "object" && !Array.isArray(e)).map((e) => {
-        var _a, _b, _c, _d;
-        return {
-          ts: String((_a = e["ts"]) != null ? _a : ""),
-          op: String((_b = e["op"]) != null ? _b : "api"),
-          kind: String((_c = e["kind"]) != null ? _c : "error"),
-          message: String((_d = e["message"]) != null ? _d : "")
-        };
-      });
-    } catch {
-      return [];
-    }
-  }
-  function recordError(op, err, kind = "error", now) {
-    try {
-      const message = err instanceof Error ? err.message : typeof err === "string" ? err : String(err);
-      const entry = { ts: nowIso(now), op, kind, message: truncate(message) };
-      const next = [entry, ...recentErrors()].slice(0, MAX_ENTRIES);
-      let blob = JSON.stringify(next);
-      while (next.length > 1 && utf8ByteLength(blob) > MAX_BLOB_BYTES) {
-        next.pop();
-        blob = JSON.stringify(next);
-      }
-      setProp(KEY, blob);
-    } catch {
-    }
-  }
-  function clearErrors() {
-    deleteProp(KEY);
-  }
+  var log = createErrorLog({
+    get: (key) => getProp(key),
+    set: (key, value) => setProp(key, value),
+    delete: (key) => deleteProp(key)
+  });
+  var recentErrors = log.recentErrors;
+  var recordError = log.recordError;
+  var markRecorded = log.markRecorded;
+  var clearErrors = log.clearErrors;
 
   // src/server/archiveStore.ts
   var SUBFOLDERS = [
@@ -6368,13 +6573,9 @@ var Server = (() => {
   function pruneEpisodesCore(state, c) {
     const set = c.severities ? purgeSet(c.severities) : null;
     const episodes = [];
-    const prunedKeys = [];
+    const pruned = [];
     for (const e of state.episodes) {
-      if (episodeMatches(e, c, set)) {
-        prunedKeys.push(e.vuln_key);
-        continue;
-      }
-      episodes.push({ ...e });
+      (episodeMatches(e, c, set) ? pruned : episodes).push({ ...e });
     }
     return {
       state: {
@@ -6382,9 +6583,21 @@ var Server = (() => {
         ledger: Object.fromEntries(Object.entries(state.ledger).map(([k, v]) => [k, { ...v }])),
         episodes
       },
-      removed: prunedKeys.length,
-      prunedKeys
+      removed: pruned.length,
+      pruned,
+      prunedKeys: pruned.map((e) => e.vuln_key)
     };
+  }
+  function purgeCheckpointForPrunedEpisodes(checkpoint, pruned, scans) {
+    const order = new Map(scansAsc([...scans]).map((s, i) => [s.scan_id, i]));
+    const floor = checkpoint.floor_scan_id === null ? void 0 : order.get(checkpoint.floor_scan_id);
+    const keys = /* @__PURE__ */ new Set();
+    for (const e of pruned) {
+      const by = e.superseded_by_scan === null ? void 0 : order.get(e.superseded_by_scan);
+      if (by !== void 0 && floor !== void 0 && by <= floor) continue;
+      keys.add(e.vuln_key);
+    }
+    return purgeCheckpointByKeys(checkpoint, keys);
   }
   function trimHistoryRows(rows, beforeDate) {
     const kept = rows.filter((r) => {
@@ -6506,7 +6719,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "4ecc3301646f" : "dev";
+  var BUILD_ID = true ? "1240b71cc9a3" : "dev";
   var CACHE_EPOCH = "3";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
@@ -6654,7 +6867,15 @@ var Server = (() => {
       "raw_ref",
       "obs_ref",
       "severities",
-      "sealed"
+      "sealed",
+      // THE COMPLETENESS RECORD (gas_shared/domain/scanCompleteness.ts), appended last so
+      // `ensureHeaders` adds them to an existing tab without moving a column. `disappearance` is
+      // the verdict a replay reads back — "complete", "deferred:<reason>", or blank on a row
+      // written before the gate, which replays under the old rules.
+      "reported_total",
+      "partial_pages",
+      "duplicates",
+      "disappearance"
     ],
     [TABS.vulnLedger]: [
       "vuln_key",
@@ -6751,7 +6972,12 @@ var Server = (() => {
       "journal_ref",
       "error",
       "started_at",
-      "updated_at"
+      "updated_at",
+      // A scan's fetch-side account, carried across continuation hops to the persist that runs
+      // the completeness gate: whether the tenant reported a total at all (`total_count` reads 0
+      // for both "reported 0" and "not reported"), and how many pages came back PARTIAL.
+      "total_reported",
+      "partial_pages"
     ]
   };
   var SCHEMA_VERSION = 2;
@@ -6785,11 +7011,18 @@ var Server = (() => {
   }
   function ensureHeaders(sh, headers) {
     const width = Math.max(sh.getLastColumn(), 1);
-    const existing = sh.getRange(1, 1, 1, width).getValues()[0].map(String).filter((h) => h !== "");
+    const raw = sh.getRange(1, 1, 1, width).getValues()[0].map(String);
+    const existing = raw.filter((h) => h !== "");
     const missing = headers.filter((h) => !existing.includes(h));
     if (missing.length) {
       sh.getRange(1, existing.length + 1, 1, missing.length).setValues([missing]);
     }
+    const row = raw.slice();
+    missing.forEach((h, i) => {
+      row[existing.length + i] = h;
+    });
+    while (row.length && row[row.length - 1] === "") row.pop();
+    return row;
   }
   function ensureTab(tab) {
     const ss = ledgerSpreadsheet();
@@ -6893,25 +7126,34 @@ var Server = (() => {
     const max = sh.getMaxRows();
     if (max > needed) sh.deleteRows(needed + 1, max - needed);
   }
+  var UPDATE_TAIL_ROWS = 50;
   function updateWhere(tab, keyColumn, keyValue, patch) {
     const sh = sheet(tab);
+    if (sh.getLastRow() < 2) return false;
+    const declared = TAB_HEADERS[tab];
+    const headers = declared ? ensureHeaders(sh, declared) : sh.getRange(1, 1, 1, Math.max(sh.getLastColumn(), 1)).getValues()[0].map(String);
     const lastRow = sh.getLastRow();
-    const lastCol = sh.getLastColumn();
-    if (lastRow < 2) return false;
-    const values = sh.getRange(1, 1, lastRow, lastCol).getValues();
-    const headers = values[0].map(String);
+    const lastCol = headers.length;
     const keyIdx = headers.indexOf(keyColumn);
     if (keyIdx < 0) return false;
-    for (let i = 1; i < values.length; i++) {
-      if (fromCell(values[i][keyIdx]) === keyValue) {
-        const rowVals = values[i].slice();
-        for (const [k, v] of Object.entries(patch)) {
-          const idx = headers.indexOf(k);
-          if (idx >= 0) rowVals[idx] = toCell(v);
-        }
-        sh.getRange(i + 1, 1, 1, lastCol).setValues([rowVals]);
-        return true;
+    const write = (sheetRow, values) => {
+      const rowVals = values.slice();
+      for (const [k, v] of Object.entries(patch)) {
+        const idx = headers.indexOf(k);
+        if (idx >= 0) rowVals[idx] = toCell(v);
       }
+      sh.getRange(sheetRow, 1, 1, lastCol).setValues([rowVals]);
+      return true;
+    };
+    const tailFirst = Math.max(2, lastRow - UPDATE_TAIL_ROWS + 1);
+    const tail = sh.getRange(tailFirst, 1, lastRow - tailFirst + 1, lastCol).getValues();
+    for (let i = tail.length - 1; i >= 0; i--) {
+      if (fromCell(tail[i][keyIdx]) === keyValue) return write(tailFirst + i, tail[i]);
+    }
+    if (tailFirst <= 2) return false;
+    const head = sh.getRange(2, 1, tailFirst - 2, lastCol).getValues();
+    for (let i = head.length - 1; i >= 0; i--) {
+      if (fromCell(head[i][keyIdx]) === keyValue) return write(i + 2, head[i]);
     }
     return false;
   }
@@ -6922,6 +7164,9 @@ var Server = (() => {
       return { name: sh.getName(), rows, cols, cells: rows * cols };
     });
     return { total: tabs.reduce((acc, t) => acc + t.cells, 0), tabs };
+  }
+  function cellCount() {
+    return cellUsage().total;
   }
 
   // src/server/historyStore.ts
@@ -7008,7 +7253,7 @@ var Server = (() => {
     forgetActiveJob();
   }
   function rowToJob(r) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o;
     return {
       job_id: String((_a = r["job_id"]) != null ? _a : ""),
       kind: (_b = r["kind"]) != null ? _b : "scan",
@@ -7019,11 +7264,13 @@ var Server = (() => {
       findings_so_far: Number((_g = r["findings_so_far"]) != null ? _g : 0),
       page_size: Number((_h = r["page_size"]) != null ? _h : 0),
       total_count: Number((_i = r["total_count"]) != null ? _i : 0),
-      params_json: (_j = r["params_json"]) != null ? _j : null,
-      journal_ref: (_k = r["journal_ref"]) != null ? _k : null,
+      total_reported: r["total_reported"] === true || r["total_reported"] === 1 || r["total_reported"] === "1" || String((_j = r["total_reported"]) != null ? _j : "").toUpperCase() === "TRUE",
+      partial_pages: Number((_k = r["partial_pages"]) != null ? _k : 0) || 0,
+      params_json: (_l = r["params_json"]) != null ? _l : null,
+      journal_ref: (_m = r["journal_ref"]) != null ? _m : null,
       error: normError(r["error"]),
-      started_at: String((_l = r["started_at"]) != null ? _l : ""),
-      updated_at: String((_m = r["updated_at"]) != null ? _m : "")
+      started_at: String((_n = r["started_at"]) != null ? _n : ""),
+      updated_at: String((_o = r["updated_at"]) != null ? _o : "")
     };
   }
   function listJobs() {
@@ -7129,8 +7376,20 @@ var Server = (() => {
       raw_ref: (_h = r["raw_ref"]) != null ? _h : null,
       obs_ref: (_i = r["obs_ref"]) != null ? _i : null,
       severities: (_j = r["severities"]) != null ? _j : null,
-      sealed: r["sealed"] === 1 || r["sealed"] === "1" || r["sealed"] === true ? 1 : 0
+      sealed: r["sealed"] === 1 || r["sealed"] === "1" || r["sealed"] === true ? 1 : 0,
+      // The completeness record. Blank cells stay null — on a row written before these columns
+      // existed that is the LEGACY marker the replay reads (`scanCompleteness.readDisappearance`),
+      // so it must not be coerced to 0 or to "complete" on the way in.
+      reported_total: numOrNull2(r["reported_total"]),
+      partial_pages: numOrNull2(r["partial_pages"]),
+      duplicates: numOrNull2(r["duplicates"]),
+      disappearance: r["disappearance"] === null || r["disappearance"] === void 0 || r["disappearance"] === "" ? null : String(r["disappearance"])
     };
+  }
+  function numOrNull2(v) {
+    if (v === null || v === void 0 || v === "") return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
   }
   function rowToLedger(r) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u;
@@ -7228,6 +7487,7 @@ var Server = (() => {
   function writeStateTables(state) {
     ensureTab(TABS.vulnLedger);
     ensureTab(TABS.episodes);
+    ensureTab(TABS.scans);
     overwrite(TABS.vulnLedger, Object.values(state.ledger));
     overwrite(TABS.episodes, state.episodes);
     overwrite(TABS.scans, scansAsc(state.scans));
@@ -7235,7 +7495,7 @@ var Server = (() => {
     invalidateLedgerMemos();
   }
   function persistFlatScan2(records, options) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d, _e;
     const state = loadState();
     const scanId = options.scanId || nowIso();
     const existing = state.scans.find((s) => s.scan_id === scanId);
@@ -7246,7 +7506,8 @@ var Server = (() => {
           resolved_count: existing.resolved_count,
           reopened_count: existing.reopened_count
         },
-        scanRow: null
+        scanRow: null,
+        absent: 0
       };
     }
     const jobId = (_a = options.jobId) != null ? _a : newJobId("scan");
@@ -7269,14 +7530,17 @@ var Server = (() => {
         error: null
       });
     }
-    const { deltas, observations, scanRow } = persistFlatScan(state, records, {
+    const { deltas, observations, scanRow, absent } = persistFlatScan(state, records, {
       mode: options.mode,
       scanId,
       scannedSeverities: (_b = options.scannedSeverities) != null ? _b : null,
-      rawRef: (_c = options.rawRef) != null ? _c : null
+      rawRef: (_c = options.rawRef) != null ? _c : null,
+      completeness: (_d = options.completeness) != null ? _d : null,
+      incremental: (_e = options.incremental) != null ? _e : null
     });
     const obsRef = writeObservations(scanId, observations);
     if (scanRow) scanRow.obs_ref = obsRef;
+    ensureTab(TABS.scans);
     overwrite(TABS.vulnLedger, Object.values(state.ledger));
     overwrite(TABS.episodes, state.episodes);
     writeLedgerSnapshot(state);
@@ -7284,7 +7548,7 @@ var Server = (() => {
     invalidateLedgerMemos();
     updateJob(jobId, { phase: "DONE" });
     trashFile(journalRef);
-    return { deltas, scanRow };
+    return { deltas, scanRow, absent };
   }
   function persistGroupedScan2(nodes, options) {
     var _a, _b, _c;
@@ -7299,7 +7563,7 @@ var Server = (() => {
       appendRows(TABS.scans, [scanRow]);
       invalidateLedgerMemos();
     }
-    return { deltas, scanRow };
+    return { deltas, scanRow, absent: 0 };
   }
   var readPayloadForRow = (row) => readScanPayload(row.raw_ref);
   function loadBaseRows(now) {
@@ -7654,6 +7918,7 @@ var Server = (() => {
     });
     const present2 = new Set(loadScanRows().map((s) => s.scan_id));
     const toAppend = session.sealedScans.filter((s) => !present2.has(s.scan_id));
+    ensureTab(TABS.scans);
     chunkedAppend(TABS.scans, toAppend);
     invalidateLedgerMemos();
     const cpRef = writeCheckpointManifest(
@@ -7775,16 +8040,17 @@ var Server = (() => {
   }
   function pruneEpisodes(c) {
     const state = loadState();
-    const { state: pruned, removed, prunedKeys } = pruneEpisodesCore(state, c);
+    const { state: next, removed, pruned } = pruneEpisodesCore(state, c);
     if (!removed) return { removed: 0, checkpointRemoved: 0, remaining: state.episodes.length };
     const jobId = newJobId("purge");
     const journalRef = writeJournal(jobId, state);
-    const keys = new Set(prunedKeys);
-    const checkpointRemoved = rewriteCheckpoints((cp) => purgeCheckpointByKeys(cp, keys));
-    writeStateTables(pruned);
+    const checkpointRemoved = rewriteCheckpoints(
+      (cp) => purgeCheckpointForPrunedEpisodes(cp, pruned, state.scans)
+    );
+    writeStateTables(next);
     shrinkTab(TABS.episodes);
     trashFile(journalRef);
-    return { removed, checkpointRemoved, remaining: pruned.episodes.length };
+    return { removed, checkpointRemoved, remaining: next.episodes.length };
   }
   function trimHistory(beforeDate) {
     const rows = readAll(TABS.mttrHistory);
@@ -8135,9 +8401,18 @@ var Server = (() => {
   function settingsCacheKey() {
     return "settings1:" + dataVersion();
   }
-  function readSettingsCache() {
+  function safeSettingsCacheKey() {
     try {
-      const raw = CacheService.getScriptCache().get(settingsCacheKey());
+      return settingsCacheKey();
+    } catch (e) {
+      console.warn(`Settings cache key unreadable: ${e}`);
+      return null;
+    }
+  }
+  function readSettingsCache(key) {
+    if (key === null) return void 0;
+    try {
+      const raw = CacheService.getScriptCache().get(key);
       if (!raw) return void 0;
       const parsed = JSON.parse(raw);
       return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : void 0;
@@ -8146,18 +8421,20 @@ var Server = (() => {
       return void 0;
     }
   }
-  function writeSettingsCache(settings) {
+  function writeSettingsCache(key, settings) {
+    if (key === null) return;
     try {
       const json = JSON.stringify(settings);
       if (json.length > SETTINGS_CACHE_MAX_CHARS) return;
-      CacheService.getScriptCache().put(settingsCacheKey(), json, SETTINGS_CACHE_TTL_SEC);
+      CacheService.getScriptCache().put(key, json, SETTINGS_CACHE_TTL_SEC);
     } catch (e) {
       console.warn(`Settings cache write failed: ${e}`);
     }
   }
   function loadSettings() {
     if (settingsMemo !== void 0) return settingsMemo;
-    const hit = readSettingsCache();
+    const cacheKey2 = safeSettingsCacheKey();
+    const hit = readSettingsCache(cacheKey2);
     if (hit) {
       settingsMemo = hit;
       return hit;
@@ -8178,7 +8455,7 @@ var Server = (() => {
       }
     }
     settingsMemo = out;
-    writeSettingsCache(out);
+    writeSettingsCache(cacheKey2, out);
     return out;
   }
   function saveSettings(settings) {
@@ -8191,7 +8468,7 @@ var Server = (() => {
     );
     settingsMemo = settings;
     bumpDataVersion();
-    writeSettingsCache(settings);
+    writeSettingsCache(safeSettingsCacheKey(), settings);
   }
   var getFetchSeverities2 = () => getFetchSeverities(loadSettings());
   var getDisplaySeverities2 = () => getDisplaySeverities(loadSettings());
@@ -8226,28 +8503,41 @@ var Server = (() => {
     return rows;
   }
   var SG_MAP_CACHE_TTL_SEC = 21600;
+  var SG_MAP_CACHE_NAME = "sgMap2";
   function sgMapCacheKey() {
-    return "sgMap1:" + dataVersion();
+    var _a;
+    return `${SG_MAP_CACHE_NAME}:${(_a = getProp(PROP_KEYS.supportGroupMapGen)) != null ? _a : "0"}`;
   }
-  function readSgMapCache() {
+  function safeSgMapCacheKey() {
     try {
-      const hit = cacheGetJson(sgMapCacheKey());
+      return sgMapCacheKey();
+    } catch (e) {
+      console.warn(`Support-group map cache key unreadable: ${e}`);
+      return null;
+    }
+  }
+  function readSgMapCache(key) {
+    if (key === null) return void 0;
+    try {
+      const hit = cacheGetJson(key);
       return hit && typeof hit === "object" && !Array.isArray(hit) ? hit : void 0;
     } catch (e) {
       console.warn(`Support-group map cache read failed: ${e}`);
       return void 0;
     }
   }
-  function writeSgMapCache(map) {
+  function writeSgMapCache(key, map) {
+    if (key === null) return;
     try {
-      cachePutJson(sgMapCacheKey(), map, SG_MAP_CACHE_TTL_SEC);
+      cachePutJson(key, map, SG_MAP_CACHE_TTL_SEC);
     } catch (e) {
       console.warn(`Support-group map cache write failed: ${e}`);
     }
   }
   function getSupportGroupMap2() {
     if (sgMapMemo !== void 0) return { version: 0, map: sgMapMemo };
-    const hit = readSgMapCache();
+    const cacheKey2 = safeSgMapCacheKey();
+    const hit = readSgMapCache(cacheKey2);
     if (hit) {
       sgMapMemo = hit;
       return { version: 0, map: hit };
@@ -8256,7 +8546,7 @@ var Server = (() => {
     const rows = readAll(TABS.supportGroupMap);
     const map = rows.length ? supportGroupRowsToMap(rows) : getSupportGroupMap(loadSettings()).map;
     sgMapMemo = map;
-    writeSgMapCache(map);
+    writeSgMapCache(cacheKey2, map);
     return { version: 0, map };
   }
   function setFetchSeverities(sevs) {
@@ -8308,7 +8598,8 @@ var Server = (() => {
     } else {
       bumpDataVersion();
     }
-    writeSgMapCache(sgMapMemo);
+    setProp(PROP_KEYS.supportGroupMapGen, dataVersion());
+    writeSgMapCache(safeSgMapCacheKey(), sgMapMemo);
   }
 
   // src/server/bizDomains.ts
@@ -8423,6 +8714,13 @@ var Server = (() => {
     cache.put(TOKEN_CACHE_KEY, token, ttl);
     return token;
   }
+  function errorMessages(errors) {
+    if (!Array.isArray(errors)) return [];
+    return errors.map((e) => {
+      var _a;
+      return e && typeof e === "object" ? String((_a = e["message"]) != null ? _a : "") : String(e);
+    }).filter(Boolean).map((m) => m.slice(0, 300));
+  }
   function baseVariables() {
     return JSON.parse(JSON.stringify(BASE_VARIABLES));
   }
@@ -8485,7 +8783,8 @@ var Server = (() => {
         nodes: (_c = connection["nodes"]) != null ? _c : [],
         hasNextPage: Boolean(pageInfo["hasNextPage"]),
         endCursor: (_d = pageInfo["endCursor"]) != null ? _d : null,
-        totalCount: typeof rawTotal === "number" ? rawTotal : null
+        totalCount: typeof rawTotal === "number" ? rawTotal : null,
+        partialErrors: errorMessages(body["errors"])
       };
     }
     throw new WizQueryError(`Wiz query failed after retries (${lastError}).`);
@@ -9572,7 +9871,7 @@ var Server = (() => {
   // ../gas_shared/domain/scopeSummary.ts
   var DEFAULT_SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
   var SUMMARY_TREND_POINTS = 60;
-  function numOrNull(v) {
+  function numOrNull3(v) {
     return typeof v === "number" && Number.isFinite(v) ? v : null;
   }
   function numOr0(v) {
@@ -9615,12 +9914,12 @@ var Server = (() => {
         sev: sev2,
         open,
         resolved,
-        kmMedian: numOrNull(kmMedianPerSev[sev2]),
-        kmP90: numOrNull(kmP90PerSev[sev2]),
-        kmLowerBound: numOrNull(kmLowerBoundPerSev[sev2]),
-        slaPct: numOrNull(st["sla_pct"]),
+        kmMedian: numOrNull3(kmMedianPerSev[sev2]),
+        kmP90: numOrNull3(kmP90PerSev[sev2]),
+        kmLowerBound: numOrNull3(kmLowerBoundPerSev[sev2]),
+        slaPct: numOrNull3(st["sla_pct"]),
         pastSla: numOr0(obj(pastPerSev[sev2])["breached"]),
-        slaTarget: numOrNull(st["sla_target"]),
+        slaTarget: numOrNull3(st["sla_target"]),
         awaiting: numOr0(awaitingPerSev[sev2])
       });
     }
@@ -9629,12 +9928,12 @@ var Server = (() => {
       var _a2;
       return {
         date: String((_a2 = p["date"]) != null ? _a2 : ""),
-        open: numOrNull(p["open"]),
+        open: numOrNull3(p["open"]),
         // THE KAPLAN-MEIER MEDIAN ONLY — the estimator the hero reads. Falling back to the naive
         // closed-only median where KM is unobservable put "30 days" at the end of this line under a
         // hero reading "at least 210 days": two estimators on one page, the lower one looking like
         // the answer. A point with no KM median is a gap in the line, not a different number.
-        medianDays: numOrNull(p["km_median_days"])
+        medianDays: numOrNull3(p["km_median_days"])
       };
     });
     return {
@@ -9643,21 +9942,21 @@ var Server = (() => {
       open: numOr0(overall["open"]),
       resolved: numOr0(overall["resolved"]),
       mttr: {
-        median: numOrNull(km["median"]),
-        medianLowerBound: numOrNull(km["medianLowerBound"]),
+        median: numOrNull3(km["median"]),
+        medianLowerBound: numOrNull3(km["medianLowerBound"]),
         // gas publishes the overall p90 beside the curve; gas_devsecops inside it.
-        p90: (_a = numOrNull(rem["kmP90"])) != null ? _a : numOrNull(km["p90"]),
-        naiveMedian: numOrNull(km["naiveMedian"])
+        p90: (_a = numOrNull3(rem["kmP90"])) != null ? _a : numOrNull3(km["p90"]),
+        naiveMedian: numOrNull3(km["naiveMedian"])
       },
       sla: {
-        attainmentPct: numOrNull(mttr["slaPct"]),
+        attainmentPct: numOrNull3(mttr["slaPct"]),
         pastSla: numOr0(pastOverall["breached"]),
-        pastSlaPct: numOrNull(pastOverall["pct"]),
+        pastSlaPct: numOrNull3(pastOverall["pct"]),
         unknown: numOr0(pastOverall["unknown"])
       },
       awaiting: {
         count: numOr0(awaiting["overall"]),
-        pctOfOpen: numOrNull(awaiting["pctOfOpen"])
+        pctOfOpen: numOrNull3(awaiting["pctOfOpen"])
       },
       backlog: Object.keys(backlog).length ? { observed: numOr0(backlog["observed"]), unobserved: numOr0(backlog["unobserved"]) } : null,
       perSev: sevRows,
@@ -10181,6 +10480,7 @@ var Server = (() => {
     dailyScan: () => dailyScan,
     jobStatus: () => jobStatus,
     resetStuckJob: () => resetStuckJob,
+    runPendingSupportGroupRefresh: () => runPendingSupportGroupRefresh,
     slimRecord: () => slimRecord,
     startScan: () => startScan
   });
@@ -10216,6 +10516,7 @@ var Server = (() => {
   var CONTINUE_HANDLER3 = "trigger_continueScan";
   var DELTA_OVERLAP_MINUTES = 15;
   var FORCE_STOP_LOCK_MS = 1e4;
+  var SG_REFRESH_LOCK_MS = 2e4;
   var ScanCancelled = class extends Error {
   };
   var cancelKey = (jobId) => `CANCEL_${jobId}`;
@@ -10469,10 +10770,11 @@ var Server = (() => {
       rawRef: scanFolder(scanId).getId()
     });
     afterPersist(slim);
+    handOffAfterScan();
     return { jobId: null, message: "Dry-run scan saved." };
   }
   function step3(job, budgetMs = BUDGET_MS3) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
     const started = Date.now();
     const params = JSON.parse((_a = job.params_json) != null ? _a : "{}");
     const scanId = job.scan_id;
@@ -10482,6 +10784,8 @@ var Server = (() => {
     let page = job.page;
     let findings = job.findings_so_far;
     let totalCount = job.total_count;
+    let totalReported = job.total_reported === true;
+    let partialPages = (_d = job.partial_pages) != null ? _d : 0;
     try {
       for (; ; ) {
         if (isCancelRequested(job.job_id)) throw new ScanCancelled();
@@ -10498,9 +10802,33 @@ var Server = (() => {
         page += 1;
         findings += result.nodes.length;
         cursor = result.endCursor;
-        if (result.totalCount !== null) totalCount = result.totalCount;
-        updateJob(job.job_id, { cursor, page, findings_so_far: findings, total_count: totalCount });
-        if (!result.hasNextPage || page >= MAX_PAGES) break;
+        if (result.totalCount !== null) {
+          totalCount = result.totalCount;
+          totalReported = true;
+        }
+        if (result.partialErrors.length) {
+          partialPages += 1;
+          console.warn(JSON.stringify({
+            stage: "partialPage",
+            scanId,
+            page: pageName,
+            errors: result.partialErrors.slice(0, 3)
+          }));
+        }
+        updateJob(job.job_id, {
+          cursor,
+          page,
+          findings_so_far: findings,
+          total_count: totalCount,
+          total_reported: totalReported,
+          partial_pages: partialPages
+        });
+        if (!result.hasNextPage) break;
+        if (page >= MAX_PAGES) {
+          throw new WizQueryError(
+            `Wiz walk reached MAX_PAGES (${MAX_PAGES}) and the cursor still reports more. Refusing to truncate silently \u2014 a partial register that looks complete is worse than a failed scan.`
+          );
+        }
         if (Date.now() - started > budgetMs) {
           writeSlimRecords(scanId, slim);
           writePageRuns(scanId, pageRuns);
@@ -10511,7 +10839,7 @@ var Server = (() => {
       writeSlimRecords(scanId, slim);
       writePageRuns(scanId, pageRuns);
       updateJob(job.job_id, { phase: "RECONCILING" });
-      finishScan(job.job_id, scanId, params, slim);
+      finishScan(job.job_id, scanId, params, slim, fetchAccount(totalCount, totalReported, partialPages));
     } catch (e) {
       if (e instanceof ScanCancelled) {
         finalizeCancel(job);
@@ -10534,9 +10862,17 @@ var Server = (() => {
       throw e;
     }
   }
-  function finishScan(jobId, scanId, params, slim) {
+  function fetchAccount(totalCount, totalReported, partialPages) {
+    const n = Number(totalCount);
+    const reportedTotal = Number.isFinite(n) && (totalReported || n > 0) ? n : null;
+    return { reportedTotal, partialPages: Number(partialPages) || 0 };
+  }
+  function finishScan(jobId, scanId, params, slim, fetched) {
+    var _a;
     clearCancel(jobId);
     let records = slim;
+    let completeness = null;
+    let incremental = null;
     if (params.incremental) {
       if (!slim.length) {
         updateJob(jobId, { phase: "DONE", error: null });
@@ -10551,6 +10887,14 @@ var Server = (() => {
         });
         return;
       }
+      const baselineRow = loadScanRows().find((s) => s.scan_id === params.baselineScanId);
+      incremental = {
+        baselineDisappearance: (_a = baselineRow == null ? void 0 : baselineRow.disappearance) != null ? _a : null,
+        partialPages: fetched.partialPages,
+        // Measured on the DELTA as fetched: the merge below keys by vulnKey, so the merged set
+        // can hold no repeat to count.
+        duplicates: distinctNodes(slim).duplicates
+      };
       records = mergeNodes(baselineSlim, slim);
       let pageNo = 1;
       for (let i = 0; i < records.length; i += 500) {
@@ -10560,20 +10904,46 @@ var Server = (() => {
       writeFrameSafely(scanId, records, (i) => Math.floor(i / 500) + 1);
     } else {
       writeFrameSafely(scanId, records, pageOfFromRuns(readPageRuns(scanId), records.length));
+      completeness = fetched;
     }
     updateJob(jobId, { phase: "PERSISTING", scan_id: scanId });
     scheduleContinuation3();
-    persistFlatScan2(records, {
+    const outcome = persistFlatScan2(records, {
       mode: params.mode,
       scanId,
       scannedSeverities: params.severities,
       rawRef: scanFolder(scanId).getId(),
-      jobId
+      jobId,
+      completeness,
+      incremental
     });
+    recordDeferral(outcome);
     afterPersist(records);
     updateJob(jobId, { phase: "DONE" });
     clearContinuationTriggers3();
     clearCancel(jobId);
+    handOffAfterScan();
+  }
+  function recordDeferral(outcome) {
+    var _a, _b, _c, _d, _e, _f;
+    try {
+      const row = outcome.scanRow;
+      const verdict = readDisappearance((_a = row == null ? void 0 : row.disappearance) != null ? _a : null);
+      if (!row || !verdict.deferred) return;
+      const reported = (_b = row.reported_total) != null ? _b : null;
+      const total = reported === null ? "no total reported" : `${reported} reported`;
+      const held = `${outcome.absent} open finding(s) it did not return were left open; the next complete scan will resolve them.`;
+      recordError(
+        "scanCompleteness",
+        // A quick refresh is not judged on its own records (ledgerCore.PersistFlatOptions); it
+        // inherited the deferral, and saying "looked incomplete" of it would send the operator
+        // after a delta that was fine.
+        row.mode.includes("incremental") ? `Quick refresh ${row.scan_id} was built on a deferred scan (${(_c = verdict.reason) != null ? _c : "unknown"}), so it was deferred too. ${held}` : `Scan ${row.scan_id} looked incomplete (${(_d = verdict.reason) != null ? _d : "unknown"}: ${row.total} received, ${total}, ${(_e = row.duplicates) != null ? _e : 0} duplicate(s), ${(_f = row.partial_pages) != null ? _f : 0} partial page(s)). ${held}`,
+        "warning"
+      );
+    } catch (e) {
+      console.warn(`Recording a deferred scan failed: ${e}`);
+    }
   }
   function loadBaselineSlim(baselineScanId) {
     const slim = readSlimRecords(baselineScanId);
@@ -10586,7 +10956,6 @@ var Server = (() => {
   }
   function afterPersist(records) {
     var _a, _b;
-    refreshSupportGroupsAfterScan();
     try {
       const { perSev, overall } = calculateMttr(records);
       const median2 = overall.mttr_median;
@@ -10608,10 +10977,20 @@ var Server = (() => {
       recordError("mttrSnapshot", e);
     }
     autoCompactIfDue();
+  }
+  function handOffAfterScan() {
+    if (hasWizCredentials()) {
+      try {
+        setProp(PROP_KEYS.supportGroupRefreshPending, nowIso());
+      } catch (e) {
+        console.warn(`Could not queue the post-scan support-group refresh: ${e}`);
+        recordError("supportGroupRefresh", e);
+      }
+    }
     try {
-      warmReadModels();
+      if (scheduleWarm()) console.log("Post-scan read-model warm: scheduled.");
     } catch (e) {
-      console.warn(`Cache warming after scan failed: ${e}`);
+      console.warn(`Post-scan read-model warm could not be scheduled: ${e}`);
       recordError("cacheWarm", e);
     }
   }
@@ -10626,13 +11005,43 @@ var Server = (() => {
       recordError("autoCompact", e);
     }
   }
-  function refreshSupportGroupsAfterScan() {
-    if (!hasWizCredentials()) return;
+  function runPendingSupportGroupRefresh() {
+    let pending;
     try {
-      refreshSupportGroups();
+      pending = getProp(PROP_KEYS.supportGroupRefreshPending);
     } catch (e) {
+      console.warn(`Could not read the queued support-group refresh: ${e}`);
+      return false;
+    }
+    if (!pending) return false;
+    if (!hasWizCredentials()) {
+      deleteProp(PROP_KEYS.supportGroupRefreshPending);
+      return false;
+    }
+    try {
+      const { map } = fetchSupportGroups();
+      return withScriptLock(() => {
+        const still = getProp(PROP_KEYS.supportGroupRefreshPending);
+        if (!still) {
+          console.log("Support-group refresh after scan: another pass already wrote it.");
+          return false;
+        }
+        setSupportGroupMap(map);
+        if (still === pending) deleteProp(PROP_KEYS.supportGroupRefreshPending);
+        return true;
+      }, SG_REFRESH_LOCK_MS);
+    } catch (e) {
+      if (e instanceof LedgerBusyError) {
+        console.warn(`Support-group refresh after scan: ledger busy, left queued: ${e}`);
+        return false;
+      }
       console.warn(`Support-group refresh after scan failed: ${e}`);
       recordError("supportGroupRefresh", e);
+      try {
+        deleteProp(PROP_KEYS.supportGroupRefreshPending);
+      } catch (_e) {
+      }
+      return false;
     }
   }
   function scheduleContinuation3(delayMs = CONTINUE_DELAY_MS3) {
@@ -10646,7 +11055,7 @@ var Server = (() => {
   function continueJob(_e) {
     try {
       withScriptLock(() => {
-        var _a, _b;
+        var _a, _b, _c;
         clearContinuationTriggers3();
         const job = activeJob();
         if (!job || job.kind !== "scan") return;
@@ -10659,7 +11068,13 @@ var Server = (() => {
         } else if (job.phase === "RECONCILING") {
           const params = JSON.parse((_a = job.params_json) != null ? _a : "{}");
           const slim = (_b = readSlimRecords(job.scan_id)) != null ? _b : [];
-          finishScan(job.job_id, job.scan_id, params, slim);
+          finishScan(
+            job.job_id,
+            job.scan_id,
+            params,
+            slim,
+            fetchAccount(job.total_count, job.total_reported === true, (_c = job.partial_pages) != null ? _c : 0)
+          );
         } else if (job.phase === "PERSISTING" || job.phase === "REPLAYING") {
           recoverIfNeeded();
           clearCancel(job.job_id);
@@ -12879,7 +13294,10 @@ var Server = (() => {
     // (a no-op on `null`) through `visibleBase` — byte-for-byte this function's own `base` —
     // so the two share both the population and the `showNoFix` gate, and reusing the MTTR
     // page's already-cached estimate is the correct answer, not a shortcut.
-    durablyCached("scanHistory4", { showNoFix: getShowNoFix2() }, scanHistoryData)
+    // "scanHistory4" → "scanHistory5" (completeness gate): every `scans` row gained the
+    // completeness record (`disappearance`, `reported_total`, `partial_pages`, `duplicates`) the
+    // Saved scans table marks a deferred scan from; a warm scanHistory4 entry would draw none.
+    durablyCached("scanHistory5", { showNoFix: getShowNoFix2() }, scanHistoryData)
   );
   function getScanHistory(_p) {
     return run(() => {
@@ -13788,8 +14206,13 @@ var Server = (() => {
   var WARM_CONTINUE_DELAY_MS = 1e3;
   var WARM_BUSY_DELAY_MS = 6e4;
   var WARM_MAX_HOPS = 6;
+  var WARM_MAX_BUSY_WAITS = 240;
+  var WARM_FAILURES_LISTED = 8;
   function warmHopsKey() {
     return "warmHops:" + currentStamp();
+  }
+  function warmBusyKey() {
+    return "warmBusy:" + currentStamp();
   }
   function scheduleWarmContinuation(delayMs) {
     var _a;
@@ -13799,13 +14222,45 @@ var Server = (() => {
       const hops = Number((_a = cache.get(key)) != null ? _a : "0") + 1;
       if (hops > WARM_MAX_HOPS) {
         console.warn(`Cache warm: gave up after ${WARM_MAX_HOPS} continuation hops`);
+        recordError("cacheWarm", `Gave up after ${WARM_MAX_HOPS} continuation hops under one data version.`);
         return;
       }
       cache.put(key, String(hops), 21600);
-      clearTriggers(WARM_CONTINUE_HANDLER);
-      ScriptApp.newTrigger(WARM_CONTINUE_HANDLER).timeBased().after(delayMs).create();
+      armWarm(delayMs);
     } catch (e) {
       console.warn(`Cache warm: could not schedule a continuation: ${e}`);
+    }
+  }
+  function deferWarm(job) {
+    var _a;
+    try {
+      const cache = CacheService.getScriptCache();
+      const key = warmBusyKey();
+      const waits = Number((_a = cache.get(key)) != null ? _a : "0") + 1;
+      if (waits > WARM_MAX_BUSY_WAITS) {
+        const msg = `Gave up after ${WARM_MAX_BUSY_WAITS} one-minute waits deferred behind ${job.kind} job ${job.job_id} (${job.phase}); the next scheduled warm picks it up.`;
+        console.warn(`Cache warm: ${msg}`);
+        recordError("cacheWarm", msg);
+        return;
+      }
+      cache.put(key, String(waits), 21600);
+      armWarm(WARM_BUSY_DELAY_MS);
+    } catch (e) {
+      console.warn(`Cache warm: could not schedule a deferred continuation: ${e}`);
+    }
+  }
+  function armWarm(delayMs) {
+    clearTriggers(WARM_CONTINUE_HANDLER);
+    ScriptApp.newTrigger(WARM_CONTINUE_HANDLER).timeBased().after(delayMs).create();
+  }
+  function scheduleWarm(delayMs = WARM_CONTINUE_DELAY_MS) {
+    try {
+      armWarm(delayMs);
+      return true;
+    } catch (e) {
+      console.warn(`Cache warm: could not schedule the post-scan warm: ${e}`);
+      recordError("cacheWarm", `Could not schedule a warm: ${e instanceof Error ? e.message : String(e)}`);
+      return false;
     }
   }
   function warmReadModels(budgetMs = WARM_BUDGET_MS) {
@@ -13828,26 +14283,55 @@ var Server = (() => {
     const job = activeJob();
     if (job) {
       console.log(`Cache warm: continuation deferred, ${job.kind} job ${job.job_id} is ${job.phase}`);
-      scheduleWarmContinuation(WARM_BUSY_DELAY_MS);
+      deferWarm(job);
       return;
     }
-    warmReadModels();
+    try {
+      CacheService.getScriptCache().remove(warmBusyKey());
+    } catch (_e2) {
+    }
+    warmAfterChores();
+  }
+  function warmAfterChores() {
+    const t0 = Date.now();
+    if (runPendingSupportGroupRefresh()) {
+      invalidateFrameMemo();
+    }
+    warmReadModels(Math.max(0, WARM_BUDGET_MS - (Date.now() - t0)));
+  }
+  function warmFailureSummary(failed, attempted) {
+    var _a;
+    const counts = /* @__PURE__ */ new Map();
+    for (const label of failed) counts.set(label, ((_a = counts.get(label)) != null ? _a : 0) + 1);
+    const names = [...counts].map(([label, n]) => n > 1 ? `${label} \xD7${n}` : label);
+    const listed = names.slice(0, WARM_FAILURES_LISTED).join(", ");
+    const more = names.length - WARM_FAILURES_LISTED;
+    return `${failed.length} of ${attempted} warm targets failed: ${listed}${more > 0 ? `, \u2026 (+${more} more)` : ""}.`;
   }
   function warmReadModelsInner(budgetMs) {
     const t0 = Date.now();
     let warmed = 0;
     let skipped = 0;
+    const failed = [];
     const warm = (label, fn) => {
       if (Date.now() - t0 >= budgetMs) {
         skipped += 1;
         return;
       }
+      const ts = Date.now();
+      let ok = true;
       try {
         fn();
         warmed += 1;
       } catch (e) {
+        ok = false;
         console.warn(`Cache warm (${label}) failed: ${e}`);
+        if (!failed.length) {
+          recordError("cacheWarm", `${label}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+        failed.push(label);
       }
+      console.log(JSON.stringify({ stage: "warm", label, ms: Date.now() - ts, ok }));
     };
     warm("bootstrap", () => bootstrap());
     const display = getDisplaySeverities2();
@@ -13875,6 +14359,9 @@ var Server = (() => {
     warm("scanHistory", () => cachedScanHistoryData());
     warm("storageStats", () => cachedStorageStatsData());
     warmScopedViews(warm);
+    if (failed.length > 1) {
+      recordError("cacheWarm", warmFailureSummary(failed, warmed + failed.length));
+    }
     if (skipped) {
       console.warn(`Cache warm: ran out of budget after ${warmed} entries, ${skipped} left cold`);
     }
@@ -13887,7 +14374,7 @@ var Server = (() => {
       console.log(`Cache warm: skipped, ${job.kind} job ${job.job_id} is ${job.phase}`);
       return;
     }
-    warmReadModels();
+    warmAfterChores();
   }
   function saveHubUrl(p) {
     return run(() => {
@@ -13985,6 +14472,23 @@ var Server = (() => {
     return HtmlService.createHtmlOutput(welcomeHtml(email, continueUrl, accountChooserUrl())).setTitle(PRODUCT).addMetaTag("viewport", "width=device-width, initial-scale=1");
   }
 
+  // ../gas_shared/server/dailyTrigger.ts
+  function dailyTriggerSignature(tz, hour) {
+    return `${tz}|${hour}`;
+  }
+  function reconcileDailyTrigger(spec) {
+    const { handler, tz, hour, label } = spec;
+    const existing = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === handler);
+    const want = dailyTriggerSignature(tz, hour);
+    if (existing.length === 1 && spec.getSignature() === want) {
+      return `${label}: already installed (${hour}:00 ${tz})`;
+    }
+    ScriptApp.newTrigger(handler).timeBased().everyDays(1).atHour(hour).inTimezone(tz).create();
+    for (const t of existing) ScriptApp.deleteTrigger(t);
+    spec.setSignature(want);
+    return `${label}: installed (${hour}:00 ${tz})` + (existing.length ? ` (replaced ${existing.length})` : "");
+  }
+
   // src/server/setup.ts
   var SPREADSHEET_NAME = "Wiz Sidekick OS Ledger";
   var FOLDER_NAME = "wiz-sidekick";
@@ -13992,11 +14496,25 @@ var Server = (() => {
   var DAILY_TRIGGER_HOUR = 5;
   var WARM_TRIGGER_HANDLER = "trigger_warmReadModels";
   var WARM_READY_BY_HOURS = [9, 13, 17];
-  var WARM_TRIGGER_TZ = "Europe/Paris";
+  var TRIGGER_TZ = "Europe/Paris";
   var WARM_TRIGGER_NEAR_MINUTE = 30;
   var WARM_TRIGGER_HOURS = WARM_READY_BY_HOURS.map((h) => (h + 23) % 24);
+  var WARM_TRIGGER_COUNT = WARM_TRIGGER_HOURS.length;
   function warmScheduleSignature() {
-    return `${WARM_TRIGGER_TZ}|${WARM_TRIGGER_HOURS.join(",")}@${WARM_TRIGGER_NEAR_MINUTE}`;
+    return `${TRIGGER_TZ}|${WARM_TRIGGER_HOURS.join(",")}@${WARM_TRIGGER_NEAR_MINUTE}`;
+  }
+  function dailyScanSchedule() {
+    return dailyTriggerSignature(TRIGGER_TZ, DAILY_TRIGGER_HOUR);
+  }
+  function reconcileDailyScanTrigger() {
+    return reconcileDailyTrigger({
+      handler: DAILY_TRIGGER_HANDLER,
+      tz: TRIGGER_TZ,
+      hour: DAILY_TRIGGER_HOUR,
+      label: "daily trigger",
+      getSignature: () => getProp(PROP_KEYS.dailyTriggerSchedule),
+      setSignature: (sig) => setProp(PROP_KEYS.dailyTriggerSchedule, sig)
+    });
   }
   function setup() {
     const notes = [];
@@ -14033,15 +14551,7 @@ var Server = (() => {
     } else {
       notes.push("allowlist: already set, left as-is");
     }
-    const existing = ScriptApp.getProjectTriggers().filter(
-      (t) => t.getHandlerFunction() === DAILY_TRIGGER_HANDLER
-    );
-    if (!existing.length) {
-      ScriptApp.newTrigger(DAILY_TRIGGER_HANDLER).timeBased().everyDays(1).atHour(DAILY_TRIGGER_HOUR).create();
-      notes.push(`daily trigger: installed (${DAILY_TRIGGER_HOUR}:00 script-local)`);
-    } else {
-      notes.push("daily trigger: already installed");
-    }
+    notes.push(reconcileDailyScanTrigger());
     const warmExisting = ScriptApp.getProjectTriggers().filter(
       (t) => t.getHandlerFunction() === WARM_TRIGGER_HANDLER
     );
@@ -14051,11 +14561,11 @@ var Server = (() => {
     } else {
       for (const t of warmExisting) ScriptApp.deleteTrigger(t);
       for (const hour of WARM_TRIGGER_HOURS) {
-        ScriptApp.newTrigger(WARM_TRIGGER_HANDLER).timeBased().everyDays(1).atHour(hour).nearMinute(WARM_TRIGGER_NEAR_MINUTE).inTimezone(WARM_TRIGGER_TZ).create();
+        ScriptApp.newTrigger(WARM_TRIGGER_HANDLER).timeBased().everyDays(1).atHour(hour).nearMinute(WARM_TRIGGER_NEAR_MINUTE).inTimezone(TRIGGER_TZ).create();
       }
       setProp(PROP_KEYS.warmTriggerSchedule, wantSchedule);
       notes.push(
-        `warm trigger: installed ${WARM_TRIGGER_HOURS.length}x daily, warm by ${WARM_READY_BY_HOURS.map((h) => `${h}:00`).join(", ")} ${WARM_TRIGGER_TZ}` + (warmExisting.length ? ` (replaced ${warmExisting.length})` : "")
+        `warm trigger: installed ${WARM_TRIGGER_HOURS.length}x daily, warm by ${WARM_READY_BY_HOURS.map((h) => `${h}:00`).join(", ")} ${TRIGGER_TZ}` + (warmExisting.length ? ` (replaced ${warmExisting.length})` : "")
       );
     }
     const missing = [
@@ -14083,7 +14593,7 @@ var Server = (() => {
   function wizDiagnostic() {
     var _a, _b;
     const lines = [];
-    const log = (m) => {
+    const log2 = (m) => {
       lines.push(m);
       console.log(m);
     };
@@ -14094,20 +14604,20 @@ var Server = (() => {
     const clientSecret = getProp(PROP_KEYS.wizClientSecret);
     const projectId = getProp(PROP_KEYS.wizProjectIdV2);
     const mode = resolveWizAuthMode(token, clientId, clientSecret);
-    log("=== Wiz diagnostic ===");
-    log(`WIZ_API_URL:        ${apiUrl || "(unset!)"}`);
-    log(`Auth mode:          ${mode != null ? mode : "(none)"}`);
-    log(`WIZ_API_TOKEN:      ${preview(token)}`);
-    log(`WIZ_CLIENT_ID:      ${preview(clientId)}`);
-    log(`WIZ_CLIENT_SECRET:  ${secretPreview(clientSecret)}`);
-    if (mode === "oauth") log(`WIZ_AUTH_URL:       ${authUrl}`);
-    log(`WIZ_PROJECT_ID_V2:  ${projectId || "(unset \u2014 querying all projects)"}`);
+    log2("=== Wiz diagnostic ===");
+    log2(`WIZ_API_URL:        ${apiUrl || "(unset!)"}`);
+    log2(`Auth mode:          ${mode != null ? mode : "(none)"}`);
+    log2(`WIZ_API_TOKEN:      ${preview(token)}`);
+    log2(`WIZ_CLIENT_ID:      ${preview(clientId)}`);
+    log2(`WIZ_CLIENT_SECRET:  ${secretPreview(clientSecret)}`);
+    if (mode === "oauth") log2(`WIZ_AUTH_URL:       ${authUrl}`);
+    log2(`WIZ_PROJECT_ID_V2:  ${projectId || "(unset \u2014 querying all projects)"}`);
     if (!apiUrl) {
-      log("FAIL: WIZ_API_URL is required, e.g. https://api.<region>.app.wiz.io/graphql.");
+      log2("FAIL: WIZ_API_URL is required, e.g. https://api.<region>.app.wiz.io/graphql.");
       return lines.join("\n");
     }
     if (mode === null) {
-      log(
+      log2(
         "FAIL: no usable credentials \u2014 the app runs in dry-run mode. Set WIZ_API_TOKEN, or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET."
       );
       return lines.join("\n");
@@ -14115,12 +14625,12 @@ var Server = (() => {
     let bearer = "";
     try {
       bearer = getToken(true);
-      log(
+      log2(
         mode === "token" ? `Step 1 OK: using raw WIZ_API_TOKEN (${preview(bearer)}).` : `Step 1 OK: OAuth exchange minted an access token (${preview(bearer)}).`
       );
     } catch (e) {
-      log(`Step 1 FAIL: could not obtain a token \u2014 ${e.message}`);
-      log(
+      log2(`Step 1 FAIL: could not obtain a token \u2014 ${e.message}`);
+      log2(
         mode === "oauth" ? "\u2192 The token endpoint rejected the client credentials. Verify WIZ_CLIENT_ID / WIZ_CLIENT_SECRET (regenerate the service account in Wiz), and that WIZ_AUTH_URL matches the auth host shown on the service-account page." : "\u2192 WIZ_API_TOKEN is unusable. A Wiz GraphQL service account gives a client id + secret, not a durable token; use WIZ_CLIENT_ID / WIZ_CLIENT_SECRET."
       );
       return lines.join("\n");
@@ -14129,49 +14639,148 @@ var Server = (() => {
     try {
       const page = queryPage(buildVariables({ first: 1 }));
       firstNode = (_b = page.nodes[0]) != null ? _b : null;
-      log(`Step 2 OK: query succeeded \u2014 ${page.nodes.length} finding(s) on page 1.`);
+      log2(`Step 2 OK: query succeeded \u2014 ${page.nodes.length} finding(s) on page 1.`);
     } catch (e) {
       const msg = e.message;
-      log(`Step 2 FAIL: the query was rejected \u2014 ${msg}`);
+      log2(`Step 2 FAIL: the query was rejected \u2014 ${msg}`);
       if (/HTTP 401|HTTP 403|Unauthorized/i.test(msg)) {
-        log(
+        log2(
           "\u2192 401/403/Unauthorized: the token was not accepted (expired, invalid, or minted for a different tenant). Confirm the service account targets this tenant."
         );
       } else if (/HTTP 404/i.test(msg)) {
-        log(
+        log2(
           "\u2192 404: WIZ_API_URL host/path is wrong \u2014 it must be https://api.<region>.app.wiz.io/graphql for your tenant's region."
         );
       } else {
-        log(
+        log2(
           '\u2192 If the body names a field (e.g. "Cannot query field"), the service account lacks permission for it or the tenant schema differs.'
         );
       }
       return lines.join("\n");
     }
     if (firstNode === null) {
-      log(
+      log2(
         "Step 3 SKIPPED: the query returned no findings, so there was no row to read a Wiz console link off. Not a failure \u2014 widen the severity filter or the project and re-run if you want this checked."
       );
     } else {
       const raw = firstNode["portalUrl"];
       const usable = normalizeWizUrl(raw);
       if (usable) {
-        log(`Step 3 OK: findings carry a Wiz console link (${usable}).`);
+        log2(`Step 3 OK: findings carry a Wiz console link (${usable}).`);
       } else if (typeof raw === "string" && raw.trim()) {
-        log(
+        log2(
           `Step 3 WARN: this tenant returned a portalUrl the register will not link to \u2014 ${raw.trim()}`
         );
-        log(
+        log2(
           "\u2192 The finding sheet shows no Wiz row for it. Links are allowed only on the Wiz consoles (app.wiz.io / app.wiz.us); see gas_shared/domain/wizUrl.ts for why the list is a security boundary rather than a typo-catcher, and widen it there if your tenant is genuinely served from another host."
         );
       } else {
-        log("Step 3 WARN: the query worked but this finding carried no portalUrl.");
-        log(
+        log2("Step 3 WARN: the query worked but this finding carried no portalUrl.");
+        log2(
           "\u2192 The finding sheet will show no Wiz row for findings like it. If EVERY finding is like this, the tenant is not populating the field and there is nothing to link to; the register states that rather than guessing a URL."
         );
       }
     }
-    log("=== All checks passed. Live scans should work. ===");
+    log2("=== All checks passed. Live scans should work. ===");
+    return lines.join("\n");
+  }
+  var TRIGGER_CAP = 20;
+  var JOB_TRIGGER_SLOTS = 1;
+  function deploymentDiagnostic() {
+    const lines = [];
+    const line = (m) => {
+      lines.push(m);
+      console.log(m);
+    };
+    const ok = (label, value) => line(`  OK    ${label}: ${value}`);
+    const bad = (label, value) => line(`  FAIL  ${label}: ${value}`);
+    line("Wiz Sidekick OS \u2014 deployment diagnostic");
+    line(`Build ${BUILD_ID}, schema v${SCHEMA_VERSION}`);
+    line("");
+    const ssId = getProp(PROP_KEYS.ledgerSpreadsheetId);
+    if (ssId) {
+      try {
+        const ss = ledgerSpreadsheet();
+        ok("Ledger spreadsheet", `${ss.getName()} (${ssId})`);
+        for (const tab of Object.values(TABS)) {
+          const rows = dataRowCount(tab);
+          line(`        ${tab}: ${rows} row${rows === 1 ? "" : "s"}`);
+        }
+        ok("Cells used", String(cellCount()));
+      } catch (e) {
+        bad("Ledger spreadsheet", `${ssId} exists as a property but could not be opened: ${e}`);
+      }
+    } else {
+      bad("Ledger spreadsheet", "not created \u2014 run setup()");
+    }
+    const folderId = getProp(PROP_KEYS.archiveFolderId);
+    if (folderId) ok("Archive folder", folderId);
+    else bad("Archive folder", "not created \u2014 run setup()");
+    if (hasWizCredentials()) ok("Wiz credentials", "present (run wizDiagnostic() to test them)");
+    else bad("Wiz credentials", "absent \u2014 the app runs dry-run only; set WIZ_API_URL and WIZ_CLIENT_ID + WIZ_CLIENT_SECRET (or WIZ_API_TOKEN)");
+    const users = getProp(PROP_KEYS.allowedUsers);
+    if (users) ok("Allowlist", `${users.split(/[,;\s]+/).filter(Boolean).length} address(es)`);
+    else bad("Allowlist", "empty \u2014 the app is owner-only until ALLOWED_USERS is set");
+    line("");
+    let handlers = [];
+    try {
+      handlers = ScriptApp.getProjectTriggers().map((t) => t.getHandlerFunction());
+    } catch (e) {
+      bad("Triggers", `could not be listed: ${e}`);
+      return lines.join("\n");
+    }
+    const count = (names) => handlers.filter((h) => names.includes(h)).length;
+    const daily = count([DAILY_TRIGGER_HANDLER]);
+    const dailySig = getProp(PROP_KEYS.dailyTriggerSchedule);
+    if (daily > 1) {
+      bad("Daily scan trigger", `${daily} installed, expected 1 \u2014 the scan runs ${daily}x a day; run setup()`);
+    } else if (!daily) {
+      bad("Daily scan trigger", "not installed \u2014 run setup()");
+    } else if (dailySig !== dailyScanSchedule()) {
+      bad("Daily scan trigger", `schedule ${dailySig != null ? dailySig : "(unrecorded)"} is not this build's ${dailyScanSchedule()} \u2014 run setup() as the deploying account`);
+    } else {
+      ok("Daily scan trigger", `installed (${dailySig})`);
+    }
+    const warm = count([WARM_TRIGGER_HANDLER]);
+    const warmSig = getProp(PROP_KEYS.warmTriggerSchedule);
+    if (warm !== WARM_TRIGGER_COUNT) {
+      bad("Warm triggers", `${warm} installed, expected ${WARM_TRIGGER_COUNT} \u2014 run setup()`);
+    } else if (warmSig !== warmScheduleSignature()) {
+      bad("Warm triggers", `schedule ${warmSig != null ? warmSig : "(unrecorded)"} is not this build's ${warmScheduleSignature()} \u2014 run setup()`);
+    } else {
+      ok("Warm triggers", `${warm} installed (${warmSig})`);
+    }
+    const job = activeJob();
+    const pending = [];
+    let stray = 0;
+    for (const [kind, handler] of Object.entries(CONTINUE_HANDLERS)) {
+      const n = count([handler]);
+      if (!n) continue;
+      const what = kind === "scan" ? "scan hop / watchdog" : `${kind} hop`;
+      pending.push(`${n} ${what}`);
+      if (!job || job.kind !== kind) stray += n;
+    }
+    const warmOneShots = count([WARM_CONTINUE_HANDLER]);
+    if (warmOneShots) pending.push(`${warmOneShots} warm`);
+    if (warmOneShots > 1) {
+      bad("Pending one-shots", `${pending.join(", ")} \u2014 more than one warm one-shot pending; each arming should clear the last`);
+    } else {
+      ok("Pending one-shots", (pending.join(", ") || "none") + (stray ? ` (${stray} with no matching job in flight \u2014 each clears itself when it fires)` : ""));
+    }
+    const queued = getProp(PROP_KEYS.supportGroupRefreshPending);
+    ok("Queued support-group refresh", queued ? `since ${queued} (runs at the next warm hop)` : "none");
+    const free = TRIGGER_CAP - handlers.length;
+    if (free >= (job ? 0 : JOB_TRIGGER_SLOTS)) ok("Triggers used", `${handlers.length} of ${TRIGGER_CAP}`);
+    else bad("Triggers used", `${handlers.length} of ${TRIGGER_CAP} \u2014 no room for a job's next hop; delete stray triggers in the editor's Triggers panel`);
+    if (job) {
+      ok("Job in flight", `${job.kind} ${job.job_id} \u2014 ${job.phase}`);
+      line(`        page ${job.page}, ${job.findings_so_far} finding(s) so far`);
+      if (isStaleJob(job)) {
+        bad("  heartbeat", "silent for over 30 minutes \u2014 run resetStuckJob() from the editor");
+      }
+    } else {
+      ok("Job in flight", "none");
+    }
     return lines.join("\n");
   }
   return __toCommonJS(index_exports);

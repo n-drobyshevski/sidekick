@@ -33,10 +33,16 @@ import { MIGRATION_KIND, MIGRATION_VERSION, type MigrationBundle } from "./impor
 import { LEDGER_COLUMNS, type LedgerRow } from "./reconcile";
 import type { Rec } from "./util";
 
-/** `scans` minus the Drive references. Matches migrate.BUNDLE_SCAN_COLUMNS. */
+/**
+ * `scans` minus the Drive references: migrate.BUNDLE_SCAN_COLUMNS, then the completeness record
+ * (gas_shared/domain/scanCompleteness.ts), which migrate.py predates. `importMerge.coerceScan`
+ * reads it back, so a deferred scan stays deferred across an export/import round trip; a
+ * reader that maps columns by name ignores the four it does not know.
+ */
 export const BUNDLE_SCAN_COLUMNS: (keyof ScanRow)[] = [
   "scan_id", "ts", "mode", "shape", "total",
   "new_count", "resolved_count", "reopened_count", "severities", "sealed",
+  "reported_total", "partial_pages", "duplicates", "disappearance",
 ];
 
 /** Every EpisodeRow field — wider than migrate.BUNDLE_EPISODE_COLUMNS, see the header. */

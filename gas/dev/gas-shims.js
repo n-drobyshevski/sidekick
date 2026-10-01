@@ -6,7 +6,8 @@
 //     plain-text parsing, and serverCache only round-trips its own blobs.
 //   - LockService always grants the lock (single-threaded page).
 //   - ScriptApp triggers are recorded; a trigger_continueScan one-shot actually
-//     fires via setTimeout so a (hypothetical) multi-hop scan still completes.
+//     fires via setTimeout so a (hypothetical) multi-hop scan still completes, and so
+//     does trigger_continueWarm, so a scan's post-scan warm still runs.
 
 (function () {
   "use strict";
@@ -395,6 +396,14 @@
             setTimeout(() => {
               try { window.Server.jobs.continueJob(); }
               catch (e) { console.error("continueJob failed:", e); }
+            }, 100);
+          }
+          // The post-scan warm runs on its own one-shot (api.WARM_CONTINUE_HANDLER) since it
+          // left the scan's lock; unfired, the dev harness would never warm after a scan.
+          if (handler === "trigger_continueWarm") {
+            setTimeout(() => {
+              try { window.Server.api.continueWarm(); }
+              catch (e) { console.error("continueWarm failed:", e); }
             }, 100);
           }
           return trigger;

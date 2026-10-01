@@ -13,7 +13,7 @@ import {
 } from "../ui.js";
 import { trendTableModel } from "./_charts.js";
 import {
-  kmSparkCaption, kpiSparkSeries, kpiView, movementView, sparkCaption,
+  deferralOf, kmSparkCaption, kpiSparkSeries, kpiView, movementView, sparkCaption,
 } from "./historyModel.js";
 
 // The rows-per-page the table OPENS on. It is no longer the only size available: the footer
@@ -56,6 +56,14 @@ function deltaCell(n, { good = false, sign = "" } = {}) {
   return el("span",
     { class: "num", style: `color:var(--${good ? "ok" : "bad"})` },
     `${sign}${v.toLocaleString()}`);
+}
+
+/** The −Resolved cell: the count, and a Deferred marker when the scan's absences were held. */
+function resolvedCell(s) {
+  const count = deltaCell(s.resolved_count, { good: true, sign: "−" });
+  const deferral = deferralOf(s.disappearance);
+  if (!deferral) return count;
+  return el("span", {}, count, " ", statusPill("warn", "Deferred", deferral.help));
 }
 
 export async function renderHistory(main, _params, ctx) {
@@ -499,8 +507,12 @@ export async function renderHistory(main, _params, ctx) {
         {
           key: "resolved",
           label: "−Resolved",
-          help: ["Findings that left the register between the previous scan and this one."],
-          cell: (s) => deltaCell(s.resolved_count, { good: true, sign: "−" }),
+          help: ["Findings that left the register between the previous scan and this one.",
+            "A scan marked Deferred looked incomplete, so nothing it missed was resolved."],
+          // The count, plus the one thing it does NOT include: a deferred scan resolved nothing
+          // by absence. Said beside the figure it qualifies rather than in a column a reader
+          // has to switch on.
+          cell: (s) => resolvedCell(s),
         },
         {
           key: "reopened",

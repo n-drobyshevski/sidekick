@@ -16,7 +16,7 @@ import { describe, expect, it } from "vitest";
 
 import { findEntry } from "../src/client/js/helpContent.js";
 import {
-  kmSparkCaption, kpiSparkSeries, kpiView, movementView, resolvedSharePct,
+  deferralOf, kmSparkCaption, kpiSparkSeries, kpiView, movementView, resolvedSharePct,
 } from "../src/client/js/pages/historyModel.js";
 
 /** The balanced wide-then-narrow window from test/program.test.ts, as the payload ships it. */
@@ -276,5 +276,26 @@ describe("resolvedSharePct refuses a zero base", () => {
     expect(resolvedSharePct({ tracked: 0, resolvedAllTime: 0 })).toBeNull();
     expect(naiveSharePct({ tracked: undefined, resolvedAllTime: 5 })).toBeNaN();
     expect(resolvedSharePct({ tracked: undefined, resolvedAllTime: 5 })).toBeNull();
+  });
+});
+
+describe("deferralOf — the Saved scans table's Deferred marker", () => {
+  it("is null for a complete scan, and for a legacy row with no verdict", () => {
+    for (const v of ["complete", "", null, undefined, 3]) expect(deferralOf(v)).toBeNull();
+  });
+
+  it("names why a deferred scan held its absences", () => {
+    expect(deferralOf("deferred:empty")).toEqual({
+      reason: "empty",
+      help: ["This scan was saved, but it returned nothing while the register still held open "
+        + "findings. Nothing it missed was resolved — the next complete scan resolves those "
+        + "findings."],
+    });
+    expect(deferralOf("deferred:short").help[0]).toContain("fewer findings than Wiz reported");
+    expect(deferralOf("deferred:duplicates").help[0]).toContain("more than once");
+  });
+
+  it("a reason this client was never taught still reads as deferred", () => {
+    expect(deferralOf("deferred:whatever").help[0]).toContain("it looked incomplete");
   });
 });

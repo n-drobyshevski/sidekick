@@ -284,18 +284,25 @@ describe("the trend slices — shared behaviour", () => {
 
 // --------------------------------------------------------------- scan history
 
-describe("scanRowsSlice — the ten columns the table draws", () => {
+describe("scanRowsSlice — the columns the table draws", () => {
   const ROW = {
     scan_id: "s1", ts: "2026-08-01T00:00:00Z", mode: "full", shape: "flat", total: 161,
     new_count: 4, resolved_count: 2, reopened_count: 0, severities: "CRITICAL,HIGH",
     sealed: false, raw_ref: "1AbCdEfGhIjKlMnOpQrStUvWxYz012345", obs_ref: "1ZyXwVuTsRqPoNmLkJ",
+    reported_total: 170, partial_pages: 0, duplicates: 0, disappearance: "deferred:short",
   };
 
-  it("keeps every column the page reads", () => {
+  it("keeps every column the page reads — the completeness verdict included", () => {
     expect(Object.keys(scanRowsSlice([ROW])[0]!).sort()).toEqual([
-      "mode", "new_count", "reopened_count", "resolved_count", "scan_id",
+      "disappearance", "mode", "new_count", "reopened_count", "resolved_count", "scan_id",
       "sealed", "severities", "shape", "total", "ts",
     ]);
+    expect(scanRowsSlice([ROW])[0]!["disappearance"]).toBe("deferred:short");
+  });
+
+  it("leaves the fetch diagnostics behind — they reach the error log, not the table", () => {
+    const json = JSON.stringify(scanRowsSlice([ROW]));
+    for (const k of ["reported_total", "partial_pages", "duplicates"]) expect(json).not.toContain(k);
   });
 
   // Drive file ids for the archived pages and the observation set: internal storage addresses
@@ -637,8 +644,10 @@ describe("scanHistoryData's namespace moves when kpis stops carrying medianMttr"
    *  above it, which names every prior namespace on purpose and must keep doing so. */
   const active = [...API.matchAll(/durablyCached\(\s*"(scanHistory\d*)"/g)].map((m) => m[1]);
 
-  it("names scanHistory4, exactly once, as the namespace it caches under", () => {
-    expect(active).toEqual(["scanHistory4"]);
+  it("names scanHistory5, exactly once, as the namespace it caches under", () => {
+    // scanHistory4 → scanHistory5: scan rows gained the completeness record (see the bump note).
+    expect(active).toEqual(["scanHistory5"]);
+    expect(API).toContain(String.raw`"scanHistory4" → "scanHistory5"`);
   });
 
   it("no longer caches under scanHistory3", () => {

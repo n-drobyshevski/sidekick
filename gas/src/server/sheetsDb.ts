@@ -24,6 +24,11 @@ export const TAB_HEADERS: Record<string, string[]> = {
   [TABS.scans]: [
     "scan_id", "ts", "mode", "shape", "total", "new_count", "resolved_count",
     "reopened_count", "raw_ref", "obs_ref", "severities", "sealed",
+    // THE COMPLETENESS RECORD (gas_shared/domain/scanCompleteness.ts), appended last so
+    // `ensureHeaders` adds them to an existing tab without moving a column. `disappearance` is
+    // the verdict a replay reads back — "complete", "deferred:<reason>", or blank on a row
+    // written before the gate, which replays under the old rules.
+    "reported_total", "partial_pages", "duplicates", "disappearance",
   ],
   [TABS.vulnLedger]: [
     "vuln_key", "cve", "severity", "asset_id", "asset_name", "asset_type", "cloud",
@@ -68,6 +73,10 @@ export const TAB_HEADERS: Record<string, string[]> = {
     "job_id", "kind", "phase", "scan_id", "cursor", "page", "findings_so_far",
     "page_size", "total_count", "params_json", "journal_ref", "error",
     "started_at", "updated_at",
+    // A scan's fetch-side account, carried across continuation hops to the persist that runs
+    // the completeness gate: whether the tenant reported a total at all (`total_count` reads 0
+    // for both "reported 0" and "not reported"), and how many pages came back PARTIAL.
+    "total_reported", "partial_pages",
   ],
 };
 
@@ -115,16 +124,23 @@ export function ensureTabs(ss: GoogleAppsScript.Spreadsheet.Spreadsheet): void {
 /**
  * Append any headers a newer schema added to an existing tab (order-safe: appended last, so
  * existing column positions never move). No-op when the header row is already complete.
+ *
+ * Returns row 1 as it now stands, POSITIONALLY (index i is column i + 1, trailing blanks
+ * dropped), so a caller that maps a row by header name — `updateWhere` — can heal and read the
+ * headers in one read rather than two.
  */
-export function ensureHeaders(sh: GoogleAppsScript.Spreadsheet.Sheet, headers: string[]): void {
+export function ensureHeaders(sh: GoogleAppsScript.Spreadsheet.Sheet, headers: string[]): string[] {
   const width = Math.max(sh.getLastColumn(), 1);
-  const existing = sh.getRange(1, 1, 1, width).getValues()[0]
-    .map(String)
-    .filter((h) => h !== "");
+  const raw = sh.getRange(1, 1, 1, width).getValues()[0].map(String);
+  const existing = raw.filter((h) => h !== "");
   const missing = headers.filter((h) => !existing.includes(h));
   if (missing.length) {
     sh.getRange(1, existing.length + 1, 1, missing.length).setValues([missing]);
   }
+  const row = raw.slice();
+  missing.forEach((h, i) => { row[existing.length + i] = h; });
+  while (row.length && row[row.length - 1] === "") row.pop();
+  return row;
 }
 
 /**
@@ -289,26 +305,64 @@ export function shrinkTab(tab: string, keepSpare = SHRINK_SPARE_ROWS): void {
   if (max > needed) sh.deleteRows(needed + 1, max - needed);
 }
 
-/** Update the first row where keyColumn === keyValue (returns false when absent). */
+/** How many trailing rows `updateWhere` reads before it falls back to the rest of the tab. */
+const UPDATE_TAIL_ROWS = 50;
+
+/**
+ * Update the row where keyColumn === keyValue (returns false when absent). THE KEY MUST BE
+ * UNIQUE on the tab: the search runs from the bottom, so with a duplicated key it patches the
+ * LAST match, not the first. Its callers all key on an id minted once per row —
+ * `jobsStore.updateJob` on `job_id`, `ledgerStore.setScanObsRef` on `scan_id` and
+ * `ledgerStore.rewriteCheckpoints` on `compaction_id`.
+ *
+ * `patch` is partial: a key the patch omits keeps whatever the row already held, which is
+ * what lets a job checkpoint only the fields a hop actually advanced.
+ *
+ * TAIL FIRST. `updateJob` writes once per fetched page, always to the job it appended moments
+ * ago, and the `jobs` tab gains a row per scan, backfill and purge and is only truncated by a
+ * full ledger reset — so a whole-tab read per write got more expensive for the life of the
+ * deployment while the row it wanted was nearly always the last one (`readTail`'s argument, on
+ * the write path). The last `UPDATE_TAIL_ROWS` rows are read first; only a key not among them
+ * costs the rest of the tab.
+ *
+ * Heals the header row first (`ensureHeaders` against TAB_HEADERS), like `ensureTab` on the
+ * other write paths. It used to read row 1 and skip any patch key whose column was missing, so
+ * a patch into a tab written before that column existed lost the field silently — and of its
+ * callers only `createJob` heals its tab beforehand.
+ */
 export function updateWhere(tab: string, keyColumn: string, keyValue: unknown, patch: Rec): boolean {
   const sh = sheet(tab);
+  if (sh.getLastRow() < 2) return false;
+  const declared = TAB_HEADERS[tab];
+  const headers = declared
+    ? ensureHeaders(sh, declared)
+    : sh.getRange(1, 1, 1, Math.max(sh.getLastColumn(), 1)).getValues()[0].map(String);
   const lastRow = sh.getLastRow();
-  const lastCol = sh.getLastColumn();
-  if (lastRow < 2) return false;
-  const values = sh.getRange(1, 1, lastRow, lastCol).getValues();
-  const headers = values[0].map(String);
+  const lastCol = headers.length;
   const keyIdx = headers.indexOf(keyColumn);
   if (keyIdx < 0) return false;
-  for (let i = 1; i < values.length; i++) {
-    if (fromCell(values[i][keyIdx]) === keyValue) {
-      const rowVals = values[i].slice();
-      for (const [k, v] of Object.entries(patch)) {
-        const idx = headers.indexOf(k);
-        if (idx >= 0) rowVals[idx] = toCell(v);
-      }
-      sh.getRange(i + 1, 1, 1, lastCol).setValues([rowVals]);
-      return true;
+
+  const write = (sheetRow: number, values: unknown[]): boolean => {
+    const rowVals = values.slice();
+    for (const [k, v] of Object.entries(patch)) {
+      const idx = headers.indexOf(k);
+      if (idx >= 0) rowVals[idx] = toCell(v);
     }
+    sh.getRange(sheetRow, 1, 1, lastCol).setValues([rowVals]);
+    return true;
+  };
+
+  const tailFirst = Math.max(2, lastRow - UPDATE_TAIL_ROWS + 1);
+  const tail = sh.getRange(tailFirst, 1, lastRow - tailFirst + 1, lastCol).getValues();
+  for (let i = tail.length - 1; i >= 0; i--) {
+    if (fromCell(tail[i][keyIdx]) === keyValue) return write(tailFirst + i, tail[i]);
+  }
+  if (tailFirst <= 2) return false; // the tail was the whole tab
+
+  // Rows 2..tailFirst-1 — everything between the header and the tail.
+  const head = sh.getRange(2, 1, tailFirst - 2, lastCol).getValues();
+  for (let i = head.length - 1; i >= 0; i--) {
+    if (fromCell(head[i][keyIdx]) === keyValue) return write(i + 2, head[i]);
   }
   return false;
 }

@@ -170,7 +170,22 @@ export function coerceScan(r: Rec): ScanRow {
     obs_ref: null,
     severities: str(r["severities"]),
     sealed: 1,
+    // The completeness record, when the bundle carries one (a GAS export since the gate;
+    // migrate.py's never does). An imported scan is never replayed, but the NEWEST imported
+    // one bounds the disappearance window the first replayed scan resolves against — a
+    // deferred import read back as complete would resolve less than the live register did.
+    // Blank stays null: that is the legacy marker, not a value to coerce.
+    reported_total: numOrNull(r["reported_total"]),
+    partial_pages: numOrNull(r["partial_pages"]),
+    duplicates: numOrNull(r["duplicates"]),
+    disappearance: str(r["disappearance"]),
   };
+}
+
+function numOrNull(v: unknown): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 }
 
 export function coerceLedger(r: Rec): LedgerRow {

@@ -119,9 +119,9 @@ export function isAllSeverities(raw) {
 
 /**
  * What a scan's completeness verdict means, in the words the table's marker carries. The
- * stored value is `"deferred:<reason>"` (domain/scanCompleteness.ts); a blank or "complete"
- * value is no deferral, and a reason this client was never taught still reads as deferred —
- * the generic sentence is true of every reason.
+ * stored value is `"deferred:<reason>"` (gas_shared/domain/scanCompleteness.ts); a blank or
+ * "complete" value is no deferral, and a reason this client was never taught still reads as
+ * deferred — the generic sentence is true of every reason.
  */
 const DEFER_WHY = {
   empty: "it returned nothing while the register still held open findings",

@@ -290,9 +290,9 @@ describe("a repository the scanner stopped returning is 'unobserved', never warm
 });
 
 describe("a deferred newest scan does not make the repositories it missed unobserved", () => {
-  // The newest sca scan came back short and was deferred (scanCompleteness.ts), so it proved
-  // nothing about what it missed. With the window back to the last COMPLETE scan, a repository
-  // last seen there is still observed; without it, it would read as gone.
+  // The newest sca scan came back short and was deferred (gas_shared/domain/scanCompleteness.ts),
+  // so it proved nothing about what it missed. With the window back to the last COMPLETE scan, a
+  // repository last seen there is still observed; without it, it would read as gone.
   const rows = [row({ repo_id: "repo-missed", last_scan_id: "scan-sca-8" })];
   it("is observed when its last scan is inside the window", () => {
     const out = profile(rows, {
