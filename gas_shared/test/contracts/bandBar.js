@@ -163,6 +163,94 @@ export function registerBandBarContract(ctx) {
       expect(m.fillPct).toBe(0);
     });
 
+    // THE TIP IS THE SEGMENT IN WORDS: its band, its count, and the share its width encodes.
+    it("gives each segment a tip naming its band, count and share of the row", () => {
+      const m = bandBarModel({
+        bands: [
+          { key: "a", label: "0-30 d", count: 3, rank: 1, extra: "12 open" },
+          { key: "b", label: "30-60 d", count: 1, rank: 2 },
+        ],
+        max: 4, unit: "repositories", unitOne: "repository", name: "Payments",
+      });
+      expect(m.segments[0].tip).toEqual(["0-30 d", "3 repositories · 75% of the 4 in Payments", "12 open"]);
+      expect(m.segments[1].tip).toEqual(["30-60 d", "1 repository · 25% of the 4 in Payments"]);
+    });
+
+    // A COUNT OF 1 TAKES THE SINGULAR, in the sentence and the tip alike — and only when the
+    // caller spelled it out, because an -s rule cannot (repository/repositories).
+    it("names a count of one with the singular noun it was given", () => {
+      const m = bandBarModel({
+        bands: [
+          { key: "a", label: "0-30 d", count: 1, rank: 1 },
+          { key: "b", label: "30-60 d", count: 2, rank: 2 },
+        ],
+        max: 3, unit: "repositories", unitOne: "repository", name: "Payments",
+      });
+      expect(m.aria).toBe("Payments: 1 repository at 0-30 d, 2 repositories at 30-60 d.");
+      expect(m.segments[0].tip[1]).toBe("1 repository · 33% of the 3 in Payments");
+      expect(m.segments[1].tip[1]).toBe("2 repositories · 67% of the 3 in Payments");
+      // No singular given: the plural stays, as before.
+      const bare = bandBarModel({ bands: bands([1]), unit: "assets" });
+      expect(bare.aria).toBe("1 assets at band 0.");
+    });
+
+    // THE WHOLE-BAR CARD IS THE ROW'S LEGEND: one clause per band, the same clauses the
+    // sentence is built from, under the row's name.
+    it("hands the bar's legend its row name and one phrase per band", () => {
+      const m = bandBarModel({
+        bands: [
+          { key: "a", label: "0-30 d", count: 1, rank: 1, extra: "3 open" },
+          { key: "b", label: "never", count: 2, rank: null },
+        ],
+        max: 3, unit: "repositories", unitOne: "repository", name: "Payments",
+      });
+      expect(m.name).toBe("Payments");
+      expect(m.segments.map((x) => x.phrase))
+        .toEqual(["1 repository at 0-30 d (3 open)", "2 repositories at never"]);
+      expect(m.aria).toBe("Payments: " + m.segments.map((x) => x.phrase).join(", ") + ".");
+    });
+
+    // THE GREY, IN WORDS: the unfilled track is the distance to the table's largest row.
+    it("says what the unfilled track measures, and only when there is one", () => {
+      const spec = { unit: "repositories", unitOne: "repository", peer: "product" };
+      const short = bandBarModel({ ...spec, bands: bands([2, 1]), max: 12 });
+      expect(short.scaleNote).toBe("Bar length is out of 12 repositories, the largest product here.");
+      // The largest row fills its track; a lone row has no scale. Neither has grey to explain.
+      expect(bandBarModel({ ...spec, bands: bands([8, 4]), max: 12 }).scaleNote).toBeNull();
+      expect(bandBarModel({ ...spec, bands: bands([2, 1]) }).scaleNote).toBeNull();
+      // No peer named: a neutral noun, never a missing one.
+      expect(bandBarModel({ bands: bands([1]), max: 3, unit: "assets" }).scaleNote)
+        .toBe("Bar length is out of 3 assets, the largest row here.");
+    });
+
+    // WHAT THE BAR NEVER DRAWS: the row's population that sits in no band.
+    it("counts the units in no band from the row's whole population", () => {
+      const spec = {
+        bands: bands([2, 1]), max: 12, unit: "repositories", unitOne: "repository",
+        outsideWhy: "out of sight",
+      };
+      expect(bandBarModel({ ...spec, of: 6 }).outsideNote)
+        .toBe("3 more repositories are in no band (out of sight).");
+      expect(bandBarModel({ ...spec, of: 4 }).outsideNote)
+        .toBe("1 more repository is in no band (out of sight).");
+      // Everything is in a band, or the population is smaller than the bands (stale figures):
+      // nothing outside to name.
+      expect(bandBarModel({ ...spec, of: 3 }).outsideNote).toBeNull();
+      expect(bandBarModel({ ...spec, of: 2 }).outsideNote).toBeNull();
+      // REFUSED BY TYPE: an unreported population is not "zero outside", and not a guess.
+      for (const bad of [null, undefined, "6", NaN, Infinity, [], false]) {
+        expect(bandBarModel({ ...spec, of: bad }).outsideNote).toBeNull();
+      }
+      // No reason given: the count alone.
+      expect(bandBarModel({ ...spec, outsideWhy: undefined, of: 5 }).outsideNote)
+        .toBe("2 more repositories are in no band.");
+    });
+
+    it("writes a sliver as <1%, never as a 0% that contradicts the drawn segment", () => {
+      const m = bandBarModel({ bands: bands([999, 1]), max: 1000 });
+      expect(m.segments[1].tip[1]).toBe("1 · <1% of the 1000");
+    });
+
     it("survives a spec that is not a spec", () => {
       for (const junk of [null, undefined, {}, { bands: null }, { bands: "nope" }]) {
         expect(bandBarModel(junk).empty).toBe(true);
@@ -178,6 +266,27 @@ export function registerBandBarContract(ctx) {
       expect(BAND_SRC).not.toContain("onclick");
       expect(BAND_SRC).not.toContain("addEventListener");
       expect(BAND_SRC).not.toContain("tabindex");
+    });
+
+    // THE TIP ADDS NO STOP. `tipAnchor` only marks the node for the delegated card; the
+    // "builds no button" assertion above is what keeps that true.
+    it("anchors a pointer tip on every segment and on the bar", () => {
+      expect(BAND_SRC).toContain("tipAnchor(seg");
+      expect(BAND_SRC).toMatch(/return tipAnchor\(\s*el\("span", \{ class: cls, role: "img"/);
+    });
+
+    // THE CARD'S MARK IS THE BAR'S RAMP, and decorative: the band's word sits beside it.
+    it("marks each band in the tip with a data-rank swatch hidden from assistive technology", () => {
+      expect(BAND_SRC).toContain("bandbar-tip__mark");
+      expect(BAND_SRC).toMatch(/"bandbar-tip__mark",\s*"data-rank"/);
+      expect(BAND_SRC).toMatch(/"aria-hidden": "true"/);
+    });
+
+    // THE TRACK'S CARD CARRIES BOTH NOTES after the legend, and only the track's: a segment's
+    // card is about its band.
+    it("puts the scale and no-band notes on the bar's own card", () => {
+      expect(BAND_SRC).toMatch(/\[model\.scaleNote, model\.outsideNote\]/);
+      expect(BAND_SRC).toContain("bandbar-tip__note");
     });
 
     it("is one role=img carrying the whole sentence", () => {

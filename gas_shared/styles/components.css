@@ -2042,9 +2042,29 @@ h2.section-collapse__title { margin: 0; }
    somewhere without that override would animate for a reader who asked it not to. */
 .bandbar__seg[data-on="false"] { opacity: 0.22; }
 .bandbar__seg { transition: opacity var(--dur-quick) var(--ease-out); }
+/* The segment under the pointer is the one the tip is about, so it is the one marked: an inset
+   ring rather than a colour change, so the band keeps its tint and the dim keeps its meaning. */
+.bandbar__seg[data-tip]:hover { box-shadow: inset 0 0 0 2px var(--ink); }
+/* The tip card's band mark: the bar's own ramp at the key row's swatch size, so the bar, the
+   key and the card are one vocabulary. Decorative — the band's word always sits beside it. */
+.bandbar-tip__band { display: flex; align-items: center; gap: var(--space-2); }
+.bandbar-tip__mark { width: 10px; height: 10px; border-radius: var(--radius-xs); flex: 0 0 auto; }
+.bandbar-tip__mark[data-rank="1"] { background: var(--rank-1-tint); }
+.bandbar-tip__mark[data-rank="2"] { background: var(--rank-2-tint); }
+.bandbar-tip__mark[data-rank="3"] { background: var(--rank-3-tint); }
+.bandbar-tip__mark[data-rank="4"] { background: var(--rank-4-tint); }
+.bandbar-tip__mark[data-rank="none"] { background-color: var(--surface-2); background-image: var(--hatch); }
+/* What the grey track measures, and what the bar never draws: commentary on the picture, so
+   quieter than the legend above it and set off from it by one hairline. */
+.bandbar-tip__note { display: block; color: var(--text-3); }
+.bandbar-tip__note--first {
+  margin-top: var(--space-half); padding-top: var(--space-1); border-top: 1px solid var(--hairline);
+}
 @media (forced-colors: active) {
   .bandbar { background: transparent; border: 1px solid CanvasText; }
   .bandbar__seg[data-on="false"] { opacity: 1; }
+  .bandbar__seg[data-tip]:hover { box-shadow: none; outline: 2px solid Highlight; outline-offset: -2px; }
+  .bandbar-tip__mark { border: 1px solid CanvasText; }
 }
 
 /* -------------------------------------- the band key row, and the row a reader picked

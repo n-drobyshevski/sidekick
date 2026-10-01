@@ -8,6 +8,22 @@
 // five-figures-per-row become the cell's `aria-label` and its tip — one level down, which is
 // DESIGN.md's ladder, rather than gone.
 //
+// THE TIP IS POINTER-ONLY, ON PURPOSE. Each segment anchors its own band's figures, and the
+// bar anchors its whole sentence so the unfilled track still answers. `tipAnchor` adds no tab
+// stop and no role, and the card is aria-hidden: a keyboard or screen-reader user already has
+// every figure in the `aria-label`, so the tip hands the pointer the same words and says
+// nothing twice.
+//
+// THE TIP CARRIES THE SEGMENT'S OWN MARK. A swatch on the same `data-rank` ramp opens the band
+// line, so the card names its band by colour as well as by word — and the whole-bar card is
+// the row's legend, one marked line per band. The mark is never the only carrier: the word is
+// always beside it.
+//
+// THE GREY IS SAID IN WORDS TOO. The unfilled track is not a band: it is the distance to the
+// table's largest row, which is what makes the column comparable. The track's card says so
+// (`scaleNote`), and — because a band total is not the row's whole population — it also
+// names what the bar never draws: the units that sit in no band at all (`outsideNote`).
+//
 // THE SCALE IS A PROPERTY OF THE TABLE, NEVER OF A ROW, and this is the defect the component
 // exists to refuse. A bar normalised to its own row's total draws 280 subjects and 30 subjects
 // at the same length, so a reader comparing two rows compares two different units — the exact
@@ -35,6 +51,7 @@
 // are all 0 and finite, so a cast-first version silently plots missing readings as real zeros.
 
 import { el } from "./dom.js";
+import { tipAnchor } from "./tip.js";
 
 /**
  * The bands of one row, reshaped into what the bar draws.
@@ -46,14 +63,27 @@ import { el } from "./dom.js";
  *   `extra` is an optional second figure per band, carried into the sentence only.
  * @param {number} spec.max  the largest row total in the TABLE. 0 or absent means every row
  *   fills its track, which is the single-row case and not a scale.
- * @param {string} spec.unit  what one count counts ("assets"), for the sentence.
+ * @param {string} spec.unit  what the counts count, plural ("assets"), for the sentence.
+ * @param {string} [spec.unitOne]  the same noun for a count of exactly 1 ("asset"). Spelled
+ *   out by the caller rather than derived: an -s rule writes "repositorys". Without it a 1
+ *   keeps the plural, which is the old reading rather than a wrong one.
+ * @param {number} [spec.of]  the row's WHOLE population (the Repos / Assets column). When it
+ *   exceeds the drawn total, the difference is the units in no band, which `outsideNote` names.
+ * @param {string} [spec.outsideWhy]  why a unit sits in no band, for `outsideNote`.
+ * @param {string} [spec.peer]  what one row of the table is ("product"), for `scaleNote`.
  * @param {string} spec.name  the row's own label, opening the sentence.
  * @returns {{total: number, fillPct: number, segments: Array, aria: string, empty: boolean}}
+ *   Each segment carries `tip` (the lines its hover card shows) and `phrase` (its clause of the
+ *   sentence); `name` is the row's label. `scaleNote` says what the unfilled track measures and
+ *   `outsideNote` counts the units in no band; each is null when it has nothing to say.
  */
 export function bandBarModel(spec) {
   const p = spec || {};
   const bands = Array.isArray(p.bands) ? p.bands : [];
   const unit = typeof p.unit === "string" && p.unit ? p.unit : "";
+  const unitOne = typeof p.unitOne === "string" && p.unitOne ? p.unitOne : unit;
+  const noun = (n) => (unit ? " " + (n === 1 ? unitOne : unit) : "");
+  const counted = (n) => String(n) + noun(n);
   const name = typeof p.name === "string" ? p.name : "";
 
   const kept = [];
@@ -80,24 +110,75 @@ export function bandBarModel(spec) {
   // comparison — it fills its track rather than being drawn against a scale it has no peer on.
   const fillPct = total <= 0 ? 0 : max > 0 ? Math.min(100, (total / max) * 100) : 100;
 
-  const segments = kept.map((b) => ({
-    key: b.key,
-    label: b.label,
-    count: b.count,
-    rank: b.rank,
-    extra: b.extra,
+  const segments = kept.map((b) => {
     // Within the row's own fill, so the segments always sum to it.
-    pct: total > 0 ? (b.count / total) * 100 : 0,
-  }));
-
-  const clauses = segments.map((s) => {
-    const head = String(s.count) + (unit ? " " + unit : "") + " at " + s.label;
-    return s.extra ? head + " (" + s.extra + ")" : head;
+    const pct = total > 0 ? (b.count / total) * 100 : 0;
+    return {
+      key: b.key,
+      label: b.label,
+      count: b.count,
+      rank: b.rank,
+      extra: b.extra,
+      pct,
+      tip: segmentTip(b, pct, total, counted, name),
+      phrase: counted(b.count) + " at " + b.label + (b.extra ? " (" + b.extra + ")" : ""),
+    };
   });
+
+  const clauses = segments.map((s) => s.phrase);
   const body = clauses.length ? clauses.join(", ") + "." : "nothing to show.";
   const aria = name ? name + ": " + body : body;
 
-  return { total, fillPct, segments, aria, empty: segments.length === 0 };
+  // THE GREY, IN WORDS. Only when there is grey: a row that fills its track is the largest
+  // row, and a lone row has no scale to state.
+  const peer = typeof p.peer === "string" && p.peer ? p.peer : "row";
+  const scaleNote = max > 0 && total > 0 && total < max
+    ? "Bar length is out of " + counted(max) + ", the largest " + peer + " here."
+    : null;
+
+  // WHAT THE BAR NEVER DRAWS. Refused by type like every count above: a population nobody
+  // reported is not a reason to claim that zero units sit outside the bands.
+  const of = typeof p.of === "number" && Number.isFinite(p.of) ? p.of : null;
+  const outside = of !== null && of > total ? of - total : 0;
+  const why = typeof p.outsideWhy === "string" && p.outsideWhy ? p.outsideWhy : "";
+  const outsideNote = outside > 0
+    ? String(outside) + " more" + noun(outside) + " " + (outside === 1 ? "is" : "are")
+      + " in no band"
+      + (why ? " (" + why + ")" : "") + "."
+    : null;
+
+  return {
+    total, fillPct, segments, aria, name, scaleNote, outsideNote, empty: segments.length === 0,
+  };
+}
+
+/**
+ * One segment's hover card: the band, its count with its share OF THE ROW (the reading the
+ * segment's width encodes), and the band's second figure when it has one.
+ *
+ * A share that rounds to 0 is written "<1%": the segment exists, so "0%" would contradict it.
+ */
+function segmentTip(b, pct, total, counted, name) {
+  const rounded = Math.round(pct);
+  const share = rounded === 0 && pct > 0 ? "<1%" : String(rounded) + "%";
+  const whole = "the " + String(total) + (name ? " in " + name : "");
+  const lines = [
+    b.label,
+    counted(b.count) + " · " + share + " of " + whole,
+  ];
+  if (b.extra) lines.push(b.extra);
+  return lines;
+}
+
+/** A band's swatch for the tip card, on the bar's own ramp. Decorative: the word is beside it. */
+function tipMarked(rank, text) {
+  return el("span", { class: "bandbar-tip__band" },
+    el("span", {
+      class: "bandbar-tip__mark",
+      "data-rank": rank === null ? "none" : String(rank),
+      "aria-hidden": "true",
+    }),
+    text);
 }
 
 /**
@@ -124,12 +205,31 @@ export function bandBar(model, opts) {
     style: "width:" + model.fillPct.toFixed(2) + "%",
   });
   for (const s of model.segments) {
-    fill.append(el("span", {
+    const seg = el("span", {
       class: "bandbar__seg",
       "data-rank": s.rank === null ? "none" : String(s.rank),
       "data-on": selected === null ? "true" : String(s.key === selected),
       style: "width:" + s.pct.toFixed(2) + "%",
-    }));
+    });
+    if (Array.isArray(s.tip) && s.tip.length) {
+      // Built on each reveal: the card empties itself between anchors.
+      tipAnchor(seg, () => [tipMarked(s.rank, s.tip[0]), ...s.tip.slice(1)]);
+    }
+    fill.append(seg);
   }
-  return el("span", { class: cls, role: "img", "aria-label": model.aria }, fill);
+  // The innermost anchor wins (`closest("[data-tip]")`), so this answers only over the track
+  // a segment does not cover — with the row's legend, one marked line per band.
+  return tipAnchor(
+    el("span", { class: cls, role: "img", "aria-label": model.aria }, fill),
+    () => ({
+      aka: model.name || null,
+      lines: [
+        ...model.segments.map((s) => tipMarked(s.rank, s.phrase)),
+        ...[model.scaleNote, model.outsideNote].filter(Boolean)
+          .map((t, i) => el("span", {
+            class: "bandbar-tip__note" + (i === 0 ? " bandbar-tip__note--first" : ""),
+          }, t)),
+      ],
+    }),
+  );
 }

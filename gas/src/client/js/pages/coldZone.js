@@ -403,7 +403,10 @@ export async function renderColdZone(main, _params, ctx) {
           cell: (r) => {
             if (r.isEstate) return "";
             const model = bandBarModel({
-              bands: r.bands, max: scale, unit: "assets", name: r.label,
+              bands: r.bands, max: scale, unit: "assets", unitOne: "asset", name: r.label,
+              // The Assets column beside it: the difference is the assets in no band.
+              of: r.assets, peer: "support group",
+              outsideWhy: "out of the scanner's sight, or with nothing open",
             });
             const wrap = el("span", { class: "bandcell" });
             // Kept on the node so a selection change repaints the bar without rebuilding the
