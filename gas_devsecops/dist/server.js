@@ -5981,7 +5981,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "10a12b78bff9" : "dev";
+  var BUILD_ID = true ? "1de831a8cb92" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");

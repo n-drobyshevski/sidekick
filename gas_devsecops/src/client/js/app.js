@@ -26,8 +26,9 @@ import { call } from "../../../../gas_shared/api.js";
 import { bootstrapCached, navigate } from "../../../../gas_shared/store.js";
 import { createAppShell } from "../../../../gas_shared/shell/appShell.js";
 import {
-  createJobPoller, openSyncDetails, renderSyncCard, resumePlan, shouldContinuePolling,
+  openSyncDetails, renderSyncCard, resumePlan, shouldContinuePolling,
 } from "./syncProgress.js";
+import { createJobPoller } from "../../../../gas_shared/ui/jobPoller.js";
 import {
   clear, confirmDialog, el, statusPill, syncCaption, tipAnchor, toast,
 } from "./ui.js";
@@ -124,9 +125,10 @@ let syncCardHost = null;
 let syncButtonsRow = null;
 
 /**
- * The job poll — `syncProgress.createJobPoller`: a plain `call()` per tick (never the session
- * cache — a cached FETCHING arriving after the fresh DONE is how the card used to reappear and
- * the finish be announced twice), one request in flight, 3 s in view and 15 s hidden.
+ * The job poll — `createJobPoller` (gas_shared/ui/jobPoller.js; gas's scan card drives the same
+ * one): a plain `call()` per tick (never the session cache — a cached FETCHING arriving after the
+ * fresh DONE is how the card used to reappear and the finish be announced twice), one request in
+ * flight, 3 s in view and 15 s hidden.
  */
 const jobPoller = createJobPoller({
   fetchJob: (jobId) => call("api_getJobStatus", { jobId }),

@@ -25,13 +25,15 @@
 // graph until the manifest gave the copy one source.
 
 import { readFileSync } from "node:fs";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as errorLog from "../src/server/errorLog";
 import { registerErrorLogContract } from "../../gas_shared/test/contracts/errorLog.js";
 import { DAILY_SYNC_HANDLER, reconcileDailySyncTrigger, TRIGGER_TZ } from "../src/server/setup";
 import { PROP_KEYS } from "../src/server/props";
 import { registerDailyTriggerContract } from "../../gas_shared/test/contracts/dailyTrigger.js";
+import * as jobPoller from "../../gas_shared/ui/jobPoller.js";
+import { registerJobPollerContract } from "../../gas_shared/test/contracts/jobPoller.js";
 
 import { SEVERITY_COLORS, SEVERITY_TEXT, SLA_TARGETS } from "../src/domain/config";
 import { LANE_ICONS, ROUTE_ICONS } from "../src/client/js/routeIcons.js";
@@ -381,4 +383,11 @@ registerDailyTriggerContract({
   ...base, beforeEach, afterEach,
   handler: DAILY_SYNC_HANDLER, tz: TRIGGER_TZ, hour: 14, propKey: PROP_KEYS.dailySyncSchedule,
   reconcile: () => reconcileDailySyncTrigger(14),
+});
+
+// The job poll: the shared loop under fake timers, and this register's app.js building its sync
+// card's poll from it with a plain call(). What each phase means for the card stays in app.js.
+registerJobPollerContract({
+  ...base, beforeEach, afterEach, vi, poller: jobPoller,
+  appSrc: readFileSync(new URL("../src/client/js/app.js", import.meta.url), "utf8"),
 });
