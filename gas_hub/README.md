@@ -101,7 +101,13 @@ scopes.
    the sidekick URLs; only the owner may edit the admins list — an admin who could promote
    admins is not a second tier.
 6. **Deploy → New deployment → Web app**, *Execute as: Me*, *Who has access: Anyone within
-   \<your domain\>*. Accept the two-scope consent prompt.
+   \<your domain\>* (or `npm run deploy:new`). Accept the two-scope consent prompt.
+
+   **Redeploy in place** from then on: `DEPLOYMENT_ID=<id> npm run deploy` (the id is on Deploy
+   → Manage deployments, or `npx clasp deployments`) pushes, cuts a version and repoints that
+   deployment; it refuses to run without the id. The same goes for each sibling — the URLs
+   pasted in step 4 name a deployment, so a sibling redeployed as a NEW deployment has a new
+   `/exec` URL and its tile keeps opening the old version until the URL is re-pasted.
 7. Open the `/exec` URL and click each tile.
 
 ### The one thing only a deployment can prove

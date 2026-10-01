@@ -335,8 +335,9 @@ about at least two of them, and the clock is the product.
    2. In the editor, run **`wizDiagnostic()`** and **accept the consent prompt**. Read the
       **Execution log** — that is where both diagnostics print, and it names which step
       failed.
-   3. **Deploy → Manage deployments → Edit → New version.** `clasp push` changes the code the
-      editor runs; the `/exec` URL keeps serving the version it was pinned to.
+   3. **Deploy → Manage deployments → Edit → New version** (or `npm run deploy`, step 8).
+      `clasp push` changes the code the editor runs; the `/exec` URL keeps serving the version
+      it was pinned to.
    4. Check the daily sync trigger still fires. A scope change is the one thing that can
       suspend an installable trigger with nothing in the UI to say so.
 6. Optionally, set the two **repository tag keys** in Project Settings → Script Properties.
@@ -359,6 +360,12 @@ about at least two of them, and the clock is the product.
    rather than stopping at the first failure. `wizDiagnostic()` is its network-touching
    sibling: it does the real token exchange and one query, and names which of the two failed
    — they look identical from the app and have different remedies.
+8. Deploy: **Deploy → New deployment → Web app** (execute as you, access: domain), or
+   `npm run deploy:new`, once. Every later deploy goes **in place** —
+   `DEPLOYMENT_ID=<id> npm run deploy` (the id is on Deploy → Manage deployments, or
+   `npx clasp deployments`) pushes, cuts a version and repoints that deployment, so the `/exec`
+   URL people and the hub hold keeps working. It refuses to run without the id rather than
+   minting a new URL.
 
 Access fails **closed**: an unset `ALLOWED_USERS` means owner-only, and the owner is allowed
 by identity rather than by membership.
