@@ -48,6 +48,8 @@ const warmReports: WarmReport[] = [];
 const compactCalls: Array<{ retentionDays: number | null; dryRun: boolean }> = [];
 /** How many times a script lock was actually acquired. The write-RPC spec reads this. */
 let lockAcquisitions = 0;
+/** The wait the most recent `tryLock` was asked for. The view-switch spec reads this. */
+let lastLockWaitMs: number | undefined;
 let externalLockHold = false;
 /** Whether the caller is the owner or an admin. Only clearRecentErrors' gate reads it. */
 const accessState = { canEdit: true };
@@ -391,7 +393,8 @@ vi.stubGlobal("LockService", {
   getScriptLock: () => {
     let mine = false;
     return {
-      tryLock: () => {
+      tryLock: (ms?: number) => {
+        lastLockWaitMs = ms;
         if (externalLockHold) return false;
         externalLockHold = true;
         mine = true;
@@ -1487,23 +1490,67 @@ describe("putSettings moves the daily sync trigger when the hour changes", () =>
 });
 
 describe("setProjectView", () => {
-  it("sets the scope and bumps the data version", async () => {
+  // A VIEW SWITCH IS NOT A DATA CHANGE. It used to bump DATA_VERSION like any settings save,
+  // which cold-started every L1 and L2 entry — the inline boot included — for every user each
+  // time anyone moved the header picker. Every view-dependent payload now carries the view in
+  // its key, so the switch moves SETTINGS_GEN (the settings cache's own stamp) and nothing else.
+  it("sets the scope without bumping the data version, and moves the settings generation", async () => {
     const { api } = await load();
     const before = cacheState.version;
+    const genBefore = props["SETTINGS_GEN"];
     const res = api.setProjectView({ projectView: "value-chain" }) as unknown as Rec;
     expect(res["ok"], String(res["error"])).toBe(true);
     expect((res["data"] as Rec)["projectView"]).toBe("value-chain");
-    expect(cacheState.version).toBeGreaterThan(before);
+    expect(cacheState.version).toBe(before);
+    expect(props["SETTINGS_GEN"]).toBeDefined();
+    expect(props["SETTINGS_GEN"]).not.toBe(genBefore);
   });
 
-  it("clears the scope back to \"\", and that also bumps the data version", async () => {
+  it("clears the scope back to \"\", also without a data-version bump", async () => {
     const { api } = await load();
     api.setProjectView({ projectView: "value-chain" });
     const before = cacheState.version;
+    const genBefore = props["SETTINGS_GEN"];
     const res = api.setProjectView({ projectView: "" }) as unknown as Rec;
     expect(res["ok"], String(res["error"])).toBe(true);
     expect((res["data"] as Rec)["projectView"]).toBe("");
+    expect(cacheState.version).toBe(before);
+    expect(props["SETTINGS_GEN"]).not.toBe(genBefore);
+  });
+
+  it("setDomainView is a view switch too", async () => {
+    const { api } = await load();
+    const before = cacheState.version;
+    const res = api.setDomainView({ domainView: "Payments" }) as unknown as Rec;
+    expect(res["ok"], String(res["error"])).toBe(true);
+    expect((res["data"] as Rec)["domainView"]).toBe("Payments");
+    expect(cacheState.version).toBe(before);
+  });
+
+  it("an ordinary settings save still bumps the data version", async () => {
+    const { api } = await load();
+    const before = cacheState.version;
+    const genBefore = props["SETTINGS_GEN"];
+    const res = api.putSettings({ settings: { retentionDays: 91 } }) as unknown as Rec;
+    expect(res["ok"], String(res["error"])).toBe(true);
     expect(cacheState.version).toBeGreaterThan(before);
+    expect(props["SETTINGS_GEN"]).not.toBe(genBefore);
+  });
+
+  it("a viewOnly save that changes anything else is treated as a full save", async () => {
+    const { api } = await load();
+    const settings = await import("../src/server/settingsStore");
+    expect(api.setProjectView({ projectView: "leaf-a" }).ok).toBe(true);
+    const before = cacheState.version;
+    // Same view, so a claim of `viewOnly` alone would skip the bump — but the SLA window moved,
+    // and every cached SLA figure keyed to the old one must go.
+    const current = settings.loadSettings();
+    settings.saveSettings({ ...current, retentionDays: current.retentionDays + 1 }, { viewOnly: true });
+    expect(cacheState.version).toBeGreaterThan(before);
+    // And the honest case beside it, through the same door: only the view moves, no bump.
+    const mid = cacheState.version;
+    settings.saveSettings({ ...settings.loadSettings(), projectView: "leaf-b" }, { viewOnly: true });
+    expect(cacheState.version).toBe(mid);
   });
 
   it("leaves every other Settings field untouched", async () => {
@@ -1515,12 +1562,18 @@ describe("setProjectView", () => {
     expect(data["retentionDays"]).toBe(90);
   });
 
-  it("takes the script lock, same as every other mutating RPC", async () => {
+  it("takes the script lock, same as every other mutating RPC — with a shorter wait", async () => {
     const { api } = await load();
     const before = lockAcquisitions;
     const res = api.setProjectView({ projectView: "value-chain" }) as unknown as Rec;
     expect(res["ok"]).toBe(true);
     expect(lockAcquisitions).toBeGreaterThan(before);
+    expect(lastLockWaitMs).toBe(10_000);
+    expect(api.setDomainView({ domainView: "Payments" }).ok).toBe(true);
+    expect(lastLockWaitMs).toBe(10_000);
+    // An ordinary write keeps the full wait.
+    expect(api.putSettings({ settings: { retentionDays: 92 } }).ok).toBe(true);
+    expect(lastLockWaitMs).toBe(30_000);
   });
 });
 
@@ -1605,7 +1658,7 @@ describe("timing lines", () => {
 // The first production log measured doGet spending 6.4 s (warm) to 7.1 s (cold) computing the
 // bootstrap inline on every page load. The core is cached now, and doGet only ever PEEKS at it.
 describe("bootstrapIfWarm", () => {
-  const coreKeys = () => [...cacheState.store.keys()].filter((k) => k.startsWith("dsBootCore2|"));
+  const coreKeys = () => [...cacheState.store.keys()].filter((k) => k.startsWith("dsBootCore3|"));
 
   it("answers {ok:false} on a cold core and computes nothing", async () => {
     const { api } = await syncedRegister();

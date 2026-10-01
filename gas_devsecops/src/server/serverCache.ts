@@ -35,8 +35,9 @@ const WIZ_VERSION_PROP = "WIZ_DATA_VERSION";
  * alters many payloads at once and cannot sensibly be expressed as a list of namespace bumps.
  *
  * A stale payload that slips past both is bounded anyway: DATA_VERSION moves on every sync and
- * settings save, no L1 entry outlives CacheService's six hours, and no L2 file is served past
- * readModelStore's `MAX_AGE_MS`.
+ * every settings save but a header view switch (which every view-dependent key carries instead —
+ * see `settingsStore.saveSettings`), no L1 entry outlives CacheService's six hours, and no L2
+ * file is served past readModelStore's `MAX_AGE_MS`.
  */
 // "1" → "2": the CURRENT-DOMAIN ASSIGNMENT (server/currentDomains.ts). Every read model that puts
 // a finding in a domain now counts it under its support group's ONE pinned domain (or an admin

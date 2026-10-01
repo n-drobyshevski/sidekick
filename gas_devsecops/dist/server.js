@@ -3703,6 +3703,7 @@ var Server = (() => {
     for (const row of rows) {
       const projects = parseProjects(row.projects_json);
       const groups = projects.filter((p) => isSupportGroup(p.name)).map((p) => p.name);
+      const counted = /* @__PURE__ */ new Set();
       for (const p of projects) {
         if (groups.length && isProduct(p.name)) {
           let parents = parentsOf.get(p.slug);
@@ -3722,9 +3723,13 @@ var Server = (() => {
             supportGroup: null,
             supportGroupCount: 0
           });
+          counted.add(p.slug);
           continue;
         }
-        seen.findings += 1;
+        if (!counted.has(p.slug)) {
+          seen.findings += 1;
+          counted.add(p.slug);
+        }
         if (seen.isFolder === void 0 && p.isFolder !== void 0) seen.isFolder = p.isFolder;
       }
     }
@@ -5848,7 +5853,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "3b4481574ca4" : "dev";
+  var BUILD_ID = true ? "12ac6e43cd3a" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
@@ -5882,12 +5887,22 @@ var Server = (() => {
   var settingsMemo;
   var SETTINGS_CACHE_TTL_SEC = 21600;
   var SETTINGS_CACHE_MAX_CHARS = 9e4;
-  function settingsCacheKey() {
-    return "dsSettings1:" + dataVersion();
+  var SETTINGS_GEN_PROP = "SETTINGS_GEN";
+  function settingsGen() {
+    var _a;
+    return (_a = getProp(SETTINGS_GEN_PROP)) != null ? _a : "0";
   }
-  function readSettingsCache() {
+  function bumpSettingsGen() {
+    const now = String(Date.now());
+    const [prevMs, prevN] = settingsGen().split(".");
+    setProp(SETTINGS_GEN_PROP, prevMs === now ? `${now}.${(Number(prevN) || 0) + 1}` : `${now}.0`);
+  }
+  function settingsCacheKey() {
+    return "dsSettings2:" + dataVersion() + ":" + settingsGen();
+  }
+  function readSettingsCache(key) {
     try {
-      const raw = CacheService.getScriptCache().get(settingsCacheKey());
+      const raw = CacheService.getScriptCache().get(key);
       const parsed = raw ? JSON.parse(raw) : void 0;
       return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : void 0;
     } catch (e) {
@@ -5895,11 +5910,11 @@ var Server = (() => {
       return void 0;
     }
   }
-  function writeSettingsCache(raw) {
+  function writeSettingsCache(key, raw) {
     try {
       const json = JSON.stringify(raw);
       if (json.length > SETTINGS_CACHE_MAX_CHARS) return;
-      CacheService.getScriptCache().put(settingsCacheKey(), json, SETTINGS_CACHE_TTL_SEC);
+      CacheService.getScriptCache().put(key, json, SETTINGS_CACHE_TTL_SEC);
     } catch (e) {
       console.warn(`Settings cache write failed: ${e}`);
     }
@@ -5907,35 +5922,52 @@ var Server = (() => {
   function loadSettings() {
     var _a, _b;
     if (settingsMemo) return settingsMemo;
-    const cachedRaw = readSettingsCache();
+    const key = settingsCacheKey();
+    const cachedRaw = readSettingsCache(key);
     if (cachedRaw) {
       settingsMemo = cleanSettings(cachedRaw);
       return settingsMemo;
     }
     const raw = {};
     for (const row of readAll(TABS.settings)) {
-      const key = String((_a = row.key) != null ? _a : "");
-      if (!key) continue;
+      const key2 = String((_a = row.key) != null ? _a : "");
+      if (!key2) continue;
       try {
-        raw[key] = JSON.parse(String((_b = row.value_json) != null ? _b : "null"));
+        raw[key2] = JSON.parse(String((_b = row.value_json) != null ? _b : "null"));
       } catch {
-        raw[key] = null;
+        raw[key2] = null;
       }
     }
     settingsMemo = cleanSettings(raw);
-    writeSettingsCache(raw);
+    writeSettingsCache(key, raw);
     return settingsMemo;
   }
-  function saveSettings(next) {
+  var VIEW_KEYS = /* @__PURE__ */ new Set(["projectView", "domainView"]);
+  function canonical(v) {
+    var _a;
+    if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+    if (v && typeof v === "object") {
+      const r = v;
+      return `{${Object.keys(r).sort().map((k) => `${JSON.stringify(k)}:${canonical(r[k])}`).join(",")}}`;
+    }
+    return (_a = JSON.stringify(v)) != null ? _a : "null";
+  }
+  function sameOutsideView(a, b) {
+    const strip = (s2) => Object.fromEntries(Object.entries(s2).filter(([k]) => !VIEW_KEYS.has(k)));
+    return canonical(strip(a)) === canonical(strip(b));
+  }
+  function saveSettings(next, opts = {}) {
     const cleaned = cleanSettings(next);
+    const viewOnly = opts.viewOnly === true && sameOutsideView(loadSettings(), cleaned);
     const rows = Object.entries(cleaned).map(([key, value]) => ({
       key,
       value_json: JSON.stringify(value)
     }));
     overwrite(TABS.settings, rows);
     settingsMemo = cleaned;
-    bumpDataVersion();
-    writeSettingsCache(JSON.parse(JSON.stringify(cleaned)));
+    bumpSettingsGen();
+    if (!viewOnly) bumpDataVersion();
+    writeSettingsCache(settingsCacheKey(), JSON.parse(JSON.stringify(cleaned)));
     return cleaned;
   }
   function getSupportGroupDomains2() {
@@ -7255,7 +7287,7 @@ var Server = (() => {
   }
 
   // src/server/bootCore.ts
-  var BOOT_CORE = "dsBootCore2";
+  var BOOT_CORE = "dsBootCore3";
   var BOOT_CORE_PARAMS = {};
   function bootCoreModel() {
     return durablyCached(BOOT_CORE, BOOT_CORE_PARAMS, buildBootCore);
@@ -7327,9 +7359,6 @@ var Server = (() => {
     attachRepoTags(allRows, { domain: false });
     attachCurrentDomains(allRows);
     laps.lap("repoTags");
-    const projectView = settings.projectView || null;
-    const domainView = settings.domainView || null;
-    const shown = projectView ? allRows.filter((r) => inProject(parseProjects(r.projects_json), projectView)).length : domainView ? allRows.filter((r) => inDomain(r, domainView)).length : allRows.length;
     const core = {
       product: "Wiz Sidekick DevSecOps",
       scopes: SCOPES,
@@ -7339,11 +7368,7 @@ var Server = (() => {
       effectiveSlaTargets: effectiveSlaTargets(settings),
       latestSync,
       lastScanByScope,
-      settings,
       scope: {
-        projectView: settings.projectView,
-        domainView: settings.domainView,
-        shown,
         register: allRows.length,
         unattributed: unattributedCount(allRows),
         noDomain: noDomainCount(allRows),
@@ -7366,6 +7391,16 @@ var Server = (() => {
     laps.lap("catalogues");
     laps.log();
     return core;
+  }
+  function viewShown(core, projectView, domainView) {
+    var _a, _b, _c, _d;
+    if (projectView) {
+      return (_b = (_a = core.filterOptions.projectList.find((p) => p.slug === projectView)) == null ? void 0 : _a.findings) != null ? _b : 0;
+    }
+    if (domainView) {
+      return (_d = (_c = core.filterOptions.domainList.find((d) => d.name === domainView)) == null ? void 0 : _c.findings) != null ? _d : 0;
+    }
+    return core.scope.register;
   }
 
   // src/server/access.ts
@@ -10395,10 +10430,13 @@ var Server = (() => {
   function secretsModel(p) {
     const n2 = norm(p);
     return cached(
-      "dsSecrets4",
-      // `mttrExcludeEndOfLife` is here because `timeToRevoke` reads it; `severities` is not
-      // because nothing does. One rule, both directions.
-      { scope: "secrets", showNoFix: n2.showNoFix, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
+      "dsSecrets5",
+      // `mttrExcludeEndOfLife` is here because `timeToRevoke` reads it; `severities` is pinned to
+      // null because nothing reads it. One rule, both directions.
+      {
+        ...keyOf({ ...n2, scope: "secrets", severities: null }),
+        mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife
+      },
       () => buildSecrets(n2),
       CLOCK_TTL_SEC
     );
@@ -11585,11 +11623,11 @@ var Server = (() => {
       return { ok: false, error: String(e instanceof Error ? e.message : e), errorKind: kind };
     }
   }
-  function mutate(fn, label = "api") {
+  function mutate(fn, label = "api", lockWaitMs) {
     return run(() => withScriptLock(() => {
       recoverIfNeeded();
       return fn();
-    }), label);
+    }, lockWaitMs), label);
   }
   function bootstrap(_p) {
     const viewer = enforcedScope();
@@ -11621,6 +11659,7 @@ var Server = (() => {
   }
   function withLiveBootFields(core) {
     const job = activeJob();
+    const settings = loadSettings();
     return {
       product: core.product,
       buildId: BUILD_ID,
@@ -11636,8 +11675,13 @@ var Server = (() => {
       activeJob: job ? jobSummarySlice(job, !isTerminalPhase(job.phase) && isStaleJob(job)) : null,
       canEditAccess: canEditUsers(),
       hubUrl: readHubUrl(),
-      settings: core.settings,
-      scope: core.scope,
+      settings,
+      scope: {
+        projectView: settings.projectView,
+        domainView: settings.domainView,
+        shown: viewShown(core, settings.projectView, settings.domainView),
+        ...core.scope
+      },
       filterOptions: core.filterOptions
     };
   }
@@ -11864,11 +11908,20 @@ var Server = (() => {
       return { saved: true, errors: [], items: getSupportGroupDomains2().items };
     }, "saveSupportGroupDomain");
   }
+  var VIEW_SWITCH_LOCK_WAIT_MS = 1e4;
   function setProjectView(p) {
-    return mutate(() => saveSettings(withProjectView(loadSettings(), p.projectView)), "setProjectView");
+    return mutate(
+      () => saveSettings(withProjectView(loadSettings(), p.projectView), { viewOnly: true }),
+      "setProjectView",
+      VIEW_SWITCH_LOCK_WAIT_MS
+    );
   }
   function setDomainView(p) {
-    return mutate(() => saveSettings(withDomainView(loadSettings(), p.domainView)), "setDomainView");
+    return mutate(
+      () => saveSettings(withDomainView(loadSettings(), p.domainView), { viewOnly: true }),
+      "setDomainView",
+      VIEW_SWITCH_LOCK_WAIT_MS
+    );
   }
   function refreshDomains(_p) {
     return mutate(() => refreshRepoTags(), "refreshDomains");

@@ -152,6 +152,11 @@ export function projectCatalogue(
   for (const row of rows) {
     const projects = parseProjects(row.projects_json);
     const groups = projects.filter((p) => isSupportGroup(p.name)).map((p) => p.name);
+    // A slug counts ONCE PER ROW. `reconcile.projectsListJson` already writes each slug once,
+    // but the cell is plain text and a hand edit can repeat one — and `findings` is documented
+    // as ROWS carrying the project, the figure `inProject` admits. The header's live `shown`
+    // count (server/bootCore.ts `viewShown`) is read off this field on that promise.
+    const counted = new Set<string>();
     for (const p of projects) {
       if (groups.length && isProduct(p.name)) {
         let parents = parentsOf.get(p.slug);
@@ -171,9 +176,13 @@ export function projectCatalogue(
           supportGroup: null,
           supportGroupCount: 0,
         });
+        counted.add(p.slug);
         continue;
       }
-      seen.findings += 1;
+      if (!counted.has(p.slug)) {
+        seen.findings += 1;
+        counted.add(p.slug);
+      }
       if (seen.isFolder === undefined && p.isFolder !== undefined) seen.isFolder = p.isFolder;
     }
   }

@@ -37,6 +37,8 @@ vi.mock("../src/server/sheetsDb", async (orig) => {
 const props = new Map<string, string>();
 const cache = new Map<string, string>();
 let cacheThrows = false;
+/** Only `put` fails — a write-through that did not land, while reads still work. */
+let putThrows = false;
 
 beforeEach(() => {
   reads.length = 0;
@@ -51,6 +53,7 @@ beforeEach(() => {
   props.clear();
   cache.clear();
   cacheThrows = false;
+  putThrows = false;
   const guard = () => {
     if (cacheThrows) throw new Error("cache down");
   };
@@ -64,7 +67,11 @@ beforeEach(() => {
   vi.stubGlobal("CacheService", {
     getScriptCache: () => ({
       get: (k: string) => { guard(); return cache.get(k) ?? null; },
-      put: (k: string, v: string) => { guard(); cache.set(k, v); },
+      put: (k: string, v: string) => {
+        guard();
+        if (putThrows) throw new Error("cache put failed");
+        cache.set(k, v);
+      },
       getAll: (keys: string[]) => {
         guard();
         const out: Record<string, string> = {};
@@ -130,6 +137,32 @@ describe("settings: cross-execution cache", () => {
     (await nextExecution()).loadSettings();
     props.set("DATA_VERSION", "999");
     (await nextExecution()).loadSettings();
+    expect(readsOf("settings")).toBe(2);
+  });
+
+  // A header view switch saves WITHOUT moving DATA_VERSION (`saveSettings`'s `viewOnly`), so the
+  // key has to move on something else — SETTINGS_GEN — or it would go on answering for the old
+  // view. The write-through usually hides that: the save rewrites the very entry it would have
+  // left stale. These two take the write-through away.
+  it("a view-only save moves the key without moving the data version", async () => {
+    const first = await nextExecution();
+    first.loadSettings();
+    const version = props.get("DATA_VERSION");
+    first.saveSettings({ ...first.loadSettings(), projectView: "leaf-a" }, { viewOnly: true });
+    expect(props.get("DATA_VERSION")).toBe(version);
+    expect(props.get("SETTINGS_GEN")).toBeDefined();
+    // Two entries now, under two keys: the stale one is unreachable rather than overwritten.
+    expect([...cache.keys()].filter((k) => k.startsWith("dsSettings2:"))).toHaveLength(2);
+    expect((await nextExecution()).loadSettings().projectView).toBe("leaf-a");
+  });
+
+  it("a view switch whose write-through failed is not served the old view", async () => {
+    (await nextExecution()).loadSettings(); // the old view, cached
+    const saver = await nextExecution();
+    putThrows = true;
+    saver.saveSettings({ ...saver.loadSettings(), projectView: "leaf-a" }, { viewOnly: true });
+    putThrows = false;
+    expect((await nextExecution()).loadSettings().projectView).toBe("leaf-a");
     expect(readsOf("settings")).toBe(2);
   });
 

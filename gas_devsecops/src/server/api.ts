@@ -130,12 +130,16 @@ function run<T>(fn: () => T, label = "api"): ApiResult<T> {
   }
 }
 
-/** A write: take the lock, roll back a half-finished predecessor, then run. */
-function mutate<T>(fn: () => T, label = "api"): ApiResult<T> {
+/**
+ * A write: take the lock, roll back a half-finished predecessor, then run. `lockWaitMs` is how
+ * long to queue behind another writer before answering "busy" — `withScriptLock`'s 30 s unless
+ * a caller has a reason to give up sooner (the header view switch, below).
+ */
+function mutate<T>(fn: () => T, label = "api", lockWaitMs?: number): ApiResult<T> {
   return run(() => withScriptLock(() => {
     recoverIfNeeded();
     return fn();
-  }), label);
+  }, lockWaitMs), label);
 }
 
 export interface Bootstrap {
@@ -310,8 +314,8 @@ export interface Bootstrap {
  *
  * A CACHED CORE PLUS LIVE FIELDS. Everything derived from the ledger, the settings, the scans
  * tab and the repository tag map is `bootCore.bootCoreModel()` — durably cached per data
- * version, since every writer of those four bumps it. What changes without a bump, or differs
- * per viewer, is read live on every call: see `withLiveBootFields`.
+ * version, since every writer of those four bumps it. What changes without a bump (the header
+ * view among it), or differs per viewer, is read live on every call: see `withLiveBootFields`.
  *
  * Timed to the execution log as `{"stage":"bootstrap",core,live}`; the core's own parts log
  * as `{"stage":"bootCore",…}` when it is actually computed. test/api.test.ts pins both.
@@ -370,9 +374,18 @@ export function bootstrapIfWarm(): ApiResult<Bootstrap> {
  * data-version bump (credentials saved, a connection test, the hub address edited), so a copy
  * in the core would keep serving the old value until some unrelated sync; `buildId` is the
  * code actually answering, which a durable entry written by an earlier deploy must not claim.
+ *
+ * AND THE HEADER VIEW: `settings` (which echoes `projectView` / `domainView`) and the scope
+ * block's view half — `projectView`, `domainView`, `shown`. A view switch saves the settings
+ * without a data-version bump (`settingsStore.saveSettings`'s `viewOnly`), so a core holding any
+ * of them would keep answering for the previous view. `loadSettings()` is one CacheService get
+ * here (its key moves on every save), and `shown` comes off the core's own catalogues
+ * (`bootCore.viewShown`), so neither costs a pass over the ledger. doGet's inline path
+ * (`bootstrapIfWarm`) comes through here too, so the page it renders shows the view in force.
  */
 function withLiveBootFields(core: bootCore.BootCore): Bootstrap {
   const job = activeJob();
+  const settings = loadSettings();
   return {
     product: core.product,
     buildId: BUILD_ID,
@@ -388,8 +401,13 @@ function withLiveBootFields(core: bootCore.BootCore): Bootstrap {
     activeJob: job ? jobSummarySlice(job, !isTerminalPhase(job.phase) && isStaleJob(job)) : null,
     canEditAccess: canEditUsers(),
     hubUrl: readHubUrl(),
-    settings: core.settings,
-    scope: core.scope,
+    settings,
+    scope: {
+      projectView: settings.projectView,
+      domainView: settings.domainView,
+      shown: bootCore.viewShown(core, settings.projectView, settings.domainView),
+      ...core.scope,
+    },
     filterOptions: core.filterOptions,
   };
 }
@@ -736,6 +754,20 @@ export function saveSupportGroupDomain(p: {
 }
 
 /**
+ * How long a header view switch queues behind another writer. STILL UNDER THE LOCK: it rewrites
+ * the whole settings tab, and an unlocked rewrite racing a Settings save could put the other
+ * fields back the way they were. But it is a click in the header that blocks the page, not a
+ * sync, so it gives up after 10 s rather than 30 — another save or a view switch holds the lock
+ * for well under a second, and a sync's commit for longer than either wait is worth spending.
+ * The client shows the "busy" error and the reader picks again.
+ *
+ * THE SWITCH NO LONGER BUMPS THE DATA VERSION (`saveSettings`'s `viewOnly`): every payload that
+ * depends on the view carries it in its cache key, and the bootstrap core reads the view live,
+ * so switching leaves every cached entry — the inline boot included — warm for every user.
+ */
+const VIEW_SWITCH_LOCK_WAIT_MS = 10_000;
+
+/**
  * Set the view scope alone — which project's rows the pages show, out of everything the
  * ledger holds. A separate endpoint rather than routing this through `putSettings` because
  * the header control that will call it (a later package) has no reason to load, mutate and
@@ -747,7 +779,11 @@ export function saveSupportGroupDomain(p: {
  * validated field would turn a retired project's stale name into a scope nobody can clear.
  */
 export function setProjectView(p: { projectView?: unknown }): ApiResult<ReturnType<typeof loadSettings>> {
-  return mutate(() => saveSettings(withProjectView(loadSettings(), p.projectView)), "setProjectView");
+  return mutate(
+    () => saveSettings(withProjectView(loadSettings(), p.projectView), { viewOnly: true }),
+    "setProjectView",
+    VIEW_SWITCH_LOCK_WAIT_MS,
+  );
 }
 
 /**
@@ -760,7 +796,11 @@ export function setProjectView(p: { projectView?: unknown }): ApiResult<ReturnTy
  * that used the wrong helper — see `settingsLogic.withProjectView` for the argument.
  */
 export function setDomainView(p: { domainView?: unknown }): ApiResult<ReturnType<typeof loadSettings>> {
-  return mutate(() => saveSettings(withDomainView(loadSettings(), p.domainView)), "setDomainView");
+  return mutate(
+    () => saveSettings(withDomainView(loadSettings(), p.domainView), { viewOnly: true }),
+    "setDomainView",
+    VIEW_SWITCH_LOCK_WAIT_MS,
+  );
 }
 
 /**

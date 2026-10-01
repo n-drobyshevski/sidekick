@@ -434,6 +434,7 @@ describe("the caching audit is per model, and the header states it", () => {
     // ships a false floor or mean — same unchanged layer claim. "dsMttr5" -> "dsMttr6" (hasFix
     // relabel): `remediation.fetchFilter` joined the payload — same claim again.
     // "dsSecrets3" -> "dsSecrets4" (twin fold): `twins` can carry the cross-repository counts.
+    // "dsSecrets4" -> "dsSecrets5" (view switch keeps caches warm): the key gained the view.
     // "dsRegister3" -> "dsRegister4" (hasFix relabel, register page): `fetchFilter` joined the
     // payload — same claim.
     expect(layerOf("dsExecutive3")).toEqual(["cached"]);
@@ -443,7 +444,7 @@ describe("the caching audit is per model, and the header states it", () => {
     // windows — the same shape of risk the newer dsMttr2 -> ... -> dsMttr6 bumps above
     // guard against.
     expect(layerOf("dsMttr6")).toEqual(["cached"]);
-    expect(layerOf("dsSecrets4")).toEqual(["cached"]);
+    expect(layerOf("dsSecrets5")).toEqual(["cached"]);
     // "dsRegister1" -> "dsRegister2": the namespace was bumped when the payload gained its
     // `population` block. The CLAIM these three lines encode is the LAYER each model caches
     // in, not the spelling of its namespace, and that is unchanged — a warm entry from the
@@ -822,7 +823,7 @@ describe("secretsModel has no severity axis", () => {
     secretsModel(ALL);
     secretsModel({ ...ALL, severities: ["CRITICAL"] });
     const keys = H.cacheCalls
-      .filter((c) => c.name === "dsSecrets4")
+      .filter((c) => c.name === "dsSecrets5")
       .map((c) => JSON.stringify(c.params));
     expect(new Set(keys).size).toBe(1);
   });
@@ -1703,7 +1704,7 @@ describe("warmReadModels", () => {
     expect(new Set(H.cacheCalls.map((c) => c.name))).toEqual(new Set([
       "dsBootCore1",
       "dsHistory6", "dsProgram2", "dsRepos2", "dsStorage1",
-      "dsExecutive3", "dsMttr6", "dsMttrSplit2", "dsSecrets4", "dsRegister4",
+      "dsExecutive3", "dsMttr6", "dsMttrSplit2", "dsSecrets5", "dsRegister4",
     ]));
     // FIRST, because doGet only inlines a bootstrap core that is already stored: a budget
     // cut-out must never be what leaves every page load paying the second round trip.

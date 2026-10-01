@@ -2340,11 +2340,20 @@ export function secretsModel(p?: ModelParams): Rec {
   //
   // "dsSecrets3" -> "dsSecrets4" (twin fold): `twins` can carry `crossRepoKeys`/
   // `crossRepoNodes`/`maxBucketSize` (see `latestSecretsTwins`).
+  //
+  // "dsSecrets4" -> "dsSecrets5" (view switch keeps caches warm): the key gained the view —
+  // `project`, `domain`, and the viewer scope and split when present — through `keyOf`, pinned
+  // to the scope and severities `buildSecrets` pins. `visibleRows` has always narrowed this
+  // model by them, and the key carried none: harmless only while every view switch bumped the
+  // data version. It no longer does, and two views would have shared one entry.
   return cached(
-    "dsSecrets4",
-    // `mttrExcludeEndOfLife` is here because `timeToRevoke` reads it; `severities` is not
-    // because nothing does. One rule, both directions.
-    { scope: "secrets", showNoFix: n.showNoFix, mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
+    "dsSecrets5",
+    // `mttrExcludeEndOfLife` is here because `timeToRevoke` reads it; `severities` is pinned to
+    // null because nothing reads it. One rule, both directions.
+    {
+      ...keyOf({ ...n, scope: "secrets", severities: null }),
+      mttrExcludeEndOfLife: n.mttrExcludeEndOfLife,
+    },
     () => buildSecrets(n),
     CLOCK_TTL_SEC,
   );
