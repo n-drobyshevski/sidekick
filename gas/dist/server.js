@@ -5921,6 +5921,10 @@ var Server = (() => {
     // timezone, so this is the only way a later edit to the schedule can be detected and
     // reconciled rather than silently ignored on an existing deployment.
     warmTriggerSchedule: "WARM_TRIGGER_SCHEDULE",
+    // The daily scan trigger's counterpart: `${tz}|${hour}` as setup.dailyScanSchedule() builds
+    // it. Written last by setup.reconcileDailyScanTrigger, so a failed create leaves it stale and
+    // the next setup() (or deploymentDiagnostic) sees the mismatch.
+    dailyTriggerSchedule: "DAILY_TRIGGER_SCHEDULE",
     // A support-group refresh a scan queued for the next warm hop (scanJobs.handOffAfterScan →
     // runPendingSupportGroupRefresh), so the Wiz call runs outside the scan's lock. Set to the
     // time it was queued; deleted once it has run.
@@ -6703,7 +6707,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "d62bb2f0adbb" : "dev";
+  var BUILD_ID = true ? "1886c1059c1e" : "dev";
   var CACHE_EPOCH = "3";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
@@ -14363,6 +14367,23 @@ var Server = (() => {
     return HtmlService.createHtmlOutput(welcomeHtml(email, continueUrl, accountChooserUrl())).setTitle(PRODUCT).addMetaTag("viewport", "width=device-width, initial-scale=1");
   }
 
+  // ../gas_shared/server/dailyTrigger.ts
+  function dailyTriggerSignature(tz, hour) {
+    return `${tz}|${hour}`;
+  }
+  function reconcileDailyTrigger(spec) {
+    const { handler, tz, hour, label } = spec;
+    const existing = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === handler);
+    const want = dailyTriggerSignature(tz, hour);
+    if (existing.length === 1 && spec.getSignature() === want) {
+      return `${label}: already installed (${hour}:00 ${tz})`;
+    }
+    ScriptApp.newTrigger(handler).timeBased().everyDays(1).atHour(hour).inTimezone(tz).create();
+    for (const t of existing) ScriptApp.deleteTrigger(t);
+    spec.setSignature(want);
+    return `${label}: installed (${hour}:00 ${tz})` + (existing.length ? ` (replaced ${existing.length})` : "");
+  }
+
   // src/server/setup.ts
   var SPREADSHEET_NAME = "Wiz Sidekick OS Ledger";
   var FOLDER_NAME = "wiz-sidekick";
@@ -14370,11 +14391,22 @@ var Server = (() => {
   var DAILY_TRIGGER_HOUR = 5;
   var WARM_TRIGGER_HANDLER = "trigger_warmReadModels";
   var WARM_READY_BY_HOURS = [9, 13, 17];
-  var WARM_TRIGGER_TZ = "Europe/Paris";
+  var TRIGGER_TZ = "Europe/Paris";
   var WARM_TRIGGER_NEAR_MINUTE = 30;
   var WARM_TRIGGER_HOURS = WARM_READY_BY_HOURS.map((h) => (h + 23) % 24);
+  var WARM_TRIGGER_COUNT = WARM_TRIGGER_HOURS.length;
   function warmScheduleSignature() {
-    return `${WARM_TRIGGER_TZ}|${WARM_TRIGGER_HOURS.join(",")}@${WARM_TRIGGER_NEAR_MINUTE}`;
+    return `${TRIGGER_TZ}|${WARM_TRIGGER_HOURS.join(",")}@${WARM_TRIGGER_NEAR_MINUTE}`;
+  }
+  function reconcileDailyScanTrigger() {
+    return reconcileDailyTrigger({
+      handler: DAILY_TRIGGER_HANDLER,
+      tz: TRIGGER_TZ,
+      hour: DAILY_TRIGGER_HOUR,
+      label: "daily trigger",
+      getSignature: () => getProp(PROP_KEYS.dailyTriggerSchedule),
+      setSignature: (sig) => setProp(PROP_KEYS.dailyTriggerSchedule, sig)
+    });
   }
   function setup() {
     const notes = [];
@@ -14411,15 +14443,7 @@ var Server = (() => {
     } else {
       notes.push("allowlist: already set, left as-is");
     }
-    const existing = ScriptApp.getProjectTriggers().filter(
-      (t) => t.getHandlerFunction() === DAILY_TRIGGER_HANDLER
-    );
-    if (!existing.length) {
-      ScriptApp.newTrigger(DAILY_TRIGGER_HANDLER).timeBased().everyDays(1).atHour(DAILY_TRIGGER_HOUR).create();
-      notes.push(`daily trigger: installed (${DAILY_TRIGGER_HOUR}:00 script-local)`);
-    } else {
-      notes.push("daily trigger: already installed");
-    }
+    notes.push(reconcileDailyScanTrigger());
     const warmExisting = ScriptApp.getProjectTriggers().filter(
       (t) => t.getHandlerFunction() === WARM_TRIGGER_HANDLER
     );
@@ -14429,11 +14453,11 @@ var Server = (() => {
     } else {
       for (const t of warmExisting) ScriptApp.deleteTrigger(t);
       for (const hour of WARM_TRIGGER_HOURS) {
-        ScriptApp.newTrigger(WARM_TRIGGER_HANDLER).timeBased().everyDays(1).atHour(hour).nearMinute(WARM_TRIGGER_NEAR_MINUTE).inTimezone(WARM_TRIGGER_TZ).create();
+        ScriptApp.newTrigger(WARM_TRIGGER_HANDLER).timeBased().everyDays(1).atHour(hour).nearMinute(WARM_TRIGGER_NEAR_MINUTE).inTimezone(TRIGGER_TZ).create();
       }
       setProp(PROP_KEYS.warmTriggerSchedule, wantSchedule);
       notes.push(
-        `warm trigger: installed ${WARM_TRIGGER_HOURS.length}x daily, warm by ${WARM_READY_BY_HOURS.map((h) => `${h}:00`).join(", ")} ${WARM_TRIGGER_TZ}` + (warmExisting.length ? ` (replaced ${warmExisting.length})` : "")
+        `warm trigger: installed ${WARM_TRIGGER_HOURS.length}x daily, warm by ${WARM_READY_BY_HOURS.map((h) => `${h}:00`).join(", ")} ${TRIGGER_TZ}` + (warmExisting.length ? ` (replaced ${warmExisting.length})` : "")
       );
     }
     const missing = [

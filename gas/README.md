@@ -921,9 +921,14 @@ and the result reports the true zero rather than claiming a reclaim.
 2. Create an Apps Script project (`clasp create --type webapp` or use an existing
    script id) and put its id in `.clasp.json`.
 3. `npx clasp login`, then `npm run push` (builds and pushes `dist/`).
-4. In the GAS editor, run **`setup()`** once. It creates the "Wiz Sidekick OS Ledger"
-   spreadsheet, the `wiz-sidekick` Drive folder skeleton, the daily scan trigger
-   (05:00 UTC), and records their ids in Script Properties.
+4. In the GAS editor, run **`setup()`** once, as the account the web app executes as. It
+   creates the "Wiz Sidekick OS Ledger" spreadsheet, the `wiz-sidekick` Drive folder skeleton,
+   the daily scan trigger (05:00 Europe/Paris, pinned on the trigger) and the three warm
+   triggers, and records their ids and schedules in Script Properties. Safe to re-run: the
+   triggers are reconciled against the recorded schedule (`DAILY_TRIGGER_SCHEDULE`,
+   `WARM_TRIGGER_SCHEDULE`), so a re-run is a no-op, and the first one after an upgrade
+   replaces a daily trigger installed before the signature existed, once, and collapses any
+   duplicates.
 5. Set the remaining Script Properties by hand (never committed anywhere):
    - `WIZ_API_URL` — your tenant GraphQL endpoint, e.g. `https://api.<region>.app.wiz.io/graphql`
    - Authentication — pick **one**:

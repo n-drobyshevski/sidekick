@@ -4,7 +4,7 @@
 // Creates (when absent) and records in Script Properties:
 //   LEDGER_SPREADSHEET_ID  — "Wiz Sidekick OS Ledger" spreadsheet with all tabs
 //   ARCHIVE_FOLDER_ID      — "wiz-sidekick" Drive folder with the archive skeleton
-// and installs the daily scan trigger. Wiz credentials must be set by hand — setup()
+// and reconciles the daily scan + warm triggers. Wiz credentials must be set by hand — setup()
 // never touches secrets: WIZ_API_URL, WIZ_PROJECT_ID_V2, and either WIZ_API_TOKEN (a
 // raw bearer token) or WIZ_CLIENT_ID/WIZ_CLIENT_SECRET (OAuth client-credentials).
 //
@@ -21,27 +21,31 @@ import { ownerEmail } from "./access";
 import { ensureFolders } from "./archiveStore";
 import { DEFAULT_WIZ_AUTH_URL, getProp, PROP_KEYS, setProp } from "./props";
 import { ensureTabs } from "./sheetsDb";
+import { dailyTriggerSignature, reconcileDailyTrigger } from "../../../gas_shared/server/dailyTrigger";
 
 const SPREADSHEET_NAME = "Wiz Sidekick OS Ledger";
 const FOLDER_NAME = "wiz-sidekick";
-const DAILY_TRIGGER_HANDLER = "trigger_dailyScan";
-// Clock triggers resolve in the SCRIPT's timezone unless told otherwise, and the manifest sets
-// that to Europe/Paris — so this is 05:00 Paris, not UTC as this line used to claim.
-const DAILY_TRIGGER_HOUR = 5;
+// Exported for diagnostics.ts, which counts installed triggers by these names rather than by a
+// second copy of the literal that could drift from what this file installs.
+export const DAILY_TRIGGER_HANDLER = "trigger_dailyScan";
+// 05:00 in TRIGGER_TZ — pinned on the trigger with `.inTimezone`, not inherited from the
+// manifest. Fixed: this register has no setting for it (gas_devsecops's daily sync does).
+export const DAILY_TRIGGER_HOUR = 5;
 
-const WARM_TRIGGER_HANDLER = "trigger_warmReadModels";
+export const WARM_TRIGGER_HANDLER = "trigger_warmReadModels";
 
 // The hours the app should already BE warm at, local to the analysts who open it. This list is
 // the schedule as a person states it; the fire times are derived from it below.
 export const WARM_READY_BY_HOURS = [9, 13, 17];
 
-// Pinned rather than inherited from the manifest. `atHour` would otherwise follow whatever
-// `timeZone` the manifest carries, and a project re-created with `clasp create` gets the CLI's
-// default — which would quietly move the whole schedule onto another continent's working day
-// while the client kept rendering Europe/Paris (`client/js/ui.js`, DISPLAY_TZ). Naming it here
-// makes the two agree by construction, and DST is Google's problem rather than an offset we
-// would have to maintain twice a year.
-const WARM_TRIGGER_TZ = "Europe/Paris";
+// Pinned rather than inherited from the manifest, for EVERY clock trigger this file installs —
+// the daily scan and the warm set alike. `atHour` would otherwise follow whatever `timeZone` the
+// manifest carries, and a project re-created with `clasp create` gets the CLI's default — which
+// would quietly move the whole schedule onto another continent's working day while the client
+// kept rendering Europe/Paris (`client/js/ui.js`, DISPLAY_TZ). Naming it here makes the two
+// agree by construction, and DST is Google's problem rather than an offset we would have to
+// maintain twice a year.
+export const TRIGGER_TZ = "Europe/Paris";
 
 // WHY THE FIRE IS AN HOUR BEFORE THE HOUR IT SERVES. `atHour(9)` does not run at 09:00 — it runs
 // somewhere between 09:00 and 10:00, so a trigger named for 9 hands the 09:00 arrival exactly the
@@ -52,6 +56,9 @@ const WARM_TRIGGER_TZ = "Europe/Paris";
 const WARM_TRIGGER_NEAR_MINUTE = 30;
 const WARM_TRIGGER_HOURS = WARM_READY_BY_HOURS.map((h) => (h + 23) % 24);
 
+/** How many warm triggers a correct install has — what diagnostics.ts counts against. */
+export const WARM_TRIGGER_COUNT = WARM_TRIGGER_HOURS.length;
+
 /**
  * What is installed, in one comparable string. A ClockTrigger exposes its handler and nothing
  * else — no hour, no minute, no timezone — so `getProjectTriggers()` cannot answer "is the
@@ -60,7 +67,38 @@ const WARM_TRIGGER_HOURS = WARM_READY_BY_HOURS.map((h) => (h + 23) % 24);
  * deployment on the old schedule forever with nothing to show for it.
  */
 export function warmScheduleSignature(): string {
-  return `${WARM_TRIGGER_TZ}|${WARM_TRIGGER_HOURS.join(",")}@${WARM_TRIGGER_NEAR_MINUTE}`;
+  return `${TRIGGER_TZ}|${WARM_TRIGGER_HOURS.join(",")}@${WARM_TRIGGER_NEAR_MINUTE}`;
+}
+
+/**
+ * The daily scan's counterpart to `warmScheduleSignature()`, for the same reason: a ClockTrigger
+ * cannot say what hour or timezone it fires at, so that is recorded beside it
+ * (`PROP_KEYS.dailyTriggerSchedule`).
+ */
+export function dailyScanSchedule(): string {
+  return dailyTriggerSignature(TRIGGER_TZ, DAILY_TRIGGER_HOUR);
+}
+
+/**
+ * Make the installed daily scan trigger fire at DAILY_TRIGGER_HOUR in TRIGGER_TZ, returning the
+ * line setup() prints. The reconcile — a no-op on a matching signature and exactly one trigger,
+ * otherwise create before delete with duplicates collapsed and the signature written last — is
+ * `gas_shared/server/dailyTrigger.ts`, shared with gas_devsecops's daily sync.
+ *
+ * It replaced a dedupe by handler name alone, which called ANY daily trigger done: one installed
+ * before the timezone was pinned stayed on the script's timezone forever, and two (a setup() run
+ * twice racing, or a hand-made copy) both kept firing a full scan. The first setup() after this
+ * change therefore replaces the legacy unsigned trigger once; every later run is a no-op.
+ */
+export function reconcileDailyScanTrigger(): string {
+  return reconcileDailyTrigger({
+    handler: DAILY_TRIGGER_HANDLER,
+    tz: TRIGGER_TZ,
+    hour: DAILY_TRIGGER_HOUR,
+    label: "daily trigger",
+    getSignature: () => getProp(PROP_KEYS.dailyTriggerSchedule),
+    setSignature: (sig) => setProp(PROP_KEYS.dailyTriggerSchedule, sig),
+  });
 }
 
 export function setup(): string {
@@ -111,20 +149,8 @@ export function setup(): string {
     notes.push("allowlist: already set, left as-is");
   }
 
-  // Daily scan trigger (deduplicated by handler name).
-  const existing = ScriptApp.getProjectTriggers().filter(
-    (t) => t.getHandlerFunction() === DAILY_TRIGGER_HANDLER,
-  );
-  if (!existing.length) {
-    ScriptApp.newTrigger(DAILY_TRIGGER_HANDLER)
-      .timeBased()
-      .everyDays(1)
-      .atHour(DAILY_TRIGGER_HOUR)
-      .create();
-    notes.push(`daily trigger: installed (${DAILY_TRIGGER_HOUR}:00 script-local)`);
-  } else {
-    notes.push("daily trigger: already installed");
-  }
+  // Daily scan trigger, reconciled against its recorded signature (see reconcileDailyScanTrigger).
+  notes.push(reconcileDailyScanTrigger());
 
   // Read-model warm trigger. Reconciled rather than merely deduplicated: the schedule is a set
   // of triggers now, so "none installed" is no longer the only state that needs fixing.
@@ -168,7 +194,7 @@ export function setup(): string {
         .everyDays(1)
         .atHour(hour)
         .nearMinute(WARM_TRIGGER_NEAR_MINUTE)
-        .inTimezone(WARM_TRIGGER_TZ)
+        .inTimezone(TRIGGER_TZ)
         .create();
     }
     // LAST, so a create() that throws part-way leaves the property stale and the next setup()
@@ -176,7 +202,7 @@ export function setup(): string {
     setProp(PROP_KEYS.warmTriggerSchedule, wantSchedule);
     notes.push(
       `warm trigger: installed ${WARM_TRIGGER_HOURS.length}x daily, warm by ` +
-      `${WARM_READY_BY_HOURS.map((h) => `${h}:00`).join(", ")} ${WARM_TRIGGER_TZ}` +
+      `${WARM_READY_BY_HOURS.map((h) => `${h}:00`).join(", ")} ${TRIGGER_TZ}` +
       (warmExisting.length ? ` (replaced ${warmExisting.length})` : ""),
     );
   }

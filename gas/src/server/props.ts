@@ -37,6 +37,10 @@ export const PROP_KEYS = {
   // timezone, so this is the only way a later edit to the schedule can be detected and
   // reconciled rather than silently ignored on an existing deployment.
   warmTriggerSchedule: "WARM_TRIGGER_SCHEDULE",
+  // The daily scan trigger's counterpart: `${tz}|${hour}` as setup.dailyScanSchedule() builds
+  // it. Written last by setup.reconcileDailyScanTrigger, so a failed create leaves it stale and
+  // the next setup() (or deploymentDiagnostic) sees the mismatch.
+  dailyTriggerSchedule: "DAILY_TRIGGER_SCHEDULE",
   // A support-group refresh a scan queued for the next warm hop (scanJobs.handOffAfterScan →
   // runPendingSupportGroupRefresh), so the Wiz call runs outside the scan's lock. Set to the
   // time it was queued; deleted once it has run.
