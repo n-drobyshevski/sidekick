@@ -69,7 +69,8 @@ import {
   uiIcon,
 } from "../ui.js";
 import {
-  boundedDays, chartCard, concentrationModel, figureCard, missingColumnsNote, movementCard,
+  boundedDays, chartCard, concentrationModel, figureCard, leftCoverageStats, missingColumnsNote,
+  movementCard,
   movementModel, oldestReposModel, pagedTable, pillFilterRow, registerFirstRunView,
   registerRowsTable, renderRegisterPage, sectionCard, statusSegment, textCell,
 } from "./sca.js";
@@ -359,6 +360,10 @@ export function secretsModel(payload, opts) {
 
   const total = num(cov.total, num(sec.rowCount, num(reg.rowCount)));
   const median = boundedDays(ttr.median, ttr.medianLowerBound);
+  // `censored` holds the repository drop-outs too (secretsLifecycle.ts decision 5): only the
+  // rest are still live.
+  const leftCoverage = Math.min(num(ttr.censored), num(ttr.leftCoverage));
+  const stillLive = num(ttr.censored) - leftCoverage;
   const firstRun = registerFirstRunView(
     sec.rowCount !== undefined ? sec.rowCount : reg.rowCount,
     opts && opts.synced,
@@ -374,6 +379,9 @@ export function secretsModel(payload, opts) {
     asOf: reg.asOf ?? sec.asOf ?? null,
     rowCount: num(sec.rowCount, num(reg.rowCount)),
     open: num(sec.open, num(reg.open)),
+    // Repository drop-outs (the register model's `stateCounts`): in `rowCount`, neither open
+    // nor closed by the string leaving HEAD — named in the stat strip when there are any.
+    leftCoverage: num(reg.leftCoverage, 0),
 
     // WHAT THE FIGURES ABOVE WERE MEASURED OVER — the in-scope count, the gate the last scan
     // of THIS scope applied, and the base filters the secrets query carries. Passed straight through:
@@ -484,6 +492,9 @@ export function secretsModel(payload, opts) {
       sla: num(ttr.sla, null),
       events: num(ttr.events),
       censored: num(ttr.censored),
+      // Of `censored`, the credentials whose repository left the scan: censored where the
+      // register lost sight of them, so neither still live nor dead — named apart.
+      leftCoverage,
       // PRINTED, ALWAYS. Never-validated rows are EXCLUDED, not censored — censoring
       // asserts "still alive at time c", which an unvalidated row cannot support.
       excludedUnmeasured: num(ttr.excludedUnmeasured),
@@ -492,8 +503,12 @@ export function secretsModel(payload, opts) {
       curve: (ttr.km && Array.isArray(ttr.km.curve)) ? ttr.km.curve : [],
       glossary: "time-to-revoke",
       denominator:
-        `${fmtCount(ttr.events)} observed rotations and ${fmtCount(ttr.censored)} still-live `
-        + `credentials right-censored at today build this estimate, out of ${fmtCount(ttr.total)} `
+        `${fmtCount(ttr.events)} observed rotations and ${fmtCount(stillLive)} still-live `
+        + "credentials right-censored at today"
+        + (leftCoverage > 0
+          ? `, plus ${fmtCount(leftCoverage)} censored where their repository left the scan,`
+          : "")
+        + ` build this estimate, out of ${fmtCount(ttr.total)} `
         + `rows. ${fmtCount(ttr.excludedUnmeasured)} were EXCLUDED, not censored, because `
         + "nobody ever validated them; a further " + fmtCount(ttr.excludedNoClock)
         + " were measured but carry no usable duration.",
@@ -976,6 +991,7 @@ function paintSecrets(host, vm, filters) {
     stats: vm.firstRun.show ? [] : [
       statRow("In register", fmtCount(vm.rowCount), "findings, open and resolved"),
       statRow("Open", fmtCount(vm.open), "string still in HEAD"),
+      ...leftCoverageStats(vm.leftCoverage),
       statRow(
         "Ever validated",
         fmtCount(vm.validationCoverage.measured),

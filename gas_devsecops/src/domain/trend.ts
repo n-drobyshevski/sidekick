@@ -543,25 +543,32 @@ function kmMedianOf(
 /**
  * A row RESOLVED by the replay instant, as the three KM replays below read it: an event at its
  * stored `mttr_days` — or, for a repository drop-out (which has none), right-censored at the
- * age it had when the register lost sight of it, the as-of twin of `BaseRow.censor_days`. Null
- * when it contributes nothing: no clock, or an exit at-or-before its own entry (never
+ * age it had when the register lost sight of it, the as-of twin of `BaseRow.censor_days`:
+ * `lostSight` is its last sighting (`lostSightOf`), the same point `withDerived` uses.
+ * Null when it contributes nothing: no clock, or an exit at-or-before its own entry (never
  * observable by this register — `kaplanMeierExtended`'s `excludedPreEntry` rule).
  */
 // Positional rather than a row object on purpose: `withKmMedian` calls this once per row per
 // trend point, and a spread to narrow `resolvedAt` would allocate on every one of those.
 function resolvedObservation(
   first: number | null,
-  resolvedAt: number,
+  lostSight: number,
   mttr: number | null,
   dropout: boolean,
   entry: number,
 ): { obs: KMObservation; event: boolean } | null {
   if (dropout) {
     if (first === null) return null;
-    const t = (resolvedAt - first) / DAY_MS;
+    const t = (lostSight - first) / DAY_MS;
     return t > entry ? { obs: { t, entry }, event: false } : null;
   }
   return mttr !== null && mttr > entry ? { obs: { t: mttr, entry }, event: true } : null;
+}
+
+/** Where a resolved row's KM observation ends if it is a drop-out — its last sighting, else
+ *  `resolvedAt` (ledgerCore.withDerived's `lostSight`); unread for every other row. */
+function lostSightOf(r: Rec, resolvedAt: number | null): number | null {
+  return parseTs(r["last_seen"]) ?? resolvedAt;
 }
 
 /**
@@ -609,6 +616,7 @@ export function kmMedianByGroupTrend(
   const parsed = rows.map((r) => ({
     first: parseTs(r["first_seen"]),
     resolvedAt: parseTs(r["resolved_at"]),
+    lostSight: isRepoDropout(r) ? lostSightOf(r, parseTs(r["resolved_at"])) : null,
     mttr: mttrOf(r),
     fixAvail: parseTs(r["fix_available_at"]),
     dropout: isRepoDropout(r),
@@ -629,7 +637,7 @@ export function kmMedianByGroupTrend(
       if (r.resolvedAt !== null && r.resolvedAt <= ts.ms) {
         // Resolved by ts: an event at its final mttr_days (a null-mttr resolution drops out),
         // or a drop-out censored where it left — see resolvedObservation.
-        const o = resolvedObservation(r.first, r.resolvedAt, r.mttr, r.dropout, r.entry);
+        const o = resolvedObservation(r.first, r.lostSight ?? r.resolvedAt, r.mttr, r.dropout, r.entry);
         if (o !== null) {
           if (o.event) (events[r.group] ??= []).push(o.obs);
           (risk[r.group] ??= []).push(o.obs);
@@ -795,6 +803,7 @@ export function withKmMedian<T extends { date: string; reconstructed?: boolean }
   const parsed = rows.map((r) => ({
     first: parseTs(r["first_seen"]),
     resolvedAt: parseTs(r["resolved_at"]),
+    lostSight: isRepoDropout(r) ? lostSightOf(r, parseTs(r["resolved_at"])) : null,
     mttr: mttrOf(r),
     fixAvail: parseTs(r["fix_available_at"]),
     dropout: isRepoDropout(r),
@@ -816,7 +825,7 @@ export function withKmMedian<T extends { date: string; reconstructed?: boolean }
       const risk: KMObservation[] = []; // the risk set: events + open-as-of-d censored ages
       for (const r of parsed) {
         if (r.resolvedAt !== null && r.resolvedAt <= d) {
-          const o = resolvedObservation(r.first, r.resolvedAt, r.mttr, r.dropout, r.entry);
+          const o = resolvedObservation(r.first, r.lostSight ?? r.resolvedAt, r.mttr, r.dropout, r.entry);
           if (o !== null) {
             if (o.event) events.push(o.obs);
             risk.push(o.obs);
@@ -862,7 +871,9 @@ export function kmMedianAsOf(
     const resolvedAt = parseTs(r["resolved_at"]);
     const first = parseTs(r["first_seen"]);
     if (resolvedAt !== null && resolvedAt <= d) {
-      const o = resolvedObservation(first, resolvedAt, mttrOf(r), isRepoDropout(r), entry);
+      const dropout = isRepoDropout(r);
+      const lostSight = dropout ? (lostSightOf(r, resolvedAt) ?? resolvedAt) : resolvedAt;
+      const o = resolvedObservation(first, lostSight, mttrOf(r), dropout, entry);
       if (o !== null) {
         if (o.event) events.push(o.obs);
         risk.push(o.obs);

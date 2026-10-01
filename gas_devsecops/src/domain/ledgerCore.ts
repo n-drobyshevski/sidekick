@@ -584,8 +584,13 @@ function withDerived(
   // moment as `censor_days` (and the actionable twin), which only the Kaplan–Meier inputs
   // read — right-censored at the drop-out, never an event. A dedicated field rather than an
   // `age_days`, because `age_days` is what every open-backlog and aging figure reads.
+  //
+  // "That moment" is `last_seen`, the last scan that SAW it — not `resolved_at`, the scan that
+  // noticed it gone. Between them sit the deferred scans (and the scan interval itself), and
+  // the register watched nothing then: censoring at `resolved_at` would claim days of
+  // observed survival nobody observed. A row with no `last_seen` falls back to `resolved_at`.
   const dropout = isRepoDropout(row);
-  const lostSight = dropout ? parseTs(row.resolved_at) : null;
+  const lostSight = dropout ? (parseTs(row.last_seen) ?? parseTs(row.resolved_at)) : null;
   const resolved = dropout ? null : parseTs(row.resolved_at);
   const open = row.status === "OPEN";
   const isSca = row.scope === "sca";
@@ -612,8 +617,12 @@ function withDerived(
       resolved !== null && actionableMs !== null ? (resolved - actionableMs) / DAY_MS : null,
     actionable_age_days: open && actionableMs !== null ? (nowMs - actionableMs) / DAY_MS : null,
     censor_days: lostSight !== null && first !== null ? (lostSight - first) / DAY_MS : null,
+    // Null, not negative, for a drop-out whose fix only became available after it was last
+    // seen: it was never on the actionable clock while the register could see it.
     censor_actionable_days:
-      lostSight !== null && actionableMs !== null ? (lostSight - actionableMs) / DAY_MS : null,
+      lostSight !== null && actionableMs !== null && actionableMs <= lostSight
+        ? (lostSight - actionableMs) / DAY_MS
+        : null,
     // `isSca &&` is the flag's DEFINITION, not a shortcut: "awaiting a vendor fix" names a
     // state only a dependency finding can be in. On sast/secrets it is false even for the
     // degenerate row whose first_seen is missing — that row cannot be measured (its actionable
@@ -636,7 +645,10 @@ function rowFromEpisode(e: EpisodeRow): LedgerRow {
     branch: null,
     platform: null,
     first_seen: e.first_seen,
-    last_seen: e.resolved_at,
+    // `resolved_at`, as every episode always read — except a repository drop-out's, whose last
+    // sighting is its censoring point (`withDerived`) and is read back when the episode carries
+    // one (an episode sealed before the column existed does not, and falls back too).
+    last_seen: (isRepoDropout(e) ? e.last_seen : null) ?? e.resolved_at,
     status: "RESOLVED",
     resolved_at: e.resolved_at,
     resolution_src: e.resolution_src,

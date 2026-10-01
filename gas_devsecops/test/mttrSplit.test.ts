@@ -159,8 +159,36 @@ describe("the split follows the header scope", () => {
     const s = split();
     expect(s["dimension"]).toBe("repo");
     expect((s["rows"] as Rec[]).length).toBe(20);
-    expect(s["cut"]).toEqual({ groups: 2, open: 2, resolved: 0 });
+    expect(s["cut"]).toEqual({ groups: 2, open: 2, resolved: 0, leftCoverage: 0 });
     expect((s["within"] as Rec)["supportGroup"]).toBe("CS-BIG");
+  });
+
+  it("ranks and cuts repositories without reading a drop-out as a fix", async () => {
+    // Nineteen open repositories, then one slot: "aa-drop" (three findings that left coverage
+    // with it) against "zz-fixed" (one real fix). Counted as resolved, the drop-outs won the
+    // slot and the cut said "1 resolved"; they are neither open nor resolved.
+    const at = "2026-03-01T00:00:00Z";
+    const big = (name: string, over: Partial<Rec> = {}) => ledgerRow({
+      finding_key: `sca#${name}`, scope: "sca", repo_id: name, repo_name: name,
+      projects_json: project("CS-BIG"), ...over,
+    });
+    const dropped = { status: "RESOLVED", resolved_at: at, resolution_src: "repo_dropout" };
+    await seed([
+      ...ROWS,
+      ...Array.from({ length: 19 }, (_, i) => big(`big-${String(i).padStart(2, "0")}`)),
+      // A drop-out on a repository that is listed anyway: not part of its totals either.
+      { ...big("big-00"), finding_key: "sca#big-00-left", ...dropped },
+      ...["1", "2", "3"].map((i) => ({ ...big("aa-drop"), finding_key: `sca#aa-drop-${i}`, ...dropped })),
+      big("zz-fixed", { status: "RESOLVED", resolved_at: at, resolution_src: "api" }),
+    ]);
+    ok(server.api.setProjectView({ projectView: "cs-big" }));
+    const s = split();
+    expect(s["dimension"]).toBe("repo");
+    expect(labels(s)).toContain("zz-fixed");
+    expect(labels(s)).not.toContain("aa-drop");
+    expect(s["cut"]).toEqual({ groups: 1, open: 0, resolved: 0, leftCoverage: 3 });
+    const big00 = (s["rows"] as Rec[]).find((r) => r["group"] === "big-00")!;
+    expect(big00["totalByScope"]).toEqual({ sca: 1 });
   });
 });
 

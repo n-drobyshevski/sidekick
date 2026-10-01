@@ -306,6 +306,7 @@ function rowToEpisode(r: Rec): EpisodeRow {
     cwe: s(r, "cwe"),
     language: s(r, "language"),
     owner_project: ownerOf(r),
+    last_seen: s(r, "last_seen"),
   };
 }
 

@@ -44,9 +44,17 @@ describe("severityStats", () => {
       rec({ severity: "HIGH", status: "RESOLVED" }),
     ];
     const stats = severityStats(records);
-    expect(stats.CRITICAL).toEqual({ total: 3, open: 2, resolved: 1 });
-    expect(stats.HIGH).toEqual({ total: 1, open: 0, resolved: 1 });
-    for (const s of Object.values(stats)) expect(s.open + s.resolved).toBe(s.total);
+    expect(stats.CRITICAL).toEqual({ total: 3, open: 2, resolved: 1, leftCoverage: 0 });
+    expect(stats.HIGH).toEqual({ total: 1, open: 0, resolved: 1, leftCoverage: 0 });
+    for (const s of Object.values(stats)) expect(s.open + s.resolved + s.leftCoverage).toBe(s.total);
+  });
+
+  it("does not count a repository drop-out as resolved", () => {
+    const stats = severityStats([
+      rec({ severity: "HIGH", status: "RESOLVED", resolution_src: "api" }),
+      rec({ severity: "HIGH", status: "RESOLVED", resolution_src: "repo_dropout" }),
+    ]);
+    expect(stats.HIGH).toEqual({ total: 2, open: 0, resolved: 1, leftCoverage: 1 });
   });
 
   it("scope filter narrows to one register", () => {

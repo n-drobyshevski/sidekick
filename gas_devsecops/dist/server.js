@@ -1546,14 +1546,14 @@ var Server = (() => {
     return { deltas, observations, scanRow, twinStats, absence };
   }
   function withDerived(row, nowMs, trackingStart) {
-    var _a, _b;
+    var _a, _b, _c;
     const first = parseTs(row.first_seen);
     const dropout = isRepoDropout(row);
-    const lostSight = dropout ? parseTs(row.resolved_at) : null;
+    const lostSight = dropout ? (_a = parseTs(row.last_seen)) != null ? _a : parseTs(row.resolved_at) : null;
     const resolved = dropout ? null : parseTs(row.resolved_at);
     const open = row.status === "OPEN";
     const isSca = row.scope === "sca";
-    const fixAvailableAt = isSca ? (_b = (_a = row.fix_date) != null ? _a : row.fix_observed_at) != null ? _b : null : row.first_seen;
+    const fixAvailableAt = isSca ? (_c = (_b = row.fix_date) != null ? _b : row.fix_observed_at) != null ? _c : null : row.first_seen;
     const fixAvailMs = parseTs(fixAvailableAt);
     const actionableMs = fixAvailMs === null ? null : first === null ? fixAvailMs : Math.max(first, fixAvailMs);
     const actionableFrom = actionableMs === null ? null : toIso(actionableMs);
@@ -1570,7 +1570,9 @@ var Server = (() => {
       mttr_actionable_days: resolved !== null && actionableMs !== null ? (resolved - actionableMs) / DAY_MS3 : null,
       actionable_age_days: open && actionableMs !== null ? (nowMs - actionableMs) / DAY_MS3 : null,
       censor_days: lostSight !== null && first !== null ? (lostSight - first) / DAY_MS3 : null,
-      censor_actionable_days: lostSight !== null && actionableMs !== null ? (lostSight - actionableMs) / DAY_MS3 : null,
+      // Null, not negative, for a drop-out whose fix only became available after it was last
+      // seen: it was never on the actionable clock while the register could see it.
+      censor_actionable_days: lostSight !== null && actionableMs !== null && actionableMs <= lostSight ? (lostSight - actionableMs) / DAY_MS3 : null,
       // `isSca &&` is the flag's DEFINITION, not a shortcut: "awaiting a vendor fix" names a
       // state only a dependency finding can be in. On sast/secrets it is false even for the
       // degenerate row whose first_seen is missing — that row cannot be measured (its actionable
@@ -1579,6 +1581,7 @@ var Server = (() => {
     };
   }
   function rowFromEpisode(e) {
+    var _a;
     return {
       finding_key: e.finding_key,
       scope: e.scope,
@@ -1591,7 +1594,10 @@ var Server = (() => {
       branch: null,
       platform: null,
       first_seen: e.first_seen,
-      last_seen: e.resolved_at,
+      // `resolved_at`, as every episode always read — except a repository drop-out's, whose last
+      // sighting is its censoring point (`withDerived`) and is read back when the episode carries
+      // one (an episode sealed before the column existed does not, and falls back too).
+      last_seen: (_a = isRepoDropout(e) ? e.last_seen : null) != null ? _a : e.resolved_at,
       status: "RESOLVED",
       resolved_at: e.resolved_at,
       resolution_src: e.resolution_src,
@@ -2077,9 +2083,10 @@ var Server = (() => {
     const out = {};
     for (const r of rows) {
       const s2 = sev(r);
-      const stat = (_a = out[s2]) != null ? _a : out[s2] = { total: 0, open: 0, resolved: 0 };
+      const stat = (_a = out[s2]) != null ? _a : out[s2] = { total: 0, open: 0, resolved: 0, leftCoverage: 0 };
       stat.total += 1;
       if (isOpen2(r["status"])) stat.open += 1;
+      else if (isRepoDropout(r)) stat.leftCoverage += 1;
       else stat.resolved += 1;
     }
     return out;
@@ -2740,6 +2747,7 @@ var Server = (() => {
     };
   }
   function latencyObservation(row, nowMs) {
+    var _a;
     const first = parseTs(row.first_seen);
     if (first === null) return null;
     const fixAvail = parseTs(row.fix_available_at);
@@ -2747,7 +2755,7 @@ var Server = (() => {
       const raw = fixAvail - first;
       return { t: Math.max(0, raw) / DAY_MS5, event: true, closedBeforeFix: false };
     }
-    const resolved = parseTs(row.resolved_at);
+    const resolved = isRepoDropout(row) ? (_a = parseTs(row.last_seen)) != null ? _a : parseTs(row.resolved_at) : parseTs(row.resolved_at);
     if (resolved !== null) {
       return { t: Math.max(0, resolved - first) / DAY_MS5, event: false, closedBeforeFix: true };
     }
@@ -2888,13 +2896,17 @@ var Server = (() => {
     const cutAt = reliableUntilFromCurve(curve);
     return kmMedianFromCurve(cutAt === null ? [] : curve.filter((p) => p.t <= cutAt));
   }
-  function resolvedObservation(first, resolvedAt, mttr, dropout, entry) {
+  function resolvedObservation(first, lostSight, mttr, dropout, entry) {
     if (dropout) {
       if (first === null) return null;
-      const t = (resolvedAt - first) / DAY_MS6;
+      const t = (lostSight - first) / DAY_MS6;
       return t > entry ? { obs: { t, entry }, event: false } : null;
     }
     return mttr !== null && mttr > entry ? { obs: { t: mttr, entry }, event: true } : null;
+  }
+  function lostSightOf(r, resolvedAt) {
+    var _a;
+    return (_a = parseTs(r["last_seen"])) != null ? _a : resolvedAt;
   }
   function trendFromBase(scans, base, severities = null, opts = {}) {
     var _a;
@@ -2951,6 +2963,7 @@ var Server = (() => {
       return {
         first: parseTs(r["first_seen"]),
         resolvedAt: parseTs(r["resolved_at"]),
+        lostSight: isRepoDropout(r) ? lostSightOf(r, parseTs(r["resolved_at"])) : null,
         mttr: mttrOf(r),
         fixAvail: parseTs(r["fix_available_at"]),
         dropout: isRepoDropout(r),
@@ -2961,6 +2974,7 @@ var Server = (() => {
     });
     const skip = kmSkipMask(points, opts.maxReconstructed);
     return points.map((p, i) => {
+      var _a2;
       if (skip !== null && skip[i]) return { ...p, km_median_days: null };
       const d = parseTs(p.date);
       let med = null;
@@ -2969,7 +2983,7 @@ var Server = (() => {
         const risk = [];
         for (const r of parsed) {
           if (r.resolvedAt !== null && r.resolvedAt <= d) {
-            const o = resolvedObservation(r.first, r.resolvedAt, r.mttr, r.dropout, r.entry);
+            const o = resolvedObservation(r.first, (_a2 = r.lostSight) != null ? _a2 : r.resolvedAt, r.mttr, r.dropout, r.entry);
             if (o !== null) {
               if (o.event) events.push(o.obs);
               risk.push(o.obs);
@@ -2986,7 +3000,7 @@ var Server = (() => {
     });
   }
   function kmMedianAsOf(base, severities, d, opts = {}) {
-    var _a, _b;
+    var _a, _b, _c;
     if (d === null || !base.length) return null;
     const hideNoFix = (_a = opts.hideNoFix) != null ? _a : false;
     const rows = scopeRows(base, severities, opts.scope);
@@ -2997,7 +3011,9 @@ var Server = (() => {
       const resolvedAt = parseTs(r["resolved_at"]);
       const first = parseTs(r["first_seen"]);
       if (resolvedAt !== null && resolvedAt <= d) {
-        const o = resolvedObservation(first, resolvedAt, mttrOf(r), isRepoDropout(r), entry);
+        const dropout = isRepoDropout(r);
+        const lostSight = dropout ? (_c = lostSightOf(r, resolvedAt)) != null ? _c : resolvedAt : resolvedAt;
+        const o = resolvedObservation(first, lostSight, mttrOf(r), dropout, entry);
         if (o !== null) {
           if (o.event) events.push(o.obs);
           risk.push(o.obs);
@@ -3241,7 +3257,7 @@ var Server = (() => {
     return episodes;
   }
   function toEpisodeRow(live, compactionId) {
-    var _a, _b, _c, _d, _e, _f, _g;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     return {
       finding_key: live.finding_key,
       scope: live.scope,
@@ -3261,7 +3277,8 @@ var Server = (() => {
       epss: (_d = live.epss) != null ? _d : null,
       cwe: (_e = live.cwe) != null ? _e : null,
       language: (_f = live.language) != null ? _f : null,
-      owner_project: (_g = live.owner_project) != null ? _g : null
+      owner_project: (_g = live.owner_project) != null ? _g : null,
+      last_seen: (_h = live.last_seen) != null ? _h : null
     };
   }
   function deleteScansCore(state, scanIds, readPayload, checkpoint, now) {
@@ -4466,7 +4483,11 @@ var Server = (() => {
       "epss",
       "cwe",
       "language",
-      "owner_project"
+      "owner_project",
+      // Appended last so `ensureHeaders` adds it without moving a column: a sealed repository
+      // drop-out is censored where it was last SEEN (ledgerCore.withDerived), not where the
+      // register noticed it gone.
+      "last_seen"
     ],
     [TABS.scans]: [
       // `raw_ref` addresses the scan's archived pages; `obs_ref` addresses its OBSERVATION SET
@@ -5939,7 +5960,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "b20c0bde05a1" : "dev";
+  var BUILD_ID = true ? "a236188dfb39" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
@@ -6616,7 +6637,8 @@ var Server = (() => {
       epss: risk.epss,
       cwe: s(r, "cwe"),
       language: s(r, "language"),
-      owner_project: ownerOf(r)
+      owner_project: ownerOf(r),
+      last_seen: s(r, "last_seen")
     };
   }
   var scanRowsMemo;
@@ -8946,7 +8968,7 @@ var Server = (() => {
     return { valid, invalid, measured, ratePct: pct2(valid, measured) };
   }
   function timeToRevoke(rows, opts) {
-    var _a;
+    var _a, _b, _c;
     const { rows: secrets, ignoredOtherScopes } = secretsOnly(rows);
     const sla = (_a = opts.sla) != null ? _a : DEFAULT_REVOKE_SLA_DAYS;
     const projected = [];
@@ -8986,6 +9008,25 @@ var Server = (() => {
         excludedNoClock += 1;
         continue;
       }
+      if (isRepoDropout(row)) {
+        const lost = (_b = parseTs(row.last_seen)) != null ? _b : parseTs(row.resolved_at);
+        const checked = parseTs(row.validated_at);
+        const at = lost === null ? checked : checked === null ? lost : Math.min(lost, checked);
+        const censorDays = at === null ? null : (at - born) / DAY_MS10;
+        if (censorDays === null || !Number.isFinite(censorDays) || censorDays <= 0) {
+          excludedNoClock += 1;
+          continue;
+        }
+        projected.push({
+          severity: null,
+          status: STATUS_RESOLVED,
+          mttr_days: null,
+          age_days: null,
+          censor_days: censorDays,
+          entry_days: entryDays
+        });
+        continue;
+      }
       const age = (opts.now - born) / DAY_MS10;
       if (!Number.isFinite(age) || age < 0) {
         excludedNoClock += 1;
@@ -9009,6 +9050,7 @@ var Server = (() => {
       medianLowerBound: km.medianLowerBound,
       events: km.events,
       censored: km.censored,
+      leftCoverage: (_c = km.censoredLeftCoverage) != null ? _c : 0,
       excludedUnmeasured,
       excludedNoClock,
       total: secrets.length,
@@ -9860,7 +9902,7 @@ var Server = (() => {
   function mttrModel(p) {
     const n2 = norm(p);
     return cached(
-      "dsMttr7",
+      "dsMttr8",
       { ...keyOf(n2), slaTargets: n2.slaTargets, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => buildMttr(n2),
       CLOCK_TTL_SEC
@@ -9881,17 +9923,17 @@ var Server = (() => {
     return "domain";
   }
   function remediationSplitRow(group, rs, n2, now) {
-    var _a, _b, _c;
+    var _a, _b;
     const k = kaplanMeier(rs, KM_OPTS);
     const shipped = shipKM(k);
     const { perSev, overall } = mttrFromLedger(rs, { now, slaTargets: n2.slaTargets });
     const openByScope = {};
     const totalByScope = {};
     for (const r of rs) {
+      const open = isOpen8(r.status);
+      if (!open && isRepoDropout(r)) continue;
       totalByScope[r.scope] = ((_a = totalByScope[r.scope]) != null ? _a : 0) + 1;
-      if (!RESOLVED_STATUSES.has(String((_b = r.status) != null ? _b : "").toUpperCase())) {
-        openByScope[r.scope] = ((_c = openByScope[r.scope]) != null ? _c : 0) + 1;
-      }
+      if (open) openByScope[r.scope] = ((_b = openByScope[r.scope]) != null ? _b : 0) + 1;
     }
     return {
       group,
@@ -9925,28 +9967,29 @@ var Server = (() => {
       if (!list) buckets.set(g, list = []);
       list.push(r);
     }
-    const isOpen9 = (r) => {
-      var _a2;
-      return !RESOLVED_STATUSES.has(String((_a2 = r.status) != null ? _a2 : "").toUpperCase());
-    };
-    const openOf = (rs) => rs.filter(isOpen9).length;
+    const counts = new Map([...buckets].map(([g, rs]) => [g, stateCounts(rs)]));
     const byName = (a, b) => a < b ? -1 : a > b ? 1 : 0;
     const names = [...buckets.keys()].sort((a, b) => {
       if (a === SPLIT_NONE2) return 1;
       if (b === SPLIT_NONE2) return -1;
-      const ra = buckets.get(a), rb = buckets.get(b);
       if (dimension === "repo") {
-        return openOf(rb) - openOf(ra) || rb.length - openOf(rb) - (ra.length - openOf(ra)) || byName(a, b);
+        const ca = counts.get(a), cb = counts.get(b);
+        return cb.open - ca.open || cb.resolved - ca.resolved || byName(a, b);
       }
-      return rb.length - ra.length || byName(a, b);
+      return buckets.get(b).length - buckets.get(a).length || byName(a, b);
     });
     const kept = dimension === "repo" ? names.slice(0, REPO_TOP_N) : names;
     const dropped = dimension === "repo" ? names.slice(REPO_TOP_N) : [];
-    const cut = dropped.length ? {
-      groups: dropped.length,
-      open: dropped.reduce((a, g) => a + openOf(buckets.get(g)), 0),
-      resolved: dropped.reduce((a, g) => a + buckets.get(g).length - openOf(buckets.get(g)), 0)
-    } : null;
+    let cut = null;
+    if (dropped.length) {
+      cut = { groups: dropped.length, open: 0, resolved: 0, leftCoverage: 0 };
+      for (const g of dropped) {
+        const c = counts.get(g);
+        cut.open += c.open;
+        cut.resolved += c.resolved;
+        cut.leftCoverage += c.leftCoverage;
+      }
+    }
     const groups = new Set(rows.map((r) => splitBucketOf("supportGroup", r)));
     const oneGroup = groups.size === 1 ? [...groups][0] : null;
     return {
@@ -9963,7 +10006,7 @@ var Server = (() => {
   function mttrSplitModel(p) {
     const n2 = norm({ ...p, split: null });
     return cached(
-      "dsMttrSplit3",
+      "dsMttrSplit4",
       { ...keyOf(n2), slaTargets: n2.slaTargets, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => buildMttrSplit(n2),
       CLOCK_TTL_SEC
@@ -9973,7 +10016,7 @@ var Server = (() => {
     const n2 = norm(p);
     if (!n2.split) throw new Error("mttrGroupModel: a split { by, value } is required.");
     return cached(
-      "dsMttrGroup4",
+      "dsMttrGroup5",
       { ...keyOf(n2), slaTargets: n2.slaTargets, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => {
         const snap = baseSnapshot();
@@ -10180,7 +10223,7 @@ var Server = (() => {
   function executiveModel(p) {
     const n2 = norm(p);
     return cached(
-      "dsExecutive4",
+      "dsExecutive5",
       {
         ...keyOf(n2),
         slaTargets: n2.slaTargets,
@@ -10334,7 +10377,9 @@ var Server = (() => {
       // count as a measurement again.
       // "dsRegister4" -> "dsRegister5" (drop-outs counted apart): `resolved` no longer counts
       // repository drop-outs, which ship as `leftCoverage`.
-      "dsRegister5",
+      // "dsRegister5" -> "dsRegister6": `sevStats` stops counting them as `resolved` too — each
+      // severity gained `leftCoverage`.
+      "dsRegister6",
       { ...keyOf(n2), scope, slaTargets: n2.slaTargets },
       () => buildRegister(scope, n2),
       CLOCK_TTL_SEC
@@ -10537,7 +10582,7 @@ var Server = (() => {
   function secretsModel(p) {
     const n2 = norm(p);
     return cached(
-      "dsSecrets6",
+      "dsSecrets7",
       // `mttrExcludeEndOfLife` is here because `timeToRevoke` reads it; `severities` is pinned to
       // null because nothing reads it. One rule, both directions.
       {
@@ -10667,7 +10712,7 @@ var Server = (() => {
   function reposModel(p) {
     const n2 = norm(p);
     return durablyCached(
-      "dsRepos3",
+      "dsRepos4",
       {
         ...keyOf(n2),
         coldAfterDays: n2.coldAfterDays,
@@ -10806,7 +10851,7 @@ var Server = (() => {
   function historyModel(p) {
     const n2 = norm(p);
     return durablyCached(
-      "dsHistory8",
+      "dsHistory9",
       { ...keyOf(n2), mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => buildHistory(n2)
     );
@@ -10877,7 +10922,8 @@ var Server = (() => {
       // split row's lower bound is null where the reliability cut left nothing to bound.
       // "dsScopeSummary4" -> "dsScopeSummary5" (drop-outs censored): every half-life it reads
       // changed as `dsMttr7` did, and the history counts under it as `dsHistory8` did.
-      "dsScopeSummary5",
+      // "dsScopeSummary5" -> "dsScopeSummary6": and again as `dsMttr8` / `dsHistory9` did.
+      "dsScopeSummary6",
       { ...keyOf(n2), slaTargets: n2.slaTargets, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => {
         const latest = latestScanRowOf(loadScanRows());

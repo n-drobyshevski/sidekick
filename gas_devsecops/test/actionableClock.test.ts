@@ -216,7 +216,7 @@ function episode(over: Partial<EpisodeRow> & Pick<EpisodeRow, "finding_key" | "s
     resolution_src: "api", reopened_count: 0, compaction_id: "cmp",
     superseded_by_scan: null, fix_date: null, fix_observed_at: null,
     has_kev: null, has_exploit: null, epss: null, cwe: null, language: null,
-    owner_project: null,
+    owner_project: null, last_seen: null,
     ...over,
   };
 }

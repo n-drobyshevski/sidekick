@@ -38,6 +38,7 @@ import {
 import {
   RISK_TIER_LABELS, RISK_TIER_ORDER, SEVERITY_FALLBACK, agingModel, agingSurfaceNote,
   agingTableModel, chartCard, concentrationModel, figureCard, filterEmptyNotice, funnelModel,
+  leftCoverageClause, leftCoverageStats,
   movementCard, movementModel, oldestFindingsModel, pagedTable, readRegisterParams,
   registerFirstRunView, registerRowsTable, registerToolbar, renderRegisterPage, sectionCard,
   sevPalette, severityCountsTableModel, signalFigure, signalRow, textCell, tierModel,
@@ -117,6 +118,8 @@ export function sastModel(payload, opts) {
     rowCount: num(p.rowCount),
     open: num(p.open),
     resolved: num(p.resolved),
+    // Repository drop-outs: in `rowCount`, neither open nor resolved — see scaModel's twin.
+    leftCoverage: num(p.leftCoverage, 0),
 
     // WHAT THE FIGURES ABOVE WERE MEASURED OVER — the in-scope count, the gate the last scan
     // of THIS scope applied, and the base filters its query carries. Passed straight through:
@@ -133,7 +136,7 @@ export function sastModel(payload, opts) {
       sub: firstRun.show
         ? "Nothing has been measured for this register yet."
         : `open weaknesses of ${fmtCount(p.rowCount)} in the register — `
-          + `${fmtCount(p.resolved)} resolved.`,
+          + `${fmtCount(p.resolved)} resolved${leftCoverageClause(p.leftCoverage)}.`,
     },
 
     // ONE CLOCK, AND THE PAGE SAYS WHY IT IS ONE.
@@ -150,7 +153,13 @@ export function sastModel(payload, opts) {
       denominator:
         `${fmtCount(p.resolved)} of ${fmtCount(p.rowCount)} findings in this register have a `
         + "closing date at all, and every one of those dates came from a disappearance rather "
-        + "than from the API.",
+        + "than from the API."
+        // A drop-out has a closing date too, but it dates the repository leaving the scan, not
+        // a fix — so it is outside the count above and named here, where there is one.
+        + (num(p.leftCoverage, 0) > 0
+          ? ` A further ${fmtCount(p.leftCoverage)} closed only because their repository left `
+            + "the scan, which is not a fix."
+          : ""),
     },
 
     rule: {
@@ -250,6 +259,7 @@ function paintSast(host, vm, filters) {
       statRow("In register", fmtCount(vm.rowCount), "weaknesses, open and resolved"),
       statRow("Open", fmtCount(vm.open), "still outstanding"),
       statRow("Resolved", fmtCount(vm.resolved), "dated by disappearance"),
+      ...leftCoverageStats(vm.leftCoverage),
     ],
   }));
 

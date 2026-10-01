@@ -94,6 +94,23 @@ export function registerFirstRunView(rowCount, synced, at) {
   return { show: num(rowCount, 0) === 0, synced: !!synced, at };
 }
 
+/**
+ * A register's repository drop-outs, named where a headline states its total: ", N left
+ * coverage with their repository" when there are any, "" otherwise. They are in `rowCount`
+ * and in neither `open` nor `resolved` (registerModel's `stateCounts`), so a headline that
+ * printed only the other two would not add up. The three register pages share it.
+ */
+export function leftCoverageClause(leftCoverage) {
+  const n = num(leftCoverage, 0);
+  return n > 0 ? `, ${fmtCount(n)} left coverage with their repository` : "";
+}
+
+/** The stat-strip row for the same count — none when there is nothing to name. */
+export function leftCoverageStats(leftCoverage) {
+  const n = num(leftCoverage, 0);
+  return n > 0 ? [statRow("Left coverage", fmtCount(n), "left the scan with their repository")] : [];
+}
+
 /** EPSS is a probability, 0..1 off the wire; rendered as the percentage it names. */
 export function epssPct(v) {
   return v === null || v === undefined || !Number.isFinite(Number(v))
@@ -1062,6 +1079,10 @@ export function scaModel(payload, opts) {
     rowCount: num(p.rowCount),
     open: num(p.open),
     resolved: num(p.resolved),
+    // Repository drop-outs (registerModel's `stateCounts`): in `rowCount`, but neither open nor
+    // resolved. open + resolved + leftCoverage = rowCount, so the hero names them when there
+    // are any rather than leaving a remainder nobody can account for.
+    leftCoverage: num(p.leftCoverage, 0),
 
     // WHAT THE FIGURES ABOVE WERE MEASURED OVER — the in-scope count, the gate the last scan
     // of THIS scope applied, and the base filters its query carries. Passed straight through:
@@ -1081,7 +1102,7 @@ export function scaModel(payload, opts) {
       sub: firstRun.show
         ? "Nothing has been measured for this register yet."
         : `open findings of ${fmtCount(p.rowCount)} in the register — `
-          + `${fmtCount(p.resolved)} resolved.`,
+          + `${fmtCount(p.resolved)} resolved${leftCoverageClause(p.leftCoverage)}.`,
     },
 
     // TWO FIGURES, NEVER ONE. A single "average time to fix" over both populations would be
@@ -1246,6 +1267,7 @@ function paintSca(host, vm, filters) {
       statRow("In register", fmtCount(vm.rowCount), "findings, open and resolved"),
       statRow("Open", fmtCount(vm.open), "still outstanding"),
       statRow("Resolved", fmtCount(vm.resolved), "closed in the ledger"),
+      ...leftCoverageStats(vm.leftCoverage),
     ],
   }));
 

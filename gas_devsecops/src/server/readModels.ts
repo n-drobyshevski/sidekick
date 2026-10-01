@@ -1306,6 +1306,10 @@ export function mttrModel(p?: ModelParams): Rec {
   // the payload gained `leftCoverage` and each `km.censoredLeftCoverage`. A warm dsMttr6
   // entry would serve the half-life computed with those rows deleted from the risk set.
   //
+  // "dsMttr7" -> "dsMttr8" (drop-out censoring point): a drop-out is censored at its last
+  // sighting (`last_seen`), not at the later scan that noticed it gone (ledgerCore.withDerived),
+  // so every KM figure that holds one moves.
+  //
   // `slaTargets` JOINS THE KEY (not just `keyOf`'s base four) because this compute reads it —
   // `openPastSla`, `agingDistribution` and `mttrFromLedger`'s `sla_target`/`sla_pct` all take
   // it as an argument below. Without it in the key, an operator saving a new Deadlines window
@@ -1317,7 +1321,7 @@ export function mttrModel(p?: ModelParams): Rec {
   // which repositories every figure below is measured over, so an operator flipping it and
   // reloading would otherwise read the OLD half-life off an entry whose params look the same.
   return cached(
-    "dsMttr7",
+    "dsMttr8",
     { ...keyOf(n), slaTargets: n.slaTargets, mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
     () => buildMttr(n),
     CLOCK_TTL_SEC,
@@ -1373,13 +1377,15 @@ function remediationSplitRow(group: string, rs: BaseRow[], n: NormParams, now: n
   const k = kaplanMeier(rs, KM_OPTS);
   const shipped = shipKM(k);
   const { perSev, overall } = mttrFromLedger(rs as unknown as Rec[], { now, slaTargets: n.slaTargets });
+  // Per register, the rows the row's own `open` + `resolved` count — a repository drop-out is
+  // neither (`stateCounts`), so it does not make a register the sheet offers for this row.
   const openByScope: Record<string, number> = {};
   const totalByScope: Record<string, number> = {};
   for (const r of rs) {
+    const open = isOpen(r.status);
+    if (!open && isRepoDropout(r)) continue;
     totalByScope[r.scope] = (totalByScope[r.scope] ?? 0) + 1;
-    if (!RESOLVED_STATUSES.has(String(r.status ?? "").toUpperCase())) {
-      openByScope[r.scope] = (openByScope[r.scope] ?? 0) + 1;
-    }
+    if (open) openByScope[r.scope] = (openByScope[r.scope] ?? 0) + 1;
   }
   return {
     group,
@@ -1410,25 +1416,31 @@ function buildMttrSplit(n: NormParams): Rec {
     if (!list) buckets.set(g, (list = []));
     list.push(r);
   }
-  const isOpen = (r: BaseRow) => !RESOLVED_STATUSES.has(String(r.status ?? "").toUpperCase());
-  const openOf = (rs: BaseRow[]) => rs.filter(isOpen).length;
+  // Open / resolved / left coverage per bucket, once (`stateCounts`): a repository drop-out is
+  // neither open nor resolved, so it ranks a repository by neither and the cut counts it apart.
+  const counts = new Map([...buckets].map(([g, rs]) => [g, stateCounts(rs)] as const));
   const byName = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
   const names = [...buckets.keys()].sort((a, b) => {
     if (a === SPLIT_NONE) return 1;
     if (b === SPLIT_NONE) return -1;
-    const ra = buckets.get(a)!, rb = buckets.get(b)!;
     if (dimension === "repo") {
-      return (openOf(rb) - openOf(ra)) || ((rb.length - openOf(rb)) - (ra.length - openOf(ra))) || byName(a, b);
+      const ca = counts.get(a)!, cb = counts.get(b)!;
+      return (cb.open - ca.open) || (cb.resolved - ca.resolved) || byName(a, b);
     }
-    return (rb.length - ra.length) || byName(a, b);
+    return (buckets.get(b)!.length - buckets.get(a)!.length) || byName(a, b);
   });
   const kept = dimension === "repo" ? names.slice(0, REPO_TOP_N) : names;
   const dropped = dimension === "repo" ? names.slice(REPO_TOP_N) : [];
-  const cut = dropped.length ? {
-    groups: dropped.length,
-    open: dropped.reduce((a, g) => a + openOf(buckets.get(g)!), 0),
-    resolved: dropped.reduce((a, g) => a + buckets.get(g)!.length - openOf(buckets.get(g)!), 0),
-  } : null;
+  let cut: { groups: number; open: number; resolved: number; leftCoverage: number } | null = null;
+  if (dropped.length) {
+    cut = { groups: dropped.length, open: 0, resolved: 0, leftCoverage: 0 };
+    for (const g of dropped) {
+      const c = counts.get(g)!;
+      cut.open += c.open;
+      cut.resolved += c.resolved;
+      cut.leftCoverage += c.leftCoverage;
+    }
+  }
   // The support group the rows share, when they share one — a repository row under it carries
   // that group's override marker in the sheet.
   const groups = new Set(rows.map((r) => splitBucketOf("supportGroup", r)));
@@ -1445,14 +1457,17 @@ function buildMttrSplit(n: NormParams): Rec {
   };
 }
 
-/** The split, cached. Keyed like `dsMttr7` on the two settings the compute reads.
+/** The split, cached. Keyed like `dsMttr8` on the two settings the compute reads.
  *  "dsMttrSplit1" -> "dsMttrSplit2": each row's `km` gained `medianBoundReason`, and its
  *  `medianLowerBound` is null where the reliability cut left nothing to bound (`dsMttr5`).
- *  "dsMttrSplit2" -> "dsMttrSplit3": drop-outs censored, as `dsMttr7`. */
+ *  "dsMttrSplit2" -> "dsMttrSplit3": drop-outs censored, as `dsMttr7`.
+ *  "dsMttrSplit3" -> "dsMttrSplit4": the repository cap ranks and cuts on `stateCounts` — a
+ *  drop-out is no longer `cut.resolved` (it is `cut.leftCoverage`) nor in a row's
+ *  `totalByScope` — and drop-outs censor at their last sighting (`dsMttr8`). */
 export function mttrSplitModel(p?: ModelParams): Rec {
   const n = norm({ ...p, split: null });
   return cached(
-    "dsMttrSplit3",
+    "dsMttrSplit4",
     { ...keyOf(n), slaTargets: n.slaTargets, mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
     () => buildMttrSplit(n),
     CLOCK_TTL_SEC,
@@ -1471,9 +1486,9 @@ export function mttrGroupModel(p: ModelParams): Rec {
   if (!n.split) throw new Error("mttrGroupModel: a split { by, value } is required.");
   // "dsMttrGroup1" -> "dsMttrGroup2": `buildMttr`'s payload changed under it (`dsMttr5`), and
   // "dsMttrGroup2" -> "dsMttrGroup3" again (`dsMttr6`), "dsMttrGroup3" -> "dsMttrGroup4"
-  // again (`dsMttr7`).
+  // again (`dsMttr7`), "dsMttrGroup4" -> "dsMttrGroup5" again (`dsMttr8`).
   return cached(
-    "dsMttrGroup4",
+    "dsMttrGroup5",
     { ...keyOf(n), slaTargets: n.slaTargets, mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
     () => {
       const snap = baseSnapshot();
@@ -1767,6 +1782,9 @@ export function executiveModel(p?: ModelParams): Rec {
   // week-over-week delta keep repository drop-outs as censored (`mttrModel`'s `dsMttr7`), and
   // `byScope` rows count them apart (`leftCoverage`) instead of as `resolved`.
   //
+  // "dsExecutive4" -> "dsExecutive5": those half-lives censor a drop-out at its last sighting
+  // (`dsMttr8`).
+  //
   // `coldAfterDays` joins it beside them on the identical argument, one block later: the
   // cold-zone headline is computed from it, so an operator saving a new window and reloading
   // would otherwise keep reading the OLD cold count for up to `CLOCK_TTL_SEC` off an entry
@@ -1780,7 +1798,7 @@ export function executiveModel(p?: ModelParams): Rec {
   // never changes SHAPE with the mode — a key that sometimes carries three fewer fields makes
   // "same params" mean two different things.
   return cached(
-    "dsExecutive4",
+    "dsExecutive5",
     {
       ...keyOf(n),
       slaTargets: n.slaTargets,
@@ -1968,7 +1986,9 @@ export function registerModel(scope: Scope, p?: ModelParams): Rec {
     // count as a measurement again.
     // "dsRegister4" -> "dsRegister5" (drop-outs counted apart): `resolved` no longer counts
     // repository drop-outs, which ship as `leftCoverage`.
-    "dsRegister5",
+    // "dsRegister5" -> "dsRegister6": `sevStats` stops counting them as `resolved` too — each
+    // severity gained `leftCoverage`.
+    "dsRegister6",
     { ...keyOf(n), scope, slaTargets: n.slaTargets },
     () => buildRegister(scope, n),
     CLOCK_TTL_SEC,
@@ -2408,9 +2428,14 @@ export function secretsModel(p?: ModelParams): Rec {
   // data version. It no longer does, and two views would have shared one entry.
   //
   // "dsSecrets5" -> "dsSecrets6": `timeToRevoke.km` gained `censoredLeftCoverage` (the shared
-  // estimator's new count; time-to-revoke itself already censored a drop-out's credential).
+  // estimator's new count). The note said time-to-revoke "already censored a drop-out's
+  // credential"; it did, but at `now`, as a still-live one — the defect the next bump fixes.
+  //
+  // "dsSecrets6" -> "dsSecrets7": a drop-out's credential is censored where its repository left
+  // the scan (or at its last validation, if earlier) and counted apart as
+  // `timeToRevoke.leftCoverage` — secretsLifecycle.ts's decision 5.
   return cached(
-    "dsSecrets6",
+    "dsSecrets7",
     // `mttrExcludeEndOfLife` is here because `timeToRevoke` reads it; `severities` is pinned to
     // null because nothing reads it. One rule, both directions.
     {
@@ -2635,8 +2660,10 @@ export function reposModel(p?: ModelParams): Rec {
   // "dsRepos2" -> "dsRepos3" (drop-outs censored) IS a bump, the payload-under-an-unchanged-key
   // shape: each asset's half-life now keeps its repository drop-outs as censored, and a warm
   // Drive file would serve the median computed with them deleted.
+  //
+  // "dsRepos3" -> "dsRepos4": those drop-outs censor at their last sighting (`dsMttr8`).
   return durablyCached(
-    "dsRepos3",
+    "dsRepos4",
     {
       ...keyOf(n),
       coldAfterDays: n.coldAfterDays,
@@ -2886,8 +2913,10 @@ export function historyModel(p?: ModelParams): Rec {
   // "dsHistory7" -> "dsHistory8" (drop-outs censored and counted apart): `kpis.km` and the
   // trend's `km_median_days` censor repository drop-outs (`dsMttr7`), and `kpis.tracked` /
   // `kpis.resolvedAllTime` no longer count them — `kpis.leftCoverage` does.
+  //
+  // "dsHistory8" -> "dsHistory9": those drop-outs censor at their last sighting (`dsMttr8`).
   return durablyCached(
-    "dsHistory8",
+    "dsHistory9",
     { ...keyOf(n), mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
     () => buildHistory(n),
   );
@@ -3037,7 +3066,8 @@ export function scopeSummaryModel(viewer: ViewerScope): Rec {
     // split row's lower bound is null where the reliability cut left nothing to bound.
     // "dsScopeSummary4" -> "dsScopeSummary5" (drop-outs censored): every half-life it reads
     // changed as `dsMttr7` did, and the history counts under it as `dsHistory8` did.
-    "dsScopeSummary5",
+    // "dsScopeSummary5" -> "dsScopeSummary6": and again as `dsMttr8` / `dsHistory9` did.
+    "dsScopeSummary6",
     { ...keyOf(n), slaTargets: n.slaTargets, mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
     () => {
       const latest = latestScanRowOf(loadScanRows());

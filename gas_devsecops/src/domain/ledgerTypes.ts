@@ -270,6 +270,14 @@ export interface EpisodeRow {
   cwe: string | null;
   language: string | null;
   owner_project: string | null;
+  /**
+   * The last scan that SAW the finding, carried so a sealed repository drop-out keeps its
+   * censoring point (`BaseRow.censor_days` is measured to it, not to `resolved_at`). Read back
+   * only on a drop-out (ledgerCore's `rowFromEpisode`); every other episode still reads
+   * `last_seen` as `resolved_at`. Appended last on the tab; blank on an episode sealed before
+   * the column existed, which falls back to `resolved_at` — the point it was sealed under.
+   */
+  last_seen: string | null;
 }
 
 export interface LedgerState {
@@ -307,8 +315,9 @@ export type BaseRow = LedgerRow & {
   mttr_actionable_days: number | null;
   actionable_age_days: number | null;
   /**
-   * A REPOSITORY DROP-OUT's age when the register lost sight of it (`resolved_at −
-   * first_seen`), and its actionable-clock twin (`resolved_at − actionable_from`); null on
+   * A REPOSITORY DROP-OUT's age when the register lost sight of it (`last_seen −
+   * first_seen` — the last scan that saw it, not the later one that noticed it gone), and its
+   * actionable-clock twin (`last_seen − actionable_from`); null on
    * every other row. Read ONLY by the Kaplan–Meier inputs (`remediation.kaplanMeier` and the
    * as-of replays in `trend.ts`), which right-censor the row there — it was observed open that
    * long and then not observed at all. Kept apart from `age_days` because that one is the

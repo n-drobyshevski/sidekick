@@ -36,7 +36,7 @@ import {
 } from "../src/domain/maintenance";
 import { movementDecomposition } from "../src/domain/movementDecomposition";
 import { capacityByMonth, confusionMatrix, type RiskRow } from "../src/domain/program";
-import { actionableView, kaplanMeier } from "../src/domain/remediation";
+import { actionableView, kaplanMeier, latencyView } from "../src/domain/remediation";
 import {
   assessCompleteness,
   completenessTolerance,
@@ -301,6 +301,7 @@ describe("repository drop-out", () => {
   it("closes the rows with no MTTR clock and outside every remediation figure", () => {
     const state = emptyState();
     live(state, ALL, T(2));
+    live(state, ALL, T(5));
     live(state, [...A, ...C], T(10)); // B leaves; nothing else moves
     live(state, [...A], T(12)); // C (two) resolves normally — the one real fix population
     const base = baseRows(state, { now: Date.parse(T(20)) });
@@ -313,8 +314,9 @@ describe("repository drop-out", () => {
       mttr_actionable_days: null,
       age_days: null,
       removed_at: null,
-      // Watched open from T(1) until B left at T(10): censored there, never an event.
-      censor_days: 9,
+      // Watched open from T(1) until B was last seen at T(5): censored there, never an event —
+      // not at T(10), the scan that noticed it gone.
+      censor_days: 4,
       // No fixedVersion on these nodes, so no actionable clock to censor either.
       censor_actionable_days: null,
     });
@@ -334,7 +336,7 @@ describe("repository drop-out", () => {
     // The trend: B leaves the open count at T(10) and never enters the resolved count.
     const scans = state.scans.map((s) => ({ ts: s.ts, scope: s.scope }));
     const trend = trendFromFrames(scans, base as unknown as Rec[]);
-    expect(trend.map((p) => [p.open, p.resolved])).toEqual([[9, 0], [6, 0], [4, 2]]);
+    expect(trend.map((p) => [p.open, p.resolved])).toEqual([[9, 0], [9, 0], [6, 0], [4, 2]]);
 
     // SLA attainment: a drop-out is not a resolution on time. Every row actionable from T(1),
     // HIGH's 14-day deadline is T(15), and by T(20) the whole cohort's verdict is knowable:
@@ -605,15 +607,59 @@ describe("a drop-out is censored where it left, in every Kaplan–Meier figure",
     const state = emptyState();
     const fixed = (recs: Rec[]) => recs.map((r) => ({ ...r, fixedVersion: "2.0.0" }));
     live(state, fixed(ALL), T(2));
+    live(state, fixed(ALL), T(5));
     live(state, fixed([...A, ...C]), T(10)); // B leaves
     const base = baseRows(state, { now: Date.parse(T(20)) });
     const b1 = base.find((r) => r.finding_key === "sca:id:b1")!;
-    // Fixable from its first scan (T(2), fix_observed_at) until it left at T(10).
-    expect(b1.censor_actionable_days).toBe(8);
+    // Fixable from its first scan (T(2), fix_observed_at) until it was last seen at T(5).
+    expect(b1.censor_actionable_days).toBe(3);
     const km = kaplanMeier(actionableView(base), {});
     expect(km.events).toBe(0);
     expect(km.censored).toBe(9);
     expect(km.censoredLeftCoverage).toBe(3);
+  });
+
+  it("censors at the last scan that SAW it, not the later one that noticed it gone", () => {
+    // B is last seen at T(2); a deferred scan at T(3) cannot resolve it; the complete scan at
+    // T(8) does — resolved_at T(8). Censored there, the three drop-outs would sit in the risk
+    // set past a's fixes at day 5 (S = 1 − 4/9, median not reached); censored at their last
+    // sighting (day 1) they leave it before, and the median is 5. Every KM reader agrees, and
+    // so does the row after it is sealed.
+    const fixedA = A.map((n) => ({ ...n, status: "RESOLVED", resolvedAt: T(6) }));
+    const run = (seal: boolean, legacy = false) => {
+      const state = emptyState();
+      live(state, ALL, T(2));
+      const deferred = live(state, [...A, ...C], T(3), complete(20)); // short: deferred
+      expect(deferred.scanRow!.disappearance).toBe("deferred:short");
+      live(state, [...fixedA, ...C], T(8)); // complete: B drops out
+      if (seal) {
+        for (const id of ["b1", "b2", "b3"]) {
+          const key = `sca:id:${id}`;
+          const episode = toEpisodeRow(state.ledger[key]!, "cmp-1");
+          state.episodes.push(legacy ? { ...episode, last_seen: null } : episode);
+          delete state.ledger[key];
+        }
+      }
+      return baseRows(state, { now: Date.parse(T(20)) });
+    };
+    for (const seal of [false, true]) {
+      const base = run(seal);
+      const b1 = base.find((r) => r.finding_key === "sca:id:b1")!;
+      expect(b1, `seal=${seal}`).toMatchObject({
+        resolution_src: RESOLUTION_REPO_DROPOUT, resolved_at: T(8), last_seen: T(2), censor_days: 1,
+      });
+      const rows = base as unknown as Rec[];
+      expect(kaplanMeier(base, {}).median).toBe(5);
+      // The vendor-wait clock stops observing a drop-out at the same point.
+      const wait = latencyView(base, "detection", Date.parse(T(20)));
+      expect(wait.filter((r) => r.age_days === 1)).toHaveLength(3);
+      expect(kmMedianAsOf(rows, null, Date.parse(T(20)))).toBe(5);
+      expect(withKmMedian([{ date: T(20) }], rows)[0]!.km_median_days).toBe(5);
+    }
+    // An episode sealed before the tab carried `last_seen` reads as it was sealed: at
+    // resolved_at.
+    const legacy = run(true, true).find((r) => r.finding_key === "sca:id:b1")!;
+    expect(legacy.censor_days).toBe(7);
   });
 
   it("the per-asset half-life censors them too", () => {
@@ -623,27 +669,52 @@ describe("a drop-out is censored where it left, in every Kaplan–Meier figure",
     expect(overall.km_median_days).toBeNull();
   });
 
-  it("time-to-revoke already censored a drop-out's live credential (the credential axis)", () => {
-    const state = emptyState();
-    const secret = (id: string, repo: string, line: number): Rec => ({
+  describe("time-to-revoke censors a drop-out's credential where it left, not at now", () => {
+    // A credential last measured VALID on a repository that then left the scan used to stay in
+    // the risk set censored at `now − first_seen` — an age that grew with every report, under
+    // "still-live credentials". It is unobservable after its last sighting: censored at the
+    // earlier of `last_seen` and its last validation, and counted apart as `leftCoverage`.
+    const secret = (id: string, repo: string, line: number, validatedAt: string | null): Rec => ({
       id, secretDataId: `sd-${id}`, path: "cfg.yml", lineNumber: line, status: "OPEN",
-      firstSeenAt: T(1), validationStatus: "VALID", lastValidatedAt: T(1),
+      firstSeenAt: T(1), validationStatus: "VALID",
+      ...(validatedAt === null ? {} : { lastValidatedAt: validatedAt }),
       resource: { id: repo, name: `org/${repo}`, type: "REPOSITORY" },
     });
-    const R = [secret("s1", "R", 1), secret("s2", "R", 2), secret("s3", "R", 3)];
-    const keep = [secret("k1", "K", 1)];
     const opts = (ts: string, recs: Rec[]) => ({
       scope: "secrets" as const, mode: "live", scanId: ts, scannedSeverities: [],
       completeness: complete(recs.length),
     });
-    persistFlatScan(state, [...R, ...keep], opts(T(2), [...R, ...keep]));
-    persistFlatScan(state, keep, opts(T(3), keep));
-    const ttr = timeToRevoke(
-      baseRows(state, { now: Date.parse(T(20)) }) as unknown as SecretRow[],
-      { now: Date.parse(T(20)) },
-    );
-    expect(ttr.km.events).toBe(0);
-    expect(ttr.km.censored).toBe(4);
+    function ttrFor(validatedAt: string | null) {
+      const state = emptyState();
+      const R = [1, 2, 3].map((i) => secret(`s${i}`, "R", i, validatedAt));
+      // Never validated, so it stays out of the clock (decision 3) and the drop-outs are the
+      // whole risk set: `maxObserved` is then their censoring age and nothing else's.
+      const keep = [{ ...secret("k1", "K", 1, null), validationStatus: "UNKNOWN" }];
+      persistFlatScan(state, [...R, ...keep], opts(T(2), [...R, ...keep]));
+      persistFlatScan(state, [...R, ...keep], opts(T(5), [...R, ...keep])); // R last seen
+      persistFlatScan(state, keep, opts(T(8), keep)); // R leaves the scan
+      const base = baseRows(state, { now: Date.parse(T(20)) });
+      expect(base.filter((r) => r.resolution_src === RESOLUTION_REPO_DROPOUT)).toHaveLength(3);
+      return timeToRevoke(base as unknown as SecretRow[], { now: Date.parse(T(20)) });
+    }
+
+    it("at the last sighting when nothing validated it later", () => {
+      const ttr = ttrFor(null);
+      expect(ttr).toMatchObject({
+        events: 0, censored: 3, leftCoverage: 3, excludedUnmeasured: 1, excludedNoClock: 0,
+      });
+      expect(ttr.km.censoredLeftCoverage).toBe(3);
+      // Last seen at T(5), four days in — not nineteen, today's age.
+      expect(ttr.km.maxObserved).toBe(4);
+    });
+
+    it("at the last validation when that came earlier", () => {
+      const ttr = ttrFor(T(4));
+      expect(ttr).toMatchObject({ censored: 3, leftCoverage: 3 });
+      expect(ttr.km.maxObserved).toBe(3);
+      // Validated at detection only: no observed life at all — no usable duration.
+      expect(ttrFor(T(1))).toMatchObject({ censored: 0, leftCoverage: 0, excludedNoClock: 3 });
+    });
   });
 });
 

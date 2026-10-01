@@ -162,8 +162,10 @@ ledger. **A repository that vanishes whole is not a fix either**: on SCA and sec
 fetch returns resolved findings too, a complete scan that returns nothing at all for a
 repository whose missing open findings number three or more closes them as `repo_dropout` —
 out of the backlog and out of every resolved count, MTTR, In-SLA and percentile figure, and
-in the Kaplan–Meier half-life as *censored* at the age they had when the repository left (the
-register watched them stay open that long, then lost sight). If the repository comes back,
+in the Kaplan–Meier half-life as *censored* at the age they had when a scan last saw them (the
+register watched them stay open that long, then lost sight; a credential is censored there
+too, or at its last validation if earlier, and is not counted as still live). If the
+repository comes back,
 they resume their original clock rather than counting as reopened. SAST never takes this
 path: its fetch returns open findings only, so a repository whose findings were all fixed
 returns nothing either, and its findings close by disappearance as before.

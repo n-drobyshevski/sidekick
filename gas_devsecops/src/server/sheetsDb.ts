@@ -165,6 +165,10 @@ export const TAB_HEADERS: Record<string, string[]> = {
     "compaction_id", "superseded_by_scan",
     "fix_date", "fix_observed_at", "has_kev", "has_exploit", "epss",
     "cwe", "language", "owner_project",
+    // Appended last so `ensureHeaders` adds it without moving a column: a sealed repository
+    // drop-out is censored where it was last SEEN (ledgerCore.withDerived), not where the
+    // register noticed it gone.
+    "last_seen",
   ],
   [TABS.scans]: [
     // `raw_ref` addresses the scan's archived pages; `obs_ref` addresses its OBSERVATION SET

@@ -322,6 +322,27 @@ export function mttrHeroView(mttr) {
 }
 
 /**
+ * The briefing's "Still open" figure, off `mttrHeroView`: the censored rows LESS the repository
+ * drop-outs — censored too, but where their repository left the scan, so not open. The same
+ * split the hero's qualifier and the accounting table make; the drop-outs are named in the
+ * caption rather than folded into the figure.
+ */
+export function stillOpenFigure(view) {
+  const total = num(view && view.total, 0);
+  const leftCoverage = num(view && view.leftCoverage, 0);
+  const count = Math.max(0, num(view && view.censored, 0) - leftCoverage);
+  return {
+    count,
+    leftCoverage,
+    trackLabel: fmtCount(count) + " of " + fmtCount(total) + " observations still open",
+    caption: "kept in the estimate as evidence (censored), not dropped"
+      + (leftCoverage > 0
+        ? "; " + fmtCount(leftCoverage) + " more left coverage with their repository"
+        : ""),
+  };
+}
+
+/**
  * "Tracking since <date> — earlier fixes are not visible" — PRODUCT.md's seventh principle
  * (a clock has to say where it started), printed once beside the hero it qualifies rather than
  * repeated under every half-life on the page (the per-severity table and fan below read the
@@ -1468,7 +1489,8 @@ export async function renderMttr(host, params, ctx) {
     // secondary figures. "Not reached" stays the value in words; every rate keeps its base.
     const trendValues = (Array.isArray(trendPoints) ? trendPoints : []).map((p) => p.km_median_days);
     const total = num(view.total, 0);
-    const censoredRate = rateView(total ? (num(view.censored, 0) / total) * 100 : null, total,
+    const stillOpen = stillOpenFigure(view);
+    const censoredRate = rateView(total ? (stillOpen.count / total) * 100 : null, total,
       fmtCount(total) + " observations", "nothing is observed yet");
     const slaTrackPct = meterPctFor(overallSla);
     const censoredTrackPct = meterPctFor(censoredRate);
@@ -1530,12 +1552,12 @@ export async function renderMttr(host, params, ctx) {
         label: "Still open",
         help: { term: "censoring" },
         denominator: total ? "Of " + fmtCount(total) + " observations." : null,
-        value: fmtCount(view.censored),
+        value: fmtCount(stillOpen.count),
         visual: censoredTrackPct === null ? null : shareTrack({
           part: censoredTrackPct, whole: 100,
-          label: fmtCount(view.censored) + " of " + fmtCount(total) + " observations still open",
+          label: stillOpen.trackLabel,
         }),
-        caption: "kept in the estimate as evidence (censored), not dropped",
+        caption: stillOpen.caption,
       }),
       first ? null : awaiting.show && !awaiting.measurable
         ? briefFigure({
@@ -1876,7 +1898,12 @@ export async function renderMttr(host, params, ctx) {
       groupHost.append(el("p", { class: "small muted", style: "margin:8px 0 0" },
         `${fmtCount(cut.groups)} more ${num(cut.groups, 0) === 1 ? "repository" : "repositories"} `
         + `not listed — ${fmtCount(num(cut.open, 0))} open, ${fmtCount(num(cut.resolved, 0))} `
-        + "resolved between them."));
+        + "resolved"
+        // A repository drop-out is neither (`stateCounts`); named only when there is one.
+        + (num(cut.leftCoverage, 0) > 0
+          ? `, ${fmtCount(num(cut.leftCoverage, 0))} left coverage`
+          : "")
+        + " between them."));
     }
   }
 

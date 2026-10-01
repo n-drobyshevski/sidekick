@@ -49,7 +49,7 @@
 // test/remediation.test.ts asserts all 12 against this file, per severity AND OVERALL. The
 // functions D4b adds have no brick counterpart and are pinned by hand-written cases instead.
 
-import { RESOLVED_STATUSES, SEVERITY_ORDER, SLA_TARGETS, type Scope } from "./config";
+import { RESOLVED_STATUSES, SEVERITY_ORDER, SLA_TARGETS, isRepoDropout, type Scope } from "./config";
 import type { BaseRow } from "./ledgerTypes";
 import { findCol, recordColumns } from "./metrics";
 import { normalizeSeverity } from "./severity";
@@ -1139,7 +1139,7 @@ export interface LatencySegments {
   /**
    * Resolved without a fix ever being observed — the repository went away, the finding was
    * ignored, or Wiz simply stopped returning it. Censored at its resolution, because that is
-   * when we stopped being able to observe a fix. It is a competing risk and not a fix, so it
+   * when we stopped being able to observe a fix — a repository drop-out at its last sighting. It is a competing risk and not a fix, so it
    * is counted apart: `resolution_src` only distinguishes `api` from `disappeared`, never
    * "patched" from "abandoned", so a cause-specific model is not available and this counter is
    * the honest substitute.
@@ -1165,7 +1165,9 @@ export interface LatencySegments {
 type LatencyRow = Pick<
   BaseRow,
   "severity" | "status" | "first_seen" | "fix_available_at" | "resolved_at" | "entry_days"
-> & { scope?: Scope };
+> & { scope?: Scope } &
+  // Read only to censor a repository drop-out at its last sighting (`latencyObservation`).
+  Partial<Pick<BaseRow, "resolution_src" | "last_seen">>;
 
 /** One row's classification: null when it contributes to no clock. */
 function latencyObservation(
@@ -1184,7 +1186,11 @@ function latencyObservation(
     return { t: Math.max(0, raw) / DAY_MS, event: true, closedBeforeFix: false };
   }
 
-  const resolved = parseTs(row.resolved_at);
+  // A repository drop-out stopped being observable at its last sighting, not at the later scan
+  // that noticed it gone — the same censoring point `BaseRow.censor_days` uses.
+  const resolved = isRepoDropout(row)
+    ? (parseTs(row.last_seen) ?? parseTs(row.resolved_at))
+    : parseTs(row.resolved_at);
   if (resolved !== null) {
     return { t: Math.max(0, resolved - first) / DAY_MS, event: false, closedBeforeFix: true };
   }

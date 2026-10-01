@@ -284,6 +284,7 @@ export function toEpisodeRow(live: LedgerRow, compactionId: string): EpisodeRow 
     cwe: live.cwe ?? null,
     language: live.language ?? null,
     owner_project: live.owner_project ?? null,
+    last_seen: live.last_seen ?? null,
   };
 }
 

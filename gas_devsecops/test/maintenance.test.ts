@@ -185,9 +185,11 @@ function envelope(records: unknown[]) {
   return { data: { libraryVulnerabilities: { nodes: records } } };
 }
 
-/** Episodes as they compare: without the storage-specific compaction_id. */
+/** Episodes as they compare: without the storage-specific compaction_id (and `last_seen`). */
 function episodesWithoutId(episodes: Record<string, unknown>[]): Record<string, unknown>[] {
-  return episodes.map(({ compaction_id, ...rest }) => rest);
+  // `last_seen` goes too: this register's episode carries it (a sealed drop-out's censoring
+  // point — ledgerTypes.EpisodeRow) and gas/'s fixture has no such column.
+  return episodes.map(({ compaction_id, last_seen, ...rest }) => rest);
 }
 
 // --------------------------------------------------------------------------- #
@@ -284,9 +286,9 @@ describe("fixture field accounting — nothing is silently dropped", () => {
       const ef = fieldsOf(step.episodes);
       expect([...ef].filter((f) => !episodeAccounted.has(f)).sort()).toEqual([]);
       expect(ef.size).toBe(8); // 2 renamed + 6 passed through
-      // The fixture cannot carry these three: gas/'s test strips compaction_id, and gas/ has
-      // no `scope` and no `component` on an episode.
-      for (const added of ["compaction_id", "scope", "component"]) {
+      // The fixture cannot carry these four: gas/'s test strips compaction_id, and gas/ has
+      // no `scope`, no `component` and no `last_seen` on an episode.
+      for (const added of ["compaction_id", "scope", "component", "last_seen"]) {
         expect(ef.has(added)).toBe(false);
       }
     }

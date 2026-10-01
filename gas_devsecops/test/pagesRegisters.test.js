@@ -367,6 +367,31 @@ describe("the three register pages are wired, not stubbed", () => {
 
 // ========================================================== sca: the clock splits in two
 
+describe("the register headlines add up when a repository left coverage", () => {
+  // `rowCount` counts repository drop-outs; `open` and `resolved` do not (stateCounts). The
+  // headline used to read "of 120 in the register — 30 resolved" over 90 open: 117 of 120.
+  it("sca names the drop-outs beside the resolved count, only when there are any", () => {
+    expect(SCA.hero.sub).toBe("open findings of 120 in the register — 30 resolved.");
+    const left = scaModel(scaPayload({ rowCount: 123, leftCoverage: 3 }));
+    expect(left.hero.sub)
+      .toBe("open findings of 123 in the register — 30 resolved, 3 left coverage with their repository.");
+    expect(left.open + left.resolved + left.leftCoverage).toBe(left.rowCount);
+  });
+
+  it("sast does the same, and its closing-date sentence says the drop-outs are not fixes", () => {
+    expect(SAST.clock.denominator).not.toMatch(/repository left/);
+    const left = sastModel(sastPayload({ rowCount: 344, leftCoverage: 4 }));
+    expect(left.hero.sub).toMatch(/— 40 resolved, 4 left coverage with their repository\.$/);
+    expect(left.clock.denominator).toMatch(/A further 4 closed only because their repository left the scan/);
+  });
+
+  it("each page puts them in its stat strip too", () => {
+    for (const src of [SCA_SRC, SAST_SRC, SECRETS_SRC]) {
+      expect(src).toMatch(/\.\.\.leftCoverageStats\(vm\.leftCoverage\)/);
+    }
+  });
+});
+
 describe("sca — two clocks, never one blended number", () => {
   it("renders awaiting-vendor and actionable as two independent figures", () => {
     const clocks = SCA.clocks;
@@ -729,6 +754,18 @@ describe("secrets — the denominators are sentences and the exclusions are prin
     // And it is a figure of its own on the page, not only a clause in a sentence.
     expect(SECRETS_SRC).toMatch(/Excluded, unmeasured/);
     expect(SECRETS_SRC).toMatch(/vm\.timeToRevoke\.excludedUnmeasured/);
+  });
+
+  it("names the credentials whose repository left the scan apart from the still-live ones", () => {
+    // Before: "3 still-live credentials" counted the drop-outs too, censored at today.
+    expect(SECRETS.timeToRevoke.denominator).toMatch(/3 still-live credentials right-censored at today build/);
+    expect(SECRETS.timeToRevoke.denominator).not.toMatch(/repository left/);
+    const base = secretsPayload().secrets.timeToRevoke;
+    const left = secretsModel(secretsPayload({
+      secrets: { ...secretsPayload().secrets, timeToRevoke: { ...base, leftCoverage: 2 } },
+    })).timeToRevoke;
+    expect(left.leftCoverage).toBe(2);
+    expect(left.denominator).toMatch(/1 still-live credentials right-censored at today, plus 2 censored where their repository left the scan,/);
   });
 
   it("keeps the four revocation populations summing to the register", () => {

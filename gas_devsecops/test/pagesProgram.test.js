@@ -37,7 +37,7 @@ import {
   accountingView, actionableClockView, awaitingView, endOfLifeExclusionNote, fmtCount, fmtDays,
   HAS_FIX_NOT_MEASURABLE, kmHalfLifeView, mttrHeroView,
   mttrSeverityRows, PAST_CUT_HELP, TOO_FEW_TO_ESTIMATE, rateView, resolutionBucketView, rmstView, slaSeverityRows,
-  survivalAxisNote, trackingSinceView, WINDOW_LINE_HELP, windowLineView,
+  stillOpenFigure, survivalAxisNote, trackingSinceView, WINDOW_LINE_HELP, windowLineView,
 } from "../src/client/js/pages/mttr.js";
 import {
   boundedRateView, capacityView, confusionView, coverageEfficiencyView, sensitivityView,
@@ -410,6 +410,21 @@ describe("a curve that never reaches half", () => {
     expect(view.leftCoverage).toBe(30);
     expect(view.qualifier).toContain("150 still open (censored)");
     expect(view.qualifier).toContain("30 left coverage (censored)");
+  });
+
+  it("the briefing's Still open figure is censored less left coverage, and names the rest", () => {
+    const view = mttrHeroView(mttrPayload({ ...kmCensored(), censoredLeftCoverage: 30 }));
+    const fig = stillOpenFigure(view);
+    expect(fig.count).toBe(150);
+    expect(fig.trackLabel).toBe("150 of " + fmtCount(view.total) + " observations still open");
+    expect(fig.caption).toMatch(/30 more left coverage with their repository/);
+    // No drop-out: the figure is the censored count and the caption names nothing extra.
+    const plain = stillOpenFigure(mttrHeroView(mttrPayload(kmCensored())));
+    expect(plain.count).toBe(180);
+    expect(plain.caption).not.toMatch(/left coverage/);
+    // And the briefing draws THIS figure, not the raw censored count.
+    expect(SRC.mttr).toMatch(/value: fmtCount\(stillOpen\.count\)/);
+    expect(SRC.mttr).not.toMatch(/fmtCount\(view\.censored\)/);
   });
 
   it("the Executive hero names drop-outs as the third part of tracked", () => {
