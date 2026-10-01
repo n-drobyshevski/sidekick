@@ -1,7 +1,15 @@
-// One-shot Wiz connectivity check, run by hand from the Apps Script editor
-// (`wizDiagnostic`). It exercises the SAME getToken + queryPage the scan uses — so it
-// validates the real path — and prints a secret-safe report of exactly which step
-// fails and why. Nothing here is called during a normal scan.
+// Run by hand from the Apps Script editor; nothing here is called during a normal scan.
+//
+// `wizDiagnostic` is the one-shot Wiz connectivity check. It exercises the SAME getToken +
+// queryPage the scan uses — so it validates the real path — and prints a secret-safe report of
+// exactly which step fails and why.
+//
+// `deploymentDiagnostic` answers "is this installation wired up", separately from "is the data
+// right": the ledger and archive, the allowlist, and every trigger setup() and the jobs install,
+// counted by the handler names those modules export. It makes no network call.
+//
+// Both return a string rather than throwing: an operator running one is already looking at
+// something broken, and the useful output is every check at once, not the first failure.
 
 import {
   DEFAULT_WIZ_AUTH_URL,
@@ -11,6 +19,18 @@ import {
 } from "./props";
 import { buildVariables, getToken, queryPage } from "./wizClient";
 import { normalizeWizUrl } from "../../../gas_shared/domain/wizUrl";
+import { hasWizCredentials } from "./props";
+import { activeJob, CONTINUE_HANDLERS, isStaleJob } from "./jobsStore";
+import { WARM_CONTINUE_HANDLER } from "./api";
+import {
+  DAILY_TRIGGER_HANDLER,
+  dailyScanSchedule,
+  WARM_TRIGGER_COUNT,
+  WARM_TRIGGER_HANDLER,
+  warmScheduleSignature,
+} from "./setup";
+import { BUILD_ID } from "./serverCache";
+import { cellCount, dataRowCount, ledgerSpreadsheet, SCHEMA_VERSION, TABS } from "./sheetsDb";
 
 /** Length + first4…last4 preview of a non-secret id/token — never the whole value. */
 function preview(value: string | null): string {
@@ -163,5 +183,155 @@ export function wizDiagnostic(): string {
   }
 
   log("=== All checks passed. Live scans should work. ===");
+  return lines.join("\n");
+}
+
+/** Apps Script's cap on triggers per project (installable, all kinds). */
+export const TRIGGER_CAP = 20;
+/**
+ * What one in-flight job holds at once: its next hop. A scan's watchdog shares
+ * `trigger_continueScan` with its hops and is armed only once the walk has stopped scheduling
+ * them, and the post-scan warm's one-shot is armed after the watchdog is cleared — so neither
+ * needs a slot of its own.
+ */
+const JOB_TRIGGER_SLOTS = 1;
+
+/**
+ * Is this deployment wired up? Run from the Apps Script editor after a deploy or a setup().
+ *
+ * BOTH ENDS OF THE REPORT ARE KEPT. The Apps Script editor does NOT display a function's return
+ * value — the Execution log shows logged output and nothing else — so each line is logged as it
+ * is built (an editor run that only returned the report would print nothing at all), and the
+ * whole text is returned for a caller or a test.
+ *
+ * THE TRIGGER CHECKS COUNT BY THE NAMES THE INSTALLERS EXPORT (setup.ts, jobsStore.ts, api.ts),
+ * never by literals typed here: gas_devsecops's copy once checked a handler nothing installed
+ * and reported FAIL on every healthy deployment, which teaches operators to ignore the line.
+ */
+export function deploymentDiagnostic(): string {
+  const lines: string[] = [];
+  const line = (m: string) => {
+    lines.push(m);
+    console.log(m);
+  };
+  const ok = (label: string, value: string) => line(`  OK    ${label}: ${value}`);
+  const bad = (label: string, value: string) => line(`  FAIL  ${label}: ${value}`);
+
+  line("Wiz Sidekick OS — deployment diagnostic");
+  line(`Build ${BUILD_ID}, schema v${SCHEMA_VERSION}`);
+  line("");
+
+  const ssId = getProp(PROP_KEYS.ledgerSpreadsheetId);
+  if (ssId) {
+    try {
+      const ss = ledgerSpreadsheet();
+      ok("Ledger spreadsheet", `${ss.getName()} (${ssId})`);
+      for (const tab of Object.values(TABS)) {
+        const rows = dataRowCount(tab);
+        line(`        ${tab}: ${rows} row${rows === 1 ? "" : "s"}`);
+      }
+      ok("Cells used", String(cellCount()));
+    } catch (e) {
+      bad("Ledger spreadsheet", `${ssId} exists as a property but could not be opened: ${e}`);
+    }
+  } else {
+    bad("Ledger spreadsheet", "not created — run setup()");
+  }
+
+  const folderId = getProp(PROP_KEYS.archiveFolderId);
+  if (folderId) ok("Archive folder", folderId);
+  else bad("Archive folder", "not created — run setup()");
+
+  if (hasWizCredentials()) ok("Wiz credentials", "present (run wizDiagnostic() to test them)");
+  else bad("Wiz credentials", "absent — the app runs dry-run only; set WIZ_API_URL and "
+    + "WIZ_CLIENT_ID + WIZ_CLIENT_SECRET (or WIZ_API_TOKEN)");
+
+  const users = getProp(PROP_KEYS.allowedUsers);
+  if (users) ok("Allowlist", `${users.split(/[,;\s]+/).filter(Boolean).length} address(es)`);
+  else bad("Allowlist", "empty — the app is owner-only until ALLOWED_USERS is set");
+
+  line("");
+  let handlers: string[] = [];
+  try {
+    handlers = ScriptApp.getProjectTriggers().map((t) => t.getHandlerFunction());
+  } catch (e) {
+    bad("Triggers", `could not be listed: ${e}`);
+    return lines.join("\n");
+  }
+  const count = (names: ReadonlyArray<string | undefined>) =>
+    handlers.filter((h) => names.includes(h)).length;
+
+  // Count AND signature, the two things setup() reconciles on: one trigger installed before the
+  // timezone was pinned passes a count check and still fires at the script's idea of 05:00.
+  const daily = count([DAILY_TRIGGER_HANDLER]);
+  const dailySig = getProp(PROP_KEYS.dailyTriggerSchedule);
+  if (daily > 1) {
+    bad("Daily scan trigger", `${daily} installed, expected 1 — the scan runs ${daily}x a day; run setup()`);
+  } else if (!daily) {
+    bad("Daily scan trigger", "not installed — run setup()");
+  } else if (dailySig !== dailyScanSchedule()) {
+    bad("Daily scan trigger", `schedule ${dailySig ?? "(unrecorded)"} is not this build's `
+      + `${dailyScanSchedule()} — run setup() as the deploying account`);
+  } else {
+    ok("Daily scan trigger", `installed (${dailySig})`);
+  }
+
+  const warm = count([WARM_TRIGGER_HANDLER]);
+  const warmSig = getProp(PROP_KEYS.warmTriggerSchedule);
+  if (warm !== WARM_TRIGGER_COUNT) {
+    bad("Warm triggers", `${warm} installed, expected ${WARM_TRIGGER_COUNT} — run setup()`);
+  } else if (warmSig !== warmScheduleSignature()) {
+    bad("Warm triggers", `schedule ${warmSig ?? "(unrecorded)"} is not this build's `
+      + `${warmScheduleSignature()} — run setup()`);
+  } else {
+    ok("Warm triggers", `${warm} installed (${warmSig})`);
+  }
+
+  // The one-shots, by handler. A job's continuation left over with no job in flight is harmless
+  // — it clears itself when it fires and finds no job — but it holds quota until then. The
+  // warm's one-shot is pending with no job in flight BY DESIGN (armed after a scan's DONE, fired
+  // a second later, or the next hop of a pass out of budget), so it never reads as stray.
+  const job = activeJob();
+  const pending: string[] = [];
+  let stray = 0;
+  for (const [kind, handler] of Object.entries(CONTINUE_HANDLERS)) {
+    const n = count([handler]);
+    if (!n) continue;
+    // A scan's watchdog is armed under its continuation handler — named so a reader of a
+    // PERSISTING scan knows what the one pending trigger is.
+    const what = kind === "scan" ? "scan hop / watchdog" : `${kind} hop`;
+    pending.push(`${n} ${what}`);
+    if (!job || job.kind !== kind) stray += n;
+  }
+  const warmOneShots = count([WARM_CONTINUE_HANDLER]);
+  if (warmOneShots) pending.push(`${warmOneShots} warm`);
+  if (warmOneShots > 1) {
+    bad("Pending one-shots", `${pending.join(", ")} — more than one warm one-shot pending; `
+      + "each arming should clear the last");
+  } else {
+    ok("Pending one-shots", (pending.join(", ") || "none")
+      + (stray ? ` (${stray} with no matching job in flight — each clears itself when it fires)` : ""));
+  }
+
+  const queued = getProp(PROP_KEYS.supportGroupRefreshPending);
+  ok("Queued support-group refresh", queued ? `since ${queued} (runs at the next warm hop)` : "none");
+
+  // Apps Script's per-project cap. With no slot free, a job that outruns one execution cannot
+  // arm its next hop.
+  const free = TRIGGER_CAP - handlers.length;
+  if (free >= (job ? 0 : JOB_TRIGGER_SLOTS)) ok("Triggers used", `${handlers.length} of ${TRIGGER_CAP}`);
+  else bad("Triggers used", `${handlers.length} of ${TRIGGER_CAP} — no room for a job's next hop; `
+    + "delete stray triggers in the editor's Triggers panel");
+
+  if (job) {
+    ok("Job in flight", `${job.kind} ${job.job_id} — ${job.phase}`);
+    line(`        page ${job.page}, ${job.findings_so_far} finding(s) so far`);
+    if (isStaleJob(job)) {
+      bad("  heartbeat", "silent for over 30 minutes — run resetStuckJob() from the editor");
+    }
+  } else {
+    ok("Job in flight", "none");
+  }
+
   return lines.join("\n");
 }

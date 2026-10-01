@@ -24,6 +24,7 @@ var Server = (() => {
     access: () => access_exports,
     api: () => api_exports,
     backfill: () => backfillJobs_exports,
+    deploymentDiagnostic: () => deploymentDiagnostic,
     doGet: () => doGet,
     include: () => include,
     jobs: () => scanJobs_exports,
@@ -6707,7 +6708,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "1886c1059c1e" : "dev";
+  var BUILD_ID = true ? "12aa52cc2087" : "dev";
   var CACHE_EPOCH = "3";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
@@ -7136,6 +7137,9 @@ var Server = (() => {
       return { name: sh.getName(), rows, cols, cells: rows * cols };
     });
     return { total: tabs.reduce((acc, t) => acc + t.cells, 0), tabs };
+  }
+  function cellCount() {
+    return cellUsage().total;
   }
 
   // src/server/historyStore.ts
@@ -14398,6 +14402,9 @@ var Server = (() => {
   function warmScheduleSignature() {
     return `${TRIGGER_TZ}|${WARM_TRIGGER_HOURS.join(",")}@${WARM_TRIGGER_NEAR_MINUTE}`;
   }
+  function dailyScanSchedule() {
+    return dailyTriggerSignature(TRIGGER_TZ, DAILY_TRIGGER_HOUR);
+  }
   function reconcileDailyScanTrigger() {
     return reconcileDailyTrigger({
       handler: DAILY_TRIGGER_HANDLER,
@@ -14574,6 +14581,105 @@ var Server = (() => {
       }
     }
     log2("=== All checks passed. Live scans should work. ===");
+    return lines.join("\n");
+  }
+  var TRIGGER_CAP = 20;
+  var JOB_TRIGGER_SLOTS = 1;
+  function deploymentDiagnostic() {
+    const lines = [];
+    const line = (m) => {
+      lines.push(m);
+      console.log(m);
+    };
+    const ok = (label, value) => line(`  OK    ${label}: ${value}`);
+    const bad = (label, value) => line(`  FAIL  ${label}: ${value}`);
+    line("Wiz Sidekick OS \u2014 deployment diagnostic");
+    line(`Build ${BUILD_ID}, schema v${SCHEMA_VERSION}`);
+    line("");
+    const ssId = getProp(PROP_KEYS.ledgerSpreadsheetId);
+    if (ssId) {
+      try {
+        const ss = ledgerSpreadsheet();
+        ok("Ledger spreadsheet", `${ss.getName()} (${ssId})`);
+        for (const tab of Object.values(TABS)) {
+          const rows = dataRowCount(tab);
+          line(`        ${tab}: ${rows} row${rows === 1 ? "" : "s"}`);
+        }
+        ok("Cells used", String(cellCount()));
+      } catch (e) {
+        bad("Ledger spreadsheet", `${ssId} exists as a property but could not be opened: ${e}`);
+      }
+    } else {
+      bad("Ledger spreadsheet", "not created \u2014 run setup()");
+    }
+    const folderId = getProp(PROP_KEYS.archiveFolderId);
+    if (folderId) ok("Archive folder", folderId);
+    else bad("Archive folder", "not created \u2014 run setup()");
+    if (hasWizCredentials()) ok("Wiz credentials", "present (run wizDiagnostic() to test them)");
+    else bad("Wiz credentials", "absent \u2014 the app runs dry-run only; set WIZ_API_URL and WIZ_CLIENT_ID + WIZ_CLIENT_SECRET (or WIZ_API_TOKEN)");
+    const users = getProp(PROP_KEYS.allowedUsers);
+    if (users) ok("Allowlist", `${users.split(/[,;\s]+/).filter(Boolean).length} address(es)`);
+    else bad("Allowlist", "empty \u2014 the app is owner-only until ALLOWED_USERS is set");
+    line("");
+    let handlers = [];
+    try {
+      handlers = ScriptApp.getProjectTriggers().map((t) => t.getHandlerFunction());
+    } catch (e) {
+      bad("Triggers", `could not be listed: ${e}`);
+      return lines.join("\n");
+    }
+    const count = (names) => handlers.filter((h) => names.includes(h)).length;
+    const daily = count([DAILY_TRIGGER_HANDLER]);
+    const dailySig = getProp(PROP_KEYS.dailyTriggerSchedule);
+    if (daily > 1) {
+      bad("Daily scan trigger", `${daily} installed, expected 1 \u2014 the scan runs ${daily}x a day; run setup()`);
+    } else if (!daily) {
+      bad("Daily scan trigger", "not installed \u2014 run setup()");
+    } else if (dailySig !== dailyScanSchedule()) {
+      bad("Daily scan trigger", `schedule ${dailySig != null ? dailySig : "(unrecorded)"} is not this build's ${dailyScanSchedule()} \u2014 run setup() as the deploying account`);
+    } else {
+      ok("Daily scan trigger", `installed (${dailySig})`);
+    }
+    const warm = count([WARM_TRIGGER_HANDLER]);
+    const warmSig = getProp(PROP_KEYS.warmTriggerSchedule);
+    if (warm !== WARM_TRIGGER_COUNT) {
+      bad("Warm triggers", `${warm} installed, expected ${WARM_TRIGGER_COUNT} \u2014 run setup()`);
+    } else if (warmSig !== warmScheduleSignature()) {
+      bad("Warm triggers", `schedule ${warmSig != null ? warmSig : "(unrecorded)"} is not this build's ${warmScheduleSignature()} \u2014 run setup()`);
+    } else {
+      ok("Warm triggers", `${warm} installed (${warmSig})`);
+    }
+    const job = activeJob();
+    const pending = [];
+    let stray = 0;
+    for (const [kind, handler] of Object.entries(CONTINUE_HANDLERS)) {
+      const n = count([handler]);
+      if (!n) continue;
+      const what = kind === "scan" ? "scan hop / watchdog" : `${kind} hop`;
+      pending.push(`${n} ${what}`);
+      if (!job || job.kind !== kind) stray += n;
+    }
+    const warmOneShots = count([WARM_CONTINUE_HANDLER]);
+    if (warmOneShots) pending.push(`${warmOneShots} warm`);
+    if (warmOneShots > 1) {
+      bad("Pending one-shots", `${pending.join(", ")} \u2014 more than one warm one-shot pending; each arming should clear the last`);
+    } else {
+      ok("Pending one-shots", (pending.join(", ") || "none") + (stray ? ` (${stray} with no matching job in flight \u2014 each clears itself when it fires)` : ""));
+    }
+    const queued = getProp(PROP_KEYS.supportGroupRefreshPending);
+    ok("Queued support-group refresh", queued ? `since ${queued} (runs at the next warm hop)` : "none");
+    const free = TRIGGER_CAP - handlers.length;
+    if (free >= (job ? 0 : JOB_TRIGGER_SLOTS)) ok("Triggers used", `${handlers.length} of ${TRIGGER_CAP}`);
+    else bad("Triggers used", `${handlers.length} of ${TRIGGER_CAP} \u2014 no room for a job's next hop; delete stray triggers in the editor's Triggers panel`);
+    if (job) {
+      ok("Job in flight", `${job.kind} ${job.job_id} \u2014 ${job.phase}`);
+      line(`        page ${job.page}, ${job.findings_so_far} finding(s) so far`);
+      if (isStaleJob(job)) {
+        bad("  heartbeat", "silent for over 30 minutes \u2014 run resetStuckJob() from the editor");
+      }
+    } else {
+      ok("Job in flight", "none");
+    }
     return lines.join("\n");
   }
   return __toCommonJS(index_exports);

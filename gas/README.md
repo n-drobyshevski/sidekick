@@ -979,6 +979,17 @@ and the result reports the true zero rather than claiming a reclaim.
    Accept it, then check that the daily scan trigger still fires afterwards — a scope change
    is the one thing that can quietly suspend an installable trigger with nothing surfacing in
    the UI to say so.
+7. In the GAS editor, run **`deploymentDiagnostic()`** after the first deploy, after every
+   `setup()` run, and whenever the deployment misbehaves. It prints (to the Execution log) one
+   `OK`/`FAIL` line per check: the ledger spreadsheet and archive folder, Wiz credentials
+   present, the allowlist, exactly one daily scan trigger on this build's recorded schedule,
+   three warm triggers on theirs, the pending one-shots by handler (scan hop / watchdog,
+   backfill, purge, and the post-scan warm — a job's hop with no job in flight is flagged as
+   stray), a queued support-group refresh, the job in flight, and the trigger count against
+   Apps Script's 20. It makes no network call — `wizDiagnostic()` (below) tests the Wiz path.
+   After a scan, the Execution log shows one `{"stage":"warm","label":…,"ms":…,"ok":…}` line per
+   read model the post-scan warm computed, in the `trigger_continueWarm` execution rather than
+   the scan's.
 
 ## Troubleshooting Wiz connectivity
 

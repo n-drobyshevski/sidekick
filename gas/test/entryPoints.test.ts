@@ -44,6 +44,22 @@ describe("every trigger handler named in src/ exists in entry.js", () => {
     for (const name of referenced) expect(globals).toContain(name);
   });
 
+  // deploymentDiagnostic counts pending one-shots by jobsStore.CONTINUE_HANDLERS, while each job
+  // module arms its own literal. A module whose handler drifted from that table would leave its
+  // pending hops uncounted, and resetStuckJob (which clears by the table) would miss them.
+  it("lists every job module's continuation handler in jobsStore.CONTINUE_HANDLERS", () => {
+    const table = readFileSync(join(root, "src/server/jobsStore.ts"), "utf8");
+    const block = table.slice(table.indexOf("export const CONTINUE_HANDLERS"));
+    const listed = new Set([...block.slice(0, block.indexOf("};")).matchAll(/"(trigger_\w+)"/g)]
+      .map((m) => m[1]!));
+    for (const file of ["scanJobs.ts", "backfillJobs.ts", "purgeJobs.ts"]) {
+      const src = readFileSync(join(root, "src/server", file), "utf8");
+      const m = /\bCONTINUE_HANDLER\s*=\s*"(\w+)"/.exec(src);
+      expect(m, `${file} declares no CONTINUE_HANDLER`).not.toBeNull();
+      expect(listed, `${file}'s ${m![1]} is not in CONTINUE_HANDLERS`).toContain(m![1]!);
+    }
+  });
+
   it("has a global for each trigger_* handler used as a continuation elsewhere", () => {
     for (const file of ["scanJobs.ts", "backfillJobs.ts", "purgeJobs.ts", "api.ts"]) {
       const src = readFileSync(join(root, "src/server", file), "utf8");
@@ -155,7 +171,9 @@ describe("the access guard covers every untrusted entry point", () => {
   });
 
   it("gates doGet, include and every editor-run maintenance global", () => {
-    for (const name of ["doGet", "include", "setup", "wizDiagnostic", "resetStuckJob"]) {
+    for (const name of [
+      "doGet", "include", "setup", "wizDiagnostic", "deploymentDiagnostic", "resetStuckJob",
+    ]) {
       expect(body(name), `${name} is ungated`).toContain("Server.access.");
     }
   });
@@ -174,18 +192,45 @@ describe("the access guard covers every untrusted entry point", () => {
     }
   });
 
-  it("calls only namespaces src/server/index.ts actually exports", () => {
+  // Scraped from entry.js rather than listed here, and EVERY `Server.X` — not only the ones
+  // followed by a dot. This used to match `Server.(\w+)\.` alone, so a top-level call like
+  // `Server.setup()` or `Server.wizDiagnostic()` was never checked: an entry.js global calling a
+  // name index.ts forgot to export answers "not a function" to the one operator already
+  // debugging an outage (gas_devsecops shipped `Server.wizDiagnostic` that way).
+  const indexSrc = readFileSync(join(root, "src/server/index.ts"), "utf8");
+  /** `export * as ns from "./mod"` — namespace → module file. */
+  const namespaces = new Map<string, string>(
+    [...indexSrc.matchAll(/^export \* as (\w+) from "\.\/(\w+)"/gm)].map((m) => [m[1]!, m[2]!]),
+  );
+  /** `export { a, b } from "./mod"` — the top-level names. */
+  const named = new Set<string>(
+    [...indexSrc.matchAll(/^export \{([^}]+)\} from/gm)]
+      .flatMap((m) => m[1]!.split(",").map((x) => x.trim()).filter(Boolean)),
+  );
+
+  it("calls only names src/server/index.ts actually exports", () => {
     // dist/server.js is a committed build artifact, so entry.js can outrun it: an entry.js
     // that calls Server.access against a bundle built before access.ts existed fails on EVERY
     // request with a TypeError — a total outage from a stale commit, not a broken feature.
-    const indexSrc = readFileSync(join(root, "src/server/index.ts"), "utf8");
-    const exported = new Set<string>([
-      ...[...indexSrc.matchAll(/^export \* as (\w+) from/gm)].map((m) => m[1]!),
-      ...[...indexSrc.matchAll(/^export \{([^}]+)\} from/gm)]
-        .flatMap((m) => m[1]!.split(",").map((s) => s.trim())),
-    ]);
-    const used = new Set([...entry.matchAll(/\bServer\.(\w+)\./g)].map((m) => m[1]!));
-    expect(used.size).toBeGreaterThan(0);
-    expect([...used].filter((n) => !exported.has(n))).toEqual([]);
+    const reached = [...new Set([...entry.matchAll(/\bServer\.(\w+)/g)].map((m) => m[1]!))];
+    expect(reached).toEqual(expect.arrayContaining([
+      "doGet", "api", "access", "setup", "wizDiagnostic", "deploymentDiagnostic",
+    ]));
+    expect(reached.filter((n) => !namespaces.has(n) && !named.has(n))).toEqual([]);
+  });
+
+  it("finds every Server.<namespace>.<method> entry.js calls exported by that module", () => {
+    // `api` is excluded: it is reached as `Server.api[name]` and has its own parity block above
+    // — but `Server.api.<method>` (the warm triggers) is a direct call, and checked here.
+    const calls = [...entry.matchAll(/\bServer\.(\w+)\.(\w+)/g)];
+    expect(calls.length).toBeGreaterThan(5);
+    for (const [, ns, method] of calls) {
+      const file = namespaces.get(ns!);
+      expect(file, `Server.${ns} is not a namespace index.ts exports`).toBeDefined();
+      const src = readFileSync(join(root, "src/server", `${file}.ts`), "utf8");
+      expect(src, `Server.${ns}.${method} is not exported by ${file}.ts`).toMatch(
+        new RegExp(`^export (function|const) ${method}\\b`, "m"),
+      );
+    }
   });
 });

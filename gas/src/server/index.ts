@@ -4,7 +4,7 @@ export { doGet, include } from "./main";
 export * as access from "./access";
 export * as welcome from "./welcome";
 export { setup } from "./setup";
-export { wizDiagnostic } from "./diagnostics";
+export { deploymentDiagnostic, wizDiagnostic } from "./diagnostics";
 export * as api from "./api";
 export * as jobs from "./scanJobs";
 export * as backfill from "./backfillJobs";
