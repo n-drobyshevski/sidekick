@@ -7,7 +7,13 @@
 
 import { SCOPES } from "../domain/config";
 import { getProp, hasWizCredentials, PROP_KEYS, projectScope, resolveWizAuthMode } from "./props";
-import { activeJob, isStaleJob } from "./jobsStore";
+import { activeJob, CONTINUE_HANDLERS, isStaleJob, WATCHDOG_HANDLERS } from "./jobsStore";
+import {
+  DAILY_SYNC_HANDLER,
+  WARM_HANDLER,
+  WARM_TRIGGER_COUNT,
+  warmTriggerSchedule,
+} from "./setup";
 import { BUILD_ID } from "../../../gas_shared/server/buildInfo";
 import { cellCount, dataRowCount, ledgerSpreadsheet, SCHEMA_VERSION, TABS } from "./sheetsDb";
 import { loadSettings } from "./settingsStore";
@@ -24,8 +30,8 @@ import { setProp } from "./props";
  * report is built, the operator sees a blank log and no error. Reported from a real editor
  * run as "nothing, no error, no status message and just finished".
  *
- * The return value is not optional either: `api_getDiagnostic` renders
- * `deploymentDiagnostic()`'s string in Settings > System. Two readers, one text.
+ * The return value is kept as well: an editor run that calls it from another function, or a
+ * test, reads the same text the log shows.
  *
  * `console.log` rather than `Logger.log` because everything else here already logs through
  * console (`entry.js`'s timedApi_, `access.logDenial`), and mixing the two would put half of
@@ -43,6 +49,11 @@ function reporter() {
     },
   };
 }
+
+/** Apps Script's cap on triggers per project (installable, all kinds). */
+const TRIGGER_CAP = 20;
+/** What one in-flight sync holds at once: its continuation hop and its watchdog. */
+const SYNC_TRIGGER_SLOTS = 2;
 
 export function deploymentDiagnostic(): string {
   const r = reporter();
@@ -92,20 +103,55 @@ export function deploymentDiagnostic(): string {
   }
 
   r.line("");
-  const daily = ScriptApp.getProjectTriggers()
-    .filter((t) => t.getHandlerFunction() === "trigger_dailyScan").length;
-  if (daily) ok("Daily scan trigger", `installed (${daily})`);
-  else bad("Daily scan trigger", "not installed — run setup()");
+  // Counted by the names setup.ts and jobsStore.ts install, imported rather than re-typed: a
+  // literal here once named a handler nothing installs, so this line said FAIL on every
+  // correctly set-up deployment and taught operators to ignore it.
+  const handlers = ScriptApp.getProjectTriggers().map((t) => t.getHandlerFunction());
+  const count = (names: ReadonlyArray<string | undefined>) =>
+    handlers.filter((h) => names.includes(h)).length;
 
+  const daily = count([DAILY_SYNC_HANDLER]);
+  if (daily === 1) ok("Daily sync trigger", "installed");
+  else if (daily) bad("Daily sync trigger", `${daily} installed, expected 1 — the sync runs ${daily}x a day`);
+  else bad("Daily sync trigger", "not installed — run setup()");
+
+  // Count AND signature, the two things setup() reconciles on: three triggers on a schedule
+  // this build no longer asks for pass a count check and still warm at the wrong hours.
+  const warm = count([WARM_HANDLER]);
+  const warmSig = getProp(PROP_KEYS.warmTriggerSchedule);
+  if (warm !== WARM_TRIGGER_COUNT) {
+    bad("Warm triggers", `${warm} installed, expected ${WARM_TRIGGER_COUNT} — run setup()`);
+  } else if (warmSig !== warmTriggerSchedule()) {
+    bad("Warm triggers", `schedule ${warmSig ?? "(unrecorded)"} is not this build's `
+      + `${warmTriggerSchedule()} — run setup()`);
+  } else {
+    ok("Warm triggers", `${warm} installed (${warmSig})`);
+  }
+
+  // The transient pair a sync arms and clears around itself. Left over with no sync in flight
+  // they are harmless — each clears itself when it fires and finds no job — but they still
+  // hold quota until then.
+  const oneShots = count([...Object.values(CONTINUE_HANDLERS), ...Object.values(WATCHDOG_HANDLERS)]);
   const job = activeJob();
+  ok("Pending one-shots", job || !oneShots
+    ? String(oneShots)
+    : `${oneShots} with no sync in flight (each clears itself when it fires)`);
+
+  // Apps Script's per-project cap. A sync holds up to two one-shots (continuation + watchdog);
+  // with no slot free, a sync that outruns one execution cannot arm its next hop.
+  const free = TRIGGER_CAP - handlers.length;
+  if (free >= (job ? 0 : SYNC_TRIGGER_SLOTS)) ok("Triggers used", `${handlers.length} of ${TRIGGER_CAP}`);
+  else bad("Triggers used", `${handlers.length} of ${TRIGGER_CAP} — no room for a sync's `
+    + `${SYNC_TRIGGER_SLOTS} one-shots; delete stray triggers in the editor's Triggers panel`);
+
   if (job) {
-    ok("Scan in flight", `${job.job_id} — ${job.phase}${job.scope ? ` (${job.scope})` : ""}`);
+    ok("Sync in flight", `${job.job_id} — ${job.phase}${job.scope ? ` (${job.scope})` : ""}`);
     r.line(`        page ${job.page}, ${job.findings_so_far} finding(s) so far`);
     if (isStaleJob(job)) {
       bad("  heartbeat", "silent for over 30 minutes — run resetStuckJob() from the editor");
     }
   } else {
-    ok("Scan in flight", "none");
+    ok("Sync in flight", "none");
   }
 
   // Deliberately says what "present" is worth. Three non-empty Script Properties is not a

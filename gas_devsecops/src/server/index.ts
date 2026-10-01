@@ -4,7 +4,10 @@ export { doGet, include } from "./main";
 export * as access from "./access";
 export * as welcome from "./welcome";
 export { setup } from "./setup";
-export { deploymentDiagnostic } from "./diagnostics";
+// Both editor-run diagnostics: dist/entry.js's `deploymentDiagnostic()` and `wizDiagnostic()`
+// globals delegate here, and a name missing from this line is "not a function" only when an
+// operator — already debugging something — runs it.
+export { deploymentDiagnostic, wizDiagnostic } from "./diagnostics";
 export * as api from "./api";
 // The trigger handlers in dist/entry.js reach for these two namespaces directly rather than
 // through `api`, because a trigger is not an RPC: it takes no params, returns nothing a client

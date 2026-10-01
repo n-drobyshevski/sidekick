@@ -25,7 +25,9 @@ import { DEFAULT_SYNC_HOUR } from "../domain/settingsLogic";
 import { DEFAULT_WIZ_AUTH_URL, getProp, PROP_KEYS, setProp } from "./props";
 import { ensureTabs } from "./sheetsDb";
 
-const DAILY_SYNC_HANDLER = "trigger_dailySync";
+// Exported for diagnostics.ts, which counts installed triggers by these names — a copy there
+// once checked a handler this file never installs and reported FAIL on every healthy deploy.
+export const DAILY_SYNC_HANDLER = "trigger_dailySync";
 /*
  * THE DAILY HOUR IS STILL THE DEFAULT, NOT `Settings.syncSchedule`, AND S7 LEFT IT THAT WAY
  * DELIBERATELY. Recording the reasoning so the next package inherits a decision rather than a
@@ -56,7 +58,7 @@ const DAILY_SYNC_HANDLER = "trigger_dailySync";
  */
 const DAILY_SYNC_HOUR = DEFAULT_SYNC_HOUR;
 
-const WARM_HANDLER = "trigger_warmReadModels";
+export const WARM_HANDLER = "trigger_warmReadModels";
 
 // The hours the app should already be warm by, local to the analysts who open it — a person's
 // statement of the schedule, with the fire times derived from it below rather than picked
@@ -76,6 +78,9 @@ const WARM_READY_BY_HOURS = [9, 13, 17];
 // 08:15 and 08:45, comfortably ahead of 09:00 for a pass that finishes in well under an hour.
 const WARM_TRIGGER_HOURS = WARM_READY_BY_HOURS.map((h) => (h + 23) % 24);
 const WARM_TRIGGER_NEAR_MINUTE = 30;
+
+/** How many warm triggers a correct install has — what diagnostics.ts counts against. */
+export const WARM_TRIGGER_COUNT = WARM_TRIGGER_HOURS.length;
 
 // Pinned rather than inherited from the manifest's `timeZone`. A project re-created with
 // `clasp create` gets whatever timezone the CLI defaults to, and `atHour` follows the SCRIPT

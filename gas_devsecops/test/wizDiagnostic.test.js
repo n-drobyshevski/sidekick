@@ -35,9 +35,12 @@ vi.stubGlobal("CacheService", {
   }),
 });
 vi.stubGlobal("Utilities", { sleep: () => {} });
-// deploymentDiagnostic reports whether the daily scan trigger is installed, so it reaches for
-// ScriptApp even though nothing on the Wiz path does.
-vi.stubGlobal("ScriptApp", { getProjectTriggers: () => [] });
+// deploymentDiagnostic reports which triggers are installed, so it reaches for ScriptApp even
+// though nothing on the Wiz path does. Handler names only — all a ClockTrigger exposes.
+const triggers = vi.hoisted(() => ({ handlers: [] }));
+vi.stubGlobal("ScriptApp", {
+  getProjectTriggers: () => triggers.handlers.map((h) => ({ getHandlerFunction: () => h })),
+});
 vi.stubGlobal("UrlFetchApp", {
   fetch: (url) => {
     if (http.throwWith) throw new Error(http.throwWith);
@@ -82,6 +85,7 @@ beforeEach(() => {
   props.WIZ_API_URL = "https://api.test.app.wiz.io/graphql";
   props.WIZ_CLIENT_ID = "client-id-value";
   props.WIZ_CLIENT_SECRET = "client-secret-value";
+  triggers.handlers = [];
   vi.resetModules();
 });
 
@@ -219,5 +223,60 @@ describe("the report reaches the operator", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe("deploymentDiagnostic's trigger read-out", () => {
+  // It used to count `trigger_dailyScan`, a name nothing installs, so it said FAIL on every
+  // correctly set-up deployment. These pin it to what setup.ts and scanJobs.ts actually arm.
+  const SETUP_INSTALLS = [
+    "trigger_dailySync",
+    "trigger_warmReadModels", "trigger_warmReadModels", "trigger_warmReadModels",
+  ];
+  const run = async () => {
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const { deploymentDiagnostic } = await load();
+      return deploymentDiagnostic();
+    } finally {
+      spy.mockRestore();
+    }
+  };
+  const lineOf = (out, label) => out.split("\n").find((l) => l.includes(`${label}:`)) ?? "";
+
+  it("passes a deployment exactly as setup() leaves it", async () => {
+    const { warmTriggerSchedule } = await import("../src/server/setup");
+    triggers.handlers = [...SETUP_INSTALLS];
+    props.WARM_TRIGGER_SCHEDULE = warmTriggerSchedule();
+    const out = await run();
+    expect(lineOf(out, "Daily sync trigger")).toMatch(/^\s+OK\s/);
+    expect(lineOf(out, "Warm triggers")).toMatch(/^\s+OK\s.*3 installed/);
+    expect(lineOf(out, "Pending one-shots")).toContain(": 0");
+    expect(lineOf(out, "Triggers used")).toContain("4 of 20");
+    expect(lineOf(out, "Sync in flight")).toContain("none");
+    expect(out).not.toContain("Scan in flight");
+  });
+
+  it("fails a missing daily trigger and a short warm set", async () => {
+    triggers.handlers = ["trigger_warmReadModels"];
+    const out = await run();
+    expect(lineOf(out, "Daily sync trigger")).toMatch(/FAIL.*run setup\(\)/);
+    expect(lineOf(out, "Warm triggers")).toMatch(/FAIL.*1 installed, expected 3/);
+  });
+
+  it("fails a full warm set whose recorded schedule is not this build's", async () => {
+    triggers.handlers = [...SETUP_INSTALLS];
+    props.WARM_TRIGGER_SCHEDULE = "Europe/Paris|7,11,15@0";
+    expect(lineOf(await run(), "Warm triggers")).toMatch(/FAIL.*Europe\/Paris\|7,11,15@0/);
+  });
+
+  it("counts leftover one-shots and fails when no sync could arm its own", async () => {
+    triggers.handlers = [
+      ...SETUP_INSTALLS, "trigger_continueSync", "trigger_watchdogSync",
+      ...Array.from({ length: 13 }, () => "someoneElsesTrigger"),
+    ];
+    const out = await run();
+    expect(lineOf(out, "Pending one-shots")).toMatch(/2 with no sync in flight/);
+    expect(lineOf(out, "Triggers used")).toMatch(/FAIL.*19 of 20/);
   });
 });

@@ -61,7 +61,8 @@ export const PROP_KEYS = {
   urlHub: "URL_HUB",
   // The warm schedule setup() last installed, as a signature string. A ClockTrigger exposes
   // its handler and nothing else, so this is the ONLY way to tell a correctly-scheduled set
-  // from one an older deployment left behind. Written by setup(), read by setup().
+  // from one an older deployment left behind. Written by setup(), read by setup() and by
+  // deploymentDiagnostic().
   warmTriggerSchedule: "WARM_TRIGGER_SCHEDULE",
   /**
    * When a real token exchange plus a real query last succeeded.

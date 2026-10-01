@@ -30,7 +30,8 @@ var Server = (() => {
     readModels: () => readModels_exports,
     scanJobs: () => scanJobs_exports,
     setup: () => setup,
-    welcome: () => welcome_exports
+    welcome: () => welcome_exports,
+    wizDiagnostic: () => wizDiagnostic
   });
 
   // src/server/api.ts
@@ -3665,7 +3666,8 @@ var Server = (() => {
     urlHub: "URL_HUB",
     // The warm schedule setup() last installed, as a signature string. A ClockTrigger exposes
     // its handler and nothing else, so this is the ONLY way to tell a correctly-scheduled set
-    // from one an older deployment left behind. Written by setup(), read by setup().
+    // from one an older deployment left behind. Written by setup(), read by setup() and by
+    // deploymentDiagnostic().
     warmTriggerSchedule: "WARM_TRIGGER_SCHEDULE",
     /**
      * When a real token exchange plus a real query last succeeded.
@@ -5476,7 +5478,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "fd6cd9988d28" : "dev";
+  var BUILD_ID = true ? "b3d9367f7977" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
@@ -11757,6 +11759,7 @@ var Server = (() => {
   var WARM_READY_BY_HOURS = [9, 13, 17];
   var WARM_TRIGGER_HOURS = WARM_READY_BY_HOURS.map((h) => (h + 23) % 24);
   var WARM_TRIGGER_NEAR_MINUTE = 30;
+  var WARM_TRIGGER_COUNT = WARM_TRIGGER_HOURS.length;
   var WARM_TRIGGER_TZ = "Europe/Paris";
   function warmTriggerSchedule() {
     return `${WARM_TRIGGER_TZ}|${WARM_TRIGGER_HOURS.join(",")}@${WARM_TRIGGER_NEAR_MINUTE}`;
@@ -11829,6 +11832,8 @@ var Server = (() => {
       }
     };
   }
+  var TRIGGER_CAP = 20;
+  var SYNC_TRIGGER_SLOTS = 2;
   function deploymentDiagnostic() {
     const r = reporter();
     const ok = (label, value) => r.line(`  OK    ${label}: ${value}`);
@@ -11867,22 +11872,96 @@ var Server = (() => {
       ok(`Severities requested (${scope})`, s2.fetchSeverities[scope].join(", ") || "(all)");
     }
     r.line("");
-    const daily = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === "trigger_dailyScan").length;
-    if (daily) ok("Daily scan trigger", `installed (${daily})`);
-    else bad("Daily scan trigger", "not installed \u2014 run setup()");
+    const handlers = ScriptApp.getProjectTriggers().map((t) => t.getHandlerFunction());
+    const count = (names) => handlers.filter((h) => names.includes(h)).length;
+    const daily = count([DAILY_SYNC_HANDLER]);
+    if (daily === 1) ok("Daily sync trigger", "installed");
+    else if (daily) bad("Daily sync trigger", `${daily} installed, expected 1 \u2014 the sync runs ${daily}x a day`);
+    else bad("Daily sync trigger", "not installed \u2014 run setup()");
+    const warm = count([WARM_HANDLER]);
+    const warmSig = getProp(PROP_KEYS.warmTriggerSchedule);
+    if (warm !== WARM_TRIGGER_COUNT) {
+      bad("Warm triggers", `${warm} installed, expected ${WARM_TRIGGER_COUNT} \u2014 run setup()`);
+    } else if (warmSig !== warmTriggerSchedule()) {
+      bad("Warm triggers", `schedule ${warmSig != null ? warmSig : "(unrecorded)"} is not this build's ${warmTriggerSchedule()} \u2014 run setup()`);
+    } else {
+      ok("Warm triggers", `${warm} installed (${warmSig})`);
+    }
+    const oneShots = count([...Object.values(CONTINUE_HANDLERS), ...Object.values(WATCHDOG_HANDLERS)]);
     const job = activeJob();
+    ok("Pending one-shots", job || !oneShots ? String(oneShots) : `${oneShots} with no sync in flight (each clears itself when it fires)`);
+    const free = TRIGGER_CAP - handlers.length;
+    if (free >= (job ? 0 : SYNC_TRIGGER_SLOTS)) ok("Triggers used", `${handlers.length} of ${TRIGGER_CAP}`);
+    else bad("Triggers used", `${handlers.length} of ${TRIGGER_CAP} \u2014 no room for a sync's ${SYNC_TRIGGER_SLOTS} one-shots; delete stray triggers in the editor's Triggers panel`);
     if (job) {
-      ok("Scan in flight", `${job.job_id} \u2014 ${job.phase}${job.scope ? ` (${job.scope})` : ""}`);
+      ok("Sync in flight", `${job.job_id} \u2014 ${job.phase}${job.scope ? ` (${job.scope})` : ""}`);
       r.line(`        page ${job.page}, ${job.findings_so_far} finding(s) so far`);
       if (isStaleJob(job)) {
         bad("  heartbeat", "silent for over 30 minutes \u2014 run resetStuckJob() from the editor");
       }
     } else {
-      ok("Scan in flight", "none");
+      ok("Sync in flight", "none");
     }
     const verified = getProp(PROP_KEYS.wizVerifiedAt);
     if (verified) ok("Credentials last verified", verified);
     else bad("Credentials last verified", "never \u2014 the tenant has not accepted them yet");
+    return r.text();
+  }
+  function redact2(v) {
+    if (!v) return "(unset)";
+    const t = v.trim();
+    return t.length <= 8 ? "(set)" : `${t.slice(0, 4)}\u2026${t.slice(-2)} (${t.length} chars)`;
+  }
+  function wizDiagnostic() {
+    var _a, _b, _c, _d;
+    const r = reporter();
+    const say = (label, value) => r.line(`  ${label}: ${value}`);
+    r.line("Wiz connectivity diagnostic");
+    r.line(`Build ${BUILD_ID}`);
+    r.line("");
+    const mode = resolveWizAuthMode(
+      getProp(PROP_KEYS.wizApiToken),
+      getProp(PROP_KEYS.wizClientId),
+      getProp(PROP_KEYS.wizClientSecret)
+    );
+    say("Auth mode", mode != null ? mode : "NONE \u2014 set WIZ_API_TOKEN, or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET");
+    say("API url", (_a = getProp(PROP_KEYS.wizApiUrl)) != null ? _a : "(unset)");
+    say("Auth url", (_b = getProp(PROP_KEYS.wizAuthUrl)) != null ? _b : "(unset)");
+    say("Client id", redact2(getProp(PROP_KEYS.wizClientId)));
+    say("Client secret", redact2(getProp(PROP_KEYS.wizClientSecret)));
+    say("Static token", redact2(getProp(PROP_KEYS.wizApiToken)));
+    say("Project scope", ((_c = projectScope()) != null ? _c : []).join(", ") || "(all projects)");
+    r.line("");
+    if (!hasWizCredentials()) {
+      r.line("STOP: no usable credentials, so there is nothing to test. Set WIZ_API_URL and");
+      r.line("either WIZ_API_TOKEN or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET in Project Settings.");
+      return r.text();
+    }
+    forgetToken();
+    try {
+      const token = getToken(true);
+      r.line(`  Step 1 OK    token acquired (${token.length} chars)`);
+    } catch (e) {
+      r.line(`  Step 1 FAIL  ${String(e instanceof Error ? e.message : e).slice(0, 600)}`);
+      r.line("");
+      r.line(e instanceof WizNotAuthorizedError ? "This is the deployment's authorization, NOT the credentials. Accept the consent\nprompt this run should have shown you, then deploy a NEW VERSION of the web app \u2014\npushing code does not change what the /exec URL serves." : "The token endpoint refused these credentials. Check WIZ_CLIENT_ID and\nWIZ_CLIENT_SECRET, and that WIZ_AUTH_URL matches your tenant's region.");
+      return r.text();
+    }
+    try {
+      const page = fetchPage("sast", { first: 1 });
+      r.line(`  Step 2 OK    query answered \u2014 ${(_d = page.totalCount) != null ? _d : "?"} finding(s) in scope`);
+      if (page.partialErrors.length) {
+        r.line(`               with partial errors: ${page.partialErrors.join("; ").slice(0, 300)}`);
+      }
+      setProp(PROP_KEYS.wizVerifiedAt, (/* @__PURE__ */ new Date()).toISOString());
+      r.line("");
+      r.line("Connectivity is fine. Settings > System will now read 'Verified'.");
+    } catch (e) {
+      r.line(`  Step 2 FAIL  ${String(e instanceof Error ? e.message : e).slice(0, 600)}`);
+      r.line("");
+      r.line("The token was accepted but the query was not. A 401 here means the service");
+      r.line("account cannot read this data; a 404 means WIZ_API_URL's host or path is wrong.");
+    }
     return r.text();
   }
 

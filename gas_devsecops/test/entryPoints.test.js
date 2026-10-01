@@ -56,10 +56,28 @@ describe("the web-app entry", () => {
     expect(ENTRY).toMatch(/function include\(filename\)[\s\S]*denyResult\("include"\)/);
   });
 
+  // Scraped from entry.js rather than listed here. A hand-kept list is exactly how
+  // `Server.wizDiagnostic` shipped unexported: entry.js grew the call, the list did not, and
+  // the editor answered "not a function" to the one operator already debugging an outage.
+  const reached = [...new Set([...ENTRY.matchAll(/\bServer\.(\w+)/g)].map((m) => m[1]))];
+
   it("exposes every global entry.js reaches for on the Server namespace", () => {
-    for (const name of ["doGet", "include", "access", "welcome", "setup", "api"]) {
+    expect(reached).toEqual(expect.arrayContaining(["doGet", "api", "wizDiagnostic"]));
+    for (const name of reached) {
       expect(INDEX, `Server.${name} is not exported`).toMatch(
-        new RegExp(`export (\\* as ${name}|\\{[^}]*\\b${name}\\b)`),
+        new RegExp(`export (\\* as ${name}\\b|\\{[^}]*\\b${name}\\b)`),
+      );
+    }
+  });
+
+  it("finds every Server.<namespace>.<method> entry.js calls exported by that module", () => {
+    // `api` is excluded: it is reached as `Server.api[name]` and has its own parity block.
+    const calls = [...ENTRY.matchAll(/\bServer\.(\w+)\.(\w+)/g)].filter(([, ns]) => ns !== "api");
+    expect(calls.length).toBeGreaterThan(0);
+    for (const [, ns, method] of calls) {
+      const src = readFileSync(new URL(`../src/server/${ns}.ts`, import.meta.url), "utf8");
+      expect(src, `Server.${ns}.${method} is not exported by ${ns}.ts`).toMatch(
+        new RegExp(`^export (function|const) ${method}\\b`, "m"),
       );
     }
   });
