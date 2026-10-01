@@ -4655,25 +4655,33 @@ var Server = (() => {
     sh.deleteRows(keep + 1, surplus);
     return surplus;
   }
+  var UPDATE_TAIL_ROWS = 50;
   function updateWhere(tab, keyColumn, keyValue, patch) {
     const sh = sheet(tab);
     if (sh.getLastRow() < 2) return false;
     const headers = ensureHeaders(sh, tab);
     const lastRow = sh.getLastRow();
     const lastCol = headers.length;
-    const values = readGrid(sh, tab, lastRow, lastCol);
     const keyIdx = headers.indexOf(keyColumn);
     if (keyIdx < 0) return false;
-    for (let i = 1; i < values.length; i++) {
-      if (fromCell(values[i][keyIdx]) === keyValue) {
-        const rowVals = values[i].slice();
-        for (const [k, v] of Object.entries(patch)) {
-          const idx = headers.indexOf(k);
-          if (idx >= 0) rowVals[idx] = toCell(v);
-        }
-        sh.getRange(i + 1, 1, 1, lastCol).setValues([rowVals]);
-        return true;
+    const write2 = (sheetRow, values) => {
+      const rowVals = values.slice();
+      for (const [k, v] of Object.entries(patch)) {
+        const idx = headers.indexOf(k);
+        if (idx >= 0) rowVals[idx] = toCell(v);
       }
+      sh.getRange(sheetRow, 1, 1, lastCol).setValues([rowVals]);
+      return true;
+    };
+    const tailFirst = Math.max(2, lastRow - UPDATE_TAIL_ROWS + 1);
+    const tail = sh.getRange(tailFirst, 1, lastRow - tailFirst + 1, lastCol).getValues();
+    for (let i = tail.length - 1; i >= 0; i--) {
+      if (fromCell(tail[i][keyIdx]) === keyValue) return write2(tailFirst + i, tail[i]);
+    }
+    if (tailFirst <= 2) return false;
+    const head = readGrid(sh, tab, tailFirst - 1, lastCol);
+    for (let i = head.length - 1; i >= 1; i--) {
+      if (fromCell(head[i][keyIdx]) === keyValue) return write2(i + 1, head[i]);
     }
     return false;
   }
@@ -5859,7 +5867,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "e2f8e1599175" : "dev";
+  var BUILD_ID = true ? "80c6687baa60" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
