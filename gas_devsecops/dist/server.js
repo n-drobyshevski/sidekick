@@ -1303,7 +1303,7 @@ var Server = (() => {
     };
   }
 
-  // src/domain/scanCompleteness.ts
+  // ../gas_shared/domain/scanCompleteness.ts
   var DISAPPEARANCE_COMPLETE = "complete";
   var DEFERRED_PREFIX = "deferred:";
   function completenessTolerance(n2) {
@@ -4528,10 +4528,10 @@ var Server = (() => {
       "raw_ref",
       "obs_ref",
       "sealed",
-      // THE COMPLETENESS RECORD (domain/scanCompleteness.ts), appended last so `ensureHeaders`
-      // adds them to an existing tab without moving a column. `disappearance` is the verdict a
-      // replay reads back — "complete", "deferred:<reason>", or blank on a row written before
-      // the gate, which replays under the old rules. `dropout_count` is the rows closed as
+      // THE COMPLETENESS RECORD (gas_shared/domain/scanCompleteness.ts), appended last so
+      // `ensureHeaders` adds them to an existing tab without moving a column. `disappearance` is the
+      // verdict a replay reads back — "complete", "deferred:<reason>", or blank on a row written
+      // before the gate, which replays under the old rules. `dropout_count` is the rows closed as
       // repository drop-outs, which `resolved_count` deliberately does not include.
       "reported_total",
       "partial_pages",
@@ -5738,7 +5738,8 @@ var Server = (() => {
     "severities",
     "sealed",
     // The completeness verdict and the drop-outs it closed — what the table marks a deferred
-    // scan by, and the count `resolved_count` deliberately leaves out (domain/scanCompleteness.ts).
+    // scan by, and the count `resolved_count` deliberately leaves out
+    // (gas_shared/domain/scanCompleteness.ts).
     // The other three record columns (reported_total, partial_pages, duplicates) are operator
     // diagnostics that reach the Data page's error log instead.
     "disappearance",
@@ -5980,7 +5981,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "3a4280533601" : "dev";
+  var BUILD_ID = true ? "030b3a63e624" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
@@ -11605,7 +11606,8 @@ var Server = (() => {
         mode: "live",
         scannedSeverities: (_b = params.severitiesByScope[scope]) != null ? _b : [],
         rawRef: (_d = (_c = params.perScope[scope]) == null ? void 0 : _c.rawRef) != null ? _d : null,
-        // What the completeness gate weighs the records against — see domain/scanCompleteness.ts.
+        // What the completeness gate weighs the records against — see
+        // gas_shared/domain/scanCompleteness.ts.
         completeness: {
           reportedTotal: reportedTotalOf(params.perScope[scope]),
           partialPages: Number((_f = (_e = params.perScope[scope]) == null ? void 0 : _e.partialPages) != null ? _f : 0) || 0
@@ -11675,8 +11677,8 @@ var Server = (() => {
           // rows and a suspect count, and a history entry that hid that would be the lie.
           partial_pages: (_f = (_e = params.perScope[s2.scope]) == null ? void 0 : _e.partialPages) != null ? _f : 0,
           // Whether this scope's absences were adjudicated, and what they amounted to — the absent
-          // share is recorded here and never gated on (domain/scanCompleteness.ts). Null on an
-          // idempotent replay, which assessed nothing.
+          // share is recorded here and never gated on (gas_shared/domain/scanCompleteness.ts). Null
+          // on an idempotent replay, which assessed nothing.
           completeness: s2.completeness
         };
       }),

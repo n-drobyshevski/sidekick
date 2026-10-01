@@ -73,7 +73,7 @@ import { SCOPES, type Scope } from "../domain/config";
 import { mttrFromLedger } from "../domain/lifecycle";
 import { effectiveSlaTargets } from "../domain/settingsLogic";
 import { nowIso, pushAll, type Rec } from "../domain/util";
-import { readDisappearance } from "../domain/scanCompleteness";
+import { readDisappearance } from "../../../gas_shared/domain/scanCompleteness";
 import * as archive from "./archiveStore";
 import * as errorLog from "./errorLog";
 import * as history from "./historyStore";
@@ -693,7 +693,8 @@ function finishSync(jobId: string, params: SyncParams): void {
     mode: "live",
     scannedSeverities: params.severitiesByScope[scope] ?? [],
     rawRef: params.perScope[scope]?.rawRef ?? null,
-    // What the completeness gate weighs the records against — see domain/scanCompleteness.ts.
+    // What the completeness gate weighs the records against — see
+    // gas_shared/domain/scanCompleteness.ts.
     completeness: {
       reportedTotal: reportedTotalOf(params.perScope[scope]),
       partialPages: Number(params.perScope[scope]?.partialPages ?? 0) || 0,
@@ -820,8 +821,8 @@ function dailyStats(params: SyncParams, outcome: ledgerStore.PersistOutcome): Re
       // rows and a suspect count, and a history entry that hid that would be the lie.
       partial_pages: params.perScope[s.scope]?.partialPages ?? 0,
       // Whether this scope's absences were adjudicated, and what they amounted to — the absent
-      // share is recorded here and never gated on (domain/scanCompleteness.ts). Null on an
-      // idempotent replay, which assessed nothing.
+      // share is recorded here and never gated on (gas_shared/domain/scanCompleteness.ts). Null
+      // on an idempotent replay, which assessed nothing.
       completeness: s.completeness,
     })),
     mttr: mttrFromLedger(

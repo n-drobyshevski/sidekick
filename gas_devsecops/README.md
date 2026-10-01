@@ -152,7 +152,7 @@ that first stopped seeing the finding — an upper bound whose error is the scan
 SAST that is *every* closed row; on SCA and secrets it is most of them.
 
 **Absence only resolves a finding when the scan was complete.** Each live scan is checked
-first (`src/domain/scanCompleteness.ts`): no rows while open findings exist, fewer distinct
+first (`gas_shared/domain/scanCompleteness.ts`): no rows while open findings exist, fewer distinct
 rows than Wiz's own total (only when no page came back partial — SAST always does), or more
 repeated rows than `max(5, 1%)`. A scan that fails is still saved, but it is *deferred*:
 nothing it missed is resolved, the Data page's error log says so, and Scan history marks the

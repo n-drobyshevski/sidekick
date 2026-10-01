@@ -1,5 +1,5 @@
 // The completeness gate and the repository drop-out — the two rules that decide when ABSENCE
-// is allowed to resolve a finding (src/domain/scanCompleteness.ts, reconcile.ts's absence
+// is allowed to resolve a finding (gas_shared/domain/scanCompleteness.ts, reconcile.ts's absence
 // pass, ledgerCore.disappearanceWindow).
 //
 // Hand-written throughout: gas/ and brick have no golden for either rule. Every scenario is a
@@ -43,7 +43,7 @@ import {
   disappearanceValue,
   distinctNodes,
   readDisappearance,
-} from "../src/domain/scanCompleteness";
+} from "../../gas_shared/domain/scanCompleteness";
 import { timeToRevoke, type SecretRow } from "../src/domain/secretsLifecycle";
 import {
   cohortSlaAttainment,

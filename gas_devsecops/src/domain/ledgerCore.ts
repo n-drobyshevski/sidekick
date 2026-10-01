@@ -45,7 +45,7 @@ import {
   assessCompleteness,
   disappearanceValue,
   readDisappearance,
-} from "./scanCompleteness";
+} from "../../../gas_shared/domain/scanCompleteness";
 import type {
   BaseRow,
   Deltas,
@@ -146,10 +146,10 @@ export function prevScanIdBySeverity(
  * resolve it — `prevScanIdBySeverity` generalised over deferred scans. null when `scope` has
  * no scans.
  *
- * Per severity: walking the scope's log newest-first, every scan covering the severity joins
- * the window, and the walk stops at the first COMPLETE one. A deferred scan resolved nothing by
- * absence (scanCompleteness.ts), so what it failed to see is still waiting on a verdict — and
- * so is what it DID see, if the next scan misses it. Both are in the window; nothing older is,
+ * Per severity: walking the scope's log newest-first, every scan covering the severity joins the
+ * window, and the walk stops at the first COMPLETE one. A deferred scan resolved nothing by absence
+ * (gas_shared/domain/scanCompleteness.ts), so what it failed to see is still waiting on a verdict —
+ * and so is what it DID see, if the next scan misses it. Both are in the window; nothing older is,
  * because the newest complete covering scan already adjudicated everything before it.
  *
  * A legacy row (blank `disappearance`) is complete. With no deferred scan in the log every
@@ -317,8 +317,8 @@ export interface PersistFlatOptions {
   now?: number;
   /**
    * LIVE: the fetch's own account of itself. When given, the completeness gate runs
-   * (scanCompleteness.ts), its verdict is written to the scan row, and a complete scan also
-   * runs the repository drop-out pass.
+   * (gas_shared/domain/scanCompleteness.ts), its verdict is written to the scan row, and a
+   * complete scan also runs the repository drop-out pass.
    */
   completeness?: { reportedTotal: number | null; partialPages: number } | null;
   /**

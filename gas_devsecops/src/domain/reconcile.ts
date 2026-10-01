@@ -18,7 +18,8 @@
 //                            reopened_count++, first_seen reset (a new episode).
 //
 // AND TWO THIS REGISTER ADDS, both about absence that is not remediation:
-//   * Deferral            -> a scan that failed the completeness gate (scanCompleteness.ts)
+//   * Deferral            -> a scan that failed the completeness gate
+//                            (gas_shared/domain/scanCompleteness.ts)
 //                            lands what it saw and resolves NOTHING by absence; the next
 //                            complete scan adjudicates the whole window since the last
 //                            complete one (`disappearanceWindow`).
