@@ -14,6 +14,7 @@
 
 import { configureApp } from "../../../../gas_shared/appConfig.js";
 import { call } from "../../../../gas_shared/api.js";
+import { createJobPoller } from "../../../../gas_shared/ui/jobPoller.js";
 import { navigate } from "../../../../gas_shared/store.js";
 import { createAppShell } from "../../../../gas_shared/shell/appShell.js";
 import { renderScanCard, openScanDetails } from "./scanProgress.js";
@@ -221,7 +222,18 @@ function appbarScope(data) {
 
 // --------------------------------------------------------------------- the scan battery
 
-let jobPoller = null;
+/**
+ * The job poll — `createJobPoller` (gas_shared/ui/jobPoller.js; gas_devsecops's sync card drives
+ * the same one): a plain `call()` per tick, one request in flight, 3 s in view and 15 s hidden,
+ * and an immediate tick when the tab comes back. It replaced a fixed 3 s interval timer that
+ * stacked requests behind a slow GAS execution, so two answers could each carry DONE to
+ * `applyJob` — two "Scan complete." toasts and two `refresh()`es. The poller stops itself before
+ * handing a terminal job over, and hands it over once.
+ */
+const jobPoller = createJobPoller({
+  fetchJob: (jobId) => call("api_getJobStatus", { jobId }),
+  onJob: (job) => applyJob(job),
+});
 let scanCardHost = null; // the progress-card slot in the current scan zone
 let scanButtonsRow = null; // the Run/Quick buttons, hidden while a job runs
 let stoppingJobId = null; // optimistic "Stopping…" until the server confirms CANCELLED
@@ -322,7 +334,7 @@ function renderScanZone(data) {
 
 /**
  * The rail's own status pill + dot, repainted from `railStatus()` on every job transition —
- * boot, a fresh Run/Quick click, every 3s poll tick, and a failure — rather than only once
+ * boot, a fresh Run/Quick click, every poll tick, and a failure — rather than only once
  * per full rail rebuild. `job` is the CURRENT JobRow (or null between runs); credentials and
  * the last-scan timestamp are read from the closured values `renderScanZone` captured, since
  * neither changes while a job runs.
@@ -434,21 +446,12 @@ async function requestStop(jobId) {
 }
 
 /**
- * One poll tick: fetch the job and hand it to `applyJob`, which decides what a terminal vs.
- * a running phase means for the card AND the rail dot. Split out of `watchJob` so the SAME
- * tick can run once immediately (see `watchJob` below) and once every 3s after — a transient
- * fetch failure here is fine, the next tick tries again.
+ * What one job summary means for the card and the rail dot, whatever phase it is in. The poll's
+ * `onJob`: a null job or a terminal phase (DONE / FAILED / CANCELLED) reaches here exactly once,
+ * after `createJobPoller` has already stopped itself, so each terminal branch's toast (and the
+ * DONE/CANCELLED `refresh()`) runs once; its `stopWatch()` is then a no-op kept for symmetry. A
+ * throw here is logged by the poller rather than ending the poll.
  */
-async function pollTick(jobId) {
-  try {
-    const job = await call("api_getJobStatus", { jobId });
-    applyJob(job);
-  } catch {
-    /* transient poll errors are fine */
-  }
-}
-
-/** What one job summary means for the card and the rail dot, whatever phase it is in. */
 function applyJob(job) {
   if (!job) {
     stopWatch();
@@ -483,22 +486,20 @@ function applyJob(job) {
 }
 
 /**
- * Poll a job every 3s until it settles. THE FIRST TICK RUNS IMMEDIATELY, not after the first
- * interval: pressing Run scan used to leave both the card and the rail dot showing their
- * pre-scan state for a full 3 seconds — on the one control whose entire job is to say
- * something is now happening. Only visible in a browser with the continuation trigger
- * frozen (the dev harness's fake clock lets 45 pages complete inside a few hundred
- * milliseconds of real time, so the card never got a frame in that setup either).
+ * Poll a job until it settles. THE FIRST TICK RUNS IMMEDIATELY (`createJobPoller.watch`), not
+ * after the first interval: pressing Run scan used to leave both the card and the rail dot
+ * showing their pre-scan state for a full 3 seconds — on the one control whose entire job is to
+ * say something is now happening. Only visible in a browser with the continuation trigger frozen
+ * (the dev harness's fake clock lets 45 pages complete inside a few hundred milliseconds of real
+ * time, so the card never got a frame in that setup either). Watching another job drops the
+ * previous one's answer still in flight.
  */
 function watchJob(jobId) {
-  stopWatch();
-  pollTick(jobId);
-  jobPoller = setInterval(() => pollTick(jobId), 3000);
+  jobPoller.watch(jobId);
 }
 
 function stopWatch() {
-  if (jobPoller) clearInterval(jobPoller);
-  jobPoller = null;
+  jobPoller.stop();
 }
 
 // ------------------------------------------------------------------------------ the shell

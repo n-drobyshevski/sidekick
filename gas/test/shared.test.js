@@ -23,7 +23,7 @@
 // where a claim about THIS register lives.
 
 import { readFileSync } from "node:fs";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as errorLog from "../src/server/errorLog";
 import { registerErrorLogContract } from "../../gas_shared/test/contracts/errorLog.js";
@@ -32,6 +32,8 @@ import {
 } from "../src/server/setup";
 import { PROP_KEYS } from "../src/server/props";
 import { registerDailyTriggerContract } from "../../gas_shared/test/contracts/dailyTrigger.js";
+import * as jobPoller from "../../gas_shared/ui/jobPoller.js";
+import { registerJobPollerContract } from "../../gas_shared/test/contracts/jobPoller.js";
 
 import { SEVERITY_COLORS, SLA_TARGETS } from "../src/domain/config";
 
@@ -546,4 +548,12 @@ registerDailyTriggerContract({
   ...base, beforeEach, afterEach,
   handler: DAILY_TRIGGER_HANDLER, tz: TRIGGER_TZ, hour: DAILY_TRIGGER_HOUR,
   propKey: PROP_KEYS.dailyTriggerSchedule, reconcile: reconcileDailyScanTrigger,
+});
+
+// The job poll: the shared loop under fake timers, and this register's app.js building its scan
+// card's poll from it with a plain call() — it used to be a 3 s setInterval that could stack
+// requests and announce one finish twice. What each phase means for the card stays in app.js.
+registerJobPollerContract({
+  ...base, beforeEach, afterEach, vi, poller: jobPoller,
+  appSrc: readFileSync(new URL("../src/client/js/app.js", import.meta.url), "utf8"),
 });
