@@ -8,6 +8,12 @@
 // five-figures-per-row become the cell's `aria-label` and its tip — one level down, which is
 // DESIGN.md's ladder, rather than gone.
 //
+// THE TIP IS POINTER-ONLY, ON PURPOSE. Each segment anchors its own band's figures, and the
+// bar anchors its whole sentence so the unfilled track still answers. `tipAnchor` adds no tab
+// stop and no role, and the card is aria-hidden: a keyboard or screen-reader user already has
+// every figure in the `aria-label`, so the tip hands the pointer the same words and says
+// nothing twice.
+//
 // THE SCALE IS A PROPERTY OF THE TABLE, NEVER OF A ROW, and this is the defect the component
 // exists to refuse. A bar normalised to its own row's total draws 280 subjects and 30 subjects
 // at the same length, so a reader comparing two rows compares two different units — the exact
@@ -35,6 +41,7 @@
 // are all 0 and finite, so a cast-first version silently plots missing readings as real zeros.
 
 import { el } from "./dom.js";
+import { tipAnchor } from "./tip.js";
 
 /**
  * The bands of one row, reshaped into what the bar draws.
@@ -49,6 +56,7 @@ import { el } from "./dom.js";
  * @param {string} spec.unit  what one count counts ("assets"), for the sentence.
  * @param {string} spec.name  the row's own label, opening the sentence.
  * @returns {{total: number, fillPct: number, segments: Array, aria: string, empty: boolean}}
+ *   Each segment carries `tip`: the lines its hover card shows.
  */
 export function bandBarModel(spec) {
   const p = spec || {};
@@ -80,15 +88,19 @@ export function bandBarModel(spec) {
   // comparison — it fills its track rather than being drawn against a scale it has no peer on.
   const fillPct = total <= 0 ? 0 : max > 0 ? Math.min(100, (total / max) * 100) : 100;
 
-  const segments = kept.map((b) => ({
-    key: b.key,
-    label: b.label,
-    count: b.count,
-    rank: b.rank,
-    extra: b.extra,
+  const segments = kept.map((b) => {
     // Within the row's own fill, so the segments always sum to it.
-    pct: total > 0 ? (b.count / total) * 100 : 0,
-  }));
+    const pct = total > 0 ? (b.count / total) * 100 : 0;
+    return {
+      key: b.key,
+      label: b.label,
+      count: b.count,
+      rank: b.rank,
+      extra: b.extra,
+      pct,
+      tip: segmentTip(b, pct, total, unit, name),
+    };
+  });
 
   const clauses = segments.map((s) => {
     const head = String(s.count) + (unit ? " " + unit : "") + " at " + s.label;
@@ -98,6 +110,24 @@ export function bandBarModel(spec) {
   const aria = name ? name + ": " + body : body;
 
   return { total, fillPct, segments, aria, empty: segments.length === 0 };
+}
+
+/**
+ * One segment's hover card: the band, its count with its share OF THE ROW (the reading the
+ * segment's width encodes), and the band's second figure when it has one.
+ *
+ * A share that rounds to 0 is written "<1%": the segment exists, so "0%" would contradict it.
+ */
+function segmentTip(b, pct, total, unit, name) {
+  const rounded = Math.round(pct);
+  const share = rounded === 0 && pct > 0 ? "<1%" : String(rounded) + "%";
+  const whole = "the " + String(total) + (name ? " in " + name : "");
+  const lines = [
+    b.label,
+    String(b.count) + (unit ? " " + unit : "") + " · " + share + " of " + whole,
+  ];
+  if (b.extra) lines.push(b.extra);
+  return lines;
 }
 
 /**
@@ -124,12 +154,19 @@ export function bandBar(model, opts) {
     style: "width:" + model.fillPct.toFixed(2) + "%",
   });
   for (const s of model.segments) {
-    fill.append(el("span", {
+    const seg = el("span", {
       class: "bandbar__seg",
       "data-rank": s.rank === null ? "none" : String(s.rank),
       "data-on": selected === null ? "true" : String(s.key === selected),
       style: "width:" + s.pct.toFixed(2) + "%",
-    }));
+    });
+    if (Array.isArray(s.tip) && s.tip.length) tipAnchor(seg, () => s.tip);
+    fill.append(seg);
   }
-  return el("span", { class: cls, role: "img", "aria-label": model.aria }, fill);
+  // The innermost anchor wins (`closest("[data-tip]")`), so this answers only over the track
+  // a segment does not cover.
+  return tipAnchor(
+    el("span", { class: cls, role: "img", "aria-label": model.aria }, fill),
+    () => [model.aria],
+  );
 }

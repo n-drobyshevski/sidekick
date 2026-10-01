@@ -163,6 +163,24 @@ export function registerBandBarContract(ctx) {
       expect(m.fillPct).toBe(0);
     });
 
+    // THE TIP IS THE SEGMENT IN WORDS: its band, its count, and the share its width encodes.
+    it("gives each segment a tip naming its band, count and share of the row", () => {
+      const m = bandBarModel({
+        bands: [
+          { key: "a", label: "0-30 d", count: 3, rank: 1, extra: "12 open" },
+          { key: "b", label: "30-60 d", count: 1, rank: 2 },
+        ],
+        max: 4, unit: "repositories", name: "Payments",
+      });
+      expect(m.segments[0].tip).toEqual(["0-30 d", "3 repositories · 75% of the 4 in Payments", "12 open"]);
+      expect(m.segments[1].tip).toEqual(["30-60 d", "1 repositories · 25% of the 4 in Payments"]);
+    });
+
+    it("writes a sliver as <1%, never as a 0% that contradicts the drawn segment", () => {
+      const m = bandBarModel({ bands: bands([999, 1]), max: 1000 });
+      expect(m.segments[1].tip[1]).toBe("1 · <1% of the 1000");
+    });
+
     it("survives a spec that is not a spec", () => {
       for (const junk of [null, undefined, {}, { bands: null }, { bands: "nope" }]) {
         expect(bandBarModel(junk).empty).toBe(true);
@@ -178,6 +196,13 @@ export function registerBandBarContract(ctx) {
       expect(BAND_SRC).not.toContain("onclick");
       expect(BAND_SRC).not.toContain("addEventListener");
       expect(BAND_SRC).not.toContain("tabindex");
+    });
+
+    // THE TIP ADDS NO STOP. `tipAnchor` only marks the node for the delegated card; the
+    // "builds no button" assertion above is what keeps that true.
+    it("anchors a pointer tip on every segment and on the bar", () => {
+      expect(BAND_SRC).toContain("tipAnchor(seg");
+      expect(BAND_SRC).toMatch(/return tipAnchor\(\s*el\("span", \{ class: cls, role: "img"/);
     });
 
     it("is one role=img carrying the whole sentence", () => {
