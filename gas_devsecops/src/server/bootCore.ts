@@ -34,7 +34,6 @@ import { projectScope } from "./props";
 import { durablyCached, durablyPeek } from "./readModelStore";
 import * as repoTags from "./repoTags";
 import { loadSettings } from "./settingsStore";
-import { readAll, TABS } from "./sheetsDb";
 import { stageLaps } from "./stageLog";
 import * as currentDomains from "./currentDomains";
 
@@ -75,7 +74,12 @@ export function peekBootCore(): BootCore | null {
  */
 export function buildBootCore(): BootCore {
   const laps = stageLaps("bootCore");
-  const scans = readAll(TABS.scans);
+  // `ledgerStore`'s per-execution memo of the tab, not a read of its own: a cold bootstrap
+  // computes beside read models that load the same tab (`readModels.newestScanByScope`, the
+  // history and register models), and the warm computes the core first in an execution that
+  // goes on to need it again. Same cells — `rowToScan` stringifies exactly as this did — except
+  // that a row with an unreadable scope reads as `sca`, as it does for every other reader.
+  const scans = ledgerStore.loadScanRows();
   // Pass 1: which sync is newest. Pass 2: every row of THAT sync. Two passes rather than one
   // because the winner is only known at the end, and a sync's rows are not adjacent on the tab.
   let newestTs = "";
@@ -85,14 +89,14 @@ export function buildBootCore(): BootCore {
   const lastScanByScope: Record<string, string | null> = {};
   for (const scope of SCOPES) lastScanByScope[scope] = null;
   for (const row of scans) {
-    const ts = String(row.ts ?? "");
+    const ts = row.ts;
     if (!ts || ts <= newestTs) continue;
     newestTs = ts;
-    newestSyncId = String(row.scan_id ?? "");
+    newestSyncId = row.scan_id;
   }
   for (const row of scans) {
-    const ts = String(row.ts ?? "");
-    const scope = String(row.scope ?? "");
+    const ts = row.ts;
+    const scope = String(row.scope);
     if (!ts || !(scope in lastScanByScope)) continue;
     if (lastScanByScope[scope] === null || ts > lastScanByScope[scope]!) {
       lastScanByScope[scope] = ts;
@@ -100,15 +104,10 @@ export function buildBootCore(): BootCore {
   }
   let latestSync: Bootstrap["latestSync"] = null;
   if (newestSyncId) {
-    const members = scans.filter((r) => String(r.scan_id ?? "") === newestSyncId);
+    const members = scans.filter((r) => r.scan_id === newestSyncId);
     const order = new Map(SCOPES.map((sc, i) => [String(sc), i]));
     const rows = members
-      .map((r) => ({
-        scope: String(r.scope ?? ""),
-        total: Number(r.total ?? 0),
-        severities: r.severities == null ? null : String(r.severities),
-        ts: String(r.ts ?? ""),
-      }))
+      .map((r) => ({ scope: String(r.scope), total: r.total, severities: r.severities, ts: r.ts }))
       // Battery order, not tab order, so the caption reads the same on every load.
       .sort((a, b) => (order.get(a.scope) ?? 99) - (order.get(b.scope) ?? 99));
     let total = 0;

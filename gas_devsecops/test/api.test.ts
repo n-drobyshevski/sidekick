@@ -64,6 +64,8 @@ const drive = {
 };
 
 let projectTriggers: string[] = [];
+/** Every whole-tab `readAll`, by tab. The bootstrap-core scans spec reads this. */
+const tabReads: string[] = [];
 /** Every clock trigger built (the daily sync reinstall), and a fault to make create() throw. */
 const clockBuilds: Array<{ handler: string; hour?: number; tz?: string }> = [];
 let clockCreateFails: Error | null = null;
@@ -85,7 +87,10 @@ vi.mock("../src/server/sheetsDb", async (importOriginal) => {
     TAB_HEADERS: real.TAB_HEADERS,
     SCHEMA_VERSION: real.SCHEMA_VERSION,
     ensureTab: () => null,
-    readAll: (tab: string) => tables[tab] ?? [],
+    readAll: (tab: string) => {
+      tabReads.push(tab);
+      return tables[tab] ?? [];
+    },
     readTail: (tab: string, n: number) => (tables[tab] ?? []).slice(-n),
     overwrite: (tab: string, rows: Row[]) => {
       tables[tab] = rows.map((r) => project(tab, r));
@@ -623,6 +628,7 @@ beforeEach(() => {
   for (const k of Object.keys(drive.named)) delete drive.named[k];
   drive.snapshot = null;
   projectTriggers = [];
+  tabReads.length = 0;
   clockBuilds.length = 0;
   clockCreateFails = null;
   tamperNode = null;
@@ -1629,6 +1635,16 @@ describe("timing lines", () => {
     } finally {
       log.mockRestore();
     }
+  });
+
+  // The core reads the `scans` tab through `ledgerStore.loadScanRows()`'s per-execution memo,
+  // so a cold bootstrap and the page models computed beside it in one execution share ONE read.
+  it("a cold core shares the scans read with the models beside it", async () => {
+    const { api } = await syncedRegister();
+    tabReads.length = 0;
+    expect(api.bootstrap({}).ok).toBe(true);
+    expect(api.getScanHistory({}).ok).toBe(true);
+    expect(tabReads.filter((t) => t === "scans")).toEqual(["scans"]);
   });
 });
 

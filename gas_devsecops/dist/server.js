@@ -5859,7 +5859,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "0f7e1543fad1" : "dev";
+  var BUILD_ID = true ? "52801d9cdb0a" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
@@ -7306,22 +7306,22 @@ var Server = (() => {
     return core && typeof core === "object" && !Array.isArray(core) ? core : null;
   }
   function buildBootCore() {
-    var _a, _b, _c, _d, _e, _f;
+    var _a, _b;
     const laps = stageLaps("bootCore");
-    const scans = readAll(TABS.scans);
+    const scans = loadScanRows();
     let newestTs = "";
     let newestSyncId = "";
     const lastScanByScope = {};
     for (const scope of SCOPES) lastScanByScope[scope] = null;
     for (const row of scans) {
-      const ts = String((_a = row.ts) != null ? _a : "");
+      const ts = row.ts;
       if (!ts || ts <= newestTs) continue;
       newestTs = ts;
-      newestSyncId = String((_b = row.scan_id) != null ? _b : "");
+      newestSyncId = row.scan_id;
     }
     for (const row of scans) {
-      const ts = String((_c = row.ts) != null ? _c : "");
-      const scope = String((_d = row.scope) != null ? _d : "");
+      const ts = row.ts;
+      const scope = String(row.scope);
       if (!ts || !(scope in lastScanByScope)) continue;
       if (lastScanByScope[scope] === null || ts > lastScanByScope[scope]) {
         lastScanByScope[scope] = ts;
@@ -7329,20 +7329,9 @@ var Server = (() => {
     }
     let latestSync = null;
     if (newestSyncId) {
-      const members = scans.filter((r) => {
-        var _a2;
-        return String((_a2 = r.scan_id) != null ? _a2 : "") === newestSyncId;
-      });
+      const members = scans.filter((r) => r.scan_id === newestSyncId);
       const order = new Map(SCOPES.map((sc, i) => [String(sc), i]));
-      const rows = members.map((r) => {
-        var _a2, _b2, _c2;
-        return {
-          scope: String((_a2 = r.scope) != null ? _a2 : ""),
-          total: Number((_b2 = r.total) != null ? _b2 : 0),
-          severities: r.severities == null ? null : String(r.severities),
-          ts: String((_c2 = r.ts) != null ? _c2 : "")
-        };
-      }).sort((a, b) => {
+      const rows = members.map((r) => ({ scope: String(r.scope), total: r.total, severities: r.severities, ts: r.ts })).sort((a, b) => {
         var _a2, _b2;
         return ((_a2 = order.get(a.scope)) != null ? _a2 : 99) - ((_b2 = order.get(b.scope)) != null ? _b2 : 99);
       });
@@ -7383,7 +7372,7 @@ var Server = (() => {
         noDomain: noDomainCount(allRows),
         // The FETCH scope, reported only — see `settingsLogic.ts`'s "TWO PROJECT SCOPES, TWO
         // HOMES". `projectScope()` is `[id] | null`; only the first element is ever set today.
-        syncProjectId: (_f = (_e = projectScope()) == null ? void 0 : _e[0]) != null ? _f : null
+        syncProjectId: (_b = (_a = projectScope()) == null ? void 0 : _a[0]) != null ? _b : null
       },
       filterOptions: {
         projectList: projectCatalogue(allRows),
