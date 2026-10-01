@@ -1528,8 +1528,9 @@ export async function renderSettings(host, params, ctx) {
         + "Europe/Paris time; Apps Script runs it somewhere within the hour, not on it. The "
         + "reinstall never blocks the save: if it fails, the hour is still saved, the failure is "
         + "listed under Data → Recent errors, and deploymentDiagnostic() reports the trigger's "
-        + "hour against the saved one until running setup() from the Apps Script editor — as "
-        + "the account that deployed the web app — puts it right."),
+        + "hour against the saved one until the next settings save retries it, or running "
+        + "setup() from the Apps Script editor — as the account that deployed the web app — "
+        + "puts it right."),
     );
 
     const autoCompactSwitch = switchToggle({

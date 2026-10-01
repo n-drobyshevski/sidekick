@@ -1427,9 +1427,9 @@ describe("putSettings merges a patch over the currently-loaded settings", () => 
 });
 
 describe("putSettings moves the daily sync trigger when the hour changes", () => {
-  // setup() installs the daily trigger at the saved hour; a save that moves the hour reinstalls
-  // it on the spot (setup.reconcileDailySyncTrigger), best-effort — the save is the operator's
-  // intent and stands whatever the trigger service says.
+  // setup() installs the daily trigger at the saved hour; a save whose hour the recorded
+  // signature does not name reinstalls it on the spot (setup.reconcileDailySyncTrigger),
+  // best-effort — the save is the operator's intent and stands whatever the trigger service says.
   it("reinstalls the trigger once, at the new hour, pinned to Europe/Paris", async () => {
     projectTriggers = ["trigger_dailySync"];
     props["DAILY_SYNC_SCHEDULE"] = "Europe/Paris|5";
@@ -1450,6 +1450,32 @@ describe("putSettings moves the daily sync trigger when the hour changes", () =>
     expect(res["ok"]).toBe(true);
     expect(clockBuilds).toEqual([]);
     expect(projectTriggers).toEqual(["trigger_dailySync"]);
+  });
+
+  // A save that keeps the hour still repairs a trigger whose signature does not name it.
+  it("replaces a legacy unsigned trigger on a save that keeps the hour", async () => {
+    projectTriggers = ["trigger_dailySync"];
+    const { api } = await load();
+    const res = api.putSettings({ settings: { autoCompact: true } }) as unknown as Rec;
+    expect(res["ok"], String(res["error"])).toBe(true);
+    expect(clockBuilds).toEqual([{ handler: "trigger_dailySync", hour: 5, tz: "Europe/Paris" }]);
+    expect(projectTriggers.filter((h) => h === "trigger_dailySync")).toHaveLength(1);
+    expect(props["DAILY_SYNC_SCHEDULE"]).toBe("Europe/Paris|5");
+  });
+
+  it("retries a reinstall an earlier save failed, on a save that keeps the hour", async () => {
+    projectTriggers = ["trigger_dailySync"];
+    props["DAILY_SYNC_SCHEDULE"] = "Europe/Paris|5";
+    clockCreateFails = new Error("Too many triggers");
+    const { api } = await load();
+    expect((api.putSettings({ settings: { syncSchedule: 9 } }) as unknown as Rec)["ok"]).toBe(true);
+    expect(props["DAILY_SYNC_SCHEDULE"]).toBe("Europe/Paris|5");
+    clockCreateFails = null;
+    const res = api.putSettings({ settings: { autoCompact: true } }) as unknown as Rec;
+    expect(res["ok"], String(res["error"])).toBe(true);
+    expect(clockBuilds.at(-1)).toEqual({ handler: "trigger_dailySync", hour: 9, tz: "Europe/Paris" });
+    expect(projectTriggers.filter((h) => h === "trigger_dailySync")).toHaveLength(1);
+    expect(props["DAILY_SYNC_SCHEDULE"]).toBe("Europe/Paris|9");
   });
 
   it("keeps the save when the reinstall fails, and records the failure", async () => {

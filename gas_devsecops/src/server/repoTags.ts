@@ -246,7 +246,13 @@ export function resetRepoTagMapMemo(): void {
  */
 export function getRepoTagMap(): RepoTagMap {
   if (mapMemo !== undefined) return mapMemo;
-  const hit = readMapCache();
+  // ONE KEY FOR THE READ AND THE WRITE-BACK, resolved before the tab is opened. Re-reading the
+  // generation for the write-back would race `setRepoTagMap`: a miss under the old generation,
+  // a 1.5 s tab read overlapping the save, then a write under the NEW key — the stale (or, read
+  // mid-`overwrite`, empty) map replacing the saved one there for six hours. Written under the
+  // key it was read under, a stale map lands where no reader asks any more.
+  const key = safeMapCacheKey();
+  const hit = readMapCache(key);
   if (hit) {
     mapMemo = hit;
     return hit;
@@ -263,7 +269,7 @@ export function getRepoTagMap(): RepoTagMap {
     }
     // Only a map actually read is cached: an unreadable tab is "no tags THIS execution", and
     // caching that `{}` would stretch one bad read across every execution for six hours.
-    writeMapCache(map);
+    writeMapCache(key, map);
   } catch (e) {
     console.warn(`Repository tag map unreadable — no tags attached this execution: ${String(e)}`);
     // Once per execution: the empty map is memoised below, so this catch does not run again.
@@ -298,10 +304,21 @@ function mapCacheKey(): string {
   return `${MAP_CACHE_NAME}:${getProp(PROP_KEYS.repoTagMapGen) ?? "0"}`;
 }
 
-function readMapCache(): RepoTagMap | undefined {
+/** The key, or null when the generation cannot be read — no cache this execution, the tab is. */
+function safeMapCacheKey(): string | null {
+  try {
+    return mapCacheKey();
+  } catch (e) {
+    console.warn(`Repository tag map cache key unreadable: ${String(e)}`);
+    return null;
+  }
+}
+
+function readMapCache(key: string | null): RepoTagMap | undefined {
+  if (key === null) return undefined;
   const t0 = Date.now();
   try {
-    const got = cacheGetJson(mapCacheKey());
+    const got = cacheGetJson(key);
     const hit = !!got && typeof got === "object" && !Array.isArray(got);
     console.log(JSON.stringify({ stage: "cache", name: MAP_CACHE_NAME, hit, getMs: Date.now() - t0 }));
     return hit ? (got as RepoTagMap) : undefined;
@@ -311,9 +328,10 @@ function readMapCache(): RepoTagMap | undefined {
   }
 }
 
-function writeMapCache(map: RepoTagMap): void {
+function writeMapCache(key: string | null, map: RepoTagMap): void {
+  if (key === null) return;
   try {
-    cachePutJson(mapCacheKey(), map, MAP_CACHE_TTL_SEC);
+    cachePutJson(key, map, MAP_CACHE_TTL_SEC);
   } catch (e) {
     console.warn(`Repository tag map cache write failed: ${String(e)}`);
   }
@@ -351,7 +369,7 @@ export function setRepoTagMap(map: RepoTagMap): void {
   // for longer than that entry's TTL.
   setProp(PROP_KEYS.repoTagMapGen, dataVersion());
   // Under the NEW generation's key, so the next execution reads the saved map from the cache.
-  writeMapCache(mapMemo);
+  writeMapCache(safeMapCacheKey(), mapMemo);
 }
 
 /**

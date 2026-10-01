@@ -17,6 +17,8 @@ const reads: string[] = [];
 const writes: string[] = [];
 const tabs: Record<string, Array<Record<string, unknown>>> = {};
 let readThrows: string | null = null;
+/** Runs inside `readAll`, after the rows are taken — another execution acting mid-read. */
+let duringRead: (() => void) | null = null;
 
 vi.mock("../src/server/sheetsDb", async (orig) => {
   const actual = await orig<typeof import("../src/server/sheetsDb")>();
@@ -25,7 +27,11 @@ vi.mock("../src/server/sheetsDb", async (orig) => {
     readAll: (tab: string) => {
       reads.push(tab);
       if (readThrows === tab) throw new Error("sheet unavailable");
-      return (tabs[tab] ?? []).map((r) => ({ ...r }));
+      const rows = (tabs[tab] ?? []).map((r) => ({ ...r }));
+      const hook = duringRead;
+      duringRead = null;
+      hook?.();
+      return rows;
     },
     overwrite: (tab: string, rows: Array<Record<string, unknown>>) => {
       writes.push(tab);
@@ -45,6 +51,7 @@ beforeEach(() => {
   reads.length = 0;
   writes.length = 0;
   readThrows = null;
+  duringRead = null;
   for (const k of Object.keys(tabs)) delete tabs[k];
   tabs["settings"] = [{ key: "retentionDays", value_json: "30" }];
   tabs["domain_map"] = [
@@ -226,6 +233,18 @@ describe("domain_map: cross-execution cache", () => {
     expect(props.get("REPO_TAG_MAP_GEN")).not.toBe(genOne);
     expect((await nextExecution()).getRepoTagMap()).toEqual(two);
     expect(readsOf("domain_map")).toBe(0);
+  });
+
+  // The tab read takes ~1.5 s, long enough for a refresh to land inside it. The reader took
+  // the OLD rows, so it must write them back under the generation it missed on — never under
+  // the one the refresh just minted, which would replace the saved map for six hours.
+  it("a read overlapping a save does not overwrite the saved map", async () => {
+    const fresh = { "repo-z": { domain: "identity", lifecycle: "production" } };
+    const writer = await nextExecution();
+    const reader = await nextExecution();
+    duringRead = () => writer.setRepoTagMap(fresh);
+    expect(Object.keys(reader.getRepoTagMap())).toEqual(["repo-a", "repo-b"]);
+    expect((await nextExecution()).getRepoTagMap()).toEqual(fresh);
   });
 
   it("round-trips a register-sized map through the chunked store", async () => {

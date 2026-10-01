@@ -104,12 +104,13 @@ export function dailySyncSchedule(hour: number): string {
  * the old hour, which deploymentDiagnostic() names; the list of old ones is read before the
  * create, so the new trigger is never in it.
  *
- * Called from setup() and from `api.putSettings` when a save moves the hour. THE TRIGGERS IT
- * SEES ARE THE RUNNING ACCOUNT'S: `getProjectTriggers()` lists the current user's triggers on
- * this project only. The web app executes as the deploying account (`executeAs:
- * USER_DEPLOYING` in appsscript.json), so a save from Settings reconciles that account's
- * trigger — which is why the README has setup() run as that same account. Run as anyone else,
- * setup() would install a second daily trigger the web app can neither see nor move.
+ * Called from setup() and from `api.putSettings` when the recorded signature does not name the
+ * saved hour. THE TRIGGERS IT SEES ARE THE RUNNING ACCOUNT'S: `getProjectTriggers()` lists the
+ * current user's triggers on this project only. The web app executes as the deploying account
+ * (`executeAs: USER_DEPLOYING` in appsscript.json), so a save from Settings reconciles that
+ * account's trigger — which is why the README has setup() run as that same account. Run as
+ * anyone else, setup() would install a second daily trigger the web app can neither see nor
+ * move.
  */
 export function reconcileDailySyncTrigger(hour: number): string {
   const existing = ScriptApp.getProjectTriggers()

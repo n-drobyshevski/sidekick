@@ -5278,7 +5278,8 @@ var Server = (() => {
   function getRepoTagMap() {
     var _a, _b, _c;
     if (mapMemo !== void 0) return mapMemo;
-    const hit = readMapCache();
+    const key = safeMapCacheKey();
+    const hit = readMapCache(key);
     if (hit) {
       mapMemo = hit;
       return hit;
@@ -5293,7 +5294,7 @@ var Server = (() => {
         if (!token || !domain && !lifecycle) continue;
         map[token] = { domain: domain || null, lifecycle: lifecycle || null };
       }
-      writeMapCache(map);
+      writeMapCache(key, map);
     } catch (e) {
       console.warn(`Repository tag map unreadable \u2014 no tags attached this execution: ${String(e)}`);
       recordError("repoTagMap", e);
@@ -5307,10 +5308,19 @@ var Server = (() => {
     var _a;
     return `${MAP_CACHE_NAME}:${(_a = getProp(PROP_KEYS.repoTagMapGen)) != null ? _a : "0"}`;
   }
-  function readMapCache() {
+  function safeMapCacheKey() {
+    try {
+      return mapCacheKey();
+    } catch (e) {
+      console.warn(`Repository tag map cache key unreadable: ${String(e)}`);
+      return null;
+    }
+  }
+  function readMapCache(key) {
+    if (key === null) return void 0;
     const t0 = Date.now();
     try {
-      const got = cacheGetJson(mapCacheKey());
+      const got = cacheGetJson(key);
       const hit = !!got && typeof got === "object" && !Array.isArray(got);
       console.log(JSON.stringify({ stage: "cache", name: MAP_CACHE_NAME, hit, getMs: Date.now() - t0 }));
       return hit ? got : void 0;
@@ -5319,9 +5329,10 @@ var Server = (() => {
       return void 0;
     }
   }
-  function writeMapCache(map) {
+  function writeMapCache(key, map) {
+    if (key === null) return;
     try {
-      cachePutJson(mapCacheKey(), map, MAP_CACHE_TTL_SEC);
+      cachePutJson(key, map, MAP_CACHE_TTL_SEC);
     } catch (e) {
       console.warn(`Repository tag map cache write failed: ${String(e)}`);
     }
@@ -5341,7 +5352,7 @@ var Server = (() => {
     mapMemo = { ...map };
     bumpDataVersion();
     setProp(PROP_KEYS.repoTagMapGen, dataVersion());
-    writeMapCache(mapMemo);
+    writeMapCache(safeMapCacheKey(), mapMemo);
   }
   function builtUnderKeys() {
     const raw = getProp(PROP_KEYS.repoTagMapKeys);
@@ -5907,7 +5918,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "3e172583b6f9" : "dev";
+  var BUILD_ID = true ? "f870f6e98dcd" : "dev";
 
   // src/server/hubUrl.ts
   var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
@@ -12074,9 +12085,8 @@ var Server = (() => {
     const patch = { ...(_a = p.settings) != null ? _a : {} };
     delete patch["supportGroupDomains"];
     return mutate(() => {
-      const before = loadSettings().syncSchedule;
       const saved = saveSettings(withSettings(loadSettings(), patch));
-      if (saved.syncSchedule !== before) {
+      if (getProp(PROP_KEYS.dailySyncSchedule) !== dailySyncSchedule(saved.syncSchedule)) {
         try {
           reconcileDailySyncTrigger(saved.syncSchedule);
         } catch (e) {

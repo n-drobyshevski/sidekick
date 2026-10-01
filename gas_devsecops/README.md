@@ -336,8 +336,8 @@ about at least two of them, and the clock is the product.
    only the running account's. A `setup()` run by another editor installs a daily trigger the
    web app can neither see nor move, and the next hour change adds a second one beside it.
    A reinstall that fails on save keeps the saved hour and lands in Data → Recent errors;
-   `deploymentDiagnostic()` flags the trigger's recorded hour against the saved one until a
-   `setup()` run converges them.
+   `deploymentDiagnostic()` flags the trigger's recorded hour against the saved one until the
+   next Settings save (any save retries it) or a `setup()` run converges them.
 5. Set `WIZ_API_TOKEN`, or `WIZ_CLIENT_ID` + `WIZ_CLIENT_SECRET`, in Project Settings. Then
    open Settings → System and press **Test connection**: `hasCredentials` only means three
    Script Properties are non-empty, and the button is what turns that into a token exchange

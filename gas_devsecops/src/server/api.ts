@@ -91,7 +91,7 @@ import * as scanJobs from "./scanJobs";
 import { testConnection, WizNotAuthorizedError } from "./wizClient";
 import * as currentDomains from "./currentDomains";
 import * as errorLog from "./errorLog";
-import { reconcileDailySyncTrigger } from "./setup";
+import { dailySyncSchedule, reconcileDailySyncTrigger } from "./setup";
 
 /**
  * THE ENVELOPE, and it lives here rather than in dist/entry.js.
@@ -691,16 +691,19 @@ export function putSettings(p: { settings?: unknown }): ApiResult<ReturnType<typ
   const patch = { ...((p.settings ?? {}) as Record<string, unknown>) };
   delete patch["supportGroupDomains"];
   return mutate(() => {
-    const before = loadSettings().syncSchedule;
     const saved = saveSettings(withSettings(loadSettings(), patch as never));
-    // A moved sync hour moves the trigger, here rather than at the next setup() run — a saved
+    // The trigger follows the saved hour here rather than at the next setup() run — a saved
     // hour that only took effect from the editor was a setting that looked wired and was not.
+    // GATED ON THE RECORDED SIGNATURE, NOT ON WHETHER THIS SAVE MOVED THE HOUR: a trigger
+    // installed before the signature existed (no property) or a reinstall that failed on an
+    // earlier save (the property still names the old hour) both differ from the saved hour, so
+    // any later save repairs them. A matching signature skips the ScriptApp listing entirely.
     // BEST-EFFORT AND AFTER THE SAVE: the settings are already stored, and a trigger quota or
     // permission failure must not turn a good save into an error toast. It lands in the recent-
     // errors log instead, and deploymentDiagnostic() keeps flagging the recorded hour against
     // the saved one until a later save or setup() converges them. Under the lock, so two saves
     // in flight cannot both delete-and-create and leave two daily triggers.
-    if (saved.syncSchedule !== before) {
+    if (getProp(PROP_KEYS.dailySyncSchedule) !== dailySyncSchedule(saved.syncSchedule)) {
       try {
         reconcileDailySyncTrigger(saved.syncSchedule);
       } catch (e) {
