@@ -11,7 +11,7 @@ it is scanned. **Three tables, shared by every scope:**
 | --- | --- | --- |
 | `wiz_findings_raw` | scan × finding | bronze: `node_json` as a string, plus `seq` (API order) |
 | **`wiz_vuln_ledger`** | **one row per `(scope, vuln_key)`** | **the durable base: `scope`, `first_seen`, `last_seen`, `status`, `resolved_at`, `resolution_src`, `reopened_count`, the fix clock and the exploit signals** |
-| **`wiz_metrics`** | **wide, told apart by `family`** | **the commit record and every gold family, appended together — see the legend below** |
+| **`wiz_metrics`** | **17 columns, told apart by `family`** | **the commit record and every gold family, appended together — see the legend below** |
 
 `os`, `sca` and `sast` write into this **same** table set — there used to be one set per scope
 (`wiz_os_*`, `wiz_sca_*`, `wiz_sast_*`, nine tables to grant, optimise and document across the
@@ -55,16 +55,16 @@ is what must survive. Both silver shapes emit the **same columns**, which is wha
 
 `…metrics` carries every row that used to have its own table — the run log and every gold family
 — with `family` telling them apart. Every row carries `scan_id`, `scan_ts`, `scope` and `family`;
-the rest of a row's columns belong to that one family and are NULL on the other families' rows,
-which is what `mergeSchema` on the append gives for free. **A read that does not filter on
+a gold row's measures sit in one struct named after its family, and the other families'
+structs are NULL on it. **A read that does not filter on
 `family` blends grains that share no key**, so every reader does: `panels.register_views`
 publishes one session view per family (`v_scans`, `v_mttr`, `v_program`, `v_capacity`,
-`v_assets` where the scope has one) and nothing else reads the table directly.
+`v_assets` where the scope has one) and nothing else in this tree reads the table directly.
 
 | `family` | Grain | Contents |
 | --- | --- | --- |
 | `scan` | one row per run | the commit record: `scope`, `severities`, and the new/resolved/reopened deltas |
-| `mttr` | scan × severity (+ `OVERALL`) | MTTR mean/median, open counts, open-age p50/p90, SLA target and compliance, the resolution-source split, the actionable clock, and the `snap_*` snapshot comparison |
+| `mttr` | scan × severity (+ `OVERALL`) | MTTR median, open counts, open-age p50/p90, SLA target and compliance, the resolution-source split, and the actionable clock |
 | `program` | scan × severity (+ `OVERALL`) | the confusion matrix, coverage and efficiency with bounds, prevalence, signal coverage |
 | `capacity` | scan × month × **`population`** | opened, closed, backlog at month start, MMCR, net flow, verdict, `reconstructed`, `closed_observed` |
 | `assets` | scan × repository branch × **`population`** | P2P v5: density percentiles, foothold rate, coverage, half-life, MMCR, capacity split — see [Assets at risk](#assets-at-risk-p2p-v5). Written for `sca` and `sast`, whose findings carry a repository branch; `os` has no narrow asset-member list to request, so it has no asset ids and writes nothing under this family (see [SCOPE_ASSET_MEMBERS](#scopes)) |
@@ -75,9 +75,22 @@ than stored per scan — see [What this does not do](reading-the-numbers.md#what
 
 The gold families are computed from the ledger and written together as **one append** — see
 [The scan record is load-bearing](#the-scan-record-is-load-bearing) for what that buys on a
-crash. The snapshot figures are still computed and published beside the `mttr` family as
-`snap_km_median`, `snap_mttr_median`, `snap_resolved`, `snap_open` — **the gap between
-`km_median` and `snap_km_median` is the size of what the snapshot-only version was missing.**
+crash. The snapshot-only figures used to be published beside the `mttr` family as `snap_*`
+columns; they are not any more — nothing read them, and the comparison they made is a
+recomputation over bronze, which is where `panels` makes it when a page wants it.
+
+**The table stores measures, in one struct per family.** A gold row carries its family's
+dimensions at the top level (`severity`, `population`, `month`, `asset_group`) and its measures
+in one struct column named after the family — `mttr.km_median`, `program.tp` — so `metrics` has
+seventeen columns however many measures the families grow (`run_pipeline.METRICS_COLUMNS`).
+Ratios and totals that are arithmetic over the measures (coverage, efficiency, `sla_pct`, MMCR,
+the capacity summary, …) are not stored at all: `metrics.DERIVED` defines each one once, as
+SQL, and every read computes it from that text — `run_pipeline.unpack_family`, which the pages
+read through, and one **view per family** that each run replaces beside the table
+(`wiz_metrics_mttr` and so on), flat and with every derived column. See
+[`columns.md`](columns.md#wiz_metrics--the-commit-record-and-every-gold-family). A register
+written in the older flat layout is refused until it is migrated — see
+[Moving metrics to the struct layout](migrating.md#moving-metrics-to-the-struct-layout).
 
 The `capacity` family gains two columns a snapshot-only pipeline could not produce, both of which
 need scan history:
@@ -238,7 +251,7 @@ external consumer is worth checking before you migrate.
 ledger is created by `ensure_tables` (clustered) and bronze by whatever first writes it
 (clustered too, at that point). `ensure_tables` also creates `metrics` when it is missing, as an
 empty declared frame with no clustering spec — its gold columns arrive later through
-`mergeSchema`, the same way `snap_*` and `population` do. An existing register keeps its
+`mergeSchema`, the same way `population` does. An existing register keeps its
 unclustered layout until someone migrates it — see
 [Migrating an existing register](migrating.md#migrating-an-existing-register).
 

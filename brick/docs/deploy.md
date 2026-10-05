@@ -39,7 +39,8 @@ GRANT USE SCHEMA, SELECT ON SCHEMA <your-catalog>.<your-schema> TO `security-ana
 ```
 
 **Privileges the job needs.** `USE CATALOG` on the catalog, `USE SCHEMA` + `CREATE TABLE` on
-the schema, and `MODIFY`/`SELECT` on its own tables. It needs `CREATE SCHEMA` on the catalog
+the schema, and `MODIFY`/`SELECT` on its own tables. `CREATE TABLE` also covers the per-family
+views over `wiz_metrics` (`wiz_metrics_mttr`, …) that each run replaces. It needs `CREATE SCHEMA` on the catalog
 **only** when the schema does not yet exist — `ensure_schema` checks first rather than issuing
 an unconditional `CREATE SCHEMA IF NOT EXISTS`, which would otherwise fail with
 PERMISSION_DENIED against a schema that already exists and is perfectly writable. In a shared

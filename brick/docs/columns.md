@@ -117,12 +117,25 @@ captured, which is not the same as `false`. Always NULL for `sast`.
 ## `wiz_metrics` — the commit record and every gold family
 
 Append-only. Each scan appends one `scan` row, then all its gold rows in a single commit. The
-`family` column tells the grains apart, and each family uses only its own columns. Every other
-column is NULL on its rows.
+`family` column tells the grains apart.
 
-**Every query must filter on `scope` and `family`**, and on `population` for `capacity` and
-`assets`. Without those filters you mix grains that have no key in common, or you count every
-row twice. To get the latest figures, pin to the newest `scan_id` for that scope.
+**Read a family view, not the table.** Every run that publishes gold replaces one view per
+family beside the table — `wiz_metrics_scan`, `wiz_metrics_mttr`, `wiz_metrics_program`,
+`wiz_metrics_capacity` and `wiz_metrics_assets`. Each has the `family` filter built in and
+carries `scan_id`, `scan_ts`, `scope` and that family's columns, flat — exactly the columns
+listed below. You still filter on `scope`, and on `population` for `capacity` and `assets`.
+To get the latest figures, pin to the newest `scan_id` for that scope. A register on
+`--data_path` has no catalog, so it gets no views; read it through
+`run_pipeline.read_family`, which returns the same thing.
+
+**What the table itself stores** is seventeen columns (`run_pipeline.METRICS_COLUMNS`): the
+four on every row, the commit record's five, the four dimensions the gold families are keyed by
+(`severity`, `population`, `month`, `asset_group`), and one struct per gold family named after
+it — `mttr`, `program`, `capacity`, `assets` — holding that family's **measures**. A query on
+the table reaches into the struct (`mttr.km_median`) and must filter on `scope` and `family`, or
+it mixes grains that have no key in common. Columns marked *derived* below are not stored at
+all: they are arithmetic over the measures, defined once as SQL in `metrics.DERIVED`, and every
+view and every page computes them on read.
 
 | `family` | One row per | Filter also on |
 | --- | --- | --- |
@@ -158,20 +171,19 @@ One row per completed scan. It is also how the pipeline knows what each scan loo
 
 ### `family = 'mttr'` — time to remediate, per severity
 
-Computed over every lifecycle in the ledger for this scope, open or resolved.
+Computed over every lifecycle in the ledger for this scope, open or resolved. *Derived:*
+`sla_pct`, `oldest_open_days`, `actionable_sla_pct`.
 
 | Column | Type | Description |
 | --- | --- | --- |
 | `severity` | string | A severity, or `OVERALL`. |
 | `resolved` | bigint | Resolved lifecycles (those with a measurable time to resolve). |
 | `open` | bigint | Open lifecycles. |
-| `mttr_mean` | double | Mean days from `first_seen` to `resolved_at`, **resolved findings only**. |
 | `mttr_median` | double | Median of the same. Biased low, because the slowest findings are the ones still open. Prefer `km_median`. |
 | `km_median` | double | **The headline figure.** Kaplan–Meier median time to remediate, counting open findings as "not closed yet". NULL when fewer than half have closed. In that case read `km_median_lower_bound`. |
 | `km_median_lower_bound` | double | Set only when `km_median` is NULL: the longest observed duration, so it can be reported as "> N days". |
-| `km_rmst` | double | Restricted mean survival time: the average days to remediate, capped at `km_restriction_time`. |
-| `km_truncated` | boolean | True when not every finding has closed by `km_restriction_time`. `km_rmst` is then a floor, not a mean. |
-| `km_restriction_time` | double | The longest observed duration, open or resolved. It's the horizon the KM figures are measured to. |
+| `km_rmst` | double | Restricted mean survival time: the average days to remediate, capped at the longest observed duration, open or resolved. |
+| `km_truncated` | boolean | True when not every finding has closed by that longest observed duration. `km_rmst` is then a floor, not a mean. |
 | `km_events` | bigint | Resolved findings that entered the KM estimate. |
 | `km_censored` | bigint | Open findings that entered the KM estimate. |
 | `open_age_p50` | double | Median age in days of the open findings. |
@@ -182,10 +194,6 @@ Computed over every lifecycle in the ledger for this scope, open or resolved.
 | `sla_pct` | double | `sla_compliant / resolved`. On `OVERALL` it's total compliant over total resolved, not an average of the severity rows. |
 | `resolved_api` | bigint | Resolutions Wiz reported. |
 | `resolved_disappeared` | bigint | Resolutions inferred because the finding disappeared. A high share says more about the data source than about the team. |
-| `snap_km_median` | double | `km_median` computed from **this scan's payload alone**, the way a snapshot-only pipeline would. The gap to `km_median` is what the snapshot misses. |
-| `snap_mttr_median` | double | `mttr_median`, snapshot-only. |
-| `snap_resolved` | bigint | `resolved`, snapshot-only. |
-| `snap_open` | bigint | `open`, snapshot-only. |
 
 The **actionable clock** measures from when a fix existed rather than from when the finding
 appeared, which is closer to what an SLA means. It applies to `os` and `sca`. For `sast` these
@@ -205,8 +213,9 @@ columns are NULL or 0, because `sast` has no vendor fix.
 ### `family = 'program'` — coverage and efficiency, per severity
 
 Each lifecycle is classified as high-risk, not high-risk or unknown by the scope's risk rule
-(`risk_rule`). It is then crossed with remediated vs open. The formulas come from Cyentia's
-*Prioritization to Prediction* (P2P).
+(the run log prints it in words on its header line). It is then crossed with remediated vs open. The formulas come from Cyentia's
+*Prioritization to Prediction* (P2P). Only the six counts are stored — `tp`, `fp`, `fn`, `tn`,
+`unknown_remediated`, `unknown_open`; *every other column is derived* from them.
 
 | Column | Type | Description |
 | --- | --- | --- |
@@ -232,7 +241,6 @@ Each lifecycle is classified as high-risk, not high-risk or unknown by the scope
 | `efficiency_hi` | double | Efficiency if every unclassified remediated finding were high-risk. |
 | `prevalence_pct` | double | `high_risk / classified`. The efficiency that picking findings at random would score. Efficiency at or below this means no real prioritisation. |
 | `signal_coverage_pct` | double | `classified / total`. Every rate above rests on this share, so report it alongside them. |
-| `risk_rule` | string | The rule that did the classifying, in words, e.g. "CWE in the Top 25 or AI triage says exploitable or severity CRITICAL". |
 
 Always report coverage and efficiency together. They pull in opposite directions, and either
 one alone can be pushed to 100%.
@@ -240,7 +248,8 @@ one alone can be pushed to 100%.
 ### `family = 'capacity'` — monthly throughput
 
 One row per UTC calendar month, from the population's first finding to the current month, and
-**once per `population`**. Months with no activity still get a row.
+**once per `population`**. Months with no activity still get a row. *Derived:* `mmcr`, `net`,
+`net_pct`, `verdict`, and the five summary columns.
 
 | Column | Type | Description |
 | --- | --- | --- |
@@ -296,16 +305,15 @@ branch, and its group is its `language`. Findings with no language fall into `UN
 
 ## Example queries
 
-The latest MTTR for one scope:
+The latest MTTR for one scope, from its view:
 
 ```sql
 WITH latest AS (
-  SELECT max_by(scan_id, scan_ts) AS scan_id
-  FROM wiz_metrics WHERE scope = 'sca' AND family = 'scan'
+  SELECT max_by(scan_id, scan_ts) AS scan_id FROM wiz_metrics_scan WHERE scope = 'sca'
 )
 SELECT severity, km_median, km_median_lower_bound, sla_pct, open, resolved
-FROM wiz_metrics JOIN latest USING (scan_id)
-WHERE scope = 'sca' AND family = 'mttr'
+FROM wiz_metrics_mttr JOIN latest USING (scan_id)
+WHERE scope = 'sca'
 ORDER BY severity;
 ```
 
@@ -313,8 +321,8 @@ A coverage and efficiency trend, one point per scan:
 
 ```sql
 SELECT scan_ts, coverage_pct, efficiency_pct, prevalence_pct, signal_coverage_pct
-FROM wiz_metrics
-WHERE scope = 'os' AND family = 'program' AND severity = 'OVERALL'
+FROM wiz_metrics_program
+WHERE scope = 'os' AND severity = 'OVERALL'
 ORDER BY scan_ts;
 ```
 
@@ -322,11 +330,20 @@ The high-risk monthly capacity as of the latest scan:
 
 ```sql
 SELECT month, opened, closed, open_at_start, mmcr, verdict, partial, reconstructed
-FROM wiz_metrics
-WHERE scope = 'os' AND family = 'capacity' AND population = 'high_risk'
-  AND scan_id = (SELECT max_by(scan_id, scan_ts) FROM wiz_metrics
-                 WHERE scope = 'os' AND family = 'scan')
+FROM wiz_metrics_capacity
+WHERE scope = 'os' AND population = 'high_risk'
+  AND scan_id = (SELECT max_by(scan_id, scan_ts) FROM wiz_metrics_scan WHERE scope = 'os')
 ORDER BY month;
+```
+
+The same stored measures straight off the table, for a reader with no view (a stored measure
+only — a derived column such as `sla_pct` exists in the views, not in the table):
+
+```sql
+SELECT scan_ts, severity, mttr.km_median, mttr.resolved, mttr.open
+FROM wiz_metrics
+WHERE scope = 'sca' AND family = 'mttr'
+ORDER BY scan_ts, severity;
 ```
 
 The open findings behind those numbers:

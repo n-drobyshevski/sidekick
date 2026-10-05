@@ -384,7 +384,6 @@ def test_mttr_matches_the_dashboard_oracle(spark):
     assert high["open"] == 1
     assert high["resolved"] == 1
     assert high["mttr_median"] == pytest.approx(7.0)
-    assert high["mttr_mean"] == pytest.approx(7.0)
     assert high["sla_target"] == 14
     assert high["sla_pct"] == pytest.approx(100.0)
 
@@ -530,9 +529,8 @@ def test_the_actionable_sla_is_inclusive_and_read_from_the_severity(spark):
 def test_the_actionable_aggregate_cannot_be_run_over_a_snapshot(spark):
     """Why this is a second function rather than a wider ``mttr_by_severity``.
 
-    ``run_pipeline.build_metrics`` calls that one TWICE -- over the ledger lifecycles and over
-    the silver snapshot, so the two can be published side by side as ``snap_*``. Silver is one
-    scan's payload and has no ``fix_observed_at``, no ``actionable_from`` and no
+    That one runs over any frame with the duration columns, a silver snapshot included. Silver
+    is one scan's payload and has no ``fix_observed_at``, no ``actionable_from`` and no
     ``awaiting_vendor_fix``; it cannot have them, because they are cross-scan facts. Widening
     the shared function would fail on the snapshot half, and the natural repair -- a coalesce,
     or a column-existence check -- would publish a single-scan figure under the same name as a

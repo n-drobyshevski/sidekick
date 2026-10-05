@@ -423,20 +423,15 @@ def register_views(spark: SparkSession, ctx: Ctx) -> None:
             "sla_compliant", F.when(~fabricated, F.col("sla_compliant"))
         ).withColumn("sla_pct", F.when(~fabricated, F.col("sla_pct")))
 
-    # ONE read of `metrics`, split by family. Every published row of every grain lives in this
-    # table, so a family frame is WIDE: it carries the other families' columns too, NULL on
-    # every row, which is what `mergeSchema` on the single union append leaves behind. That
-    # costs nothing downstream because no `%sql` cell uses `SELECT *` and every panel selects
-    # its columns explicitly -- the only thing the extra columns could break is a reader who
-    # blends grains, and the family filter is what makes that impossible.
-    #
-    # `family` itself is dropped: it is how the view was chosen, not something a page displays,
-    # and leaving it on would be the one column tempting a cell to re-filter a view that is
-    # already one grain.
+    # ONE read of `metrics`, split by family. `run_pipeline.unpack_family` hands each family back
+    # flat -- its dims, its measures out of their struct, and the derived ratios and totals
+    # computed from `metrics.DERIVED` -- so every view below has the columns the family has
+    # always had, and no other family's. Every panel selects its columns explicitly anyway, and
+    # no `%sql` cell uses `SELECT *`.
     published = spark.table(ctx.tables.metrics)
 
     def family(name: str) -> DataFrame:
-        return published.where(F.col("family") == name).drop("family")
+        return run_pipeline.unpack_family(published, name)
 
     mttr = family(run_pipeline.FAMILY_MTTR)
     ranked(sla_fixed(mttr.where(pinned & keeps_overall))).createOrReplaceTempView("v_mttr")

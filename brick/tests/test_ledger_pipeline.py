@@ -143,10 +143,10 @@ def sorted_rows(spark, table) -> list:
 
 
 def family_rows(spark, tables, family):
-    """``metrics`` filtered to one family, with ``family`` dropped -- what
+    """``metrics`` as one family, flat -- ``run_pipeline.read_family``, which is what
     ``panels.register_views`` publishes as one view per family, and what every family-scoped
-    assertion below wants instead of reading the wide table directly."""
-    return spark.table(tables.metrics).where(F.col("family") == family).drop("family")
+    assertion below wants instead of reading the structs directly."""
+    return run_pipeline.read_family(spark, tables, family)
 
 
 # --------------------------------------------------------------------- persistence
@@ -185,9 +185,11 @@ def test_the_ledger_persists_across_scans(spark, tables):
 def test_the_gold_tables_see_more_resolutions_than_the_snapshot(spark, tables):
     """The payoff, as published numbers.
 
-    ``resolved`` counts the ledger's resolutions; ``snap_resolved`` counts what the snapshot
-    alone could prove. The disappeared finding is exactly the difference, and it is why v1
-    under-reported both coverage and MTTR.
+    ``resolved`` counts the ledger's resolutions; the same transform over the final scan's
+    payload alone counts what the snapshot could prove. The disappeared finding is exactly the
+    difference, and it is why v1 under-reported both coverage and MTTR. (The snapshot figure is
+    no longer published as ``snap_*``; it is recomputed here from bronze, which is all it ever
+    was.)
     """
     run_scan(spark, tables, [node("f-1"), node("f-2")], "s1", TS["s1"])
     run_scan(spark, tables, [node("f-1")], "s2", TS["s2"])
@@ -199,7 +201,13 @@ def test_the_gold_tables_see_more_resolutions_than_the_snapshot(spark, tables):
     )
     assert overall["resolved"] == 1
     # The final scan's snapshot contains one still-open finding and no resolutions at all.
-    assert (overall["snap_resolved"] or 0) == 0
+    bronze = spark.table(tables.bronze).filter(F.col("scan_id") == "s2")
+    snapshot = (
+        metrics.mttr_by_severity(metrics.silver_findings(bronze, "sca"))
+        .filter(F.col("severity") == "OVERALL")
+        .collect()[0]
+    )
+    assert (snapshot["resolved"] or 0) == 0
     assert overall["resolved_disappeared"] == 1
     assert (overall["resolved_api"] or 0) == 0
 

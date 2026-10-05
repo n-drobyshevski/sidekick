@@ -41,6 +41,45 @@ Three things to know before you do:
 The alternative to all of it: `--rebuild_ledger` against a freshly created register replays
 bronze into new, correctly-clustered tables — see below.
 
+## Moving metrics to the struct layout
+
+`wiz_metrics` used to keep every family's every column at the top level — 93 of them, NULL on
+every row of the other families. It now has seventeen: the commit record and the keys, each
+gold family's dimensions, and one struct per family holding its measures (`mttr.km_median`).
+Ratios and totals are no longer stored; every read derives them (see
+[`columns.md`](columns.md#wiz_metrics--the-commit-record-and-every-gold-family)).
+
+A table written in the flat layout is **refused** — `ensure_tables` raises before a run writes
+anything — because appending structs to it would leave every earlier scan in columns no reader
+looks at any more. Migrate it once from a notebook, **with the pipeline stopped**, since an
+append that lands mid-rewrite is lost:
+
+```python
+import run_pipeline
+spark = run_pipeline.get_spark()
+# data_path="<root>" for a register on --data_path; argv=[] keeps the notebook's own argv out
+tables = run_pipeline.resolve_tables("<catalog>.<schema>", argv=[])
+print(run_pipeline.migrate_metrics_layout(spark, tables))
+```
+
+It prints the flat columns it folded away, or `[]` when the table was already migrated, so
+running it twice is harmless. Every row survives, and every family reads back with the values it
+had — derived ones included, since they are recomputed from the same counts.
+
+- **It rewrites the table** — an overwrite with `overwriteSchema`, not `ALTER TABLE … DROP
+  COLUMN`. Delta only drops a column under column mapping, which is a one-way protocol upgrade
+  every reader would have to support. `metrics` is small, so a rewrite is cheap, and the old
+  version stays reachable by time travel until `VACUUM` removes it.
+- **It also drops eight columns nothing read**: `snap_km_median`, `snap_mttr_median`,
+  `snap_resolved`, `snap_open`, `km_restriction_time`, `mttr_mean` and `risk_rule` are gone, and
+  `actionable_sla_compliant` moves into the `mttr` struct.
+- **Check external readers first.** A saved query that names a gold column at the top level
+  (`SELECT km_median FROM wiz_metrics`) fails after this. Point it at the family view
+  (`wiz_metrics_mttr`), which has the old flat columns, or at the struct field (`mttr.km_median`).
+- **It needs `MODIFY`** on the table, the same privilege the job already runs with.
+- **A CSV register needs nothing.** Its Delta side is rebuilt from the export every run, and
+  `csvstore.load` reads a flat export in the struct layout; the next export writes the new one.
+
 ## Backfilling from existing bronze
 
 If a register has been running against an older flat-snapshot version of this pipeline, bronze
