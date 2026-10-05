@@ -250,8 +250,9 @@ external consumer is worth checking before you migrate.
 **Layout is declared at creation.** A clustering spec cannot be added by an append, so the
 ledger is created by `ensure_tables` (clustered) and bronze by whatever first writes it
 (clustered too, at that point). `ensure_tables` also creates `metrics` when it is missing, as an
-empty declared frame with no clustering spec — its gold columns arrive later through
-`mergeSchema`, the same way `population` does. An existing register keeps its
+empty declared frame with no clustering spec — its gold columns (the dims and one struct per
+family) arrive later through `mergeSchema`, and a measure added to a family later arrives the
+same way, as a new field of that family's struct. An existing register keeps its
 unclustered layout until someone migrates it — see
 [Migrating an existing register](migrating.md#migrating-an-existing-register).
 

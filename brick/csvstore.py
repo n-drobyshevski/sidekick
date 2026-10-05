@@ -30,11 +30,12 @@ register must be identical to the one over the Delta tables it came from.
 
 The register is three tables now: ``findings_raw`` (bronze), ``vuln_ledger`` and ``metrics``.
 ``metrics`` is one CSV holding every published family -- the ``scan`` commit record and every
-gold family, told apart by its ``family`` column -- so a row's columns outside its own family
-are legitimately NULL on every row that is not that family, not just on ``sast``. That is a
-much larger source of sparse NULLs than any single gold table used to carry alone, which is
-exactly why the sidecar schema (rather than inference) is what keeps them typed instead of
-collapsing into ``false``/``0``.
+gold family, told apart by its ``family`` column -- with each gold family's measures in one
+struct column, written as a JSON object per cell (``_struct_renderer``). JSON keeps ``null``,
+``false`` and ``0`` apart inside the struct the way the sidecar keeps them apart in a flat
+column, and the other families' structs are an empty cell -- NULL -- on every row that is not
+theirs. An export written in the older flat layout is read back in the struct one by
+``load``.
 -------------------------------------------------------------------------------------------
 
 Three entry points, and they compose:

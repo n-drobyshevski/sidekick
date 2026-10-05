@@ -27,7 +27,11 @@ generates `gas/src/server/wizQuery.ts` from its `QUERY`/`VARIABLES`, and
 the three scopes `os`, `sca` and `sast`. Every scope writes the same three tables
 — `wiz_findings_raw` (bronze), `wiz_vuln_ledger` (`MERGE`d, keyed on
 `(vuln_key, scope)`) and `wiz_metrics` (the commit record and every gold family,
-told apart by a `family` column) — and `scope` is a column in every one of them.
+told apart by a `family` column; 17 columns, each gold family's measures in one
+struct named after it, with a flat view per family beside it) — and `scope` is a
+column in every one of them. A new gold measure goes in
+`run_pipeline.FAMILY_MEASURES`; a ratio or total over measures goes in
+`metrics.DERIVED` as SQL and is computed on read, never stored.
 `devlake/` at the repo root is the dev-only harness that runs it on a laptop; it
 is never deployed. The measured traps of that pipeline (the resumable gold
 write, the scope filters and what each one costs, the chained scan job) live in

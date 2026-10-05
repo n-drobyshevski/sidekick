@@ -56,8 +56,9 @@ any more, because silver is not a Delta table at all: it is a projection derived
 in memory (`metrics.silver_findings`), computed fresh from whatever bronze rows a given scan
 needs, and it has no on-disk shape to precreate. The register's third table, `metrics` (gold +
 the scan log, `family`-tagged), is unclustered and needs no DDL pre-creation either: it is
-created as an empty declared frame and gains its gold columns through `mergeSchema` on first
-write, the same way the old `scans` table used to be created.
+created as an empty declared frame and gains its gold columns — the dims and one struct per
+family — through `mergeSchema` on first write, the same way the old `scans` table used to be
+created.
 
 ## Managed on first boot, external after
 
