@@ -581,12 +581,8 @@ class TestHandoffToTheFirstScan:
         self.seeded(spark, tables)
         run_scan(spark, tables, [node("f-a")], "scan-1", "2026-07-22T00:00:00Z")
         mttr = (
-            spark.table(tables.metrics)
-            .filter(
-                (F.col("family") == run_pipeline.FAMILY_MTTR)
-                & (F.col("scan_id") == "scan-1")
-                & (F.col("severity") == "HIGH")
-            )
+            run_pipeline.read_family(spark, tables, run_pipeline.FAMILY_MTTR)
+            .filter((F.col("scan_id") == "scan-1") & (F.col("severity") == "HIGH"))
             .collect()[0]
         )
         # f-b closed after ~51 days (2026-06-01 -> 2026-07-22), not ~0 as it would read had
