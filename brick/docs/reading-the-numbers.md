@@ -109,7 +109,7 @@ not the same evidence as "closed on day 40". Columns on the `mttr` family of `�
 | `km_rmst` | restricted mean survival time — area under the curve out to the longest observed time |
 | `km_truncated` | survival never reached zero, so `km_rmst` is a floor rather than a mean |
 | `km_events` / `km_censored` | how much of the estimate rests on closures vs. still-open findings |
-| `mttr_mean` / `mttr_median` | the naive closed-only figures, kept for comparison with the earlier Python spec — the gap against `km_median` *is* the bias |
+| `mttr_median` | the naive closed-only figure, kept for comparison with the earlier Python spec — the gap against `km_median` *is* the bias |
 
 On the committed `os` fixture the two differ by about 18%: naive 18.1d against a KM median of
 21.3d.
@@ -160,8 +160,8 @@ Five columns on every lifecycle (`ledger.lifecycle_frame`), ported from
 | `awaiting_vendor_fix` | open, in a scope that HAS a vendor, and no fix available yet |
 
 and on the `mttr` family of `…metrics`, per severity plus `OVERALL`: `mttr_actionable_mean`,
-`mttr_actionable_median`, `actionable_resolved`, `actionable_age_p50` / `_p90`, and
-`actionable_sla_compliant`. `actionable_resolved` is the population the second clock could
+`mttr_actionable_median`, `actionable_resolved`, `actionable_age_p50` / `_p90`,
+`awaiting_vendor_fix_count` and `actionable_sla_pct`. `actionable_resolved` is the population the second clock could
 price at all, and it is published beside the rates for that reason — it is the denominator that
 says how much of the register the actionable figures actually cover.
 

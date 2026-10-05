@@ -220,7 +220,7 @@ def stub_ingest(run_pipeline, payloads: List[List[dict]]) -> None:
 #: Significant digits kept when dumping a float. A double carries ~15-17, and the last two or
 #: three of them are not a property of the register -- they are a property of the order Spark
 #: happened to add things up in, which changes whenever the file layout changes. Adding liquid
-#: clustering to the ledger moved `mttr_mean` (the one `avg()` in the published set) by up to
+#: clustering to the ledger moved `mttr_mean` (an `avg()`, since retired from gold) by up to
 #: 3 ULP, ~2.7e-15 relative, on every other value being bit-identical. Rounding here is what
 #: makes `diff -r` test "did a number move?" instead of "did the summation order change?".
 #: 12 digits is far beyond anything the product displays and far short of the noise floor.

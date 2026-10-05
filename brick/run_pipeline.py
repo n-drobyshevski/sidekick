@@ -38,8 +38,10 @@ is what ``mergeSchema`` on the append gives for free:
     family='assets'    scan_id x asset_group x population
 
 A read that does not filter on ``family`` blends grains that share no key, so every read
-filters: ``panels.register_views`` publishes one view per family and nothing else reads the
-table directly.
+filters: ``panels.register_views`` publishes one session view per family and nothing else in
+this tree reads the table directly. For people querying by hand, ``publish_gold`` also replaces
+a persisted view per family beside the table (``<metrics>_mttr`` and so on), with the filter and
+only that family's columns -- see ``publish_family_views``.
 
 Silver -- the typed projection of bronze -- is **not** a table. It is computed in memory for
 the scan being built and re-derived from bronze by anything that needs it later (see
@@ -59,9 +61,10 @@ and silver is just the typed projection of whatever arrived.
 
 **Where the gold numbers come from.** v1 computed them from one snapshot, which meant a finding
 remediated by disappearing from the API was never counted as resolved at all. They now come from
-the ledger's observed lifecycles instead (``ledger.lifecycle_frame``). The snapshot figures are
-still computed and published beside them as ``snap_*`` columns -- the gap between ``km_median``
-and ``snap_km_median`` is the size of what v1 was missing.
+the ledger's observed lifecycles instead (``ledger.lifecycle_frame``). The snapshot-only figures
+used to be published beside them as ``snap_*`` columns; they are not any more, because nothing
+read them and every one is a recomputation over bronze (``panels`` makes exactly that comparison
+from bronze where a page wants it). ``RETIRED_METRICS_COLUMNS`` lists what left the table.
 """
 
 from __future__ import annotations
@@ -531,8 +534,8 @@ def ensure_tables(spark: SparkSession, tables: Tables) -> None:
     ``metrics`` is created from ``METRICS_BASE_SCHEMA`` -- the commit record's columns plus
     ``family`` -- and not through ``create_clustered``, because it has no clustering spec (see
     ``CLUSTERING``). Its gold columns are not declared here at all: they arrive through
-    ``mergeSchema`` on the first append that carries them, exactly as ``snap_*`` and
-    ``population`` already do. Declaring them would be a second copy of what the gold frames
+    ``mergeSchema`` on the first append that carries them, exactly as ``population`` already
+    does. Declaring them would be a second copy of what the gold frames
     project, and projecting them is what makes widening one a one-line change.
 
     Bronze is **not** created here even though it is clustered too. It is created by whatever
@@ -1082,9 +1085,99 @@ def closed_observed(spark: SparkSession, scan_log: list, scan_ts: str, deltas: d
 
 
 # --------------------------------------------- gold: build and publish the metric families
-# The snapshot-sourced columns republished beside the ledger-sourced ones. Kept deliberately
-# short: enough to see how far v1 was off, not a second copy of the whole table.
-SNAPSHOT_COLUMNS = ["km_median", "mttr_median", "resolved", "open"]
+# Columns the gold families used to publish and no longer do. None of them had a reader: the
+# `snap_*` four were the v1-vs-v2 comparison, recomputed from bronze wherever a page wants it;
+# `km_restriction_time` is τ, already carried by `km_median_lower_bound` on the rows that need
+# it; `mttr_mean` was the closed-only mean nothing displayed; `actionable_sla_compliant` is the
+# numerator of `actionable_sla_pct`; `risk_rule` was one sentence repeated on every `program`
+# row. A register written before this change still carries them -- `mergeSchema` adds columns
+# and never removes one -- until an operator runs `drop_retired_metrics_columns` once, with the
+# pipeline stopped (brick/docs/migrating.md). New rows leave them NULL in the meantime.
+RETIRED_METRICS_COLUMNS = (
+    "snap_km_median",
+    "snap_mttr_median",
+    "snap_resolved",
+    "snap_open",
+    "km_restriction_time",
+    "mttr_mean",
+    "actionable_sla_compliant",
+    "risk_rule",
+)
+
+
+def drop_retired_metrics_columns(spark: SparkSession, tables: Tables) -> list:
+    """Rewrite ``metrics`` without ``RETIRED_METRICS_COLUMNS``. Returns the columns it dropped.
+
+    A one-off operator step, not part of a run, for the same reason the clustering migration is
+    one: it rewrites a production table, and that is not something to do silently on the next
+    scheduled run. Run it with the pipeline stopped -- an append that lands between the read and
+    the overwrite is lost.
+
+    An overwrite with ``overwriteSchema`` rather than ``ALTER TABLE ... DROP COLUMN``: Delta only
+    drops a column under column mapping, and enabling that is a one-way reader/writer protocol
+    upgrade that every reader of the table -- the data team's tools included -- would have to
+    support. ``metrics`` is a few hundred rows per scan, so rewriting it is cheap, and the
+    previous version stays reachable through time travel until ``VACUUM`` removes it.
+
+    Idempotent: a table that carries none of them is left untouched and ``[]`` comes back.
+    """
+    if not table_exists(spark, tables.metrics):
+        return []
+    current = spark.table(tables.metrics)
+    retired = [c for c in current.columns if c in RETIRED_METRICS_COLUMNS]
+    if not retired:
+        return []
+    writer = (
+        current.drop(*retired)
+        .write.format("delta")
+        .mode("overwrite")
+        .option("overwriteSchema", "true")
+    )
+    path = as_path(tables.metrics)
+    writer.save(path) if path else writer.saveAsTable(tables.metrics)
+    return retired
+
+
+def family_view(tables: Tables, family: str) -> Optional[str]:
+    """The name of ``family``'s view over ``metrics`` -- ``<metrics>_<family>`` -- or ``None``.
+
+    ``None`` for a path-backed register: a view is a catalog object, and ``--data_path`` exists
+    precisely for a deployment that has no catalog to put one in.
+    """
+    if as_path(tables.metrics):
+        return None
+    return f"{tables.metrics}_{family}"
+
+
+def publish_family_views(spark: SparkSession, tables: Tables, columns_by_family: dict) -> list:
+    """``CREATE OR REPLACE`` one view per family, holding only that family's columns.
+
+    ``metrics`` is as wide as the union of every family -- that is the price of publishing gold
+    as one commit -- but each family fills a fraction of it and the rest is NULL. A view per
+    family is the table as a reader of one grain wants it: the family filter built in, so it
+    cannot be forgotten, and only the columns that family writes, so ``SELECT *`` is readable.
+
+    The column lists are the published frames' own columns, passed in by the writer rather than
+    declared here, for the reason ``ensure_tables`` gives about ``METRICS_BASE_SCHEMA``: a
+    declared list would be a second copy of what the frames project. ``family`` itself is left
+    out -- the view's name is the filter.
+
+    Replaced on every publish, so a family that gains a column gains it in its view on the same
+    run. It needs nothing beyond what the job already holds: ``CREATE TABLE`` on the schema
+    covers views (brick/docs/deploy.md). Returns the views it wrote; none for a path register.
+    """
+    written = []
+    for family, columns in columns_by_family.items():
+        view = family_view(tables, family)
+        if view is None:
+            continue
+        projection = ", ".join(f"`{c}`" for c in columns if c != "family")
+        spark.sql(
+            f"CREATE OR REPLACE VIEW {view} AS SELECT {projection} "
+            f"FROM {tables.metrics} WHERE family = '{family}'"
+        )
+        written.append(view)
+    return written
 
 
 def build_metrics(
@@ -1103,8 +1196,8 @@ def build_metrics(
     """One scan, end to end above bronze: silver in memory, the ledger, then the gold families.
 
     Silver is computed and never stored. It is a pure per-scan projection of bronze -- the
-    snapshot columns read the frame in memory, and `panels._silver_frame` rebuilds it from
-    bronze the same way -- so a table would be a second copy of data the register already holds.
+    reconcile reads the frame in memory, and `panels._silver_frame` rebuilds it from bronze the
+    same way -- so a table would be a second copy of data the register already holds.
     Bronze is what must survive; see ``brick/docs/storage.md``, Fallback storage.
 
     ``summary=False`` skips the printed report. The report is the only reason the gold frames
@@ -1140,7 +1233,7 @@ def build_metrics(
     )
     publish_gold(
         spark, tables, scan_id=scan_id, scan_ts=scan_ts, scope=scope, severities=severities,
-        rule=rule, scan_log=scan_log, deltas=deltas, silver=silver, summary=summary,
+        rule=rule, scan_log=scan_log, deltas=deltas, summary=summary,
     )
     silver.unpersist()
 
@@ -1156,7 +1249,6 @@ def publish_gold(
     rule,
     scan_log: list,
     deltas: dict,
-    silver,
     summary: bool = True,
 ) -> None:
     """The gold families for one scan, published as ONE append to ``metrics``.
@@ -1204,10 +1296,7 @@ def publish_gold(
         return frame
 
     mttr = metrics.with_scan_columns(
-        with_snapshot_columns(
-            metrics.mttr_by_severity(lifecycles), metrics.mttr_by_severity(silver)
-        ),
-        scan_id, scan_ts, scope, FAMILY_MTTR,
+        metrics.mttr_by_severity(lifecycles), scan_id, scan_ts, scope, FAMILY_MTTR
     )
     mttr = mttr.join(metrics.resolution_sources(lifecycles), "severity", "left")
     # The second clock, joined in beside the first rather than replacing it. Both frames group
@@ -1218,10 +1307,14 @@ def publish_gold(
     # columns existed gains them on the next scan instead of refusing the write.
     mttr = publish(mttr.join(metrics.actionable_mttr_by_severity(lifecycles), "severity", "left"))
 
-    program = metrics.with_scan_columns(
-        metrics.confusion_matrix(lifecycles), scan_id, scan_ts, scope, FAMILY_PROGRAM
+    # The rule is not stamped on the rows: one sentence repeated on every row of every scan is
+    # a column nobody filtered or grouped on. The run log prints it in its header line, and
+    # `config.rule_for_scope` is what decides it.
+    program = publish(
+        metrics.with_scan_columns(
+            metrics.confusion_matrix(lifecycles), scan_id, scan_ts, scope, FAMILY_PROGRAM
+        )
     )
-    program = publish(program.withColumn("risk_rule", F.lit(rule.sentence())))
 
     # Both populations, stacked: the all-findings backlog throughput and the high-risk net flow
     # P2P v3 actually defines. Every reader of this family has to filter on `population`.
@@ -1256,6 +1349,20 @@ def publish_gold(
         union = union.unionByName(frame, allowMissingColumns=True)
     write_append(union, tables.metrics)
 
+    # After the commit, never before: a view is metadata over columns the append just added,
+    # and a failure here leaves gold complete and the previous views in place.
+    publish_family_views(
+        spark,
+        tables,
+        {
+            FAMILY_SCAN: [*SCANS_COLUMNS, "family"],
+            FAMILY_MTTR: mttr.columns,
+            FAMILY_PROGRAM: program.columns,
+            FAMILY_CAPACITY: capacity.columns,
+            FAMILY_ASSETS: assets.columns,
+        },
+    )
+
     if summary:
         summarize(
             scan_id, scope, rule, deltas, mttr, program, capacity, assets,
@@ -1264,19 +1371,6 @@ def publish_gold(
         for frame in published:
             frame.unpersist()
     lifecycles.unpersist()
-
-
-def with_snapshot_columns(ledger_mttr, snapshot_mttr):
-    """Attach the snapshot figures to the ledger ones as ``snap_*``.
-
-    Both frames are computed the same way by the same code; only the lifecycles underneath them
-    differ. That is what makes the comparison meaningful -- and what makes it worth publishing,
-    because the gap IS the survivorship the snapshot path could not see.
-    """
-    snap = snapshot_mttr.select(
-        "severity", *[F.col(c).alias(f"snap_{c}") for c in SNAPSHOT_COLUMNS]
-    )
-    return ledger_mttr.join(snap, "severity", "left")
 
 
 # ---------------------------------------------------------------- the run summary, printed
@@ -1301,13 +1395,11 @@ def summarize(
 
     # km_median leads. mttr_median is the closed-only figure kept beside it: the gap between
     # the two is the survivorship bias, and seeing them together is the argument for KM.
-    # snap_km_median is the same estimator over the snapshot lifecycles v1 used -- the gap
-    # against km_median is what cross-scan tracking added.
     print("\nMTTR and SLA by severity (km_median counts still-open findings as censored)")
     metrics.order_by_severity(
         mttr.select(
             "severity", "resolved", "open", "km_median", "km_median_lower_bound", "km_rmst",
-            "mttr_median", "sla_target", "sla_pct", "snap_km_median",
+            "mttr_median", "sla_target", "sla_pct",
         )
     ).show(truncate=False)
 
@@ -1631,9 +1723,9 @@ def rebuild_ledger(
         bronze = spark.table(tables.bronze).filter(
             (F.col("scan_id") == scan_id) & (F.col("scope") == scope)
         )
-        # Cached because it has three consumers -- `observed`, the row count in
-        # `reconcile_scan`, and the snapshot columns in `publish_gold` -- and without this each
-        # one re-reads bronze and re-parses every node_json. The live path caches for the same
+        # Cached because it has two consumers -- `observed` and the row count in
+        # `reconcile_scan` -- and without this each one re-reads bronze and re-parses every
+        # node_json. The live path caches for the same
         # reason (see `build_metrics`).
         silver = metrics.classify_risk(metrics.silver_findings(bronze, scope), rule).cache()
         try:
@@ -1648,7 +1740,7 @@ def rebuild_ledger(
             publish_gold(
                 spark, tables, scan_id=scan_id, scan_ts=ts_iso, scope=scope,
                 severities=severities, rule=rule, scan_log=scan_log, deltas=deltas,
-                silver=silver, summary=False,
+                summary=False,
             )
         finally:
             silver.unpersist()
@@ -1923,13 +2015,6 @@ def main(scan_id: Optional[str] = None) -> Optional[RunResult]:
             # config.rule_for_scope. A second spelling here would be a second place for the
             # scope-to-rule mapping to drift.
             rule = rule_for_scope(scope)
-            # Silver from bronze, the same projection `panels._silver_frame` derives and the
-            # same one the original attempt built -- bronze still holds this scan's findings
-            # under this scan_id.
-            bronze = spark.table(tables.bronze).filter(
-                f"scan_id = '{scan_id}' AND scope = '{scope}'"
-            )
-            silver = metrics.classify_risk(metrics.silver_findings(bronze, scope), rule)
             publish_gold(
                 spark, tables, scan_id=scan_id, scan_ts=scan_ts, scope=scope,
                 severities=parse_severities(logged["severities"]), rule=rule,
@@ -1938,7 +2023,6 @@ def main(scan_id: Optional[str] = None) -> Optional[RunResult]:
                     k: int(logged[k] or 0)
                     for k in ("new_count", "resolved_count", "reopened_count")
                 },
-                silver=silver,
             )
             print(f"[{scan_id}] resumed gold")
         else:

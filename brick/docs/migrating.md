@@ -41,6 +41,34 @@ Three things to know before you do:
 The alternative to all of it: `--rebuild_ledger` against a freshly created register replays
 bronze into new, correctly-clustered tables — see below.
 
+## Dropping retired metrics columns
+
+`wiz_metrics` no longer publishes eight columns nothing read: `snap_km_median`,
+`snap_mttr_median`, `snap_resolved`, `snap_open`, `km_restriction_time`, `mttr_mean`,
+`actionable_sla_compliant` and `risk_rule` (the list is `run_pipeline.RETIRED_METRICS_COLUMNS`).
+A table created before that change still has them: `mergeSchema` adds columns and never removes
+one, so new rows just leave them NULL. To take them out of the schema, run once from a notebook
+**with the pipeline stopped**, because an append that lands mid-rewrite is lost:
+
+```python
+import run_pipeline
+spark = run_pipeline.get_spark()
+# data_path="<root>" for a register on --data_path; argv=[] keeps the notebook's own argv out
+tables = run_pipeline.resolve_tables("<catalog>.<schema>", argv=[])
+print(run_pipeline.drop_retired_metrics_columns(spark, tables))
+```
+
+It prints the columns it dropped, or `[]` when there were none left, so running it twice is
+harmless.
+
+- **It rewrites the table** — an overwrite with `overwriteSchema`, not `ALTER TABLE … DROP
+  COLUMN`. Delta only drops a column under column mapping, which is a one-way protocol upgrade
+  every reader would have to support. `metrics` is small, so a rewrite is cheap, and the old
+  version stays reachable by time travel until `VACUUM` removes it.
+- **Check external readers first.** A saved query or dashboard that names one of these columns
+  fails once they are gone. Until then it only sees NULL on new rows.
+- **It needs `MODIFY`** on the table, the same privilege the job already runs with.
+
 ## Backfilling from existing bronze
 
 If a register has been running against an older flat-snapshot version of this pipeline, bronze

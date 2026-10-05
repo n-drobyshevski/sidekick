@@ -577,3 +577,95 @@ def test_closed_observed_counts_this_scans_resolutions_in_its_month(spark):
     }
     assert 99 not in counted.values(), "the undated scan is not a resolution in January"
     assert sum(counted.values()) == 23
+
+
+# ------------------------------------------------- (f) retired columns and the family views
+
+
+def test_no_retired_column_reaches_the_table(spark, tables):
+    """**Failure of presence**: a retired column that some family frame still projects would
+    come straight back through `mergeSchema` on the next append, and the table would be as wide
+    as before the columns were dropped -- with nothing failing to say so."""
+    run_scan(spark, tables, [node("f-1"), node("f-2")], "s1", TS["s1"])
+    columns = set(spark.table(tables.metrics).columns)
+    assert columns.isdisjoint(run_pipeline.RETIRED_METRICS_COLUMNS), (
+        columns & set(run_pipeline.RETIRED_METRICS_COLUMNS)
+    )
+
+
+def test_each_family_view_is_its_family_and_only_its_columns(spark, tables):
+    """One view per family: the same rows as filtering the table, and none of the other
+    families' columns.
+
+    **Failure of presence** in both directions. A view that drops a column a family writes hides
+    a published number from the person reading the view, so together the views must cover every
+    column of the table but `family`; and a view narrower than the table in rows or wider in
+    columns is the family filter done wrong. The scan view is checked against the commit record
+    exactly, since that one is declared rather than projected.
+    """
+    run_scan(spark, tables, [node("f-1"), node("f-2")], "s1", TS["s1"])
+    run_scan(spark, tables, [node("f-1")], "s2", TS["s2"])
+
+    table = spark.table(tables.metrics)
+    covered: set = set()
+    for family in run_pipeline.METRICS_FAMILIES:
+        view = spark.table(run_pipeline.family_view(tables, family))
+        assert "family" not in view.columns, family
+        assert {"scan_id", "scan_ts", "scope"} <= set(view.columns), family
+        assert view.count() == table.filter(F.col("family") == family).count(), family
+        assert view.count() > 0 or family == run_pipeline.FAMILY_ASSETS, family
+        covered |= set(view.columns)
+
+    assert covered == set(table.columns) - {"family"}
+    scan_view = spark.table(run_pipeline.family_view(tables, run_pipeline.FAMILY_SCAN))
+    assert scan_view.columns == SCANS_COLUMNS
+    mttr_view = spark.table(run_pipeline.family_view(tables, run_pipeline.FAMILY_MTTR))
+    assert "population" not in mttr_view.columns, "another family's column leaked into mttr"
+
+
+def test_a_path_register_gets_no_views(spark, path_tables):
+    """A view is a catalog object, and `--data_path` is the deployment with no catalog."""
+    run_scan(spark, path_tables, [node("f-1")], "s1", TS["s1"])
+    for family in run_pipeline.METRICS_FAMILIES:
+        assert run_pipeline.family_view(path_tables, family) is None
+    assert run_pipeline.publish_family_views(spark, path_tables, {"mttr": ["scan_id"]}) == []
+
+
+@pytest.mark.parametrize("mode", ["catalog", "path"])
+def test_drop_retired_columns_rewrites_an_old_register(spark, tables, path_tables, mode):
+    """A register written before the columns retired keeps them -- `mergeSchema` never removes
+    one -- until `drop_retired_metrics_columns` rewrites it. Every row survives, every other
+    value is unchanged, and a second call is a no-op.
+    """
+    tbl = tables if mode == "catalog" else path_tables
+    run_scan(spark, tbl, [node("f-1"), node("f-2")], "s1", TS["s1"])
+    before = metrics_rows(spark, tbl)
+
+    # What an older register looks like: the same rows, plus the retired columns, which the
+    # older pipeline filled on its own family's rows. One legacy row with all of them set is
+    # enough to widen the schema the way `mergeSchema` did.
+    legacy = spark.table(tbl.metrics).limit(1)
+    for column in run_pipeline.RETIRED_METRICS_COLUMNS:
+        value = F.lit("rule") if column == "risk_rule" else F.lit(1.0)
+        legacy = legacy.withColumn(column, value)
+    legacy = legacy.withColumn("scan_id", F.lit("legacy"))
+    run_pipeline.write_append(legacy, tbl.metrics)
+    assert set(run_pipeline.RETIRED_METRICS_COLUMNS) <= set(spark.table(tbl.metrics).columns)
+
+    dropped = run_pipeline.drop_retired_metrics_columns(spark, tbl)
+    assert sorted(dropped) == sorted(run_pipeline.RETIRED_METRICS_COLUMNS)
+
+    after = spark.table(tbl.metrics)
+    assert set(after.columns).isdisjoint(run_pipeline.RETIRED_METRICS_COLUMNS)
+    assert after.filter(F.col("scan_id") == "legacy").count() == 1
+    assert metrics_rows(spark, tbl) == sorted(
+        before + [r.asDict() for r in after.filter(F.col("scan_id") == "legacy").collect()],
+        key=lambda row: repr(sorted(row.items())),
+    )
+
+    assert run_pipeline.drop_retired_metrics_columns(spark, tbl) == []
+    # And the register still takes the next scan.
+    run_scan(spark, tbl, [node("f-1")], "s2", TS["s2"])
+    assert set(spark.table(tbl.metrics).columns).isdisjoint(
+        run_pipeline.RETIRED_METRICS_COLUMNS
+    )

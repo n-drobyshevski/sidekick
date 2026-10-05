@@ -430,7 +430,10 @@ def _mttr_aggs() -> List[Column]:
     return [
         # count() ignores NULLs, so `resolved` is exactly the population with a measurable
         # MTTR: both a first-detected and a resolved timestamp.
-        F.avg("mttr_days").alias("mttr_mean"),
+        #
+        # No mean. `mttr_mean` used to sit here and nothing read it: the closed-only figure kept
+        # for comparison is `mttr_median`, and a mean of a censored, right-skewed duration is the
+        # one summary that is wrong in both directions at once.
         F.percentile("mttr_days", 0.5).alias("mttr_median"),
         F.count("mttr_days").cast("long").alias("resolved"),
         F.sum(F.when(F.col("resolved_at").isNull(), 1).otherwise(0)).cast("long").alias("open"),
@@ -633,7 +636,13 @@ def mttr_by_severity(df: DataFrame) -> DataFrame:
     # The censoring-aware estimate rides alongside the naive one. `mttr_median` stays for
     # comparison with the earlier Python spec, but `km_median` is the one to report, and it is
     # normally larger.
-    return combined.join(kaplan_meier(df), "severity", "left")
+    #
+    # `km_restriction_time` stays behind: it is τ, the horizon `km_rmst` and
+    # `km_median_lower_bound` are computed against, and the latter already carries it on exactly
+    # the rows where a reader needs it. `kaplan_meier` keeps emitting it for its own tests.
+    return combined.join(
+        kaplan_meier(df).drop("km_restriction_time"), "severity", "left"
+    )
 
 
 def _actionable_aggs() -> List[Column]:
@@ -665,14 +674,14 @@ def actionable_mttr_by_severity(df: DataFrame) -> DataFrame:
     """The second clock, per severity plus an OVERALL row: time measured from the fix.
 
     Separate from ``mttr_by_severity`` rather than folded into it, and the reason is
-    structural rather than stylistic: ``run_pipeline.build_metrics`` calls that function
-    TWICE -- once over the ledger lifecycles and once over the silver snapshot, so the two can
-    be published side by side as ``snap_*``. Silver is a projection of one scan's payload and
-    has no ``fix_observed_at``, no ``actionable_from`` and no ``awaiting_vendor_fix``; it
-    cannot have them, because they are cross-scan facts. Widening ``mttr_by_severity`` would
-    therefore fail on the snapshot half, and the natural repair -- a ``coalesce`` or a column
-    existence check -- would publish an actionable figure computed from one scan under the
-    same name as one computed from the whole ledger.
+    structural rather than stylistic: ``mttr_by_severity`` asks only for the duration columns
+    every frame has, so it runs over any of them -- ledger lifecycles, ``panels``' per-group
+    frames, a silver snapshot. Silver is a projection of one scan's payload and has no
+    ``fix_observed_at``, no ``actionable_from`` and no ``awaiting_vendor_fix``; it cannot have
+    them, because they are cross-scan facts. Widening ``mttr_by_severity`` would make it fail
+    on such a frame, and the natural repair -- a ``coalesce`` or a column existence check --
+    would publish an actionable figure computed from one scan under the same name as one
+    computed from the whole ledger.
 
     ``sla_target`` is attached to the working frame and never emitted: it is already on the
     frame this joins into, and two copies of the same target is one more thing that can drift.
@@ -690,9 +699,16 @@ def actionable_mttr_by_severity(df: DataFrame) -> DataFrame:
     # over rows that each carry their own target.
     overall = work.groupBy(F.lit(OVERALL).alias("severity")).agg(*_actionable_aggs())
 
-    return per_sev.unionByName(overall).withColumn(
-        "actionable_sla_pct",
-        safe_pct(F.col("actionable_sla_compliant"), F.col("actionable_resolved")),
+    # The compliant count is the numerator and nothing else: `actionable_resolved` and the
+    # percentage are published, so the count is their product and a column of its own would be
+    # one more value to keep consistent with them.
+    return (
+        per_sev.unionByName(overall)
+        .withColumn(
+            "actionable_sla_pct",
+            safe_pct(F.col("actionable_sla_compliant"), F.col("actionable_resolved")),
+        )
+        .drop("actionable_sla_compliant")
     )
 
 

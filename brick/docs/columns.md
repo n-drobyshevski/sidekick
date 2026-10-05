@@ -124,6 +124,13 @@ column is NULL on its rows.
 `assets`. Without those filters you mix grains that have no key in common, or you count every
 row twice. To get the latest figures, pin to the newest `scan_id` for that scope.
 
+**Or read a family view instead.** Every run that publishes gold also replaces one view per
+family — `wiz_metrics_scan`, `wiz_metrics_mttr`, `wiz_metrics_program`, `wiz_metrics_capacity`
+and `wiz_metrics_assets`, beside the table. Each has the `family` filter built in and carries
+only `scan_id`, `scan_ts`, `scope` and that family's own columns, so `SELECT *` is readable.
+You still filter on `scope`, and on `population` for `capacity` and `assets`. A register on
+`--data_path` has no catalog, so it gets no views.
+
 | `family` | One row per | Filter also on |
 | --- | --- | --- |
 | `scan` | scan | — |
@@ -165,13 +172,11 @@ Computed over every lifecycle in the ledger for this scope, open or resolved.
 | `severity` | string | A severity, or `OVERALL`. |
 | `resolved` | bigint | Resolved lifecycles (those with a measurable time to resolve). |
 | `open` | bigint | Open lifecycles. |
-| `mttr_mean` | double | Mean days from `first_seen` to `resolved_at`, **resolved findings only**. |
 | `mttr_median` | double | Median of the same. Biased low, because the slowest findings are the ones still open. Prefer `km_median`. |
 | `km_median` | double | **The headline figure.** Kaplan–Meier median time to remediate, counting open findings as "not closed yet". NULL when fewer than half have closed. In that case read `km_median_lower_bound`. |
 | `km_median_lower_bound` | double | Set only when `km_median` is NULL: the longest observed duration, so it can be reported as "> N days". |
-| `km_rmst` | double | Restricted mean survival time: the average days to remediate, capped at `km_restriction_time`. |
-| `km_truncated` | boolean | True when not every finding has closed by `km_restriction_time`. `km_rmst` is then a floor, not a mean. |
-| `km_restriction_time` | double | The longest observed duration, open or resolved. It's the horizon the KM figures are measured to. |
+| `km_rmst` | double | Restricted mean survival time: the average days to remediate, capped at the longest observed duration, open or resolved. |
+| `km_truncated` | boolean | True when not every finding has closed by that longest observed duration. `km_rmst` is then a floor, not a mean. |
 | `km_events` | bigint | Resolved findings that entered the KM estimate. |
 | `km_censored` | bigint | Open findings that entered the KM estimate. |
 | `open_age_p50` | double | Median age in days of the open findings. |
@@ -182,10 +187,6 @@ Computed over every lifecycle in the ledger for this scope, open or resolved.
 | `sla_pct` | double | `sla_compliant / resolved`. On `OVERALL` it's total compliant over total resolved, not an average of the severity rows. |
 | `resolved_api` | bigint | Resolutions Wiz reported. |
 | `resolved_disappeared` | bigint | Resolutions inferred because the finding disappeared. A high share says more about the data source than about the team. |
-| `snap_km_median` | double | `km_median` computed from **this scan's payload alone**, the way a snapshot-only pipeline would. The gap to `km_median` is what the snapshot misses. |
-| `snap_mttr_median` | double | `mttr_median`, snapshot-only. |
-| `snap_resolved` | bigint | `resolved`, snapshot-only. |
-| `snap_open` | bigint | `open`, snapshot-only. |
 
 The **actionable clock** measures from when a fix existed rather than from when the finding
 appeared, which is closer to what an SLA means. It applies to `os` and `sca`. For `sast` these
@@ -199,13 +200,12 @@ columns are NULL or 0, because `sast` has no vendor fix.
 | `actionable_age_p50` | double | Median days open since a fix became available, for open findings. |
 | `actionable_age_p90` | double | 90th percentile of the same. |
 | `awaiting_vendor_fix_count` | bigint | Open findings with no fix available yet. |
-| `actionable_sla_compliant` | bigint | Findings resolved within SLA, counted from fix availability. |
-| `actionable_sla_pct` | double | `actionable_sla_compliant / actionable_resolved`. Read it beside `sla_pct`, not subtracted from it, because the two denominators differ. |
+| `actionable_sla_pct` | double | Share of `actionable_resolved` closed within SLA, counted from fix availability. Read it beside `sla_pct`, not subtracted from it, because the two denominators differ. |
 
 ### `family = 'program'` — coverage and efficiency, per severity
 
 Each lifecycle is classified as high-risk, not high-risk or unknown by the scope's risk rule
-(`risk_rule`). It is then crossed with remediated vs open. The formulas come from Cyentia's
+(the run log prints it in words on its header line). It is then crossed with remediated vs open. The formulas come from Cyentia's
 *Prioritization to Prediction* (P2P).
 
 | Column | Type | Description |
@@ -232,7 +232,6 @@ Each lifecycle is classified as high-risk, not high-risk or unknown by the scope
 | `efficiency_hi` | double | Efficiency if every unclassified remediated finding were high-risk. |
 | `prevalence_pct` | double | `high_risk / classified`. The efficiency that picking findings at random would score. Efficiency at or below this means no real prioritisation. |
 | `signal_coverage_pct` | double | `classified / total`. Every rate above rests on this share, so report it alongside them. |
-| `risk_rule` | string | The rule that did the classifying, in words, e.g. "CWE in the Top 25 or AI triage says exploitable or severity CRITICAL". |
 
 Always report coverage and efficiency together. They pull in opposite directions, and either
 one alone can be pushed to 100%.

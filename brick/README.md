@@ -44,7 +44,7 @@ older `wiz_dashboard/domain/` port disagree, GAS wins.
 | --- | --- | --- |
 | `wiz_findings_raw` | scan × finding | bronze: `node_json` as a string, plus `seq` (API order) |
 | **`wiz_vuln_ledger`** | **one row per `(scope, vuln_key)`** | **the durable base: `scope`, `first_seen`, `last_seen`, `status`, `resolved_at`, `resolution_src`, `reopened_count`, the fix clock and the exploit signals** |
-| **`wiz_metrics`** | **wide, told apart by `family`** | **the commit record and every gold family, appended together** |
+| **`wiz_metrics`** | **wide, told apart by `family`** | **the commit record and every gold family, appended together; one view per family beside it (`wiz_metrics_mttr`, …)** |
 
 Every scope — `os`, `sca`, `sast` — writes this **same** set; there is no table per scope.
 `scope` is part of the ledger's key rather than a label on it, and every read of the register

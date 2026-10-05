@@ -59,12 +59,12 @@ the rest of a row's columns belong to that one family and are NULL on the other 
 which is what `mergeSchema` on the append gives for free. **A read that does not filter on
 `family` blends grains that share no key**, so every reader does: `panels.register_views`
 publishes one session view per family (`v_scans`, `v_mttr`, `v_program`, `v_capacity`,
-`v_assets` where the scope has one) and nothing else reads the table directly.
+`v_assets` where the scope has one) and nothing else in this tree reads the table directly.
 
 | `family` | Grain | Contents |
 | --- | --- | --- |
 | `scan` | one row per run | the commit record: `scope`, `severities`, and the new/resolved/reopened deltas |
-| `mttr` | scan × severity (+ `OVERALL`) | MTTR mean/median, open counts, open-age p50/p90, SLA target and compliance, the resolution-source split, the actionable clock, and the `snap_*` snapshot comparison |
+| `mttr` | scan × severity (+ `OVERALL`) | MTTR median, open counts, open-age p50/p90, SLA target and compliance, the resolution-source split, and the actionable clock |
 | `program` | scan × severity (+ `OVERALL`) | the confusion matrix, coverage and efficiency with bounds, prevalence, signal coverage |
 | `capacity` | scan × month × **`population`** | opened, closed, backlog at month start, MMCR, net flow, verdict, `reconstructed`, `closed_observed` |
 | `assets` | scan × repository branch × **`population`** | P2P v5: density percentiles, foothold rate, coverage, half-life, MMCR, capacity split — see [Assets at risk](#assets-at-risk-p2p-v5). Written for `sca` and `sast`, whose findings carry a repository branch; `os` has no narrow asset-member list to request, so it has no asset ids and writes nothing under this family (see [SCOPE_ASSET_MEMBERS](#scopes)) |
@@ -75,9 +75,15 @@ than stored per scan — see [What this does not do](reading-the-numbers.md#what
 
 The gold families are computed from the ledger and written together as **one append** — see
 [The scan record is load-bearing](#the-scan-record-is-load-bearing) for what that buys on a
-crash. The snapshot figures are still computed and published beside the `mttr` family as
-`snap_km_median`, `snap_mttr_median`, `snap_resolved`, `snap_open` — **the gap between
-`km_median` and `snap_km_median` is the size of what the snapshot-only version was missing.**
+crash. The snapshot-only figures used to be published beside the `mttr` family as `snap_*`
+columns; they are not any more — nothing read them, and the comparison they made is a
+recomputation over bronze, which is where `panels` makes it when a page wants it. The columns
+that left `metrics` this way are listed in `run_pipeline.RETIRED_METRICS_COLUMNS`; see
+[Dropping retired metrics columns](migrating.md#dropping-retired-metrics-columns).
+
+Besides the table, each run replaces one **view per family** — `wiz_metrics_mttr` and so on —
+with the `family` filter built in and only that family's columns, for anyone querying the
+register by hand. See [`columns.md`](columns.md#wiz_metrics--the-commit-record-and-every-gold-family).
 
 The `capacity` family gains two columns a snapshot-only pipeline could not produce, both of which
 need scan history:
@@ -238,7 +244,7 @@ external consumer is worth checking before you migrate.
 ledger is created by `ensure_tables` (clustered) and bronze by whatever first writes it
 (clustered too, at that point). `ensure_tables` also creates `metrics` when it is missing, as an
 empty declared frame with no clustering spec — its gold columns arrive later through
-`mergeSchema`, the same way `snap_*` and `population` do. An existing register keeps its
+`mergeSchema`, the same way `population` does. An existing register keeps its
 unclustered layout until someone migrates it — see
 [Migrating an existing register](migrating.md#migrating-an-existing-register).
 
