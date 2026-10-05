@@ -362,22 +362,26 @@ Optimization** runs `OPTIMIZE` for you, and where it is enabled `--maintain` is 
 
 ```sql
 SELECT severity, coverage_pct, efficiency_pct, prevalence_pct, signal_coverage_pct
-FROM   <catalog>.<schema>.wiz_metrics
+FROM   <catalog>.<schema>.wiz_metrics_program
 WHERE  scope   = 'os'
-AND    family  = 'program'
 AND    scan_id = (
-  SELECT max_by(scan_id, scan_ts) FROM <catalog>.<schema>.wiz_metrics
-  WHERE scope = 'os' AND family = 'program'
+  SELECT max_by(scan_id, scan_ts) FROM <catalog>.<schema>.wiz_metrics_program
+  WHERE scope = 'os'
 )
 ORDER BY severity;
 ```
 
-`scope = 'os'` is not optional here: `wiz_metrics` is shared by every register now, and a query
-that drops it sums three populations' `program` rows into one plausible-looking answer instead
-of raising. Every recipe in this README that means to read *one* register against `wiz_metrics`,
-`wiz_vuln_ledger` or `wiz_findings_raw` carries this predicate for that reason — the one
-exception is the multi-scope comparison directly below, which deliberately groups by `scope`
-instead of filtering it.
+`wiz_metrics_program` is one of the five views each run replaces beside `wiz_metrics`, one per
+family: the `family` filter built in, the measures out of their struct, and the ratios computed
+— coverage and efficiency are not stored in the table at all (see
+[`columns.md`](columns.md#wiz_metrics--the-commit-record-and-every-gold-family)).
+
+`scope = 'os'` is not optional here: `wiz_metrics` and its views are shared by every register
+now, and a query that drops it sums three populations' `program` rows into one plausible-looking
+answer instead of raising. Every recipe in this README that means to read *one* register against
+`wiz_metrics` (or a view over it), `wiz_vuln_ledger` or `wiz_findings_raw` carries this
+predicate for that reason — the one exception is the multi-scope comparison directly below,
+which deliberately groups by `scope` instead of filtering it.
 
 Read that against `prevalence_pct` on the same row, not against the P2P baselines — see
 [Reading coverage and efficiency](reading-the-numbers.md#reading-coverage-and-efficiency). How much of it is the rule
@@ -398,11 +402,11 @@ scan's own `scope`:
 
 ```sql
 SELECT scope, coverage_pct, efficiency_pct
-FROM   <catalog>.<schema>.wiz_metrics
-WHERE  family = 'program' AND severity = 'OVERALL'
+FROM   <catalog>.<schema>.wiz_metrics_program
+WHERE  severity = 'OVERALL'
 AND    scan_id IN (
-  SELECT max_by(scan_id, scan_ts) FROM <catalog>.<schema>.wiz_metrics
-  WHERE family = 'program' GROUP BY scope
+  SELECT max_by(scan_id, scan_ts) FROM <catalog>.<schema>.wiz_metrics_program
+  GROUP BY scope
 )
 ORDER BY scope;
 ```

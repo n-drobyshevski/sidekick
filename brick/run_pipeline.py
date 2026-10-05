@@ -569,8 +569,8 @@ SCANS_SCHEMA = (
 )
 
 # The metrics table as it is *declared*: the commit record's own columns plus the family tag.
-# Every other column in the table belongs to one gold family and arrives on that family's first
-# append through mergeSchema -- which is why this is a base and not the schema.
+# The rest -- the gold dims and one struct per family, see METRICS_COLUMNS -- arrives on the
+# first gold append through mergeSchema, which is why this is a base and not the schema.
 METRICS_BASE_SCHEMA = SCANS_SCHEMA + ", family STRING"
 
 
@@ -1467,7 +1467,7 @@ def publish_gold(
     # onto an identical severity set: it can neither drop a row nor duplicate one, and
     # `test_panels.py` asserts exactly that against the real register rather than leaving it
     # as a claim. `write_append` passes mergeSchema, so a `metrics` table written before these
-    # columns existed gains them on the next scan instead of refusing the write.
+    # measures existed gains them as new fields of the `mttr` struct on the next scan.
     mttr = publish(mttr.join(metrics.actionable_mttr_by_severity(lifecycles), "severity", "left"))
 
     # The rule is not stamped on the rows: one sentence repeated on every row of every scan is
