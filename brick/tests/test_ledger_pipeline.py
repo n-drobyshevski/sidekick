@@ -143,10 +143,10 @@ def sorted_rows(spark, table) -> list:
 
 
 def family_rows(spark, tables, family):
-    """``metrics`` filtered to one family, with ``family`` dropped -- what
+    """``metrics`` as one family, flat -- ``run_pipeline.read_family``, which is what
     ``panels.register_views`` publishes as one view per family, and what every family-scoped
-    assertion below wants instead of reading the wide table directly."""
-    return spark.table(tables.metrics).where(F.col("family") == family).drop("family")
+    assertion below wants instead of reading the structs directly."""
+    return run_pipeline.read_family(spark, tables, family)
 
 
 # --------------------------------------------------------------------- persistence

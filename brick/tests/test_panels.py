@@ -635,13 +635,11 @@ def test_the_actionable_clock_reaches_gold_without_disturbing_the_first(spark_, 
     ACTIONABLE = [
         "mttr_actionable_mean", "mttr_actionable_median", "actionable_resolved",
         "actionable_age_p50", "actionable_age_p90", "awaiting_vendor_fix_count",
-        "actionable_sla_pct",
+        "actionable_sla_compliant", "actionable_sla_pct",
     ]
 
-    gold = spark_.table(ctx.tables.metrics).where(
-        (F.col("family") == run_pipeline.FAMILY_MTTR)
-        & (F.col("scan_id") == ctx.scan_id)
-        & (F.col("scope") == ctx.scope)
+    gold = run_pipeline.read_family(spark_, ctx.tables, run_pipeline.FAMILY_MTTR).where(
+        (F.col("scan_id") == ctx.scan_id) & (F.col("scope") == ctx.scope)
     )
     published = {r["severity"]: r.asDict() for r in gold.collect()}
     assert len(published) == gold.count(), "a severity is published twice"

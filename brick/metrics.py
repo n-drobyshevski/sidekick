@@ -190,6 +190,150 @@ def safe_pct(numerator: Column, denominator: Column) -> Column:
     return F.when(denominator > 0, numerator / denominator * 100)
 
 
+# ---------------------------------------------------------------- derived columns, as SQL
+# Every gold column that is arithmetic over the family's other columns is defined here ONCE, as
+# a SQL expression, and computed from that text everywhere it exists: by the transforms below,
+# by `run_pipeline.unpack_family` (which `panels` reads through), and by the persisted family
+# views `run_pipeline.publish_family_views` writes. `metrics` stores none of them -- a stored
+# copy of a ratio is one more value that can disagree with the counts it was taken from -- so
+# this text is the whole definition, and there is no second spelling of any formula to drift.
+#
+# Order matters: an expression may read a derived column defined above it, and each is applied
+# with its own `withColumn` (or its own subquery layer, in a view). `{over}` is a window's
+# partition clause, filled in by the caller: empty over one scan's frame here, and
+# `PARTITION BY scan_id, scope, ...` over the whole table at read time.
+
+
+def _pct_sql(numerator: str, denominator: str) -> str:
+    """``safe_pct`` as SQL: NULL, never 0, over an empty population -- and the same arithmetic,
+    so the two spellings return bit-identical doubles."""
+    return f"CASE WHEN ({denominator}) > 0 THEN ({numerator}) / ({denominator}) * 100 END"
+
+
+def _verdict_sql(net_pct: str) -> str:
+    """gaining / keeping-up / falling-behind, with a dead band around zero so a one-finding
+    swing cannot flip a month's verdict. The only spelling of the rule: the per-month verdict,
+    the scan's overall one and each asset's all read it."""
+    return (
+        f"CASE WHEN ({net_pct}) IS NULL OR abs({net_pct}) <= {NET_CAPACITY_BAND_PCT} "
+        f"THEN 'keeping-up' WHEN ({net_pct}) > 0 THEN 'gaining' ELSE 'falling-behind' END"
+    )
+
+
+#: The `mttr` family's derived columns. `oldest_open_days` is the headline KPI's "oldest open":
+#: the worst per-severity p90, not the p90 over everything, and only on the OVERALL row.
+MTTR_DERIVED = (
+    ("sla_pct", _pct_sql("sla_compliant", "resolved")),
+    (
+        "oldest_open_days",
+        f"CASE WHEN severity = '{OVERALL}' THEN max(CASE WHEN severity <> '{OVERALL}' "
+        f"THEN open_age_p90 END) OVER ({{over}}) END",
+    ),
+)
+
+#: The actionable clock's percentage, read beside `sla_pct` rather than subtracted from it --
+#: the two denominators are different populations. Applied by `actionable_mttr_by_severity`,
+#: whose columns join the `mttr` family.
+ACTIONABLE_DERIVED = (
+    ("actionable_sla_pct", _pct_sql("actionable_sla_compliant", "actionable_resolved")),
+)
+
+#: The `program` family's derived columns: totals and both rates from the six counts. The
+#: bounds are the extreme re-labellings of the unclassified rows, and their width IS the size
+#: of the doubt:
+#:
+#:   coverage = TP / (TP + FN)
+#:     lo  every unclassified-OPEN row was really high risk (worst case, they join FN)
+#:     hi  every unclassified-REMEDIATED row was really high risk (they join TP)
+#:
+#:   efficiency = TP / (TP + FP)      -- unclassified-open rows cannot affect it at all
+#:     lo  every unclassified-remediated row was NOT high risk (they join FP)
+#:     hi  every unclassified-remediated row WAS high risk (they join TP)
+#:
+#: `prevalence_pct` is the share of classified findings that are high risk -- exactly the
+#: efficiency a program picking findings at RANDOM would score, which is what turns efficiency
+#: from a number into a verdict. `signal_coverage_pct` is the honesty number: every rate above
+#: is conditional on it.
+PROGRAM_DERIVED = (
+    ("classified", "tp + fp + fn + tn"),
+    ("unknown", "unknown_remediated + unknown_open"),
+    ("total", "classified + unknown"),
+    ("remediated", "tp + fp + unknown_remediated"),
+    ("open", "fn + tn + unknown_open"),
+    ("high_risk", "tp + fn"),
+    ("not_high_risk", "fp + tn"),
+    ("coverage_pct", _pct_sql("tp", "tp + fn")),
+    ("coverage_lo", _pct_sql("tp", "tp + fn + unknown_open")),
+    ("coverage_hi", _pct_sql("tp + unknown_remediated", "tp + unknown_remediated + fn")),
+    ("efficiency_pct", _pct_sql("tp", "tp + fp")),
+    ("efficiency_lo", _pct_sql("tp", "tp + fp + unknown_remediated")),
+    ("efficiency_hi", _pct_sql("tp + unknown_remediated", "tp + fp + unknown_remediated")),
+    ("prevalence_pct", _pct_sql("high_risk", "classified")),
+    ("signal_coverage_pct", _pct_sql("classified", "total")),
+)
+
+#: The `capacity` family's per-month derived columns. Mean Monthly Close Rate is the share of
+#: the open backlog closed this month; the P2P v3 headline is that a typical organisation closes
+#: about 1 in 10, whatever its size.
+CAPACITY_MONTH_DERIVED = (
+    ("mmcr", _pct_sql("closed", "open_at_start")),
+    ("net", "closed - opened"),
+    ("net_pct", _pct_sql("closed - opened", "open_at_start")),
+)
+CAPACITY_VERDICT_DERIVED = (("verdict", _verdict_sql("net_pct")),)
+
+# A month counts toward the summary when it is over, was watched, and had a backlog to close.
+# Reconstructed months are excluded alongside partial ones for the same reason: the headline
+# "we close about 1 in N" is a claim about throughput we measured. On a register whose history
+# was rebuilt from bronze this can leave few months standing, or none -- which is why
+# `months_counted` is published beside it. A small honest sample beats a large confident one
+# built out of months nobody watched.
+_COUNTED = "(NOT partial AND NOT reconstructed AND mmcr IS NOT NULL)"
+
+#: The scan-grain summary carried on every month row of a scan and population, so one read
+#: answers both "how did July go" and "are we gaining ground overall".
+CAPACITY_SUMMARY_DERIVED = (
+    ("mmcr_mean", f"avg(CASE WHEN {_COUNTED} THEN mmcr END) OVER ({{over}})"),
+    (
+        "months_counted",
+        f"CAST(count(CASE WHEN {_COUNTED} THEN 1 END) OVER ({{over}}) AS BIGINT)",
+    ),
+    ("net_total", "CAST(sum(net) OVER ({over}) AS BIGINT)"),
+    # The P2P v3 idiom: "we close about 1 in N of the backlog each month".
+    ("one_in_n", "CASE WHEN mmcr_mean > 0 THEN 100 / mmcr_mean END"),
+    (
+        "overall_verdict",
+        "CASE WHEN months_counted > 0 THEN "
+        + _verdict_sql(f"avg(CASE WHEN {_COUNTED} THEN net_pct END) OVER ({{over}})")
+        + " END",
+    ),
+)
+
+#: What each gold family derives, in the order it derives it. A family absent here derives
+#: nothing and stores every column it computes.
+DERIVED = {
+    "mttr": MTTR_DERIVED + ACTIONABLE_DERIVED,
+    "program": PROGRAM_DERIVED,
+    "capacity": CAPACITY_MONTH_DERIVED + CAPACITY_VERDICT_DERIVED + CAPACITY_SUMMARY_DERIVED,
+}
+
+
+def derived_names(family: str) -> tuple:
+    """The columns ``family`` derives rather than stores."""
+    return tuple(name for name, _ in DERIVED.get(family, ()))
+
+
+def derive(df: DataFrame, definitions, over: str = "") -> DataFrame:
+    """Add each ``(name, sql)`` in order, ``{over}`` filled with ``over``.
+
+    The one place a definition above becomes a column, so the transforms in this module and
+    every read of the stored table compute the same expression from the same text.
+    """
+    for name, sql in definitions:
+        df = df.withColumn(name, F.expr(sql.replace("{over}", over)))
+    return df
+
+
 def normalize_severity(col: Column) -> Column:
     """Wiz severity -> the register's taxonomy. INFORMATIONAL folds to INFO; anything
     unrecognised (including NULL) becomes UNKNOWN rather than being dropped."""
@@ -621,17 +765,9 @@ def mttr_by_severity(df: DataFrame) -> DataFrame:
         .withColumn("sla_target", F.lit(None).cast("int"))
     )
 
-    combined = per_sev.unionByName(overall).withColumn(
-        "sla_pct", safe_pct(F.col("sla_compliant"), F.col("resolved"))
-    )
-
-    # "Oldest open" as the headline KPI defines it: the worst per-severity p90, not the p90
-    # over everything. Only meaningful on the OVERALL row.
-    oldest = per_sev.agg(F.max("open_age_p90").alias("oldest_open_days"))
-    combined = combined.crossJoin(oldest).withColumn(
-        "oldest_open_days",
-        F.when(F.col("severity") == OVERALL, F.col("oldest_open_days")),
-    )
+    # `sla_pct` and `oldest_open_days` -- see MTTR_DERIVED. The window is the whole frame,
+    # which is one scan's severities here.
+    combined = derive(per_sev.unionByName(overall), MTTR_DERIVED)
 
     # The censoring-aware estimate rides alongside the naive one. `mttr_median` stays for
     # comparison with the earlier Python spec, but `km_median` is the one to report, and it is
@@ -699,17 +835,7 @@ def actionable_mttr_by_severity(df: DataFrame) -> DataFrame:
     # over rows that each carry their own target.
     overall = work.groupBy(F.lit(OVERALL).alias("severity")).agg(*_actionable_aggs())
 
-    # The compliant count is the numerator and nothing else: `actionable_resolved` and the
-    # percentage are published, so the count is their product and a column of its own would be
-    # one more value to keep consistent with them.
-    return (
-        per_sev.unionByName(overall)
-        .withColumn(
-            "actionable_sla_pct",
-            safe_pct(F.col("actionable_sla_compliant"), F.col("actionable_resolved")),
-        )
-        .drop("actionable_sla_compliant")
-    )
+    return derive(per_sev.unionByName(overall), ACTIONABLE_DERIVED)
 
 
 def resolution_sources(df: DataFrame) -> DataFrame:
@@ -892,51 +1018,8 @@ def _matrix_aggs() -> List[Column]:
 
 
 def _finalize_matrix(df: DataFrame) -> DataFrame:
-    """Derive totals and both rates from the six counts.
-
-    The bounds are the extreme re-labellings of the unclassified rows, and their width IS the
-    size of the doubt:
-
-      coverage = TP / (TP + FN)
-        lo  every unclassified-OPEN row was really high risk (worst case, they join FN)
-        hi  every unclassified-REMEDIATED row was really high risk (they join TP)
-
-      efficiency = TP / (TP + FP)      -- unclassified-open rows cannot affect it at all
-        lo  every unclassified-remediated row was NOT high risk (they join FP)
-        hi  every unclassified-remediated row WAS high risk (they join TP)
-    """
-    tp, fp, fn, tn = (F.col(c) for c in ("tp", "fp", "fn", "tn"))
-    unknown_remediated = F.col("unknown_remediated")
-    unknown_open = F.col("unknown_open")
-
-    return (
-        df.withColumn("classified", tp + fp + fn + tn)
-        .withColumn("unknown", unknown_remediated + unknown_open)
-        .withColumn("total", F.col("classified") + F.col("unknown"))
-        .withColumn("remediated", tp + fp + unknown_remediated)
-        .withColumn("open", fn + tn + unknown_open)
-        .withColumn("high_risk", tp + fn)
-        .withColumn("not_high_risk", fp + tn)
-        .withColumn("coverage_pct", safe_pct(tp, tp + fn))
-        .withColumn("coverage_lo", safe_pct(tp, tp + fn + unknown_open))
-        .withColumn(
-            "coverage_hi",
-            safe_pct(tp + unknown_remediated, tp + unknown_remediated + fn),
-        )
-        .withColumn("efficiency_pct", safe_pct(tp, tp + fp))
-        .withColumn("efficiency_lo", safe_pct(tp, tp + fp + unknown_remediated))
-        .withColumn(
-            "efficiency_hi",
-            safe_pct(tp + unknown_remediated, tp + fp + unknown_remediated),
-        )
-        # The share of classified findings that are high risk -- exactly the efficiency a
-        # program picking findings at RANDOM would score. Efficiency at or below prevalence
-        # means the program is not prioritizing at all, which is what turns efficiency from a
-        # number into a verdict.
-        .withColumn("prevalence_pct", safe_pct(F.col("high_risk"), F.col("classified")))
-        # The honesty number: every rate above is conditional on it.
-        .withColumn("signal_coverage_pct", safe_pct(F.col("classified"), F.col("total")))
-    )
+    """Derive totals and both rates from the six counts -- see ``PROGRAM_DERIVED``."""
+    return derive(df, PROGRAM_DERIVED)
 
 
 def confusion_matrix(df: DataFrame) -> DataFrame:
@@ -1196,17 +1279,13 @@ def capacity_by_month(
     )
 
     months = (
-        months.withColumn("open_at_start", open_at_start)
-        # Mean Monthly Close Rate: the share of the open backlog closed this month. The P2P v3
-        # headline is that a typical organisation closes about 1 in 10, whatever its size.
-        .withColumn("mmcr", safe_pct(F.col("closed"), F.col("open_at_start")))
-        .withColumn("net", F.col("closed") - F.col("opened"))
-        .withColumn("net_pct", safe_pct(F.col("closed") - F.col("opened"), F.col("open_at_start")))
+        # `mmcr`, `net`, `net_pct` -- see CAPACITY_MONTH_DERIVED.
+        derive(months.withColumn("open_at_start", open_at_start), CAPACITY_MONTH_DERIVED)
         # The current month is not over. Never extrapolated, and excluded from the mean --
         # otherwise the headline dips every time you look early in a month.
         .withColumn("partial", F.col("month") == current_month)
     )
-    months = months.withColumn("verdict", _verdict(F.col("net_pct")))
+    months = derive(months, CAPACITY_VERDICT_DERIVED)
 
     # Months that predate the first scan were never watched -- their activity is reconstructed
     # from the API's dates. Flagged, not dropped: the backlog they describe is real and
@@ -1229,46 +1308,9 @@ def capacity_by_month(
             "left",
         )
 
-    # Scan-grain summary attached to every month row, so one table answers both "how did July
-    # go" and "are we gaining ground overall" without a second read.
-    #
-    # Reconstructed months are excluded alongside partial ones, and for the same reason: the
-    # headline "we close about 1 in N" is a claim about throughput we measured. On a register
-    # whose history was rebuilt from bronze this can leave few months standing, or none --
-    # which is why `months_counted` is published beside it. A small honest sample beats a large
-    # confident one built out of months nobody watched.
-    counted = months.filter(
-        ~F.col("partial") & ~F.col("reconstructed") & F.col("mmcr").isNotNull()
-    )
-    summary = counted.agg(
-        F.avg("mmcr").alias("mmcr_mean"),
-        F.avg("net_pct").alias("mean_net_pct"),
-        F.count(F.lit(1)).cast("long").alias("months_counted"),
-    ).crossJoin(months.agg(F.sum("net").cast("long").alias("net_total")))
-
-    summary = summary.withColumn(
-        # The P2P v3 idiom: "we close about 1 in N of the backlog each month".
-        "one_in_n",
-        F.when(F.col("mmcr_mean") > 0, 100 / F.col("mmcr_mean")),
-    ).withColumn(
-        "overall_verdict",
-        F.when(F.col("months_counted") > 0, _verdict(F.col("mean_net_pct"))),
-    ).drop("mean_net_pct")
-
-    return months.crossJoin(summary)
-
-
-def _verdict(net_pct: Column) -> Column:
-    """gaining / keeping-up / falling-behind, with a dead band around zero so a one-finding
-    swing cannot flip a month's verdict."""
-    return (
-        F.when(
-            net_pct.isNull() | (F.abs(net_pct) <= NET_CAPACITY_BAND_PCT),
-            F.lit("keeping-up"),
-        )
-        .when(net_pct > 0, F.lit("gaining"))
-        .otherwise(F.lit("falling-behind"))
-    )
+    # The scan-grain summary, as a window over the whole frame -- one scan and one population
+    # here. See CAPACITY_SUMMARY_DERIVED.
+    return derive(months, CAPACITY_SUMMARY_DERIVED)
 
 
 def capacity_populations(
@@ -1425,7 +1467,8 @@ def _per_asset(rows: DataFrame, observed_from=None) -> DataFrame:
     ).withColumn(
         "net_pct", safe_pct(F.col("closed") - F.col("opened"), F.col("open_at_start"))
     ).withColumn(
-        "verdict", F.when(F.col("net_pct").isNotNull(), _verdict(F.col("net_pct")))
+        "verdict",
+        F.expr(f"CASE WHEN net_pct IS NOT NULL THEN {_verdict_sql('net_pct')} END"),
     )
 
 

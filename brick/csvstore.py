@@ -68,6 +68,7 @@ from pyspark.sql.types import (
     LongType,
     MapType,
     ShortType,
+    StringType,
     StructType,
     TimestampType,
 )
@@ -265,7 +266,40 @@ def _renderer(data_type):
         return lambda v: "true" if v else "false"
     if isinstance(data_type, (IntegerType, LongType, ShortType)):
         return lambda v: str(int(v))
+    if isinstance(data_type, StructType):
+        return _struct_renderer(data_type)
     return str
+
+
+#: The field types a struct may hold and still round-trip through JSON exactly: JSON has
+#: numbers, booleans, strings and null, and nothing else -- no timestamp, no decimal.
+_JSON_SCALARS = (
+    BooleanType, IntegerType, LongType, ShortType, DoubleType, FloatType, StringType,
+)
+
+
+def _check_struct(data_type: StructType) -> None:
+    for field in data_type.fields:
+        if not isinstance(field.dataType, _JSON_SCALARS):
+            raise RuntimeError(
+                f"struct field {field.name}: {field.dataType.simpleString()} cannot survive a "
+                f"CSV round-trip inside a struct. Export that table as Delta, or flatten it."
+            )
+
+
+def _struct_renderer(data_type: StructType):
+    """A struct as one JSON object, keyed by field name -- ``metrics`` stores each gold family's
+    measures this way. JSON keeps the three things a CSV cell loses: ``null`` is not ``false``
+    and not ``0``, ``true`` is a boolean, and an integer has no ``.0``. ``allow_nan`` because a
+    double may legitimately be NaN and Python's reader takes it back."""
+    _check_struct(data_type)
+    names = [field.name for field in data_type.fields]
+
+    def render(value) -> str:
+        record = value.asDict() if hasattr(value, "asDict") else dict(value)
+        return json.dumps({name: record.get(name) for name in names}, allow_nan=True)
+
+    return render
 
 
 # --------------------------------------------------------------------------------- load
@@ -313,7 +347,13 @@ def load(
         with open(schema_path, encoding="utf-8") as fh:
             schema = StructType.fromJson(json.load(fh))
         rows = _read_csv(os.path.join(target, f"{name}.csv"), schema)
-        spark.createDataFrame(rows, schema).createOrReplaceTempView(name)
+        frame = spark.createDataFrame(rows, schema)
+        if attr == "metrics" and run_pipeline.legacy_metrics_columns(frame.columns):
+            # An export written in the flat layout, read in the struct one. Nothing is rewritten
+            # on disk: the next export writes the new layout, and a restore writes it to Delta,
+            # which is the only way a CSV register can be migrated -- its Delta side is scratch.
+            frame = run_pipeline.pack_legacy_metrics(frame)
+        frame.createOrReplaceTempView(name)
         found[attr] = name
 
     missing = [attr for attr in required if attr not in found]
@@ -399,7 +439,9 @@ def _parser(data_type):
         return lambda v: None if v == "" else Decimal(v)
     if isinstance(data_type, (TimestampType, DateType)):
         return _parse_timestamp_factory(isinstance(data_type, DateType))
-    if isinstance(data_type, (ArrayType, MapType, StructType)):
+    if isinstance(data_type, StructType):
+        return _struct_parser(data_type)
+    if isinstance(data_type, (ArrayType, MapType)):
         # Nothing in this register has one, and guessing at a rendering that round-trips would
         # be inventing a format. Refused loudly here rather than corrupted quietly on read.
         raise RuntimeError(
@@ -407,6 +449,48 @@ def _parser(data_type):
             f"Export that table as Delta, or flatten the column first."
         )
     return lambda v: None if v == "" else v
+
+
+def _struct_parser(data_type: StructType):
+    """The JSON object ``_struct_renderer`` wrote, back to a tuple in the sidecar's field order.
+
+    Each field goes through the same typing rule a flat column of its type would: an integer
+    field takes ``int``, a double takes ``float``, and ``null`` stays ``None`` -- never the
+    falsy value of its type. A key the sidecar declares and the object lacks is NULL, so an
+    export edited down by hand still reads; one it does not declare is refused, because the
+    sidecar is what this module trusts and a field outside it has no type to read it as.
+    """
+    _check_struct(data_type)
+
+    def typed(field_type, value):
+        if value is None:
+            return None
+        if isinstance(field_type, BooleanType):
+            if not isinstance(value, bool):
+                raise RuntimeError(f"{value!r} is not a boolean")
+            return value
+        if isinstance(field_type, (IntegerType, LongType, ShortType)):
+            return int(value)
+        if isinstance(field_type, (DoubleType, FloatType)):
+            return float(value)
+        return str(value)
+
+    fields = [(field.name, field.dataType) for field in data_type.fields]
+    names = {name for name, _ in fields}
+
+    def parse(value: str):
+        if value == "":
+            return None
+        record = json.loads(value)
+        extra = sorted(set(record) - names)
+        if extra:
+            raise RuntimeError(
+                f"struct value carries {extra}, which its sidecar does not declare -- re-export "
+                f"rather than editing the two apart"
+            )
+        return tuple(typed(field_type, record.get(name)) for name, field_type in fields)
+
+    return parse
 
 
 def _parse_int(value: str) -> int:

@@ -27,9 +27,11 @@ remediation, and every row of another scope is absent from this scope's scan by 
 
 ``metrics`` is one table holding what used to be the scan log and every gold table -- except
 the sensitivity family, which is not published at all any more (`panels.rule_sweep` recomputes
-it from the lifecycles). Every row carries ``scan_id``, ``scan_ts``, ``scope`` and ``family``;
-the rest of its columns belong to one family and are NULL on the other families' rows, which
-is what ``mergeSchema`` on the append gives for free:
+it from the lifecycles). Every row carries ``scan_id``, ``scan_ts``, ``scope`` and ``family``.
+The commit record's columns are flat; a gold row carries its family's dimensions flat and its
+measures in one struct named after the family (``mttr.km_median``), so the table stays at
+seventeen columns however many measures there are -- see ``METRICS_COLUMNS``. Ratios and
+totals are not stored: they are derived on read from ``metrics.DERIVED``.
 
     family='scan'      the commit record -- one row per run: severities, total, deltas
     family='mttr'      scan_id x severity (+ OVERALL)
@@ -37,11 +39,11 @@ is what ``mergeSchema`` on the append gives for free:
     family='capacity'  scan_id x month x population
     family='assets'    scan_id x asset_group x population
 
-A read that does not filter on ``family`` blends grains that share no key, so every read
-filters: ``panels.register_views`` publishes one session view per family and nothing else in
-this tree reads the table directly. For people querying by hand, ``publish_gold`` also replaces
-a persisted view per family beside the table (``<metrics>_mttr`` and so on), with the filter and
-only that family's columns -- see ``publish_family_views``.
+A read that does not filter on ``family`` blends grains that share no key, so every read goes
+through ``unpack_family``: ``panels.register_views`` publishes one session view per family from
+it, and nothing else in this tree reads the table directly. For people querying by hand,
+``publish_gold`` also replaces a persisted view per family beside the table (``<metrics>_mttr``
+and so on): the same rows, flat, derived columns included -- see ``publish_family_views``.
 
 Silver -- the typed projection of bronze -- is **not** a table. It is computed in memory for
 the scan being built and re-derived from bronze by anything that needs it later (see
@@ -64,7 +66,7 @@ remediated by disappearing from the API was never counted as resolved at all. Th
 the ledger's observed lifecycles instead (``ledger.lifecycle_frame``). The snapshot-only figures
 used to be published beside them as ``snap_*`` columns; they are not any more, because nothing
 read them and every one is a recomputation over bronze (``panels`` makes exactly that comparison
-from bronze where a page wants it). ``RETIRED_METRICS_COLUMNS`` lists what left the table.
+from bronze where a page wants it).
 """
 
 from __future__ import annotations
@@ -78,7 +80,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Optional
 
-from pyspark.sql import Row, SparkSession
+from pyspark.sql import DataFrame, Row, SparkSession
 from pyspark.sql import functions as F
 
 MODULE_VERSION = "3.0"
@@ -533,10 +535,10 @@ def ensure_tables(spark: SparkSession, tables: Tables) -> None:
 
     ``metrics`` is created from ``METRICS_BASE_SCHEMA`` -- the commit record's columns plus
     ``family`` -- and not through ``create_clustered``, because it has no clustering spec (see
-    ``CLUSTERING``). Its gold columns are not declared here at all: they arrive through
-    ``mergeSchema`` on the first append that carries them, exactly as ``population`` already
-    does. Declaring them would be a second copy of what the gold frames
-    project, and projecting them is what makes widening one a one-line change.
+    ``CLUSTERING``). Its gold columns -- the dims and one struct per family, see
+    ``METRICS_COLUMNS`` -- are not declared here: they arrive through ``mergeSchema`` on the
+    first gold append, exactly as ``population`` always has. Creating them empty would make a
+    register that has never published gold look as though it had.
 
     Bronze is **not** created here even though it is clustered too. It is created by whatever
     first writes it -- see ``ingest_to_bronze`` -- so that a register which has never been
@@ -556,6 +558,9 @@ def ensure_tables(spark: SparkSession, tables: Tables) -> None:
         empty = spark.createDataFrame([], METRICS_BASE_SCHEMA).write.format("delta")
         path = as_path(tables.metrics)
         empty.save(path) if path else empty.saveAsTable(tables.metrics)
+    # Before anything writes, not after the ledger has moved: a flat-layout table found only at
+    # the gold append would leave this scan's commit record without gold.
+    check_metrics_layout(spark, tables)
 
 
 SCANS_SCHEMA = (
@@ -1085,59 +1090,204 @@ def closed_observed(spark: SparkSession, scan_log: list, scan_ts: str, deltas: d
 
 
 # --------------------------------------------- gold: build and publish the metric families
-# Columns the gold families used to publish and no longer do. None of them had a reader: the
-# `snap_*` four were the v1-vs-v2 comparison, recomputed from bronze wherever a page wants it;
-# `km_restriction_time` is τ, already carried by `km_median_lower_bound` on the rows that need
-# it; `mttr_mean` was the closed-only mean nothing displayed; `actionable_sla_compliant` is the
-# numerator of `actionable_sla_pct`; `risk_rule` was one sentence repeated on every `program`
-# row. A register written before this change still carries them -- `mergeSchema` adds columns
-# and never removes one -- until an operator runs `drop_retired_metrics_columns` once, with the
-# pipeline stopped (brick/docs/migrating.md). New rows leave them NULL in the meantime.
-RETIRED_METRICS_COLUMNS = (
-    "snap_km_median",
-    "snap_mttr_median",
-    "snap_resolved",
-    "snap_open",
-    "km_restriction_time",
-    "mttr_mean",
-    "actionable_sla_compliant",
-    "risk_rule",
+# The layout of `metrics`. Every row carries the four keys. A gold row also carries the
+# dimensions its family is keyed by -- top-level, so a reader filters on them without reaching
+# into a struct -- and that family's measures in ONE struct column named after the family. The
+# commit record (`SCANS_COLUMNS`) stays flat: it is the declared base that `import_bundle`,
+# `csvstore` and the idempotency guard all read and write.
+#
+# That is seventeen top-level columns however many measures the families grow. A measure a
+# family adds lands inside its struct, through mergeSchema's nested-field merge, and never
+# widens the table. The flat layout this replaced put every family's every column at the top
+# level -- 93 of them, NULL on every row of the other four families.
+#
+# Only what is measured is stored. Whatever is arithmetic over the measures -- `metrics.DERIVED`
+# -- is computed on read, by `unpack_family` and by the family views, from the same SQL text the
+# transforms compute it from. A stored copy of a ratio is one more value that can disagree with
+# the counts it was taken from.
+METRICS_KEYS = ("scan_id", "scan_ts", "scope", "family")
+
+#: The grain each gold family is keyed by within one scan.
+FAMILY_DIMS = {
+    FAMILY_MTTR: ("severity",),
+    FAMILY_PROGRAM: ("severity",),
+    FAMILY_CAPACITY: ("population", "month"),
+    FAMILY_ASSETS: ("population", "asset_group"),
+}
+DIM_TYPES = {
+    "severity": "string",
+    "population": "string",
+    "month": "timestamp",
+    "asset_group": "string",
+}
+
+#: The measures each gold family stores, in struct order.
+#:
+#: Declared rather than taken from whatever the transforms return, because three things need it
+#: exact: `pack_family` refuses a frame that computes a column listed nowhere -- otherwise a new
+#: measure would be dropped without a word -- `pack_legacy_metrics` reads a flat register
+#: through it, and the order is what a nested append matches on.
+FAMILY_MEASURES = {
+    FAMILY_MTTR: (
+        "mttr_median", "resolved", "open", "open_age_p50", "open_age_p90", "sla_compliant",
+        "sla_target", "km_events", "km_censored", "km_median", "km_rmst", "km_truncated",
+        "km_median_lower_bound", "resolved_api", "resolved_disappeared",
+        "mttr_actionable_mean", "mttr_actionable_median", "actionable_resolved",
+        "actionable_age_p50", "actionable_age_p90", "awaiting_vendor_fix_count",
+        "actionable_sla_compliant",
+    ),
+    FAMILY_PROGRAM: ("tp", "fp", "fn", "tn", "unknown_remediated", "unknown_open"),
+    FAMILY_CAPACITY: (
+        "opened", "closed", "open_at_start", "partial", "reconstructed", "closed_observed",
+    ),
+    FAMILY_ASSETS: (
+        "assets", "density_p25", "density_p50", "density_p75", "open_findings",
+        "assets_with_high_risk_pct", "asset_coverage_p50", "assets_with_high_risk", "mmcr_p50",
+        "falling_behind_pct", "maintaining_pct", "gaining_pct", "assets_flowing",
+        "km_median_days", "km_median_lower_bound", "window_months",
+    ),
+}
+
+#: The window a family's derived columns are taken over on read: one scan of one scope -- and
+#: one population, for capacity -- which is the whole frame the transforms derive them over.
+FAMILY_WINDOW = {
+    FAMILY_MTTR: "PARTITION BY scan_id, scope",
+    FAMILY_CAPACITY: "PARTITION BY scan_id, scope, population",
+}
+
+#: Every column `metrics` may carry at its top level, in table order.
+METRICS_COLUMNS = (
+    *SCANS_COLUMNS,
+    "family",
+    *dict.fromkeys(d for dims in FAMILY_DIMS.values() for d in dims),
+    *GOLD_FAMILIES,
 )
 
 
-def drop_retired_metrics_columns(spark: SparkSession, tables: Tables) -> list:
-    """Rewrite ``metrics`` without ``RETIRED_METRICS_COLUMNS``. Returns the columns it dropped.
+def pack_family(frame: DataFrame, family: str) -> DataFrame:
+    """One gold family's frame in the stored layout: keys, dims, and its measures as a struct.
 
-    A one-off operator step, not part of a run, for the same reason the clustering migration is
-    one: it rewrites a production table, and that is not something to do silently on the next
-    scheduled run. Run it with the pipeline stopped -- an append that lands between the read and
-    the overwrite is lost.
+    The family's derived columns are dropped -- they are recomputed on every read -- and any
+    other column is refused, because a measure the transforms compute and ``FAMILY_MEASURES``
+    does not list would otherwise vanish on the way to the table.
+    """
+    dims = FAMILY_DIMS[family]
+    known = {*METRICS_KEYS, *dims, *FAMILY_MEASURES[family], *metrics.derived_names(family)}
+    unknown = [c for c in frame.columns if c not in known]
+    if unknown:
+        raise RuntimeError(
+            f"the {family} family computes {unknown}, which is neither a measure in "
+            f"FAMILY_MEASURES[{family!r}] nor derived in metrics.DERIVED. Add it to one of them."
+        )
+    return frame.select(
+        *METRICS_KEYS, *dims, F.struct(*FAMILY_MEASURES[family]).alias(family)
+    )
 
-    An overwrite with ``overwriteSchema`` rather than ``ALTER TABLE ... DROP COLUMN``: Delta only
-    drops a column under column mapping, and enabling that is a one-way reader/writer protocol
-    upgrade that every reader of the table -- the data team's tools included -- would have to
-    support. ``metrics`` is a few hundred rows per scan, so rewriting it is cheap, and the
-    previous version stays reachable through time travel until ``VACUUM`` removes it.
 
-    Idempotent: a table that carries none of them is left untouched and ``[]`` comes back.
+def unpack_family(published: DataFrame, family: str) -> DataFrame:
+    """One family's rows of ``metrics``, flat, with its derived columns computed.
+
+    The read side of ``pack_family``: ``scan_id``, ``scan_ts``, ``scope``, the family's dims, its
+    measures out of the struct, then ``metrics.DERIVED`` over them. This is the shape the family
+    had when every column was stored, so a reader -- ``panels``, a test, a notebook -- sees the
+    same columns it always did. ``family`` is left off: it is how the rows were chosen.
+    """
+    rows = published.where(F.col("family") == family)
+    if family == FAMILY_SCAN:
+        return rows.select(*SCANS_COLUMNS)
+    flat = rows.select("scan_id", "scan_ts", "scope", *FAMILY_DIMS[family], f"{family}.*")
+    return metrics.derive(flat, metrics.DERIVED.get(family, ()), FAMILY_WINDOW.get(family, ""))
+
+
+def read_family(spark: SparkSession, tables: Tables, family: str) -> DataFrame:
+    """``unpack_family`` over the stored table."""
+    return unpack_family(spark.table(tables.metrics), family)
+
+
+# ------------------------------------------------------ the flat layout, and leaving it
+def legacy_metrics_columns(columns) -> list:
+    """Top-level columns of ``metrics`` the struct layout does not have -- the flat layout's."""
+    return [c for c in columns if c not in METRICS_COLUMNS]
+
+
+def pack_legacy_metrics(frame: DataFrame) -> DataFrame:
+    """A flat-layout ``metrics`` frame in the struct layout. Every row survives.
+
+    Each gold family's measures are folded into its struct, from whichever of them the flat
+    register had -- one written before a measure existed simply has a narrower struct, and the
+    next append adds the field. Everything else the flat layout carried is dropped: the derived
+    columns, which every read recomputes from the same counts, and the eight columns retired
+    before this (the ``snap_*`` four, ``km_restriction_time``, ``mttr_mean``, ``risk_rule``).
+    """
+    def column(name: str):
+        if name in frame.columns:
+            return F.col(name)
+        return F.lit(None).cast(DIM_TYPES[name]).alias(name)
+
+    out = frame.where(F.col("family") == FAMILY_SCAN).select(*SCANS_COLUMNS, "family")
+    for family in GOLD_FAMILIES:
+        present = [m for m in FAMILY_MEASURES[family] if m in frame.columns]
+        if not present:
+            continue
+        rows = frame.where(F.col("family") == family).select(
+            *METRICS_KEYS,
+            *[column(d) for d in FAMILY_DIMS[family]],
+            F.struct(*present).alias(family),
+        )
+        out = out.unionByName(rows, allowMissingColumns=True)
+    return out
+
+
+def migrate_metrics_layout(spark: SparkSession, tables: Tables) -> list:
+    """Rewrite a flat-layout ``metrics`` in the struct layout. Returns the flat columns it folded.
+
+    A one-off operator step, not part of a run, for the same reason the clustering migration
+    is one: it rewrites a production table, and that is not something to do silently on the
+    next scheduled run. Run it with the pipeline stopped -- an append that lands between the
+    read and the overwrite is lost. Until it has run, ``check_metrics_layout`` refuses every
+    write, because appending structs to a flat table would leave the history in columns no
+    reader looks at any more.
+
+    An overwrite with ``overwriteSchema``: Delta cannot drop columns without column mapping, a
+    one-way protocol upgrade every reader of the table would have to support. ``metrics`` is a
+    few hundred rows per scan, so the rewrite is cheap, and the previous version stays reachable
+    by time travel until ``VACUUM`` removes it.
+
+    Idempotent: a table already in the struct layout is left alone and ``[]`` comes back.
     """
     if not table_exists(spark, tables.metrics):
         return []
     current = spark.table(tables.metrics)
-    retired = [c for c in current.columns if c in RETIRED_METRICS_COLUMNS]
-    if not retired:
+    legacy = legacy_metrics_columns(current.columns)
+    if not legacy:
         return []
     writer = (
-        current.drop(*retired)
+        pack_legacy_metrics(current)
         .write.format("delta")
         .mode("overwrite")
         .option("overwriteSchema", "true")
     )
     path = as_path(tables.metrics)
     writer.save(path) if path else writer.saveAsTable(tables.metrics)
-    return retired
+    return legacy
 
 
+def check_metrics_layout(spark: SparkSession, tables: Tables) -> None:
+    """Refuse to write to a ``metrics`` table still in the flat layout."""
+    if not table_exists(spark, tables.metrics):
+        return
+    legacy = legacy_metrics_columns(spark.table(tables.metrics).columns)
+    if legacy:
+        raise RuntimeError(
+            f"{tables.metrics} is still in the flat layout ({len(legacy)} columns this "
+            f"pipeline no longer writes, e.g. {', '.join(legacy[:3])}). Appending to it would "
+            f"put this scan's figures in structs and leave every earlier scan in columns no "
+            f"reader looks at. Stop the job and run run_pipeline.migrate_metrics_layout once "
+            f"-- see brick/docs/migrating.md, Moving metrics to the struct layout."
+        )
+
+
+# ------------------------------------------------------------------- the family views
 def family_view(tables: Tables, family: str) -> Optional[str]:
     """The name of ``family``'s view over ``metrics`` -- ``<metrics>_<family>`` -- or ``None``.
 
@@ -1149,33 +1299,44 @@ def family_view(tables: Tables, family: str) -> Optional[str]:
     return f"{tables.metrics}_{family}"
 
 
-def publish_family_views(spark: SparkSession, tables: Tables, columns_by_family: dict) -> list:
-    """``CREATE OR REPLACE`` one view per family, holding only that family's columns.
+def family_view_sql(tables: Tables, family: str) -> str:
+    """The ``SELECT`` behind ``family``'s view: ``unpack_family`` written as SQL.
 
-    ``metrics`` is as wide as the union of every family -- that is the price of publishing gold
-    as one commit -- but each family fills a fraction of it and the rest is NULL. A view per
-    family is the table as a reader of one grain wants it: the family filter built in, so it
-    cannot be forgotten, and only the columns that family writes, so ``SELECT *`` is readable.
+    One subquery layer per derived column, because a derived column may read the one before it
+    and SQL cannot refer to an alias in the ``SELECT`` that defines it. The expressions are
+    ``metrics.DERIVED``'s own text, so the view and every other reader compute the same thing.
+    """
+    if family == FAMILY_SCAN:
+        columns = ", ".join(f"`{c}`" for c in SCANS_COLUMNS)
+        return f"SELECT {columns} FROM {tables.metrics} WHERE family = '{family}'"
+    dims = "".join(f", `{d}`" for d in FAMILY_DIMS[family])
+    sql = (
+        f"SELECT `scan_id`, `scan_ts`, `scope`{dims}, `{family}`.* "
+        f"FROM {tables.metrics} WHERE family = '{family}'"
+    )
+    over = FAMILY_WINDOW.get(family, "")
+    for layer, (name, expr) in enumerate(metrics.DERIVED.get(family, ())):
+        sql = f"SELECT *, {expr.replace('{over}', over)} AS `{name}` FROM ({sql}) AS d{layer}"
+    return sql
 
-    The column lists are the published frames' own columns, passed in by the writer rather than
-    declared here, for the reason ``ensure_tables`` gives about ``METRICS_BASE_SCHEMA``: a
-    declared list would be a second copy of what the frames project. ``family`` itself is left
-    out -- the view's name is the filter.
 
-    Replaced on every publish, so a family that gains a column gains it in its view on the same
-    run. It needs nothing beyond what the job already holds: ``CREATE TABLE`` on the schema
-    covers views (brick/docs/deploy.md). Returns the views it wrote; none for a path register.
+def publish_family_views(spark: SparkSession, tables: Tables) -> list:
+    """``CREATE OR REPLACE`` one view per family over ``metrics``. Returns the views written.
+
+    The table as a reader of one grain wants it: the family filter built in, so it cannot be
+    forgotten; the measures out of their struct; and the derived columns computed -- so a view
+    has every column its family ever published, and ``SELECT *`` on it is readable.
+
+    Replaced on every publish, so a measure added to a family reaches its view on the same run.
+    It needs nothing beyond what the job already holds: ``CREATE TABLE`` on the schema covers
+    views (brick/docs/deploy.md). None for a path register -- see ``family_view``.
     """
     written = []
-    for family, columns in columns_by_family.items():
+    for family in METRICS_FAMILIES:
         view = family_view(tables, family)
         if view is None:
             continue
-        projection = ", ".join(f"`{c}`" for c in columns if c != "family")
-        spark.sql(
-            f"CREATE OR REPLACE VIEW {view} AS SELECT {projection} "
-            f"FROM {tables.metrics} WHERE family = '{family}'"
-        )
+        spark.sql(f"CREATE OR REPLACE VIEW {view} AS {family_view_sql(tables, family)}")
         written.append(view)
     return written
 
@@ -1250,6 +1411,7 @@ def publish_gold(
     scan_log: list,
     deltas: dict,
     summary: bool = True,
+    views: bool = True,
 ) -> None:
     """The gold families for one scan, published as ONE append to ``metrics``.
 
@@ -1259,10 +1421,11 @@ def publish_gold(
     and the ledger -- which is what makes that resume a republish rather than a second
     reconcile.
 
-    **One append, not one per family.** The families have different columns, so they are folded with
-    ``unionByName(allowMissingColumns=True)`` and each family's own columns come back NULL on
-    the other families' rows. That is what makes gold atomic: one Delta commit, so
-    ``gold_missing`` can never see half a scan.
+    **One append, not one per family.** Each family is packed into the stored layout -- keys,
+    its dims, its measures as one struct (``pack_family``) -- and the four are folded with
+    ``unionByName(allowMissingColumns=True)``, so a row's other families' structs and dims are
+    NULL. That is what makes gold atomic: one Delta commit, so ``gold_missing`` can never see
+    half a scan.
 
     ``scan_log`` must be the log as it stood **before** this scan's commit record. Both readers
     of it here add this scan themselves, so a log that already contains it counts this run's
@@ -1344,24 +1507,22 @@ def publish_gold(
 
     # The whole of gold in one Delta commit, which is what `gold_missing` relies on: a scan's
     # families are all present or all absent, never some of each.
-    union = mttr
-    for frame in (program, capacity, assets):
-        union = union.unionByName(frame, allowMissingColumns=True)
+    check_metrics_layout(spark, tables)
+    frames = {
+        FAMILY_MTTR: mttr, FAMILY_PROGRAM: program, FAMILY_CAPACITY: capacity,
+        FAMILY_ASSETS: assets,
+    }
+    union = None
+    for family in GOLD_FAMILIES:
+        packed = pack_family(frames[family], family)
+        union = packed if union is None else union.unionByName(packed, allowMissingColumns=True)
     write_append(union, tables.metrics)
 
     # After the commit, never before: a view is metadata over columns the append just added,
-    # and a failure here leaves gold complete and the previous views in place.
-    publish_family_views(
-        spark,
-        tables,
-        {
-            FAMILY_SCAN: [*SCANS_COLUMNS, "family"],
-            FAMILY_MTTR: mttr.columns,
-            FAMILY_PROGRAM: program.columns,
-            FAMILY_CAPACITY: capacity.columns,
-            FAMILY_ASSETS: assets.columns,
-        },
-    )
+    # and a failure here leaves gold complete and the previous views in place. `views=False` is
+    # the replay in `rebuild_ledger`, which publishes them once at the end instead of per scan.
+    if views:
+        publish_family_views(spark, tables)
 
     if summary:
         summarize(
@@ -1686,6 +1847,9 @@ def rebuild_ledger(
     rule = rule or rule_for_scope(scope)
     if not table_exists(spark, tables.bronze):
         raise RuntimeError(f"cannot rebuild: {tables.bronze} does not exist yet")
+    # Before the DELETEs below: a flat-layout table would take this scope's rows away and then
+    # refuse the first republish, leaving the scope with no metrics at all.
+    check_metrics_layout(spark, tables)
 
     scans = [
         (r["scan_id"], r["scan_ts"])
@@ -1740,7 +1904,7 @@ def rebuild_ledger(
             publish_gold(
                 spark, tables, scan_id=scan_id, scan_ts=ts_iso, scope=scope,
                 severities=severities, rule=rule, scan_log=scan_log, deltas=deltas,
-                summary=False,
+                summary=False, views=False,
             )
         finally:
             silver.unpersist()
@@ -1764,6 +1928,8 @@ def rebuild_ledger(
             f"[rebuild] {index}/{len(scans)} {scan_id} -> {deltas['new_count']} new, "
             f"{deltas['resolved_count']} resolved, {deltas['reopened_count']} reopened"
         )
+    if scans:
+        publish_family_views(spark, tables)
     return len(scans)
 
 

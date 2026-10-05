@@ -39,10 +39,12 @@ pytest.importorskip(
 
 from pyspark.sql import DataFrame, Row  # noqa: E402
 from pyspark.sql import functions as F  # noqa: E402
+from pyspark.sql.types import StructType  # noqa: E402
 
 BRICK_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BRICK_DIR))
 
+import metrics  # noqa: E402
 import run_pipeline  # noqa: E402
 from config import SCANS_COLUMNS  # noqa: E402
 
@@ -448,7 +450,8 @@ def test_every_scan_carries_every_family(spark, tables):
 
 
 def test_the_union_schema_is_the_elementwise_merge(spark, tables, monkeypatch):
-    """The table's schema is exactly the element-wise merge of the family frames' schemas.
+    """The table's schema is exactly the element-wise merge of the packed family frames'
+    schemas -- keys, dims and one struct per family.
 
     **The route taken**: the family frames are captured as `publish_gold` folds them, by
     recording the receiver and argument of every `unionByName` call whose frames carry a
@@ -499,8 +502,14 @@ def test_the_union_schema_is_the_elementwise_merge(spark, tables, monkeypatch):
             assert merged[field.name] == field.dataType, field.name
         merged[field.name] = field.dataType
 
-    stored = {f.name: f.dataType for f in spark.table(tables.metrics).schema.fields}
-    assert stored == merged
+    # Compared as type strings, which carry no nullability: Delta stores every nested field as
+    # nullable, while a frame may know a count inside a struct can never be NULL. The top-level
+    # comparison never saw nullability either -- it lives on the field, not in its type.
+    stored = {
+        f.name: f.dataType.simpleString() for f in spark.table(tables.metrics).schema.fields
+    }
+    assert stored == {name: t.simpleString() for name, t in merged.items()}
+    assert set(stored) <= set(run_pipeline.METRICS_COLUMNS)
 
 
 # ----------------------------------------------------------- (d) path and catalog registers
@@ -579,48 +588,119 @@ def test_closed_observed_counts_this_scans_resolutions_in_its_month(spark):
     assert sum(counted.values()) == 23
 
 
-# ------------------------------------------------- (f) retired columns and the family views
+# ------------------------------------------- (f) the struct layout, read back and migrated
 
 
-def test_no_retired_column_reaches_the_table(spark, tables):
-    """**Failure of presence**: a retired column that some family frame still projects would
-    come straight back through `mergeSchema` on the next append, and the table would be as wide
-    as before the columns were dropped -- with nothing failing to say so."""
-    run_scan(spark, tables, [node("f-1"), node("f-2")], "s1", TS["s1"])
-    columns = set(spark.table(tables.metrics).columns)
-    assert columns.isdisjoint(run_pipeline.RETIRED_METRICS_COLUMNS), (
-        columns & set(run_pipeline.RETIRED_METRICS_COLUMNS)
+def settled(rows) -> list:
+    """Rows as dicts, doubles rounded to 12 significant digits, in a fixed order.
+
+    Rounded because a derived column is an aggregate over a window on read -- `mmcr_mean` is
+    an `avg` -- and the order Spark feeds a window its rows depends on the file layout, which a
+    migration or a second scan changes. That moves the last bit or two of a sum and nothing a
+    reader could see, the same reasoning `tools/bench_pipeline.py` rounds its dumps by.
+    """
+    def settle(value):
+        return float(f"{value:.12g}") if isinstance(value, float) else value
+
+    return sorted(
+        ({k: settle(v) for k, v in (r if isinstance(r, dict) else r.asDict()).items()}
+         for r in rows),
+        key=lambda row: repr(sorted(row.items())),
     )
 
 
-def test_each_family_view_is_its_family_and_only_its_columns(spark, tables):
-    """One view per family: the same rows as filtering the table, and none of the other
-    families' columns.
+def unpacked(spark, tables, family) -> list:
+    """One family read back flat, settled."""
+    return settled(run_pipeline.read_family(spark, tables, family).collect())
 
-    **Failure of presence** in both directions. A view that drops a column a family writes hides
-    a published number from the person reading the view, so together the views must cover every
-    column of the table but `family`; and a view narrower than the table in rows or wider in
-    columns is the family filter done wrong. The scan view is checked against the commit record
-    exactly, since that one is declared rather than projected.
+
+def flatten_to_legacy(spark, tables) -> None:
+    """Rewrite `metrics` the way the flat layout stored it: every family's columns at the top
+    level, derived ones included, plus columns long retired. What a register written before
+    the struct layout looks like."""
+    flat = None
+    for family in run_pipeline.METRICS_FAMILIES:
+        rows = run_pipeline.read_family(spark, tables, family).withColumn(
+            "family", F.lit(family)
+        )
+        if family == run_pipeline.FAMILY_MTTR:
+            rows = rows.withColumn("snap_open", F.lit(1).cast("long")).withColumn(
+                "mttr_mean", F.lit(1.0)
+            )
+        if family == run_pipeline.FAMILY_PROGRAM:
+            rows = rows.withColumn("risk_rule", F.lit("a rule, in words"))
+        flat = rows if flat is None else flat.unionByName(rows, allowMissingColumns=True)
+    writer = flat.write.format("delta").mode("overwrite").option("overwriteSchema", "true")
+    path = run_pipeline.as_path(tables.metrics)
+    writer.save(path) if path else writer.saveAsTable(tables.metrics)
+
+
+def test_the_table_is_its_keys_dims_and_one_struct_per_family(spark, tables):
+    """Seventeen top-level columns at most, however many measures the families carry.
+
+    **Failure of presence**: a measure that escaped its struct widens the table again, one
+    column at a time, and nothing fails to say so. Each struct's fields are checked against
+    `FAMILY_MEASURES` in order, because the order is what a nested append matches on.
     """
     run_scan(spark, tables, [node("f-1"), node("f-2")], "s1", TS["s1"])
     run_scan(spark, tables, [node("f-1")], "s2", TS["s2"])
 
-    table = spark.table(tables.metrics)
-    covered: set = set()
+    schema = spark.table(tables.metrics).schema
+    assert set(schema.names) <= set(run_pipeline.METRICS_COLUMNS)
+    assert len(run_pipeline.METRICS_COLUMNS) == 17
+    for family in run_pipeline.GOLD_FAMILIES:
+        struct = schema[family].dataType
+        assert isinstance(struct, StructType), family
+        assert tuple(struct.names) == run_pipeline.FAMILY_MEASURES[family], family
+        assert set(struct.names).isdisjoint(metrics.derived_names(family)), (
+            f"{family} stores a column it derives on read"
+        )
+
+
+def test_what_is_read_back_is_what_the_transforms_computed(spark, tables, monkeypatch):
+    """Every column of every gold family, derived ones included, reads back from the table
+    exactly as the transform computed it before it was packed.
+
+    **Failure of value**: the derived columns are no longer stored, so each read recomputes
+    them -- over a window of the whole table rather than the one scan the transform saw. A
+    window partitioned too wide (every scan's months in one capacity summary) or a formula that
+    differs from the transform's would publish a different number under the same name, and
+    both are caught here, on a second scan, where a too-wide window has something to blend.
+    """
+    computed: dict = {}
+    real_pack = run_pipeline.pack_family
+
+    def recording(frame, family):
+        computed[family] = [r.asDict() for r in frame.drop("family").collect()]
+        return real_pack(frame, family)
+
+    run_scan(spark, tables, [node("f-1"), node("f-2"), node("f-3")], "s1", TS["s1"])
+    monkeypatch.setattr(run_pipeline, "pack_family", recording)
+    run_scan(spark, tables, [node("f-1")], "s2", TS["s2"])
+    monkeypatch.undo()
+
+    assert set(computed) == set(run_pipeline.GOLD_FAMILIES)
+    for family, rows in computed.items():
+        read = run_pipeline.read_family(spark, tables, family).where(F.col("scan_id") == "s2")
+        assert settled(read.collect()) == settled(rows), family
+
+
+def test_each_family_view_is_the_family_read_back(spark, tables):
+    """The persisted views are `unpack_family` in SQL: the same columns, the same rows.
+
+    **Failure of value**: the view computes the derived columns from the same expressions in
+    nested subqueries rather than `withColumn`s -- a layer applied out of order, or a window
+    clause filled in differently, would give a view that disagrees with every page.
+    """
+    run_scan(spark, tables, [node("f-1"), node("f-2")], "s1", TS["s1"])
+    run_scan(spark, tables, [node("f-1")], "s2", TS["s2"])
+
     for family in run_pipeline.METRICS_FAMILIES:
         view = spark.table(run_pipeline.family_view(tables, family))
-        assert "family" not in view.columns, family
-        assert {"scan_id", "scan_ts", "scope"} <= set(view.columns), family
-        assert view.count() == table.filter(F.col("family") == family).count(), family
-        assert view.count() > 0 or family == run_pipeline.FAMILY_ASSETS, family
-        covered |= set(view.columns)
-
-    assert covered == set(table.columns) - {"family"}
-    scan_view = spark.table(run_pipeline.family_view(tables, run_pipeline.FAMILY_SCAN))
-    assert scan_view.columns == SCANS_COLUMNS
-    mttr_view = spark.table(run_pipeline.family_view(tables, run_pipeline.FAMILY_MTTR))
-    assert "population" not in mttr_view.columns, "another family's column leaked into mttr"
+        expected = run_pipeline.read_family(spark, tables, family)
+        assert view.columns == expected.columns, family
+        assert settled(view.collect()) == settled(expected.collect()), family
+    assert "family" not in spark.table(run_pipeline.family_view(tables, "mttr")).columns
 
 
 def test_a_path_register_gets_no_views(spark, path_tables):
@@ -628,44 +708,83 @@ def test_a_path_register_gets_no_views(spark, path_tables):
     run_scan(spark, path_tables, [node("f-1")], "s1", TS["s1"])
     for family in run_pipeline.METRICS_FAMILIES:
         assert run_pipeline.family_view(path_tables, family) is None
-    assert run_pipeline.publish_family_views(spark, path_tables, {"mttr": ["scan_id"]}) == []
+    assert run_pipeline.publish_family_views(spark, path_tables) == []
+
+
+def test_a_measure_listed_nowhere_is_refused(spark):
+    """A column a transform computes and neither `FAMILY_MEASURES` nor `metrics.DERIVED` names
+    would be dropped by the packing without a word. Refused instead, naming it."""
+    frame = spark.createDataFrame(
+        [("s1", None, SCOPE, "program", "HIGH", 1, 0, 0, 0, 0, 0, 7)],
+        "scan_id STRING, scan_ts TIMESTAMP, scope STRING, family STRING, severity STRING, "
+        "tp LONG, fp LONG, fn LONG, tn LONG, unknown_remediated LONG, unknown_open LONG, "
+        "new_measure LONG",
+    )
+    with pytest.raises(RuntimeError, match="new_measure"):
+        run_pipeline.pack_family(frame, "program")
 
 
 @pytest.mark.parametrize("mode", ["catalog", "path"])
-def test_drop_retired_columns_rewrites_an_old_register(spark, tables, path_tables, mode):
-    """A register written before the columns retired keeps them -- `mergeSchema` never removes
-    one -- until `drop_retired_metrics_columns` rewrites it. Every row survives, every other
-    value is unchanged, and a second call is a no-op.
+def test_a_flat_register_is_refused_then_migrated(spark, tables, path_tables, mode):
+    """A register in the flat layout is refused for writing until `migrate_metrics_layout`
+    rewrites it -- and every family reads back from the migrated table exactly as it did.
+
+    **Failure of absence**: appending structs to a flat table would succeed and leave every
+    earlier scan in columns no reader looks at any more -- the trend would start at the first
+    scan after the deploy, with nothing to say why. Hence the refusal. And the migration must
+    lose nothing: not a row, not a value, derived columns included, since those are now
+    recomputed from the measures the migration folded.
     """
     tbl = tables if mode == "catalog" else path_tables
     run_scan(spark, tbl, [node("f-1"), node("f-2")], "s1", TS["s1"])
-    before = metrics_rows(spark, tbl)
-
-    # What an older register looks like: the same rows, plus the retired columns, which the
-    # older pipeline filled on its own family's rows. One legacy row with all of them set is
-    # enough to widen the schema the way `mergeSchema` did.
-    legacy = spark.table(tbl.metrics).limit(1)
-    for column in run_pipeline.RETIRED_METRICS_COLUMNS:
-        value = F.lit("rule") if column == "risk_rule" else F.lit(1.0)
-        legacy = legacy.withColumn(column, value)
-    legacy = legacy.withColumn("scan_id", F.lit("legacy"))
-    run_pipeline.write_append(legacy, tbl.metrics)
-    assert set(run_pipeline.RETIRED_METRICS_COLUMNS) <= set(spark.table(tbl.metrics).columns)
-
-    dropped = run_pipeline.drop_retired_metrics_columns(spark, tbl)
-    assert sorted(dropped) == sorted(run_pipeline.RETIRED_METRICS_COLUMNS)
-
-    after = spark.table(tbl.metrics)
-    assert set(after.columns).isdisjoint(run_pipeline.RETIRED_METRICS_COLUMNS)
-    assert after.filter(F.col("scan_id") == "legacy").count() == 1
-    assert metrics_rows(spark, tbl) == sorted(
-        before + [r.asDict() for r in after.filter(F.col("scan_id") == "legacy").collect()],
-        key=lambda row: repr(sorted(row.items())),
-    )
-
-    assert run_pipeline.drop_retired_metrics_columns(spark, tbl) == []
-    # And the register still takes the next scan.
     run_scan(spark, tbl, [node("f-1")], "s2", TS["s2"])
-    assert set(spark.table(tbl.metrics).columns).isdisjoint(
-        run_pipeline.RETIRED_METRICS_COLUMNS
-    )
+    before = {f: unpacked(spark, tbl, f) for f in run_pipeline.METRICS_FAMILIES}
+
+    flatten_to_legacy(spark, tbl)
+    assert len(spark.table(tbl.metrics).columns) > 50
+    with pytest.raises(RuntimeError, match="migrate_metrics_layout"):
+        run_pipeline.check_metrics_layout(spark, tbl)
+    with pytest.raises(RuntimeError, match="flat layout"):
+        run_pipeline.ensure_tables(spark, tbl)
+
+    folded = run_pipeline.migrate_metrics_layout(spark, tbl)
+    assert {"snap_open", "mttr_mean", "risk_rule", "km_median", "tp"} <= set(folded)
+    assert set(spark.table(tbl.metrics).columns) <= set(run_pipeline.METRICS_COLUMNS)
+    for family, rows in before.items():
+        assert unpacked(spark, tbl, family) == rows, family
+
+    assert run_pipeline.migrate_metrics_layout(spark, tbl) == []
+    run_pipeline.check_metrics_layout(spark, tbl)
+    # And the register takes the next scan, into the same structs.
+    run_scan(spark, tbl, [node("f-1")], "s3", TS["s3"])
+    scans = {r["scan_id"] for r in run_pipeline.read_family(spark, tbl, "mttr").collect()}
+    assert scans == {"s1", "s2", "s3"}
+    assert set(spark.table(tbl.metrics).columns) <= set(run_pipeline.METRICS_COLUMNS)
+
+
+def test_a_flat_csv_export_loads_in_the_struct_layout(spark, tables, tmp_path):
+    """A CSV register exported before the struct layout reads back in it -- and the structs
+    themselves survive a CSV round-trip, NULLs and booleans included.
+
+    A CSV register's Delta side is scratch, rebuilt from the export each run, so loading is
+    the only place it can be migrated; and the next export then writes the new layout.
+    """
+    import csvstore
+
+    run_scan(spark, tables, [node("f-1"), node("f-2")], "s1", TS["s1"])
+    run_scan(spark, tables, [node("f-1")], "s2", TS["s2"])
+    before = {f: unpacked(spark, tables, f) for f in run_pipeline.METRICS_FAMILIES}
+
+    # The new layout, through CSV and back.
+    csvstore.export(spark, tables, str(tmp_path / "new"))
+    loaded = csvstore.load(spark, str(tmp_path / "new"), run_pipeline.DEFAULT_TABLE_PREFIX)
+    for family, rows in before.items():
+        assert unpacked(spark, loaded, family) == rows, family
+
+    # The old one: flat, read back packed.
+    flatten_to_legacy(spark, tables)
+    csvstore.export(spark, tables, str(tmp_path / "old"))
+    loaded = csvstore.load(spark, str(tmp_path / "old"), run_pipeline.DEFAULT_TABLE_PREFIX)
+    assert set(spark.table(loaded.metrics).columns) <= set(run_pipeline.METRICS_COLUMNS)
+    for family, rows in before.items():
+        assert unpacked(spark, loaded, family) == rows, family

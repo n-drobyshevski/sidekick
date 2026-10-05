@@ -63,10 +63,13 @@ and all (measured on duckdb 1.5.5, row counts equal to Spark's):
 
 ```sql
 INSTALL delta; LOAD delta;
-SELECT severity, km_median, mttr_actionable_median
+SELECT severity, mttr.km_median, mttr.mttr_actionable_median
 FROM   delta_scan('file:///tmp/lakecheck/wiz.db/wiz_metrics')
 WHERE  scope = 'os' AND family = 'mttr';
 ```
+
+Each gold family's measures sit in a struct named after it (`mttr.km_median`), and the ratios
+are not stored at all — see [`columns.md`](columns.md#wiz_metrics--the-commit-record-and-every-gold-family).
 
 `wiz_metrics` is the one table all three `devlake.run` invocations above wrote into — `scope`
 picks the register out of it, the same predicate every SQL recipe in this README carries against

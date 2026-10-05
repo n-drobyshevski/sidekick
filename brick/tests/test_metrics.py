@@ -517,6 +517,7 @@ def test_the_actionable_sla_is_inclusive_and_read_from_the_severity(spark):
     rows = [("CRITICAL", 7.0, None, False), ("CRITICAL", 7.5, None, False)]
     got = rows_by_severity(metrics.actionable_mttr_by_severity(actionable_frame(spark, rows)))
 
+    assert got["CRITICAL"]["actionable_sla_compliant"] == 1
     assert got["CRITICAL"]["actionable_sla_pct"] == pytest.approx(50.0)
     # A rate over an empty population is unknown, not 0%.
     empty = rows_by_severity(

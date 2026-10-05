@@ -117,19 +117,25 @@ captured, which is not the same as `false`. Always NULL for `sast`.
 ## `wiz_metrics` — the commit record and every gold family
 
 Append-only. Each scan appends one `scan` row, then all its gold rows in a single commit. The
-`family` column tells the grains apart, and each family uses only its own columns. Every other
-column is NULL on its rows.
+`family` column tells the grains apart.
 
-**Every query must filter on `scope` and `family`**, and on `population` for `capacity` and
-`assets`. Without those filters you mix grains that have no key in common, or you count every
-row twice. To get the latest figures, pin to the newest `scan_id` for that scope.
+**Read a family view, not the table.** Every run that publishes gold replaces one view per
+family beside the table — `wiz_metrics_scan`, `wiz_metrics_mttr`, `wiz_metrics_program`,
+`wiz_metrics_capacity` and `wiz_metrics_assets`. Each has the `family` filter built in and
+carries `scan_id`, `scan_ts`, `scope` and that family's columns, flat — exactly the columns
+listed below. You still filter on `scope`, and on `population` for `capacity` and `assets`.
+To get the latest figures, pin to the newest `scan_id` for that scope. A register on
+`--data_path` has no catalog, so it gets no views; read it through
+`run_pipeline.read_family`, which returns the same thing.
 
-**Or read a family view instead.** Every run that publishes gold also replaces one view per
-family — `wiz_metrics_scan`, `wiz_metrics_mttr`, `wiz_metrics_program`, `wiz_metrics_capacity`
-and `wiz_metrics_assets`, beside the table. Each has the `family` filter built in and carries
-only `scan_id`, `scan_ts`, `scope` and that family's own columns, so `SELECT *` is readable.
-You still filter on `scope`, and on `population` for `capacity` and `assets`. A register on
-`--data_path` has no catalog, so it gets no views.
+**What the table itself stores** is seventeen columns (`run_pipeline.METRICS_COLUMNS`): the
+four on every row, the commit record's five, the four dimensions the gold families are keyed by
+(`severity`, `population`, `month`, `asset_group`), and one struct per gold family named after
+it — `mttr`, `program`, `capacity`, `assets` — holding that family's **measures**. A query on
+the table reaches into the struct (`mttr.km_median`) and must filter on `scope` and `family`, or
+it mixes grains that have no key in common. Columns marked *derived* below are not stored at
+all: they are arithmetic over the measures, defined once as SQL in `metrics.DERIVED`, and every
+view and every page computes them on read.
 
 | `family` | One row per | Filter also on |
 | --- | --- | --- |
@@ -165,7 +171,8 @@ One row per completed scan. It is also how the pipeline knows what each scan loo
 
 ### `family = 'mttr'` — time to remediate, per severity
 
-Computed over every lifecycle in the ledger for this scope, open or resolved.
+Computed over every lifecycle in the ledger for this scope, open or resolved. *Derived:*
+`sla_pct`, `oldest_open_days`, `actionable_sla_pct`.
 
 | Column | Type | Description |
 | --- | --- | --- |
@@ -200,13 +207,15 @@ columns are NULL or 0, because `sast` has no vendor fix.
 | `actionable_age_p50` | double | Median days open since a fix became available, for open findings. |
 | `actionable_age_p90` | double | 90th percentile of the same. |
 | `awaiting_vendor_fix_count` | bigint | Open findings with no fix available yet. |
-| `actionable_sla_pct` | double | Share of `actionable_resolved` closed within SLA, counted from fix availability. Read it beside `sla_pct`, not subtracted from it, because the two denominators differ. |
+| `actionable_sla_compliant` | bigint | Findings resolved within SLA, counted from fix availability. |
+| `actionable_sla_pct` | double | `actionable_sla_compliant / actionable_resolved`. Read it beside `sla_pct`, not subtracted from it, because the two denominators differ. |
 
 ### `family = 'program'` — coverage and efficiency, per severity
 
 Each lifecycle is classified as high-risk, not high-risk or unknown by the scope's risk rule
 (the run log prints it in words on its header line). It is then crossed with remediated vs open. The formulas come from Cyentia's
-*Prioritization to Prediction* (P2P).
+*Prioritization to Prediction* (P2P). Only the six counts are stored — `tp`, `fp`, `fn`, `tn`,
+`unknown_remediated`, `unknown_open`; *every other column is derived* from them.
 
 | Column | Type | Description |
 | --- | --- | --- |
@@ -239,7 +248,8 @@ one alone can be pushed to 100%.
 ### `family = 'capacity'` — monthly throughput
 
 One row per UTC calendar month, from the population's first finding to the current month, and
-**once per `population`**. Months with no activity still get a row.
+**once per `population`**. Months with no activity still get a row. *Derived:* `mmcr`, `net`,
+`net_pct`, `verdict`, and the five summary columns.
 
 | Column | Type | Description |
 | --- | --- | --- |
@@ -295,16 +305,15 @@ branch, and its group is its `language`. Findings with no language fall into `UN
 
 ## Example queries
 
-The latest MTTR for one scope:
+The latest MTTR for one scope, from its view:
 
 ```sql
 WITH latest AS (
-  SELECT max_by(scan_id, scan_ts) AS scan_id
-  FROM wiz_metrics WHERE scope = 'sca' AND family = 'scan'
+  SELECT max_by(scan_id, scan_ts) AS scan_id FROM wiz_metrics_scan WHERE scope = 'sca'
 )
 SELECT severity, km_median, km_median_lower_bound, sla_pct, open, resolved
-FROM wiz_metrics JOIN latest USING (scan_id)
-WHERE scope = 'sca' AND family = 'mttr'
+FROM wiz_metrics_mttr JOIN latest USING (scan_id)
+WHERE scope = 'sca'
 ORDER BY severity;
 ```
 
@@ -312,8 +321,8 @@ A coverage and efficiency trend, one point per scan:
 
 ```sql
 SELECT scan_ts, coverage_pct, efficiency_pct, prevalence_pct, signal_coverage_pct
-FROM wiz_metrics
-WHERE scope = 'os' AND family = 'program' AND severity = 'OVERALL'
+FROM wiz_metrics_program
+WHERE scope = 'os' AND severity = 'OVERALL'
 ORDER BY scan_ts;
 ```
 
@@ -321,11 +330,20 @@ The high-risk monthly capacity as of the latest scan:
 
 ```sql
 SELECT month, opened, closed, open_at_start, mmcr, verdict, partial, reconstructed
-FROM wiz_metrics
-WHERE scope = 'os' AND family = 'capacity' AND population = 'high_risk'
-  AND scan_id = (SELECT max_by(scan_id, scan_ts) FROM wiz_metrics
-                 WHERE scope = 'os' AND family = 'scan')
+FROM wiz_metrics_capacity
+WHERE scope = 'os' AND population = 'high_risk'
+  AND scan_id = (SELECT max_by(scan_id, scan_ts) FROM wiz_metrics_scan WHERE scope = 'os')
 ORDER BY month;
+```
+
+The same stored measures straight off the table, for a reader with no view (a stored measure
+only — a derived column such as `sla_pct` exists in the views, not in the table):
+
+```sql
+SELECT scan_ts, severity, mttr.km_median, mttr.resolved, mttr.open
+FROM wiz_metrics
+WHERE scope = 'sca' AND family = 'mttr'
+ORDER BY scan_ts, severity;
 ```
 
 The open findings behind those numbers:
