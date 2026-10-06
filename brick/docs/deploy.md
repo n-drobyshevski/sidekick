@@ -374,7 +374,7 @@ ORDER BY severity;
 `wiz_metrics_program` is one of the five views each run replaces beside `wiz_metrics`, one per
 family: the `family` filter built in, the measures out of their struct, and the ratios computed
 — coverage and efficiency are not stored in the table at all (see
-[`columns.md`](columns.md#wiz_metrics--the-commit-record-and-every-gold-family)).
+[`columns.md`](columns.md#wiz_metrics--the-commit-record-and-every-gold-family-17-columns)).
 
 `scope = 'os'` is not optional here: `wiz_metrics` and its views are shared by every register
 now, and a query that drops it sums three populations' `program` rows into one plausible-looking
