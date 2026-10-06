@@ -88,7 +88,7 @@ the capacity summary, …) are not stored at all: `metrics.DERIVED` defines each
 SQL, and every read computes it from that text — `run_pipeline.unpack_family`, which the pages
 read through, and one **view per family** that each run replaces beside the table
 (`wiz_metrics_mttr` and so on), flat and with every derived column. See
-[`columns.md`](columns.md#wiz_metrics--the-commit-record-and-every-gold-family). A register
+[`columns.md`](columns.md#wiz_metrics--the-commit-record-and-every-gold-family-17-columns). A register
 written in the older flat layout is refused until it is migrated — see
 [Moving metrics to the struct layout](migrating.md#moving-metrics-to-the-struct-layout).
 

@@ -6,10 +6,31 @@ and what not to claim from them, is in [`reading-the-numbers.md`](reading-the-nu
 
 | Table | One row per | Written by |
 | --- | --- | --- |
-| [`wiz_findings_raw`](#wiz_findings_raw--bronze) | finding × scan | append, every scan |
-| [`wiz_vuln_ledger`](#wiz_vuln_ledger--one-row-per-finding-lifecycle) | finding lifecycle | `MERGE`, every scan |
-| [`wiz_metrics`](#wiz_metrics--the-commit-record-and-every-gold-family) | scan, and one row per gold grain | append, every scan |
+| `wiz_findings_raw` | finding × scan | append, every scan |
+| `wiz_vuln_ledger` | finding lifecycle | `MERGE`, every scan |
+| `wiz_metrics` | scan, and one row per gold grain | append, every scan |
 | `wiz_metrics_<family>` | the same rows as `wiz_metrics`, one family each, flat | view, replaced every scan |
+
+## Contents
+
+- [Conventions that hold everywhere](#conventions-that-hold-everywhere)
+- [`wiz_findings_raw` — bronze (5 columns)](#wiz_findings_raw--bronze-5-columns)
+- [`wiz_vuln_ledger` — one row per finding lifecycle (28 columns)](#wiz_vuln_ledger--one-row-per-finding-lifecycle-28-columns)
+  - [Identity (5 columns)](#identity-5-columns)
+  - [Asset (6 columns)](#asset-6-columns)
+  - [Lifecycle (8 columns)](#lifecycle-8-columns)
+  - [Vendor-fix clock (`os` and `sca`) (2 columns)](#vendor-fix-clock-os-and-sca-2-columns)
+  - [Exploit intelligence (`os` and `sca`) (4 columns)](#exploit-intelligence-os-and-sca-4-columns)
+  - [Static-analysis inputs (3 columns)](#static-analysis-inputs-3-columns)
+- [`wiz_metrics` — the commit record and every gold family (17 columns)](#wiz_metrics--the-commit-record-and-every-gold-family-17-columns)
+  - [Read a family view, not the table](#read-a-family-view-not-the-table)
+  - [What the table stores (17 columns)](#what-the-table-stores-17-columns)
+  - [`family = 'scan'` — the commit record (5 columns)](#family--scan--the-commit-record-5-columns)
+  - [`family = 'mttr'` — time to remediate, per severity (26 fields unpacked)](#family--mttr--time-to-remediate-per-severity-26-fields-unpacked)
+  - [`family = 'program'` — coverage and efficiency, per severity (22 fields unpacked)](#family--program--coverage-and-efficiency-per-severity-22-fields-unpacked)
+  - [`family = 'capacity'` — monthly throughput (17 fields unpacked)](#family--capacity--monthly-throughput-17-fields-unpacked)
+  - [`family = 'assets'` — assets at risk (P2P volume 5) (18 fields unpacked)](#family--assets--assets-at-risk-p2p-volume-5-18-fields-unpacked)
+- [Example queries](#example-queries)
 
 ## Conventions that hold everywhere
 
@@ -32,7 +53,7 @@ and what not to claim from them, is in [`reading-the-numbers.md`](reading-the-nu
 - **SLA targets**, in days: `CRITICAL` 7, `HIGH` 14, `MEDIUM` 30, `LOW` 90, `INFO` 180. `UNKNOWN`
   has none.
 
-## `wiz_findings_raw` — bronze
+## `wiz_findings_raw` — bronze (5 columns)
 
 One row per finding per scan, exactly as the Wiz API returned it. Append-only. Clustered on
 `(scope, scan_id)`, so filter on both.
@@ -48,13 +69,13 @@ One row per finding per scan, exactly as the Wiz API returned it. Append-only. C
 Most queries should read the ledger rather than this table. Bronze is the durable record the
 ledger is rebuilt from, and it holds one full copy of the register per scan.
 
-## `wiz_vuln_ledger` — one row per finding lifecycle
+## `wiz_vuln_ledger` — one row per finding lifecycle (28 columns)
 
 One row per `(scope, vuln_key)`, updated in place by every scan (`MERGE`, not append). It is the
 current state of every finding the register has ever seen, including ones the API has stopped
 returning. Clustered on `(scope, vuln_key)`.
 
-### Identity
+### Identity (5 columns)
 
 | Column | Type | Description |
 | --- | --- | --- |
@@ -64,7 +85,7 @@ returning. Clustered on `(scope, vuln_key)`.
 | `component` | string | What the finding is in: the package or library name for `os` and `sca`, the file path for `sast`. |
 | `severity` | string | Latest severity Wiz reported. See the conventions above. |
 
-### Asset
+### Asset (6 columns)
 
 The latest non-empty value wins, so an asset that is renamed keeps its newest name.
 
@@ -77,7 +98,7 @@ The latest non-empty value wins, so an asset that is renamed keeps its newest na
 | `subscription_name` | string | Cloud account/subscription name. NULL for `sast`. |
 | `subscription_ext_id` | string | The cloud provider's own id for that account/subscription. NULL for `sast`. |
 
-### Lifecycle
+### Lifecycle (8 columns)
 
 | Column | Type | Description |
 | --- | --- | --- |
@@ -90,7 +111,7 @@ The latest non-empty value wins, so an asset that is renamed keeps its newest na
 | `first_scan_id` | string | The scan that first saw the current episode. |
 | `last_scan_id` | string | The scan that last saw it. |
 
-### Vendor-fix clock (`os` and `sca`)
+### Vendor-fix clock (`os` and `sca`) (2 columns)
 
 The first value recorded is kept. A reopen clears both columns. Always NULL for `sast`, which
 has no vendor to wait on.
@@ -100,7 +121,7 @@ has no vendor to wait on.
 | `fix_date` | timestamp | When Wiz says a fixed version became available. |
 | `fix_observed_at` | timestamp | The first scan that saw a fix exist. This is an upper bound on when the fix appeared, and it's used when `fix_date` is missing. |
 
-### Exploit intelligence (`os` and `sca`)
+### Exploit intelligence (`os` and `sca`) (4 columns)
 
 **Monotone:** once true, always true, and it survives a reopen. NULL means the signal was never
 captured, which is not the same as `false`. Always NULL for `sast`.
@@ -112,7 +133,7 @@ captured, which is not the same as `false`. Always NULL for `sast`.
 | `epss` | double | **Peak** EPSS probability ever observed (0–1), not the current one. |
 | `risk_observed_at` | timestamp | The earliest scan that captured any of the three signals above. |
 
-### Static-analysis inputs
+### Static-analysis inputs (3 columns)
 
 | Column | Type | Description |
 | --- | --- | --- |
@@ -120,7 +141,7 @@ captured, which is not the same as `false`. Always NULL for `sast`.
 | `language` | string | The ecosystem the finding lives in (`JAVA`, `JAVASCRIPT`, …). Set for `sast` and, where Wiz returns it, for `sca`. NULL for `os`. The `assets` family groups by it. |
 | `ai_verdict` | string | Wiz's AI triage verdict, upper-cased. `sast` only. Unlike the exploit signals, the **latest** verdict wins, because a re-triage is a correction. |
 
-## `wiz_metrics` — the commit record and every gold family
+## `wiz_metrics` — the commit record and every gold family (17 columns)
 
 Append-only. Each scan appends its commit record, then all its gold rows in one commit, so a
 scan's families are all present or all absent. The `family` column tells the five grains apart:
@@ -142,7 +163,7 @@ Every run that publishes gold replaces one view per family beside the table:
 `wiz_metrics_scan`, `wiz_metrics_mttr`, `wiz_metrics_program`, `wiz_metrics_capacity` and
 `wiz_metrics_assets`. A view is its family's rows, flat: `scan_id`, `scan_ts`, `scope`, then
 exactly the columns listed under that family below — derived ones included, so `SELECT *` is
-readable.
+readable. Column counts, `scan_id`, `scan_ts` and `scope` included: `wiz_metrics_scan` 8, `wiz_metrics_mttr` 29, `wiz_metrics_program` 25, `wiz_metrics_capacity` 20, `wiz_metrics_assets` 21.
 
 - The `family` filter is built in. You still filter on `scope`, and on `population` for
   `capacity` and `assets`.
@@ -151,7 +172,7 @@ readable.
   `run_pipeline.read_family(spark, tables, "<family>")`, which returns the same frame. That is
   also what the notebook pages read.
 
-### What the table stores
+### What the table stores (17 columns)
 
 The table itself has seventeen columns (`run_pipeline.METRICS_COLUMNS`), however many measures
 the families carry:
@@ -176,7 +197,9 @@ arithmetic over the measures, defined once as SQL in `metrics.DERIVED`, and ever
 page computes them on read. A query on the table itself reaches into the struct
 (`mttr.km_median`) and has no derived columns to select.
 
-In the tables below, **Stored as** says where each column lives: a top-level column, a struct
+The four gold-family sections below count **fields once unpacked** — top-level dims, struct
+fields and derived columns together — which is the shape of the family's view, not a count of
+table columns. In the tables, **Stored as** says where each column lives: a top-level column, a struct
 field, or *derived*. Every row also carries `scan_id`, `scan_ts` and `scope`:
 
 | Column | Type | Description |
@@ -186,7 +209,7 @@ field, or *derived*. Every row also carries `scan_id`, `scan_ts` and `scope`:
 | `scope` | string | `os`, `sca` or `sast`. |
 | `family` | string | `scan`, `mttr`, `program`, `capacity` or `assets`. In the table only — a view is one family already. |
 
-### `family = 'scan'` — the commit record
+### `family = 'scan'` — the commit record (5 columns)
 
 One row per completed scan, stored flat. It is also how the pipeline knows what each scan
 looked at, so it is load-bearing, not bookkeeping (see [`register.md`](register.md)).
@@ -199,7 +222,9 @@ looked at, so it is load-bearing, not bookkeeping (see [`register.md`](register.
 | `resolved_count` | bigint | Lifecycles this scan resolved, whether by `api` or by `disappeared`. |
 | `reopened_count` | bigint | Previously resolved lifecycles this scan saw again. |
 
-### `family = 'mttr'` — time to remediate, per severity
+### `family = 'mttr'` — time to remediate, per severity (26 fields unpacked)
+
+**26 fields once unpacked:** 1 top-level, 22 in the `mttr` struct, 3 derived on read. In the table itself they occupy 2 of its 17 columns (`severity` and the `mttr` struct); the view `wiz_metrics_mttr` has 29 columns, `scan_id`, `scan_ts` and `scope` included.
 
 Computed over every lifecycle in the ledger for this scope, open or resolved.
 
@@ -239,7 +264,9 @@ columns are NULL or 0, because `sast` has no vendor fix.
 | `actionable_sla_compliant` | bigint | `mttr.actionable_sla_compliant` | Findings resolved within SLA, counted from fix availability. |
 | `actionable_sla_pct` | double | *derived* | `actionable_sla_compliant / actionable_resolved`. Read it beside `sla_pct`, not subtracted from it, because the two denominators differ. |
 
-### `family = 'program'` — coverage and efficiency, per severity
+### `family = 'program'` — coverage and efficiency, per severity (22 fields unpacked)
+
+**22 fields once unpacked:** 1 top-level, 6 in the `program` struct, 15 derived on read. In the table itself they occupy 2 of its 17 columns (`severity` and the `program` struct); the view `wiz_metrics_program` has 25 columns, `scan_id`, `scan_ts` and `scope` included.
 
 Each lifecycle is classified as high-risk, not high-risk or unknown by the scope's risk rule
 (the run log prints it in words on its header line), then crossed with remediated vs open. The
@@ -274,7 +301,9 @@ stored; everything else is derived from them.
 Always report coverage and efficiency together. They pull in opposite directions, and either
 one alone can be pushed to 100%.
 
-### `family = 'capacity'` — monthly throughput
+### `family = 'capacity'` — monthly throughput (17 fields unpacked)
+
+**17 fields once unpacked:** 2 top-level, 6 in the `capacity` struct, 9 derived on read. In the table itself they occupy 3 of its 17 columns (`population`, `month` and the `capacity` struct); the view `wiz_metrics_capacity` has 20 columns, `scan_id`, `scan_ts` and `scope` included.
 
 One row per UTC calendar month, from the population's first finding to the current month, and
 **once per `population`**. Months with no activity still get a row.
@@ -306,7 +335,9 @@ them from any one row. All five are derived. A **counted** month is one that is 
 | `net_total` | bigint | *derived* | Sum of `net` over every month. |
 | `overall_verdict` | string | *derived* | The verdict for the mean `net_pct` over counted months. NULL when no month counted. |
 
-### `family = 'assets'` — assets at risk (P2P volume 5)
+### `family = 'assets'` — assets at risk (P2P volume 5) (18 fields unpacked)
+
+**18 fields once unpacked:** 2 top-level, 16 in the `assets` struct. In the table itself they occupy 3 of its 17 columns (`population`, `asset_group` and the `assets` struct); the view `wiz_metrics_assets` has 21 columns, `scan_id`, `scan_ts` and `scope` included.
 
 One row per asset group plus `OVERALL`, **once per `population`**. An asset is a repository
 branch, and its group is its `language`; findings with no language fall into `UNKNOWN`. Every

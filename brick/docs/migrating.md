@@ -47,7 +47,7 @@ bronze into new, correctly-clustered tables — see below.
 every row of the other families. It now has seventeen: the commit record and the keys, each
 gold family's dimensions, and one struct per family holding its measures (`mttr.km_median`).
 Ratios and totals are no longer stored; every read derives them (see
-[`columns.md`](columns.md#wiz_metrics--the-commit-record-and-every-gold-family)).
+[`columns.md`](columns.md#wiz_metrics--the-commit-record-and-every-gold-family-17-columns)).
 
 A table written in the flat layout is **refused** — `ensure_tables` raises before a run writes
 anything — because appending structs to it would leave every earlier scan in columns no reader

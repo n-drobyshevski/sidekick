@@ -69,7 +69,7 @@ WHERE  scope = 'os' AND family = 'mttr';
 ```
 
 Each gold family's measures sit in a struct named after it (`mttr.km_median`), and the ratios
-are not stored at all — see [`columns.md`](columns.md#wiz_metrics--the-commit-record-and-every-gold-family).
+are not stored at all — see [`columns.md`](columns.md#wiz_metrics--the-commit-record-and-every-gold-family-17-columns).
 
 `wiz_metrics` is the one table all three `devlake.run` invocations above wrote into — `scope`
 picks the register out of it, the same predicate every SQL recipe in this README carries against
