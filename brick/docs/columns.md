@@ -26,10 +26,10 @@ and what not to claim from them, is in [`reading-the-numbers.md`](reading-the-nu
   - [Read a family view, not the table](#read-a-family-view-not-the-table)
   - [What the table stores (17 columns)](#what-the-table-stores-17-columns)
   - [`family = 'scan'` — the commit record (5 columns)](#family--scan--the-commit-record-5-columns)
-  - [`family = 'mttr'` — time to remediate, per severity (26 columns)](#family--mttr--time-to-remediate-per-severity-26-columns)
-  - [`family = 'program'` — coverage and efficiency, per severity (22 columns)](#family--program--coverage-and-efficiency-per-severity-22-columns)
-  - [`family = 'capacity'` — monthly throughput (17 columns)](#family--capacity--monthly-throughput-17-columns)
-  - [`family = 'assets'` — assets at risk (P2P volume 5) (18 columns)](#family--assets--assets-at-risk-p2p-volume-5-18-columns)
+  - [`family = 'mttr'` — time to remediate, per severity (26 fields unpacked)](#family--mttr--time-to-remediate-per-severity-26-fields-unpacked)
+  - [`family = 'program'` — coverage and efficiency, per severity (22 fields unpacked)](#family--program--coverage-and-efficiency-per-severity-22-fields-unpacked)
+  - [`family = 'capacity'` — monthly throughput (17 fields unpacked)](#family--capacity--monthly-throughput-17-fields-unpacked)
+  - [`family = 'assets'` — assets at risk (P2P volume 5) (18 fields unpacked)](#family--assets--assets-at-risk-p2p-volume-5-18-fields-unpacked)
 - [Example queries](#example-queries)
 
 ## Conventions that hold everywhere
@@ -197,7 +197,9 @@ arithmetic over the measures, defined once as SQL in `metrics.DERIVED`, and ever
 page computes them on read. A query on the table itself reaches into the struct
 (`mttr.km_median`) and has no derived columns to select.
 
-In the tables below, **Stored as** says where each column lives: a top-level column, a struct
+The four gold-family sections below count **fields once unpacked** — top-level dims, struct
+fields and derived columns together — which is the shape of the family's view, not a count of
+table columns. In the tables, **Stored as** says where each column lives: a top-level column, a struct
 field, or *derived*. Every row also carries `scan_id`, `scan_ts` and `scope`:
 
 | Column | Type | Description |
@@ -220,9 +222,9 @@ looked at, so it is load-bearing, not bookkeeping (see [`register.md`](register.
 | `resolved_count` | bigint | Lifecycles this scan resolved, whether by `api` or by `disappeared`. |
 | `reopened_count` | bigint | Previously resolved lifecycles this scan saw again. |
 
-### `family = 'mttr'` — time to remediate, per severity (26 columns)
+### `family = 'mttr'` — time to remediate, per severity (26 fields unpacked)
 
-**26 columns:** 1 top-level, 22 in the `mttr` struct, 3 derived. Its view, `wiz_metrics_mttr`, has 29 with `scan_id`, `scan_ts` and `scope`.
+**26 fields once unpacked:** 1 top-level, 22 in the `mttr` struct, 3 derived on read. In the table itself they occupy 2 of its 17 columns (`severity` and the `mttr` struct); the view `wiz_metrics_mttr` has 29 columns, `scan_id`, `scan_ts` and `scope` included.
 
 Computed over every lifecycle in the ledger for this scope, open or resolved.
 
@@ -262,9 +264,9 @@ columns are NULL or 0, because `sast` has no vendor fix.
 | `actionable_sla_compliant` | bigint | `mttr.actionable_sla_compliant` | Findings resolved within SLA, counted from fix availability. |
 | `actionable_sla_pct` | double | *derived* | `actionable_sla_compliant / actionable_resolved`. Read it beside `sla_pct`, not subtracted from it, because the two denominators differ. |
 
-### `family = 'program'` — coverage and efficiency, per severity (22 columns)
+### `family = 'program'` — coverage and efficiency, per severity (22 fields unpacked)
 
-**22 columns:** 1 top-level, 6 in the `program` struct, 15 derived. Its view, `wiz_metrics_program`, has 25 with `scan_id`, `scan_ts` and `scope`.
+**22 fields once unpacked:** 1 top-level, 6 in the `program` struct, 15 derived on read. In the table itself they occupy 2 of its 17 columns (`severity` and the `program` struct); the view `wiz_metrics_program` has 25 columns, `scan_id`, `scan_ts` and `scope` included.
 
 Each lifecycle is classified as high-risk, not high-risk or unknown by the scope's risk rule
 (the run log prints it in words on its header line), then crossed with remediated vs open. The
@@ -299,9 +301,9 @@ stored; everything else is derived from them.
 Always report coverage and efficiency together. They pull in opposite directions, and either
 one alone can be pushed to 100%.
 
-### `family = 'capacity'` — monthly throughput (17 columns)
+### `family = 'capacity'` — monthly throughput (17 fields unpacked)
 
-**17 columns:** 2 top-level, 6 in the `capacity` struct, 9 derived. Its view, `wiz_metrics_capacity`, has 20 with `scan_id`, `scan_ts` and `scope`.
+**17 fields once unpacked:** 2 top-level, 6 in the `capacity` struct, 9 derived on read. In the table itself they occupy 3 of its 17 columns (`population`, `month` and the `capacity` struct); the view `wiz_metrics_capacity` has 20 columns, `scan_id`, `scan_ts` and `scope` included.
 
 One row per UTC calendar month, from the population's first finding to the current month, and
 **once per `population`**. Months with no activity still get a row.
@@ -333,9 +335,9 @@ them from any one row. All five are derived. A **counted** month is one that is 
 | `net_total` | bigint | *derived* | Sum of `net` over every month. |
 | `overall_verdict` | string | *derived* | The verdict for the mean `net_pct` over counted months. NULL when no month counted. |
 
-### `family = 'assets'` — assets at risk (P2P volume 5) (18 columns)
+### `family = 'assets'` — assets at risk (P2P volume 5) (18 fields unpacked)
 
-**18 columns:** 2 top-level, 16 in the `assets` struct. Its view, `wiz_metrics_assets`, has 21 with `scan_id`, `scan_ts` and `scope`.
+**18 fields once unpacked:** 2 top-level, 16 in the `assets` struct. In the table itself they occupy 3 of its 17 columns (`population`, `asset_group` and the `assets` struct); the view `wiz_metrics_assets` has 21 columns, `scan_id`, `scan_ts` and `scope` included.
 
 One row per asset group plus `OVERALL`, **once per `population`**. An asset is a repository
 branch, and its group is its `language`; findings with no language fall into `UNKNOWN`. Every
