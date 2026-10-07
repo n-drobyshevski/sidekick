@@ -75,6 +75,7 @@ On a cluster this is six `.py` files in one flat folder and nothing else —
 | File | Who reads it | What is in it |
 | --- | --- | --- |
 | [`docs/register.md`](docs/register.md) | writing a query, or deciding what a scope measures | the three tables and their families, the scan record, table layout, the three scopes, the SAST rule, the two silver projections, assets at risk |
+| [`docs/datalake-schema.md`](docs/datalake-schema.md) | the data team, standalone | only what is stored: the three tables, every column and struct field with its type, and which columns are confidential |
 | [`docs/columns.md`](docs/columns.md) | the data team, querying the tables | every column of every table and `metrics` family: type, meaning, units, when it is NULL; example queries |
 | [`docs/deploy.md`](docs/deploy.md) | the operator | credentials, getting the six modules onto the workspace, running from a notebook or as a bundle, parameters, retries, maintenance, reading the results |
 | [`docs/migrating.md`](docs/migrating.md) | the operator, once | adopting an existing register, backfilling from bronze, importing the Apps Script app's data |
