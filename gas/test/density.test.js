@@ -27,7 +27,7 @@ import { parsePages } from "../../gas_devsecops/dev/densityModel.mjs";
 const PAGES_JS = readFileSync(new URL("../src/client/js/pages.js", import.meta.url), "utf8");
 
 describe("parsePages() against gas's own pages.js — the route list `npm run density` walks", () => {
-  it("yields exactly gas's ten routes, in PAGES' own (= rail) order", () => {
+  it("yields exactly gas's eleven routes, in PAGES' own (= rail) order", () => {
     // Lifted from pages.js's PAGES literal by hand, once, as the thing to check against — NOT
     // re-derived from the same regex parsePages() runs, which would just check the function
     // against itself. In rail order: the Security lane (executive, mttr, program, overview),
@@ -35,8 +35,8 @@ describe("parsePages() against gas's own pages.js — the route list `npm run de
     // `coldZone` closes the Security lane: it reads the register overview has just listed and
     // asks where it stopped moving, so it comes after that page rather than before it.
     const expectedRoutes = [
-      "executive", "mttr", "program", "overview", "coldZone", "data", "history", "attribution",
-      "help", "settings",
+      "executive", "mttr", "program", "champion", "overview", "coldZone", "data", "history",
+      "attribution", "help", "settings",
     ];
     const routes = parsePages(PAGES_JS).map((p) => p.route);
     expect(routes).toEqual(expectedRoutes);
@@ -51,6 +51,7 @@ describe("parsePages() against gas's own pages.js — the route list `npm run de
       executive: "renderExecutive",
       mttr: "renderMttr",
       program: "renderProgram",
+      champion: "renderChampion",
       overview: "renderOverview",
       coldZone: "renderColdZone",
       data: "renderData",

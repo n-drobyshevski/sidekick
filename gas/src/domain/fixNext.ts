@@ -236,7 +236,7 @@ function text(v: unknown): string | null {
  * Null for a row with no readable consumed age or a severity carrying no target: both are "not
  * measured", and this register does not render a not-measured as a false.
  */
-function pastSla(row: FixNextRow, targets: Record<string, number>): boolean | null {
+export function pastSla(row: FixNextRow, targets: Record<string, number>): boolean | null {
   const age = finite(row.observed ? row.actionable_age_days : row.seen_age_days);
   if (age === null) return null;
   const target = finite(targets[normalizeSeverity(row.severity)]);
@@ -245,12 +245,12 @@ function pastSla(row: FixNextRow, targets: Record<string, number>): boolean | nu
 }
 
 /** A fix exists for this finding — what tiers 2 and 3 require before calling anyone late. */
-function hasFix(row: FixNextRow): boolean {
+export function hasFix(row: FixNextRow): boolean {
   return row.fix_available_at !== null && row.fix_available_at !== undefined;
 }
 
 /** The tier this open row earns, or the reason it earns none. Exactly one of the two. */
-function classify(
+export function classify(
   row: FixNextRow,
   rule: RiskRule,
   targets: Record<string, number>,
@@ -300,7 +300,7 @@ interface Bucket {
 }
 
 /** Who would be asked. The tenant's own word first; the subscription is the fallback. */
-function ownerOf(row: FixNextRow): { owner: string | null; kind: Bucket["ownerKind"] } {
+export function ownerOf(row: FixNextRow): { owner: string | null; kind: "supportGroup" | "subscription" | null } {
   const sg = text(row._supportGroup);
   if (sg !== null) return { owner: sg, kind: "supportGroup" };
   const sub = text(row.subscription_name);

@@ -203,6 +203,9 @@ registerEmptyStateContract({
     // notice-variant absences (no clock; nothing sitting still) and exactly one errorState, on
     // the RPC that did not answer.
     "coldZone",
+    // The champion board: a first-run gate, a "pick a team" absence, one measured empty
+    // ("Nothing open for this team") and one errorState, on the board RPC.
+    "champion",
   ],
   // The non-vacuity half: these seven still carry the failure messages, on errorState. All
   // seven "Couldn't …" call sites were emptyState before P4 — a crash announced through
@@ -232,6 +235,7 @@ registerEmptyStateContract({
     // states the register is legitimately in (no flat scan on record, nothing idle) and both
     // render through emptyState(..., { variant: "notice" }) — the split this list measures.
     "coldZone",
+    "champion",
   ],
   // The four pages that render section-by-section behind a guard(), because they are the
   // ones a single failing section must not blank. "mttr" and "attribution" joined with P1.3:
@@ -270,7 +274,7 @@ registerEmptyStateContract({
   // reason. Keeping it here would force the page back to the weaker component, or to drawing
   // both — two absences saying the same thing in two voices, which is what this whole
   // contract exists to stop.
-  firstRunRoutes: ["attribution", "history", "mttr", "overview", "coldZone"],
+  firstRunRoutes: ["attribution", "history", "mttr", "overview", "coldZone", "champion"],
   // `data`'s two are section notes inside Report and Export ("No scan saved yet — run a scan
   // to generate a report"), which name the specific thing that section cannot do; replacing
   // them with one page-wide notice would say less, in a bigger box, twice. Registering `data`
@@ -290,7 +294,8 @@ registerEmptyStateContract({
   // `coldZone` is on this list for the same reason as the other two: its one firstRunNotice(
   // call renders inside `if (!boot.latestScan)`, where `synced: false` is a literal and there
   // is never a scan to date.
-  firstRunNoAt: ["attribution", "overview", "coldZone"],
+  // `champion` too: its one call renders inside `if (!boot.latestScan)`, like coldZone's.
+  firstRunNoAt: ["attribution", "overview", "coldZone", "champion"],
 });
 
 // =========================================================================================
@@ -302,9 +307,10 @@ registerNavGroupContract({
   ROUTE_ICONS,
   // In rail order. This list moves only when a route is added or removed on purpose.
   // `help` joined it with P7: the key sheet, last page of the Data lane.
+  // `champion` closes the Program lane: the programme read for one team.
   expectedRoutes: [
-    "executive", "mttr", "program", "overview", "coldZone", "data", "history", "attribution",
-    "help", "settings",
+    "executive", "mttr", "program", "champion", "overview", "coldZone", "data", "history",
+    "attribution", "help", "settings",
   ],
   defaultRoute: "executive",
   // No `panelBlocksModule`: this register's nav panels list page links and nothing else, so

@@ -1097,13 +1097,13 @@ A viewer sees the **union** of every value. The owner and admins edit this list 
 
 |                                     | Opens the app | Sees                                                              |
 | ----------------------------------- | ------------- | ----------------------------------------------------------------- |
-| **Scoped** (in `SCOPED_USERS`)      | yes           | **My scope** (MTTR, open / past-SLA / awaiting-fix, severity split, trend) and **My findings** (read-only, paged, CSV). Nothing else. |
+| **Scoped** (in `SCOPED_USERS`)      | yes           | **My board** (the champion board, their landing page), **My scope** (MTTR, open / past-SLA / awaiting-fix, severity split, trend) and **My findings** (read-only, paged, CSV). Nothing else. |
 
 What keeps them in their slice:
 
 - **The fence is on the server.** `access.denyResult` refuses a scoped caller every RPC
   outside `SCOPED_RPCS`. The only calls let through are `bootstrap`, `getScopeSummary`,
-  `getRegisterRows` and `getExportCsv`. Settings, scans, purges, imports and every
+  `getChampionBoard`, `getRegisterRows` and `getExportCsv`. Settings, scans, purges, imports and every
   register-wide read answer `forbidden`.
 - **The scope is forced, never trusted.** Inside the fence, every endpoint replaces the
   request's domain, support group and viewer scope with the viewer's own
@@ -1147,6 +1147,57 @@ be grouped by severity, asset, CVE, tier, support group, domain, subscription or
 availability. Grouping runs on the server over the whole filtered set (`groupBy` /
 `groupValue` on `getRegisterRows`, `gas_shared/domain/rowGroups.ts`), worst severity first.
 Each group expands into its own paged rows.
+
+### The champion board: one team's week, by deadline
+
+A security champion is the person inside a team who pushes that team's fixes. They act by
+putting a short list in front of their team, not by fixing anything themselves. The champion
+board (`#/champion`, `pages/champion.js`) is that list. It is a scoped viewer's landing page
+("My board" in their rail). Full users find it last in the Program lane as **Champion board**,
+over the team picked in the header scope. With no scope picked it asks for one rather than
+drawing the whole register as a "team".
+
+**The columns are clocks** (`src/domain/championBoard.ts`), and every open finding lands in
+exactly one of them, or is counted off the board:
+
+| Column | What lands there |
+| --- | --- |
+| Act now | Fix next tier 1: known exploited and reachable from the internet. No SLA gate, no fix gate. Empty, and says why, when the latest scan carried no exposure fields. |
+| Past SLA | Late on the clock `fixNext.pastSla` reads: actionable while observed, from detection once not. Tiers 2 and 3 wear their tier; a late finding below every tier bar wears its severity. |
+| Due in 7 days / Due in 8–14 days | Observed, a fix exists, not late, and the window closes inside 7 or 8–14 days. These are the breaches a champion can still prevent. |
+| Waiting on vendor | `awaiting_vendor_fix`: no fix yet. Never late. |
+
+**Off the board, and counted.** Three kinds of open finding are left off the board, and the
+line under it says how many of each:
+- inside SLA with more than 14 days left;
+- not seen in the latest scan (no deadline anyone is measuring);
+- no readable SLA clock.
+
+**One rule, not two.** Tiering, lateness and ownership are `fixNext.ts`'s own exported
+`classify` / `pastSla` / `ownerOf`, so the board and Executive's Fix first never disagree.
+
+**Cards are (CVE × owner) groups**, never single findings. The owner is the support group,
+else the subscription. Vendor cards group by CVE across owners. A card opens a sheet of its
+findings (up to 25, with the true count). Each finding opens the usual finding sheet.
+
+**Progress, under the board:**
+- findings fixed this week, **confirmed by Wiz** (`resolution_src = "api"`, never a
+  disappearance);
+- findings that came back (`reopened_count > 0`);
+- the team's KM MTTR beside the whole register's. That is the only benchmark: no other team is
+  named or ranked.
+
+The fold lists what was fixed in the last 30 days, and what came back ("back 2×" flags a fix
+that does not stick). **Copy weekly digest** puts the same board on the clipboard as Markdown.
+It is client-only, with no write RPC.
+
+**Server details:**
+- **Endpoint:** `getChampionBoard`. It is inside the scoped fence, and the viewer's scope is
+  forced exactly as for the summary.
+- **Population:** `registerPopulation` in `api.ts`, the one builder it shares with
+  `getRegisterRows`.
+- **Cache:** `championBoard1`. It is durable and warmed per distinct roster scope for scoped
+  viewers, and CacheService-backed for a full user's header scope.
 
 ### Links to Wiz
 
@@ -1267,6 +1318,7 @@ Query flags `dev/boot.js` reads off `location.search` on every load:
 | `?coldafter=N`           | Fixed-mode window in days (`coldAfterDays`).                       |
 | `?coldtarget=N`          | Relative-mode target share, in percent (`coldTargetSharePct`).     |
 | `?coldfloor=N`           | Relative-mode floor in days (`coldFloorDays`).                     |
+| `?scoped[=<group>]`      | Open as a scoped viewer (`viewer@example.com`) over that support group (default `CS-CORE-PLATFORM`); `?scoped=d:<domain>` scopes by domain. Lands on the champion board. |
 
 The four `cold*` flags merge into one `api_saveSettings` call issued **after** the seed
 loop — saving settings bumps the settings data version, and the cold-zone read model's

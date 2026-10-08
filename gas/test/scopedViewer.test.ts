@@ -342,6 +342,65 @@ describe("bootstrap — a scoped viewer never receives the core", () => {
 });
 
 // --------------------------------------------------------------------------------------- //
+//  the champion board
+// --------------------------------------------------------------------------------------- //
+
+/** Every support group any card's findings belong to, across all five columns. */
+function boardGroups(data: Rec): string[] {
+  const columns = (data["columns"] ?? []) as Rec[];
+  return Array.from(new Set(columns.flatMap((c) => (c["cards"] as Rec[])
+    .flatMap((card) => (card["rows"] as Rec[]).map((r) => String(r["support_group"])))))).sort();
+}
+
+describe("getChampionBoard — the viewer's scope replaces the request's", () => {
+  it("answers with the viewer's cards whatever scope the request names", async () => {
+    H.active = "viewer@example.com";
+    const { api } = await load();
+    for (const p of [
+      {},
+      { domain: "", supportGroup: "" },
+      { supportGroup: "SG-2" },
+      { domain: "Logistics" },
+      { viewerScope: { domains: ["Payments", "Logistics"], supportGroups: [] } },
+    ]) {
+      const res = api.getChampionBoard(p);
+      expect(res.ok, JSON.stringify(p)).toBe(true);
+      const data = res.data as Rec;
+      expect(data["needsScope"], JSON.stringify(p)).toBeUndefined();
+      expect(boardGroups(data), JSON.stringify(p)).toEqual(["SG-1"]);
+      expect(data["open"]).toBe(10);
+    }
+  });
+
+  it("never draws the whole register for a full user with no header scope", async () => {
+    H.active = "listed@example.com";
+    const { api } = await load();
+    const res = api.getChampionBoard({});
+    expect(res.ok).toBe(true);
+    expect(res.data).toEqual({ needsScope: true });
+  });
+
+  it("builds a full user's board for the header support group", async () => {
+    H.active = "listed@example.com";
+    const { api } = await load();
+    const data = api.getChampionBoard({ supportGroup: "SG-2" }).data as Rec;
+    expect(boardGroups(data)).toEqual(["SG-2"]);
+    // The one benchmark rides along: the team's MTTR and the whole register's, no other team.
+    const mttr = data["mttr"] as Rec;
+    expect(mttr).toHaveProperty("team");
+    expect(mttr).toHaveProperty("org");
+    expect(JSON.stringify(data)).not.toContain("SG-0");
+  });
+
+  it("lets a full user preview a roster scope, as Settings → Access does", async () => {
+    H.active = OWNER;
+    const { api } = await load();
+    const data = api.getChampionBoard({ viewerScope: { domains: ["Payments"], supportGroups: [] } }).data as Rec;
+    expect(boardGroups(data)).toEqual(["SG-0", "SG-2"]);
+  });
+});
+
+// --------------------------------------------------------------------------------------- //
 //  the roster
 // --------------------------------------------------------------------------------------- //
 

@@ -49,6 +49,7 @@ var Server = (() => {
     exportMigrationBundle: () => exportMigrationBundle,
     getAccess: () => getAccess,
     getAttribution: () => getAttribution,
+    getChampionBoard: () => getChampionBoard,
     getChartsBundle: () => getChartsBundle,
     getColdZonePage: () => getColdZonePage,
     getDomains: () => getDomains3,
@@ -1243,11 +1244,11 @@ var Server = (() => {
     const ordered = SEVERITY_ORDER.filter((s) => vals.has(s));
     return `[${ordered.map((s) => JSON.stringify(s)).join(", ")}]`;
   }
-  function parseSeverities(text2) {
-    if (typeof text2 !== "string" || !text2) return null;
+  function parseSeverities(text3) {
+    if (typeof text3 !== "string" || !text3) return null;
     let vals;
     try {
-      vals = JSON.parse(text2);
+      vals = JSON.parse(text3);
     } catch {
       return null;
     }
@@ -3015,8 +3016,506 @@ var Server = (() => {
     };
   }
 
-  // src/domain/remediation.ts
+  // src/domain/pagePayload.ts
+  function execMttrSlice(mttr) {
+    var _a, _b, _c;
+    if (!mttr || typeof mttr !== "object") return null;
+    const m = mttr;
+    const overall = (_a = m["overall"]) != null ? _a : {};
+    const km = ((_b = m["remediation"]) != null ? _b : {})["km"];
+    return {
+      rowCount: m["rowCount"],
+      overall: { resolved: overall["resolved"], open: overall["open"] },
+      remediation: km ? { km: { median: km["median"], medianLowerBound: km["medianLowerBound"] } } : {},
+      // O1b: the present/unobserved split behind the hero's "Still open" count. Four scalars —
+      // `backlogSplitView` (pages/_backlog.js) is what turns them into the hero's line and
+      // caption — so this rides whole rather than earning its own narrowing function.
+      backlog: (_c = m["backlog"]) != null ? _c : null
+    };
+  }
+  function execGroupSlice(byGroup) {
+    var _a;
+    if (!byGroup || typeof byGroup !== "object") return null;
+    const b = byGroup;
+    const rows = Array.isArray(b["rows"]) ? b["rows"] : [];
+    return {
+      dimension: b["dimension"],
+      rows: rows.map((r) => {
+        var _a2;
+        return {
+          group: (_a2 = r["group"]) != null ? _a2 : r["domain"],
+          kmMedian: r["kmMedian"],
+          open: r["open"]
+        };
+      }),
+      cut: (_a = b["cut"]) != null ? _a : null
+    };
+  }
+  function pickRows(rows, keys) {
+    if (!Array.isArray(rows)) return [];
+    return rows.map((r) => {
+      const out = {};
+      for (const k of keys) if (k in r) out[k] = r[k];
+      return out;
+    });
+  }
+  var MTTR_TREND_KEYS = [
+    "date",
+    "reconstructed",
+    "open",
+    "resolved",
+    "median_days",
+    "km_median_days",
+    "open_past_sla",
+    "sla_net",
+    "sla_attainment_pct"
+  ];
+  var HISTORY_TREND_KEYS = ["date", "reconstructed", "open", "resolved", "km_median_days"];
+  var PROGRAM_TREND_KEYS = ["date", "reconstructed", "coverage_pct", "efficiency_pct"];
+  function mttrPageTrendSlice(trends) {
+    var _a;
+    if (!trends || typeof trends !== "object") return null;
+    const t = trends;
+    return { history: (_a = t["history"]) != null ? _a : [], trend: pickRows(t["trend"], MTTR_TREND_KEYS) };
+  }
+  function historyTrendSlice(trends) {
+    if (!trends || typeof trends !== "object") return null;
+    return { trend: pickRows(trends["trend"], HISTORY_TREND_KEYS) };
+  }
+  function programTrendSlice(trends) {
+    if (!trends || typeof trends !== "object") return null;
+    return { trend: pickRows(trends["trend"], PROGRAM_TREND_KEYS) };
+  }
+  var SCAN_ROW_KEYS = [
+    "scan_id",
+    "ts",
+    "mode",
+    "shape",
+    "total",
+    "new_count",
+    "resolved_count",
+    "reopened_count",
+    "severities",
+    "sealed",
+    // The completeness verdict — what the table marks a deferred scan by
+    // (gas_shared/domain/scanCompleteness.ts). The other three record columns (reported_total,
+    // partial_pages, duplicates) are operator diagnostics that reach the error log instead.
+    "disappearance"
+  ];
+  function scanRowsSlice(scans) {
+    return pickRows(scans, SCAN_ROW_KEYS);
+  }
+  var OLDEST_VIEWS = ["findings", "byAsset", "bySupportGroup", "byDomain"];
+  var OVERVIEW_OMIT = /* @__PURE__ */ new Set(["oldest", "fixNext", "movementOpen"]);
+  function overviewInsightsSlice(insights) {
+    if (!insights || typeof insights !== "object") return null;
+    const out = {};
+    for (const [k, v] of Object.entries(insights)) if (!OVERVIEW_OMIT.has(k)) out[k] = v;
+    return out;
+  }
+  function execInsightsSlice(insights) {
+    if (!insights || typeof insights !== "object") return null;
+    const i = insights;
+    return { fixNext: i["fixNext"], movement: i["movementOpen"], scan: i["scan"] };
+  }
+  function oldestOpenSlice(insights, view) {
+    const known = OLDEST_VIEWS.includes(view) ? view : "findings";
+    const oldest = insights && typeof insights === "object" ? insights["oldest"] : void 0;
+    const rows = oldest ? oldest[known] : void 0;
+    const unobserved = oldest && typeof oldest["unobserved"] === "number" ? oldest["unobserved"] : 0;
+    return { view: known, rows: Array.isArray(rows) ? rows : [], unobserved };
+  }
+  function mttrGroupTableSlice(byGroup) {
+    var _a;
+    if (!byGroup || typeof byGroup !== "object") return null;
+    const b = byGroup;
+    return {
+      dimension: b["dimension"],
+      rows: Array.isArray(b["rows"]) ? b["rows"] : [],
+      cut: (_a = b["cut"]) != null ? _a : null
+    };
+  }
+  function mttrGroupTrendSlice(byGroup) {
+    var _a;
+    if (!byGroup || typeof byGroup !== "object") return null;
+    return (_a = byGroup["trend"]) != null ? _a : null;
+  }
+  var JOB_KEYS = [
+    "job_id",
+    "kind",
+    "phase",
+    "page",
+    "findings_so_far",
+    "total_count",
+    "started_at",
+    "updated_at",
+    "error"
+  ];
+  function jobSummarySlice(job, stale) {
+    var _a, _b;
+    if (!job || typeof job !== "object") return null;
+    const j = job;
+    const out = { stale };
+    for (const k of JOB_KEYS) out[k] = (_a = j[k]) != null ? _a : null;
+    let incremental = null;
+    try {
+      const raw = j["params_json"];
+      if (typeof raw === "string" && raw) incremental = Boolean((_b = JSON.parse(raw)) == null ? void 0 : _b.incremental);
+    } catch {
+      incremental = null;
+    }
+    out["incremental"] = incremental;
+    return out;
+  }
+  var REGISTER_ROW_KEY = "vuln_key";
+  var REGISTER_ROW_COLUMNS = [
+    "cve",
+    "severity",
+    "risk_tier",
+    "status",
+    "resolution_src",
+    "reopened_count",
+    "asset_name",
+    "asset_type",
+    "cloud",
+    "subscription_name",
+    "support_group",
+    "domain",
+    "first_seen",
+    "published_date",
+    "fix_available_at",
+    "awaiting_vendor_fix",
+    "last_seen",
+    "resolved_at",
+    "has_kev",
+    "has_exploit",
+    "epss",
+    "internet_exposed",
+    "mttr_days",
+    "age_days",
+    "actionable_age_days",
+    // Wiz's own console link for this finding. NOT A DRAWN COLUMN — no table cell reads it —
+    // but the finding sheet does, and the sheet may only touch keys on this list
+    // (test/findingSheet.test.js hands the model a Proxy row and asserts exactly that). So it
+    // ships here rather than as a second payload, for the same reason `vuln_key` does: one
+    // `api_getRegisterRows` already carries everything the drill-down needs, and a sheet that
+    // had to fetch would cost one call per finding opened.
+    "portal_url"
+  ];
+  var REGISTER_ROW_SOURCE = {
+    support_group: "_supportGroup",
+    domain: "_domain"
+  };
+  var REGISTER_ROW_DEFAULT_SORT = {
+    sort: "age_days",
+    dir: "desc"
+  };
+  var REGISTER_ROWS_PAGE_SIZE_CAP = 250;
+  var REGISTER_ROWS_DEFAULT_PAGE_SIZE = 50;
+  function registerRowsSlice(rows) {
+    if (!Array.isArray(rows)) return [];
+    return rows.map((r) => {
+      var _a;
+      const key = r[REGISTER_ROW_KEY];
+      const out = { [REGISTER_ROW_KEY]: key === void 0 ? null : key };
+      for (const c of REGISTER_ROW_COLUMNS) {
+        const v = r[(_a = REGISTER_ROW_SOURCE[c]) != null ? _a : c];
+        out[c] = v === void 0 ? null : v;
+      }
+      return out;
+    });
+  }
+  function compareRegisterValues(a, b) {
+    if (typeof a === "number" && typeof b === "number") return a - b;
+    if (typeof a === "boolean" && typeof b === "boolean") return (a ? 1 : 0) - (b ? 1 : 0);
+    const sa = String(a).toLowerCase();
+    const sb = String(b).toLowerCase();
+    return sa < sb ? -1 : sa > sb ? 1 : 0;
+  }
+  function nullsLastOrder(a, b) {
+    const na = a === null || a === void 0;
+    const nb = b === null || b === void 0;
+    if (na && nb) return 0;
+    if (na) return 1;
+    if (nb) return -1;
+    return null;
+  }
+  function sortRegisterRows(rows, spec) {
+    const list = Array.isArray(rows) ? rows.slice() : [];
+    const value = spec && spec.value;
+    if (typeof value !== "function") return list;
+    const descending = Boolean(spec.descending);
+    const tiebreak = typeof spec.tiebreak === "function" ? spec.tiebreak : null;
+    return list.sort((ra, rb) => {
+      const va = value(ra);
+      const vb = value(rb);
+      const order = nullsLastOrder(va, vb);
+      if (order === null) {
+        const d = compareRegisterValues(va, vb);
+        if (d !== 0) return descending ? -d : d;
+      } else if (order !== 0) {
+        return order;
+      }
+      if (!tiebreak) return 0;
+      const ta = tiebreak(ra);
+      const tb = tiebreak(rb);
+      const tie = nullsLastOrder(ta, tb);
+      return tie === null ? compareRegisterValues(ta, tb) : tie;
+    });
+  }
+  function pageOfRegisterRows(rows, page, pageSize) {
+    const size = Math.max(1, Math.floor(pageSize));
+    const pageCount = Math.max(1, Math.ceil(rows.length / size));
+    const clamped = Math.min(Math.max(Math.floor(page) || 0, 0), pageCount - 1);
+    return {
+      rows: rows.slice(clamped * size, (clamped + 1) * size),
+      page: clamped,
+      pageCount
+    };
+  }
+  var DATE_SORT_COLUMNS = /* @__PURE__ */ new Set([
+    "first_seen",
+    "last_seen",
+    "resolved_at",
+    "fix_available_at",
+    "published_date"
+  ]);
+  var NUMBER_SORT_COLUMNS = /* @__PURE__ */ new Set([
+    "epss",
+    "mttr_days",
+    "age_days",
+    "actionable_age_days",
+    "reopened_count"
+  ]);
+  function severityRank(v) {
+    const i = SEVERITY_ORDER.indexOf(normalizeSeverity(v));
+    return i === -1 ? SEVERITY_ORDER.length : i;
+  }
+  function riskTierRank(v) {
+    const i = RISK_TIER_ORDER.indexOf(String(v != null ? v : ""));
+    return i === -1 ? RISK_TIER_ORDER.length : i;
+  }
+  function orNull(v) {
+    return v === null || v === void 0 || v === "" ? null : v;
+  }
+  function registerSortValue(column) {
+    if (column === "severity") return (r) => severityRank(r["severity"]);
+    if (column === "risk_tier") return (r) => riskTierRank(r["risk_tier"]);
+    if (DATE_SORT_COLUMNS.has(column)) return (r) => parseTs(r[column]);
+    if (NUMBER_SORT_COLUMNS.has(column)) {
+      return (r) => {
+        const raw = orNull(r[column]);
+        if (raw === null) return null;
+        const n = Number(raw);
+        return Number.isFinite(n) ? n : null;
+      };
+    }
+    return (r) => orNull(r[column]);
+  }
+
+  // src/domain/championBoard.ts
   var DAY_MS5 = 864e5;
+  var RESOLVED_BY_API = "api";
+  var CHAMPION_CARD_ROWS = 25;
+  var FIXED_WINDOW_DAYS = 30;
+  var FIXED_WEEK_DAYS = 7;
+  var CHAMPION_COLUMNS = ["now", "late", "due7", "due14", "vendor"];
+  function finite2(v) {
+    return typeof v === "number" && Number.isFinite(v) ? v : null;
+  }
+  function text2(v) {
+    if (v === null || v === void 0) return null;
+    const s = String(v).trim();
+    return s === "" ? null : s;
+  }
+  function sevRank(sev2) {
+    const i = SEVERITY_ORDER.indexOf(sev2);
+    return i < 0 ? SEVERITY_ORDER.length : i;
+  }
+  function consumedDays(row) {
+    return finite2(row.observed ? row.actionable_age_days : row.seen_age_days);
+  }
+  function cardOf(p, key, cap) {
+    const assets = /* @__PURE__ */ new Set();
+    const owners = /* @__PURE__ */ new Set();
+    let severity = "UNKNOWN";
+    for (const r of p.rows) {
+      const a = text2(r.asset_name);
+      if (a !== null) assets.add(a);
+      const o = ownerOf(r).owner;
+      if (o !== null) owners.add(o);
+      const s = normalizeSeverity(r.severity);
+      if (sevRank(s) < sevRank(severity)) severity = s;
+    }
+    return {
+      key,
+      cve: p.cve,
+      owner: p.owner,
+      ownerKind: p.ownerKind,
+      owners: [...owners].sort(),
+      tier: p.tier,
+      severity,
+      count: p.rows.length,
+      assets: assets.size,
+      lateDays: p.late,
+      dueInDays: p.due,
+      rows: registerRowsSlice(p.rows.slice(0, cap)),
+      rowsTotal: p.rows.length
+    };
+  }
+  function championBoard(rows, opts) {
+    var _a, _b;
+    const now = opts.now === void 0 ? Date.now() : opts.now;
+    const targets = (_a = opts.slaTargets) != null ? _a : SLA_TARGETS;
+    const exposedKeys = (_b = opts.exposedKeys) != null ? _b : /* @__PURE__ */ new Set();
+    const exposureKnown = opts.exposureKnown === true;
+    const cap = opts.cardRows === void 0 ? CHAMPION_CARD_ROWS : Math.max(0, Math.trunc(opts.cardRows));
+    const pending = {
+      now: /* @__PURE__ */ new Map(),
+      late: /* @__PURE__ */ new Map(),
+      due7: /* @__PURE__ */ new Map(),
+      due14: /* @__PURE__ */ new Map(),
+      vendor: /* @__PURE__ */ new Map()
+    };
+    const offBoard = { insideSlaLater: 0, unobserved: 0, noClock: 0 };
+    let open = 0;
+    const place = (col, row, tier, clock) => {
+      const cve = text2(row.cve);
+      const { owner, kind } = ownerOf(row);
+      const key = col === "vendor" ? `${cve != null ? cve : ""}` : `${cve != null ? cve : ""}\0${owner != null ? owner : ""}`;
+      let p = pending[col].get(key);
+      if (!p) {
+        p = {
+          cve,
+          owner: col === "vendor" ? null : owner,
+          ownerKind: col === "vendor" ? null : kind,
+          tier,
+          rows: [],
+          late: null,
+          due: null
+        };
+        pending[col].set(key, p);
+      }
+      p.rows.push(row);
+      if (tier !== null && (p.tier === null || tier < p.tier)) p.tier = tier;
+      if (clock.late !== void 0) p.late = p.late === null ? clock.late : Math.max(p.late, clock.late);
+      if (clock.due !== void 0) p.due = p.due === null ? clock.due : Math.min(p.due, clock.due);
+    };
+    for (const row of rows) {
+      if (!isOpenStatus(row.status)) continue;
+      open += 1;
+      const verdict = classify(row, opts.rule, targets, exposedKeys, exposureKnown);
+      if ("tier" in verdict && verdict.tier === 1) {
+        place("now", row, 1, {});
+        continue;
+      }
+      if ("reason" in verdict && verdict.reason === "noFix") {
+        place("vendor", row, null, {});
+        continue;
+      }
+      const target = finite2(targets[normalizeSeverity(row.severity)]);
+      const age = consumedDays(row);
+      const late = pastSla(row, targets);
+      if (late === true && target !== null && age !== null) {
+        place("late", row, "tier" in verdict ? verdict.tier : null, { late: Math.max(1, Math.ceil(age - target)) });
+        continue;
+      }
+      if (late === null || target === null || age === null) {
+        offBoard.noClock += 1;
+        continue;
+      }
+      if (!row.observed) {
+        offBoard.unobserved += 1;
+        continue;
+      }
+      const left = Math.max(0, Math.ceil(target - age));
+      if (left <= 7) place("due7", row, null, { due: left });
+      else if (left <= 14) place("due14", row, null, { due: left });
+      else offBoard.insideSlaLater += 1;
+    }
+    const order = {
+      now: (a, b) => b.count - a.count,
+      late: (a, b) => {
+        var _a2, _b2;
+        return ((_a2 = b.lateDays) != null ? _a2 : 0) - ((_b2 = a.lateDays) != null ? _b2 : 0) || b.count - a.count;
+      },
+      due7: (a, b) => {
+        var _a2, _b2;
+        return ((_a2 = a.dueInDays) != null ? _a2 : 0) - ((_b2 = b.dueInDays) != null ? _b2 : 0) || b.count - a.count;
+      },
+      due14: (a, b) => {
+        var _a2, _b2;
+        return ((_a2 = a.dueInDays) != null ? _a2 : 0) - ((_b2 = b.dueInDays) != null ? _b2 : 0) || b.count - a.count;
+      },
+      vendor: (a, b) => b.count - a.count
+    };
+    const tail = (a, b) => {
+      var _a2, _b2, _c, _d;
+      return sevRank(a.severity) - sevRank(b.severity) || String((_a2 = a.cve) != null ? _a2 : "").localeCompare(String((_b2 = b.cve) != null ? _b2 : "")) || String((_c = a.owner) != null ? _c : "").localeCompare(String((_d = b.owner) != null ? _d : ""));
+    };
+    const columns = CHAMPION_COLUMNS.map((id) => {
+      const cards = [...pending[id].entries()].map(([key, p]) => cardOf(p, `${id}:${key}`, cap));
+      cards.sort((a, b) => order[id](a, b) || tail(a, b));
+      return { id, cards, findings: cards.reduce((n, c) => n + c.count, 0) };
+    });
+    return { columns, open, offBoard, progress: championProgress(rows, now), exposureKnown, asOf: now };
+  }
+  function championProgress(rows, now) {
+    var _a;
+    const since30 = now - FIXED_WINDOW_DAYS * DAY_MS5;
+    const since7 = now - FIXED_WEEK_DAYS * DAY_MS5;
+    const fixedByCve = /* @__PURE__ */ new Map();
+    let fixed30 = 0;
+    let fixedWeek = 0;
+    const regressByCve = /* @__PURE__ */ new Map();
+    let reopened = 0;
+    for (const row of rows) {
+      const cve = text2(row.cve);
+      const asset = text2(row.asset_name);
+      if (isOpenStatus(row.status)) {
+        const times = (_a = finite2(row.reopened_count)) != null ? _a : 0;
+        if (times > 0) {
+          reopened += 1;
+          const k2 = cve != null ? cve : "";
+          let g2 = regressByCve.get(k2);
+          if (!g2) {
+            g2 = { cve, times: 0, count: 0, assets: /* @__PURE__ */ new Set() };
+            regressByCve.set(k2, g2);
+          }
+          g2.times = Math.max(g2.times, times);
+          g2.count += 1;
+          if (asset !== null) g2.assets.add(asset);
+        }
+        continue;
+      }
+      if (text2(row.resolution_src) !== RESOLVED_BY_API) continue;
+      const t = parseTs(row.resolved_at);
+      if (t === null || !(t > since30 && t <= now)) continue;
+      fixed30 += 1;
+      if (t > since7) fixedWeek += 1;
+      const k = cve != null ? cve : "";
+      let g = fixedByCve.get(k);
+      if (!g) {
+        g = { cve, count: 0, assets: /* @__PURE__ */ new Set(), last: t };
+        fixedByCve.set(k, g);
+      }
+      g.count += 1;
+      if (asset !== null) g.assets.add(asset);
+      g.last = Math.max(g.last, t);
+    }
+    const fixedGroups = [...fixedByCve.values()].map((g) => ({ cve: g.cve, count: g.count, assets: g.assets.size, lastDays: Math.floor((now - g.last) / DAY_MS5) })).sort((a, b) => {
+      var _a2, _b;
+      return a.lastDays - b.lastDays || b.count - a.count || String((_a2 = a.cve) != null ? _a2 : "").localeCompare(String((_b = b.cve) != null ? _b : ""));
+    });
+    const regressions = [...regressByCve.values()].map((g) => ({ cve: g.cve, times: g.times, count: g.count, assets: [...g.assets].sort() })).sort((a, b) => {
+      var _a2, _b;
+      return b.times - a.times || b.count - a.count || String((_a2 = a.cve) != null ? _a2 : "").localeCompare(String((_b = b.cve) != null ? _b : ""));
+    });
+    return { fixedWeek, fixed30, fixedGroups, reopened, regressions };
+  }
+
+  // src/domain/remediation.ts
+  var DAY_MS6 = 864e5;
   var ROLLOUT_MS2 = parseTs(REMEDIATION_ROLLOUT_ISO);
   var RESOLUTION_BUCKET_EDGES = [1, 7, 30, 90];
   var RESOLUTION_BUCKET_LABELS = ["\u22641d", "2\u20137d", "8\u201330d", "31\u201390d", "90+d"];
@@ -3209,7 +3708,7 @@ var Server = (() => {
       if (first === null) continue;
       const s = "severity" in rec ? normalizeSeverity(rec["severity"]) : "UNKNOWN";
       const target = SLA_TARGETS[s];
-      if (target !== void 0 && (nowMs - first) / DAY_MS5 > target) breached += 1;
+      if (target !== void 0 && (nowMs - first) / DAY_MS6 > target) breached += 1;
     }
     return breached;
   }
@@ -3253,14 +3752,14 @@ var Server = (() => {
     const fixAvail = parseTs(row.fix_available_at);
     if (fixAvail !== null) {
       const raw = fixAvail - originMs;
-      return { t: Math.max(0, raw) / DAY_MS5, event: true, closedBeforeFix: false };
+      return { t: Math.max(0, raw) / DAY_MS6, event: true, closedBeforeFix: false };
     }
     const resolved = parseTs(row.resolved_at);
     if (resolved !== null) {
-      return { t: Math.max(0, resolved - originMs) / DAY_MS5, event: false, closedBeforeFix: true };
+      return { t: Math.max(0, resolved - originMs) / DAY_MS6, event: false, closedBeforeFix: true };
     }
     if (isOpen2(row.status)) {
-      return { t: Math.max(0, nowMs - originMs) / DAY_MS5, event: false, closedBeforeFix: false };
+      return { t: Math.max(0, nowMs - originMs) / DAY_MS6, event: false, closedBeforeFix: false };
     }
     return null;
   }
@@ -3408,7 +3907,7 @@ var Server = (() => {
   }
 
   // src/domain/trend.ts
-  var DAY_MS6 = 864e5;
+  var DAY_MS7 = 864e5;
   function awaitingFixAsOf(firstMs, resolvedMs, fixAvailMs, d) {
     const openAsOfD = firstMs !== null && firstMs <= d && (resolvedMs === null || resolvedMs > d);
     return openAsOfD && (fixAvailMs === null || fixAvailMs > d);
@@ -3449,7 +3948,7 @@ var Server = (() => {
       const slaPct = denom ? within / denom * 100 : null;
       const p90s = [];
       for (const sev2 of SEVERITY_ORDER) {
-        const ages = parsed.filter((r, i) => openMask[i] && r.sev === sev2).map((r) => (ts.ms - r.first) / DAY_MS6);
+        const ages = parsed.filter((r, i) => openMask[i] && r.sev === sev2).map((r) => (ts.ms - r.first) / DAY_MS7);
         if (ages.length) {
           const p = quantile(ages, 0.9);
           if (p !== null) p90s.push(p);
@@ -3632,7 +4131,7 @@ var Server = (() => {
           }
         } else if (r.first !== null && r.first <= ts.ms) {
           if (hideNoFix && awaitingFixAsOf(r.first, r.resolvedAt, r.fixAvail, ts.ms)) continue;
-          ((_f = times[_e = r.group]) != null ? _f : times[_e] = []).push((censoredAsOf(ts.ms, r.last) - r.first) / DAY_MS6);
+          ((_f = times[_e = r.group]) != null ? _f : times[_e] = []).push((censoredAsOf(ts.ms, r.last) - r.first) / DAY_MS7);
         }
       }
       const byGroup = {};
@@ -3658,9 +4157,9 @@ var Server = (() => {
     const synthetic = [];
     const syntheticIso = /* @__PURE__ */ new Set();
     if (realFlatMs.length && firstSeenMs.length) {
-      const firstScanDay = Math.floor(minNum(realFlatMs) / DAY_MS6) * DAY_MS6;
-      const startDay = Math.floor(minNum(firstSeenMs) / DAY_MS6) * DAY_MS6;
-      for (let day = startDay; day < firstScanDay; day += DAY_MS6) {
+      const firstScanDay = Math.floor(minNum(realFlatMs) / DAY_MS7) * DAY_MS7;
+      const startDay = Math.floor(minNum(firstSeenMs) / DAY_MS7) * DAY_MS7;
+      for (let day = startDay; day < firstScanDay; day += DAY_MS7) {
         const iso = toIso(day);
         if (iso === null) continue;
         synthetic.push({ ts: iso, shape: "flat" });
@@ -3719,7 +4218,7 @@ var Server = (() => {
             }
           } else if (r.first !== null && r.first <= d) {
             if (hideNoFix && awaitingFixAsOf(r.first, r.resolvedAt, r.fixAvail, d)) continue;
-            times.push((censoredAsOf(d, r.last) - r.first) / DAY_MS6);
+            times.push((censoredAsOf(d, r.last) - r.first) / DAY_MS7);
           }
         }
         med = kmMedianFromCurve(kmCurve(events, times));
@@ -3752,7 +4251,7 @@ var Server = (() => {
       if (first !== null && first <= d) {
         if (hideNoFix && awaitingFixAsOf(first, resolvedAt, parseTs(r["fix_available_at"]), d)) continue;
         const last = parseTs(r["last_seen"]);
-        times.push((censoredAsOf(d, last) - first) / DAY_MS6);
+        times.push((censoredAsOf(d, last) - first) / DAY_MS7);
       }
     }
     const med = kmMedianFromCurve(kmCurve(events, times));
@@ -3781,7 +4280,7 @@ var Server = (() => {
           const target = SLA_TARGETS[r.sev];
           if (target === void 0) continue;
           const censoredMs = censoredAsOf(d, r.last);
-          const consumed = (censoredMs - r.origin) / DAY_MS6;
+          const consumed = (censoredMs - r.origin) / DAY_MS7;
           if (consumed > target) {
             breached += 1;
           } else if (r.last !== null && r.last < d) {
@@ -3803,7 +4302,7 @@ var Server = (() => {
       const actionable = parseTs(r["actionable_from"]);
       const target = SLA_TARGETS[normalizeSeverity(r["severity"])];
       if (actionable === null || target === void 0) continue;
-      out.push({ deadline: actionable + target * DAY_MS6, resolvedAt: parseTs(r["resolved_at"]) });
+      out.push({ deadline: actionable + target * DAY_MS7, resolvedAt: parseTs(r["resolved_at"]) });
     }
     return out;
   }
@@ -5383,303 +5882,6 @@ var Server = (() => {
     });
   }
 
-  // src/domain/pagePayload.ts
-  function execMttrSlice(mttr) {
-    var _a, _b, _c;
-    if (!mttr || typeof mttr !== "object") return null;
-    const m = mttr;
-    const overall = (_a = m["overall"]) != null ? _a : {};
-    const km = ((_b = m["remediation"]) != null ? _b : {})["km"];
-    return {
-      rowCount: m["rowCount"],
-      overall: { resolved: overall["resolved"], open: overall["open"] },
-      remediation: km ? { km: { median: km["median"], medianLowerBound: km["medianLowerBound"] } } : {},
-      // O1b: the present/unobserved split behind the hero's "Still open" count. Four scalars —
-      // `backlogSplitView` (pages/_backlog.js) is what turns them into the hero's line and
-      // caption — so this rides whole rather than earning its own narrowing function.
-      backlog: (_c = m["backlog"]) != null ? _c : null
-    };
-  }
-  function execGroupSlice(byGroup) {
-    var _a;
-    if (!byGroup || typeof byGroup !== "object") return null;
-    const b = byGroup;
-    const rows = Array.isArray(b["rows"]) ? b["rows"] : [];
-    return {
-      dimension: b["dimension"],
-      rows: rows.map((r) => {
-        var _a2;
-        return {
-          group: (_a2 = r["group"]) != null ? _a2 : r["domain"],
-          kmMedian: r["kmMedian"],
-          open: r["open"]
-        };
-      }),
-      cut: (_a = b["cut"]) != null ? _a : null
-    };
-  }
-  function pickRows(rows, keys) {
-    if (!Array.isArray(rows)) return [];
-    return rows.map((r) => {
-      const out = {};
-      for (const k of keys) if (k in r) out[k] = r[k];
-      return out;
-    });
-  }
-  var MTTR_TREND_KEYS = [
-    "date",
-    "reconstructed",
-    "open",
-    "resolved",
-    "median_days",
-    "km_median_days",
-    "open_past_sla",
-    "sla_net",
-    "sla_attainment_pct"
-  ];
-  var HISTORY_TREND_KEYS = ["date", "reconstructed", "open", "resolved", "km_median_days"];
-  var PROGRAM_TREND_KEYS = ["date", "reconstructed", "coverage_pct", "efficiency_pct"];
-  function mttrPageTrendSlice(trends) {
-    var _a;
-    if (!trends || typeof trends !== "object") return null;
-    const t = trends;
-    return { history: (_a = t["history"]) != null ? _a : [], trend: pickRows(t["trend"], MTTR_TREND_KEYS) };
-  }
-  function historyTrendSlice(trends) {
-    if (!trends || typeof trends !== "object") return null;
-    return { trend: pickRows(trends["trend"], HISTORY_TREND_KEYS) };
-  }
-  function programTrendSlice(trends) {
-    if (!trends || typeof trends !== "object") return null;
-    return { trend: pickRows(trends["trend"], PROGRAM_TREND_KEYS) };
-  }
-  var SCAN_ROW_KEYS = [
-    "scan_id",
-    "ts",
-    "mode",
-    "shape",
-    "total",
-    "new_count",
-    "resolved_count",
-    "reopened_count",
-    "severities",
-    "sealed",
-    // The completeness verdict — what the table marks a deferred scan by
-    // (gas_shared/domain/scanCompleteness.ts). The other three record columns (reported_total,
-    // partial_pages, duplicates) are operator diagnostics that reach the error log instead.
-    "disappearance"
-  ];
-  function scanRowsSlice(scans) {
-    return pickRows(scans, SCAN_ROW_KEYS);
-  }
-  var OLDEST_VIEWS = ["findings", "byAsset", "bySupportGroup", "byDomain"];
-  var OVERVIEW_OMIT = /* @__PURE__ */ new Set(["oldest", "fixNext", "movementOpen"]);
-  function overviewInsightsSlice(insights) {
-    if (!insights || typeof insights !== "object") return null;
-    const out = {};
-    for (const [k, v] of Object.entries(insights)) if (!OVERVIEW_OMIT.has(k)) out[k] = v;
-    return out;
-  }
-  function execInsightsSlice(insights) {
-    if (!insights || typeof insights !== "object") return null;
-    const i = insights;
-    return { fixNext: i["fixNext"], movement: i["movementOpen"], scan: i["scan"] };
-  }
-  function oldestOpenSlice(insights, view) {
-    const known = OLDEST_VIEWS.includes(view) ? view : "findings";
-    const oldest = insights && typeof insights === "object" ? insights["oldest"] : void 0;
-    const rows = oldest ? oldest[known] : void 0;
-    const unobserved = oldest && typeof oldest["unobserved"] === "number" ? oldest["unobserved"] : 0;
-    return { view: known, rows: Array.isArray(rows) ? rows : [], unobserved };
-  }
-  function mttrGroupTableSlice(byGroup) {
-    var _a;
-    if (!byGroup || typeof byGroup !== "object") return null;
-    const b = byGroup;
-    return {
-      dimension: b["dimension"],
-      rows: Array.isArray(b["rows"]) ? b["rows"] : [],
-      cut: (_a = b["cut"]) != null ? _a : null
-    };
-  }
-  function mttrGroupTrendSlice(byGroup) {
-    var _a;
-    if (!byGroup || typeof byGroup !== "object") return null;
-    return (_a = byGroup["trend"]) != null ? _a : null;
-  }
-  var JOB_KEYS = [
-    "job_id",
-    "kind",
-    "phase",
-    "page",
-    "findings_so_far",
-    "total_count",
-    "started_at",
-    "updated_at",
-    "error"
-  ];
-  function jobSummarySlice(job, stale) {
-    var _a, _b;
-    if (!job || typeof job !== "object") return null;
-    const j = job;
-    const out = { stale };
-    for (const k of JOB_KEYS) out[k] = (_a = j[k]) != null ? _a : null;
-    let incremental = null;
-    try {
-      const raw = j["params_json"];
-      if (typeof raw === "string" && raw) incremental = Boolean((_b = JSON.parse(raw)) == null ? void 0 : _b.incremental);
-    } catch {
-      incremental = null;
-    }
-    out["incremental"] = incremental;
-    return out;
-  }
-  var REGISTER_ROW_KEY = "vuln_key";
-  var REGISTER_ROW_COLUMNS = [
-    "cve",
-    "severity",
-    "risk_tier",
-    "status",
-    "resolution_src",
-    "reopened_count",
-    "asset_name",
-    "asset_type",
-    "cloud",
-    "subscription_name",
-    "support_group",
-    "domain",
-    "first_seen",
-    "published_date",
-    "fix_available_at",
-    "awaiting_vendor_fix",
-    "last_seen",
-    "resolved_at",
-    "has_kev",
-    "has_exploit",
-    "epss",
-    "internet_exposed",
-    "mttr_days",
-    "age_days",
-    "actionable_age_days",
-    // Wiz's own console link for this finding. NOT A DRAWN COLUMN — no table cell reads it —
-    // but the finding sheet does, and the sheet may only touch keys on this list
-    // (test/findingSheet.test.js hands the model a Proxy row and asserts exactly that). So it
-    // ships here rather than as a second payload, for the same reason `vuln_key` does: one
-    // `api_getRegisterRows` already carries everything the drill-down needs, and a sheet that
-    // had to fetch would cost one call per finding opened.
-    "portal_url"
-  ];
-  var REGISTER_ROW_SOURCE = {
-    support_group: "_supportGroup",
-    domain: "_domain"
-  };
-  var REGISTER_ROW_DEFAULT_SORT = {
-    sort: "age_days",
-    dir: "desc"
-  };
-  var REGISTER_ROWS_PAGE_SIZE_CAP = 250;
-  var REGISTER_ROWS_DEFAULT_PAGE_SIZE = 50;
-  function registerRowsSlice(rows) {
-    if (!Array.isArray(rows)) return [];
-    return rows.map((r) => {
-      var _a;
-      const key = r[REGISTER_ROW_KEY];
-      const out = { [REGISTER_ROW_KEY]: key === void 0 ? null : key };
-      for (const c of REGISTER_ROW_COLUMNS) {
-        const v = r[(_a = REGISTER_ROW_SOURCE[c]) != null ? _a : c];
-        out[c] = v === void 0 ? null : v;
-      }
-      return out;
-    });
-  }
-  function compareRegisterValues(a, b) {
-    if (typeof a === "number" && typeof b === "number") return a - b;
-    if (typeof a === "boolean" && typeof b === "boolean") return (a ? 1 : 0) - (b ? 1 : 0);
-    const sa = String(a).toLowerCase();
-    const sb = String(b).toLowerCase();
-    return sa < sb ? -1 : sa > sb ? 1 : 0;
-  }
-  function nullsLastOrder(a, b) {
-    const na = a === null || a === void 0;
-    const nb = b === null || b === void 0;
-    if (na && nb) return 0;
-    if (na) return 1;
-    if (nb) return -1;
-    return null;
-  }
-  function sortRegisterRows(rows, spec) {
-    const list = Array.isArray(rows) ? rows.slice() : [];
-    const value = spec && spec.value;
-    if (typeof value !== "function") return list;
-    const descending = Boolean(spec.descending);
-    const tiebreak = typeof spec.tiebreak === "function" ? spec.tiebreak : null;
-    return list.sort((ra, rb) => {
-      const va = value(ra);
-      const vb = value(rb);
-      const order = nullsLastOrder(va, vb);
-      if (order === null) {
-        const d = compareRegisterValues(va, vb);
-        if (d !== 0) return descending ? -d : d;
-      } else if (order !== 0) {
-        return order;
-      }
-      if (!tiebreak) return 0;
-      const ta = tiebreak(ra);
-      const tb = tiebreak(rb);
-      const tie = nullsLastOrder(ta, tb);
-      return tie === null ? compareRegisterValues(ta, tb) : tie;
-    });
-  }
-  function pageOfRegisterRows(rows, page, pageSize) {
-    const size = Math.max(1, Math.floor(pageSize));
-    const pageCount = Math.max(1, Math.ceil(rows.length / size));
-    const clamped = Math.min(Math.max(Math.floor(page) || 0, 0), pageCount - 1);
-    return {
-      rows: rows.slice(clamped * size, (clamped + 1) * size),
-      page: clamped,
-      pageCount
-    };
-  }
-  var DATE_SORT_COLUMNS = /* @__PURE__ */ new Set([
-    "first_seen",
-    "last_seen",
-    "resolved_at",
-    "fix_available_at",
-    "published_date"
-  ]);
-  var NUMBER_SORT_COLUMNS = /* @__PURE__ */ new Set([
-    "epss",
-    "mttr_days",
-    "age_days",
-    "actionable_age_days",
-    "reopened_count"
-  ]);
-  function severityRank(v) {
-    const i = SEVERITY_ORDER.indexOf(normalizeSeverity(v));
-    return i === -1 ? SEVERITY_ORDER.length : i;
-  }
-  function riskTierRank(v) {
-    const i = RISK_TIER_ORDER.indexOf(String(v != null ? v : ""));
-    return i === -1 ? RISK_TIER_ORDER.length : i;
-  }
-  function orNull(v) {
-    return v === null || v === void 0 || v === "" ? null : v;
-  }
-  function registerSortValue(column) {
-    if (column === "severity") return (r) => severityRank(r["severity"]);
-    if (column === "risk_tier") return (r) => riskTierRank(r["risk_tier"]);
-    if (DATE_SORT_COLUMNS.has(column)) return (r) => parseTs(r[column]);
-    if (NUMBER_SORT_COLUMNS.has(column)) {
-      return (r) => {
-        const raw = orNull(r[column]);
-        if (raw === null) return null;
-        const n = Number(raw);
-        return Number.isFinite(n) ? n : null;
-      };
-    }
-    return (r) => orNull(r[column]);
-  }
-
   // ../gas_shared/domain/snapshotCodec.ts
   var DICT_MAX_DISTINCT_SHARE = 0.5;
   function encodeRows(rows, strings, index) {
@@ -6080,9 +6282,9 @@ var Server = (() => {
       const t0 = Date.now();
       const plain = isGzip ? Utilities.ungzip(blob) : blob;
       const t1 = Date.now();
-      const text2 = plain.getDataAsString("UTF-8");
+      const text3 = plain.getDataAsString("UTF-8");
       const t2 = Date.now();
-      const parsed = JSON.parse(text2);
+      const parsed = JSON.parse(text3);
       if (meta) {
         meta.ungzipMs = t1 - t0;
         meta.textMs = t2 - t1;
@@ -6719,7 +6921,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "1240b71cc9a3" : "dev";
+  var BUILD_ID = true ? "49b43deb3ca2" : "dev";
   var CACHE_EPOCH = "3";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
@@ -9762,6 +9964,8 @@ var Server = (() => {
     "include",
     "bootstrap",
     "getScopeSummary",
+    // The champion board: forced to the viewer's scope like the summary (api.ts).
+    "getChampionBoard",
     "getRegisterRows",
     "getExportCsv"
   ];
@@ -12940,12 +13144,8 @@ var Server = (() => {
     const rawExposed = params["exposed"];
     return { status, fix, tier, exposed: rawExposed === true || rawExposed === "true" };
   }
-  function registerRowsData(p, filters) {
-    var _a, _b, _c, _d;
-    const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
-    const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
-    const severities = readSeverities(p);
-    const viewer = readViewerScope(p);
+  function registerPopulation(domain, supportGroup, severities, viewer) {
+    var _a, _b;
     const recsVisible = filterSeverities(
       scopedFrameRecords(domain, supportGroup, [], viewer),
       severities
@@ -12954,7 +13154,7 @@ var Server = (() => {
     const exposedKeys = exposedVulnKeys(recsVisible, exposureKnown);
     const framedKeys = /* @__PURE__ */ new Set();
     for (const r of recsVisible) {
-      const k = String((_c = r["_vuln_key"]) != null ? _c : "");
+      const k = String((_a = r["_vuln_key"]) != null ? _a : "");
       if (k) framedKeys.add(k);
     }
     const base = visibleBase(
@@ -12966,9 +13166,19 @@ var Server = (() => {
     for (const r of base) {
       r["_domain"] = domainOf2(r);
       r["risk_tier"] = riskTier(r, rule);
-      const key = String((_d = r["vuln_key"]) != null ? _d : "");
+      const key = String((_b = r["vuln_key"]) != null ? _b : "");
       r["internet_exposed"] = !exposureKnown || !framedKeys.has(key) ? null : exposedKeys.has(key);
     }
+    return { base, exposureKnown, exposedKeys, rule };
+  }
+  function registerRowsData(p, filters) {
+    var _a, _b;
+    const { base, exposureKnown } = registerPopulation(
+      String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
+      String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
+      readSeverities(p),
+      readViewerScope(p)
+    );
     let rows = base;
     if (filters.status !== "all") {
       const wantOpen = filters.status === "open";
@@ -13848,25 +14058,25 @@ var Server = (() => {
       };
     };
     const isOpen4 = (r) => isOpenStatus(r["status"]);
-    const text2 = (v) => String(v != null ? v : "").trim();
+    const text3 = (v) => String(v != null ? v : "").trim();
     return informativeSplits([
       buildSplit(
         rows,
-        (r) => text2(r["_supportGroup"]),
+        (r) => text3(r["_supportGroup"]),
         isOpen4,
         stat,
         { dimension: "supportGroup", label: "Support group" }
       ),
       buildSplit(
         rows,
-        (r) => text2(r["_domain"]),
+        (r) => text3(r["_domain"]),
         isOpen4,
         stat,
         { dimension: "domain", label: "Domain" }
       ),
       buildSplit(
         rows,
-        (r) => text2(r["asset_name"]),
+        (r) => text3(r["asset_name"]),
         isOpen4,
         stat,
         { dimension: "asset", label: "Asset" }
@@ -13902,6 +14112,64 @@ var Server = (() => {
       return cachedScopeSummary(viewer);
     });
   }
+  var CHAMPION_BOARD = "championBoard1";
+  function mttrHeadline(mttr) {
+    var _a, _b, _c;
+    const rem = (_a = mttr["remediation"]) != null ? _a : {};
+    const km = (_b = rem["km"]) != null ? _b : {};
+    const past = ((_c = rem["openPastSlaActionable"]) != null ? _c : {})["overall"];
+    const num = (v) => typeof v === "number" && Number.isFinite(v) ? v : null;
+    return {
+      median: num(km["median"]),
+      medianLowerBound: num(km["median"]) === null ? num(km["medianLowerBound"]) : null,
+      pastSlaPct: num(past == null ? void 0 : past["pct"])
+    };
+  }
+  function championBoardData(domain, supportGroup, severities, viewer) {
+    const { base, exposureKnown, exposedKeys, rule } = registerPopulation(domain, supportGroup, severities, viewer);
+    const board = championBoard(base, {
+      exposedKeys,
+      exposureKnown,
+      rule,
+      slaTargets: SLA_TARGETS
+    });
+    const teamMttr = viewer ? mttrData(viewerParams(viewer, severities)) : cachedMttrData({ domain, supportGroup, severities });
+    const orgMttr = cachedMttrData({ domain: "", supportGroup: "", severities });
+    const latest = latestScanRow();
+    return {
+      ...board,
+      mttr: { team: mttrHeadline(teamMttr), org: mttrHeadline(orgMttr) },
+      scan: latest ? { ts: latest.ts, total: latest.total } : null
+    };
+  }
+  var cachedChampionBoard = (viewer) => durablyCached(
+    CHAMPION_BOARD,
+    { ...scopedBootParams(viewer), riskRuleVersion: getRiskRule2().version },
+    () => championBoardData("", "", getDisplaySeverities2(), viewer)
+  );
+  var cachedHeaderChampionBoard = (domain, supportGroup, severities) => cached(
+    CHAMPION_BOARD,
+    {
+      domain,
+      supportGroup,
+      severities,
+      showNoFix: getShowNoFix2(),
+      riskRuleVersion: getRiskRule2().version
+    },
+    () => championBoardData(domain, supportGroup, severities, null),
+    3600
+  );
+  function getChampionBoard(p) {
+    return run(() => {
+      var _a, _b, _c;
+      const viewer = (_a = enforcedScope()) != null ? _a : readViewerScope(p);
+      if (viewer) return cachedChampionBoard(viewer);
+      const domain = String((_b = p == null ? void 0 : p["domain"]) != null ? _b : "");
+      const supportGroup = String((_c = p == null ? void 0 : p["supportGroup"]) != null ? _c : "");
+      if (!domain && !supportGroup) return { needsScope: true };
+      return cachedHeaderChampionBoard(domain, supportGroup, readSeverities(p));
+    });
+  }
   function warmScopedViews(step4) {
     let roster;
     try {
@@ -13913,6 +14181,7 @@ var Server = (() => {
     for (const scope of distinctScopes(roster).values()) {
       const viewer = toViewerScope(scope);
       step4("scopedBoot", () => cachedScopedBoot(viewer));
+      step4("championBoard", () => cachedChampionBoard(viewer));
       step4("scopedRegister", () => {
         const p = viewerParams(viewer, getDisplaySeverities2());
         cachedRegisterRows(p, registerRowFilters(p));

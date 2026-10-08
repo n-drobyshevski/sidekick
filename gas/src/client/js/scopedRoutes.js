@@ -1,4 +1,5 @@
-// The scoped viewer's route table: two read-only pages instead of the whole app.
+// The scoped viewer's route table: three read-only pages instead of the whole app — the
+// champion board (their front door), the MTTR summary, and their findings.
 //
 // A boot payload with `role: "scoped"` (server/api.ts `scopedBootData`) swaps PAGES for this
 // table through the shell's `pagesFor` hook (app.js). Every other route — Settings included —
@@ -18,6 +19,7 @@ import {
   fixLabel, PROVENANCE_LABEL, provenance, REGISTER_DEFAULT_DIR, REGISTER_DEFAULT_SORT,
 } from "./pages/registerModel.js";
 import { findingRowLabel, openFindingSheet } from "./pages/findingSheet.js";
+import { renderChampion } from "./pages/champion.js";
 import { wizLinkColumn } from "../../../../gas_shared/ui/wizLinks.js";
 
 const SEV_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
@@ -56,6 +58,15 @@ const SUMMARY_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
 const LIST_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6.5h11"/><path d="M9 12h11"/><path d="M9 17.5h11"/><path d="M4.5 6.5h.01"/><path d="M4.5 12h.01"/><path d="M4.5 17.5h.01"/></svg>';
 
 export const SCOPED_PAGES = {
+  // THE FRONT DOOR: the champion board over the viewer's own scope (the server forces it).
+  // The SAME KEY as the PAGES route, so the rail draws PAGES' icon and `pageHeader` titles it
+  // from PAGES — one entry, two audiences. No icon here for that reason. The RAIL label is
+  // "My board", beside "My scope" and "My findings": the 76px rail cuts "Champion board" to
+  // "Champio…", and the h1 still reads "Champion board" (pageHeader titles from PAGES).
+  champion: {
+    title: "My board", group: null,
+    render: (main, params, ctx) => renderChampion(main, params, ctx),
+  },
   scope: {
     title: "My scope", group: null, icon: SUMMARY_ICON,
     render: (main, params) => renderScopeSummary(main, params, { sevOrder: SEV_ORDER, findingsRoute: "findings" }),
@@ -90,5 +101,5 @@ export const SCOPED_PAGES = {
 
 /** The shell's `pagesFor`: the reduced table for a scoped payload, else null (PAGES). */
 export function pagesFor(data) {
-  return data && data.role === "scoped" ? { pages: SCOPED_PAGES, defaultRoute: "scope" } : null;
+  return data && data.role === "scoped" ? { pages: SCOPED_PAGES, defaultRoute: "champion" } : null;
 }

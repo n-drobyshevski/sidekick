@@ -708,3 +708,39 @@ selection and marks each lit point inline, the `chartTable` twin grows an "In se
 while anything is dimmed, and its caption carries the same sentence the alt text does. A
 highlight that existed only as pixels would be this page making a distinction and then
 withholding it.
+
+## 12. The champion board (2026-10-08)
+
+`pages/champion.js` is the front door for a security champion: a scoped viewer lands on it, and
+a full user opens it from the Program lane over one header scope. It was chosen over three other
+shapes in a round of mock-ups (an action inbox, Now/Next/Progress tabs, a digest page). The
+first proposal, a four-figure briefing over six tables, was judged too much to read for someone
+whose job is to push a handful of things with a team.
+
+**The columns are clocks, not scores.**
+- The five columns are: Act now, Past SLA, Due in 7 days, Due in 8–14 days, Waiting on vendor.
+  That makes the question a deadline ("by when"), the one thing a champion can still change.
+- The tier squares reuse `.brief-tone--tN`, the Fix next rank ramp, and the tier's name always
+  sits beside the square. An untiered card carries the shared `sevBadge`. A vendor card has a
+  hollow mark in a dashed column, because the wait is not the team's.
+- Nothing takes `--accent`.
+
+**What the board leaves out is printed, not hidden.** The line under the board counts what it
+did not draw: inside SLA beyond 14 days, not seen in the latest scan, and no readable clock.
+That is an honesty statement, so it stays on the surface. The column definitions are
+explanations, so they ride on each column head's tip.
+
+**No canvas, and no page scroll on a phone.**
+- A scoped viewer never loads Chart.js.
+- Below 960px the board scrolls inside its own wrapper.
+- That wrapper is `position: relative` on purpose. The tips' `.sr-only` spans are absolutely
+  positioned, and without a positioned scroller they dragged the whole document 591px sideways
+  at 360px (measured).
+
+**One benchmark.** The progress line puts the team's KM MTTR beside the whole register's and
+nothing else. No other team is named or ranked; that was the decision when the view was
+scoped.
+
+**The rail says "My board", the h1 says "Champion board".** The 76px scoped rail cuts the full
+title to "Champio…". "My board" sits beside "My scope" and "My findings", and the page header
+still titles it from `PAGES`.

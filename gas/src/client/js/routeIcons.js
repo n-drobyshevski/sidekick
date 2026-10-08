@@ -48,6 +48,10 @@ export const ROUTE_ICONS = {
   executive: bars,
   mttr: stopwatch,
   program: shotTarget,
+  // Three columns of uneven depth: the champion board's deadline columns. Deliberately not the
+  // executive bars (those rise from a baseline and measure; these hang from the top and sort)
+  // and not the Registers lane's sheets.
+  champion: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4" width="4.5" height="16" rx="1.2"/><rect x="9.75" y="4" width="4.5" height="10" rx="1.2"/><rect x="16" y="4" width="4.5" height="13" rx="1.2"/></svg>',
   overview: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.2l7 2.4v5.2c0 4.2-2.9 7-7 8.4-4.1-1.4-7-4.2-7-8.4V5.6z"/><path d="M12 8.5v3.4"/><path d="M12 15h.01"/></svg>',
   // A snowflake: three axes through one centre, each tipped with a pair of barbs. The page is
   // about what has stopped moving, and a flake is the one figure in this set that says "frozen"

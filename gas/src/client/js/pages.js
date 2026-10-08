@@ -15,6 +15,7 @@ import { renderExecutive } from "./pages/executive.js";
 import { renderOverview } from "./pages/overview.js";
 import { renderMttr } from "./pages/mttr.js";
 import { renderProgram } from "./pages/program.js";
+import { renderChampion } from "./pages/champion.js";
 import { renderColdZone } from "./pages/coldZone.js";
 import { renderHistory } from "./pages/history.js";
 import { renderData } from "./pages/data.js";
@@ -58,6 +59,11 @@ export const PAGES = {
   // settled the phrase, defining "Coverage & efficiency over time" while the nav went on
   // calling the page something else.
   program: { title: "Coverage & efficiency", group: "Program", render: renderProgram },
+  // A team's open findings sorted into five clocks (pages/champion.js). LAST IN THE PROGRAM LANE
+  // because it is the programme read for ONE team rather than for the register — and for a
+  // scoped viewer it is the front door (scopedRoutes.js), under this same key, so the rail
+  // icon and the h1 title resolve from this one entry for both audiences.
+  champion: { title: "Champion board", group: "Program", render: renderChampion },
   overview: { title: "OS vulnerabilities", group: "Registers", render: renderOverview },
   // LAST IN THE REGISTERS LANE, AND AFTER THE REGISTER IT READS. Executive, MTTR and
   // Coverage & efficiency ask how fast risk is closing; OS vulnerabilities is the register

@@ -184,6 +184,8 @@ export const SCOPED_RPCS: readonly string[] = [
   "include",
   "bootstrap",
   "getScopeSummary",
+  // The champion board: forced to the viewer's scope like the summary (api.ts).
+  "getChampionBoard",
   "getRegisterRows",
   "getExportCsv",
 ];

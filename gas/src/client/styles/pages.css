@@ -760,3 +760,76 @@ table.data.jobs-table td.job-status-cell { white-space: normal; max-width: 420px
    heard of it. Both now come from `.isotype--grid.isotype--census` in
    gas_shared/styles/components.css, where the argument and the declaration sit together — the
    same move gas_ai's Scans page made when its local cell-size rule was folded into `unitGrid`. */
+
+/* ---------------------------------------------------------------- the champion board
+   Five deadline columns (pages/champion.js). The board scrolls sideways inside its own wrapper
+   on a narrow screen and the page never does: a column squeezed below a card's width would
+   wrap every CVE onto three lines, which is worse than a swipe. Tier marks reuse the shared
+   `.brief-tone--tN` fills (the Fix next rank ramp); severity rides on the shared `sevBadge`.
+   Nothing here takes `--accent`. */
+.champion { display: flex; flex-direction: column; gap: var(--space-5); min-width: 0; }
+/* `position: relative` is load-bearing: the column heads' tips carry an absolutely positioned
+   `.sr-only` span, and without a positioned scroller that span is laid out against the page and
+   drags the whole document sideways on a phone (measured: 591px of page scroll at 360px). */
+.champion-board-wrap { position: relative; overflow-x: auto; max-width: 100%; min-width: 0; padding-bottom: var(--space-1); }
+.champion-board-wrap:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+.champion-board {
+  display: grid; grid-template-columns: repeat(5, minmax(184px, 1fr)); gap: var(--space-3);
+  min-width: 960px; align-items: start;
+}
+.champion-col {
+  display: flex; flex-direction: column; gap: var(--space-2); min-width: 0;
+  padding: var(--space-3); border: 1px solid var(--hairline); border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.champion-col--vendor { background: transparent; border-style: dashed; }
+.champion-col__head {
+  display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-2);
+  padding: 0 var(--space-1);
+}
+.champion-col__title {
+  margin: 0; font-size: var(--fs-label); font-weight: var(--fw-semibold); letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--text-2);
+}
+.champion-col__count { font-size: var(--fs-label); font-weight: var(--fw-semibold); color: var(--ink); }
+.champion-col__cards { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.champion-col__empty { padding: var(--space-1); }
+.champion-col__more {
+  appearance: none; border: 0; background: none; padding: var(--space-1); cursor: pointer;
+  font: inherit; font-size: var(--fs-label); color: var(--accent-text);
+}
+.champion-card {
+  appearance: none; margin: 0; width: 100%; text-align: left; font: inherit; color: inherit;
+  display: flex; flex-direction: column; gap: 3px; cursor: pointer;
+  padding: 9px 10px; border: 1px solid var(--hairline); border-radius: var(--radius-sm);
+  background: var(--page); font-size: 13px;
+}
+.champion-card:hover { border-color: var(--hairline-strong); }
+.champion-card:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 1px; }
+.champion-card__name { display: flex; align-items: center; gap: 7px; font-weight: var(--fw-semibold); min-width: 0; }
+.champion-card__cve { overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.champion-card__mark { flex: none; width: 10px; height: 10px; border-radius: var(--radius-xs); }
+.champion-card__mark--vendor { border-radius: var(--radius-pill); border: 2px solid var(--hairline-strong); }
+.champion-card__meta { color: var(--text-2); font-size: var(--fs-label); overflow-wrap: anywhere; }
+.champion-card__kind { color: var(--text-2); }
+.champion-card__clock { font-size: var(--fs-label); font-weight: var(--fw-semibold); color: var(--text-2); }
+.champion-card__clock--bad { color: var(--bad); }
+.champion-offboard { margin: calc(-1 * var(--space-3)) 0 0; }
+.champion-progress { border-top: 1px solid var(--hairline); padding-top: var(--space-4); }
+.champion-progress__line { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-5); }
+.champion-progress__label {
+  font-size: var(--fs-label); font-weight: var(--fw-semibold); letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--text-3);
+}
+.champion-progress__cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: var(--space-4) var(--space-6); }
+.champion-list__title { margin: 0 0 var(--space-2); font-size: var(--fs-body); font-weight: var(--fw-semibold); }
+.champion-list__rows { list-style: none; margin: 0; padding: 0; }
+.champion-list__rows li {
+  display: flex; justify-content: space-between; gap: var(--space-3); padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--hairline); font-size: 13px;
+}
+.champion-list__rows li > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.champion-list__name { font-weight: var(--fw-semibold); font-variant-numeric: tabular-nums; }
+.champion-list__when { color: var(--text-3); white-space: nowrap; }
+.champion-list__when--repeat { color: var(--bad); font-weight: var(--fw-semibold); }
+.champion-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }

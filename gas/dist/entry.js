@@ -107,6 +107,7 @@ function api_getColdZonePage(p) { return timedApi_("getColdZonePage", p); }
 function api_getRiskCohort(p) { return timedApi_("getRiskCohort", p); }
 function api_getRegisterRows(p) { return timedApi_("getRegisterRows", p); }
 function api_getScopeSummary(p) { return timedApi_("getScopeSummary", p); }
+function api_getChampionBoard(p) { return timedApi_("getChampionBoard", p); }
 function api_getExportCoverageCsv(p) { return timedApi_("getExportCoverageCsv", p); }
 function api_startRiskBackfill(p) { return timedApi_("startRiskBackfill", p); }
 function api_getRiskBackfillStatus(p) { return timedApi_("getRiskBackfillStatus", p); }

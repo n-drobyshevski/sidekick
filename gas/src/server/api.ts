@@ -15,6 +15,7 @@ import { mttrFromLedger, vulnKey } from "../domain/lifecycle";
 import { newestFlatScanBySeverity, type BaseRow } from "../domain/ledgerCore";
 import * as coldZone from "../domain/coldZone";
 import { fixNext } from "../domain/fixNext";
+import { championBoard, type ChampionRow } from "../domain/championBoard";
 import { extractNodes } from "../domain/transform";
 import { overallSlaOldest } from "../domain/metrics";
 import { normalizeSeverity } from "../domain/severity";
@@ -2697,6 +2698,53 @@ function registerRowFilters(p?: unknown): RegisterRowFilters {
 }
 
 /**
+ * The register's population: scoped, gated, toggle-filtered base rows with the attribution and
+ * frame joins applied (`_domain`, `risk_tier`, tri-state `internet_exposed`). ONE builder for
+ * the findings table and the champion board, so the two can never count a different team.
+ */
+function registerPopulation(
+  domain: string,
+  supportGroup: string,
+  severities: string[] | null,
+  viewer: access.ViewerScope | null,
+): { base: Rec[]; exposureKnown: boolean; exposedKeys: Set<string>; rule: program.RiskRule } {
+  // The frame half. `scopedFrameRecords` already applies `visibleFrame`, so this is the same
+  // `recsVisible` the Overview's risk ladder and triage funnel read — one join, one answer
+  // about which hosts are reachable, rather than a second pass free to disagree.
+  const recsVisible = filterSeverities(
+    scopedFrameRecords(domain, supportGroup, [], viewer),
+    severities,
+  );
+  // `exposureKnown` is `exploitSummary`'s own answer rather than a re-derivation: the key it
+  // probes for is private to insights.ts, and a copy here is a second definition of "did the
+  // scan look".
+  const exposureKnown = insights.exploitSummary(recsVisible).exposureKnown;
+  const exposedKeys = exposedVulnKeys(recsVisible, exposureKnown);
+  const framedKeys = new Set<string>();
+  for (const r of recsVisible) {
+    const k = String(r["_vuln_key"] ?? "");
+    if (k) framedKeys.add(k);
+  }
+
+  // The durable half — the same chain riskCohortRows uses.
+  const base = visibleBase(
+    filterSeverities(scopedBaseRows(domain, supportGroup, viewer), severities),
+  );
+  supportGroups.attachSupportGroups(base);
+  bizDomains.attachBizDomains(base);
+  const rule = settingsStore.getRiskRule().rule;
+  for (const r of base) {
+    r["_domain"] = currentDomains.domainOf(r);
+    r["risk_tier"] = program.riskTier(r as unknown as program.RiskRow, rule);
+    const key = String(r["vuln_key"] ?? "");
+    r["internet_exposed"] = !exposureKnown || !framedKeys.has(key)
+      ? null
+      : exposedKeys.has(key);
+  }
+  return { base, exposureKnown, exposedKeys, rule };
+}
+
+/**
  * The whole filtered set, sliced to the wire columns — everything except the sort and the
  * page, which the endpoint applies outside the cache entry.
  *
@@ -2732,44 +2780,12 @@ function registerRowFilters(p?: unknown): RegisterRowFilters {
  * than they were.
  */
 function registerRowsData(p: unknown, filters: RegisterRowFilters): Rec {
-  const domain = String((p as Rec)?.["domain"] ?? "");
-  const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
-  const severities = readSeverities(p);
-  const viewer = readViewerScope(p);
-
-  // The frame half. `scopedFrameRecords` already applies `visibleFrame`, so this is the same
-  // `recsVisible` the Overview's risk ladder and triage funnel read — one join, one answer
-  // about which hosts are reachable, rather than a second pass free to disagree.
-  const recsVisible = filterSeverities(
-    scopedFrameRecords(domain, supportGroup, [], viewer),
-    severities,
+  const { base, exposureKnown } = registerPopulation(
+    String((p as Rec)?.["domain"] ?? ""),
+    String((p as Rec)?.["supportGroup"] ?? ""),
+    readSeverities(p),
+    readViewerScope(p),
   );
-  // `exposureKnown` is `exploitSummary`'s own answer rather than a re-derivation: the key it
-  // probes for is private to insights.ts, and a copy here is a second definition of "did the
-  // scan look".
-  const exposureKnown = insights.exploitSummary(recsVisible).exposureKnown;
-  const exposedKeys = exposedVulnKeys(recsVisible, exposureKnown);
-  const framedKeys = new Set<string>();
-  for (const r of recsVisible) {
-    const k = String(r["_vuln_key"] ?? "");
-    if (k) framedKeys.add(k);
-  }
-
-  // The durable half — the same chain riskCohortRows uses.
-  const base = visibleBase(
-    filterSeverities(scopedBaseRows(domain, supportGroup, viewer), severities),
-  );
-  supportGroups.attachSupportGroups(base);
-  bizDomains.attachBizDomains(base);
-  const rule = settingsStore.getRiskRule().rule;
-  for (const r of base) {
-    r["_domain"] = currentDomains.domainOf(r);
-    r["risk_tier"] = program.riskTier(r as unknown as program.RiskRow, rule);
-    const key = String(r["vuln_key"] ?? "");
-    r["internet_exposed"] = !exposureKnown || !framedKeys.has(key)
-      ? null
-      : exposedKeys.has(key);
-  }
 
   let rows = base;
   if (filters.status !== "all") {
@@ -4019,6 +4035,98 @@ export function getScopeSummary(p?: unknown): ApiResult {
   });
 }
 
+// ---------------------------------------------------------------------- champion board
+//
+// A team's open findings sorted into five clocks (src/domain/championBoard.ts). Scoped viewers
+// land on it; a full user opens it with the header scope set to one domain or support group.
+// It never draws the whole register as a "team": with no scope at all it answers `needsScope`.
+//
+// "championBoard1": new.
+const CHAMPION_BOARD = "championBoard1";
+
+/** The two MTTR figures the progress strip prints: KM median (or its bound) and past-SLA %. */
+function mttrHeadline(mttr: Rec): Rec {
+  const rem = (mttr["remediation"] ?? {}) as Rec;
+  const km = (rem["km"] ?? {}) as Rec;
+  const past = ((rem["openPastSlaActionable"] ?? {}) as Rec)["overall"] as Rec | undefined;
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  return {
+    median: num(km["median"]),
+    medianLowerBound: num(km["median"]) === null ? num(km["medianLowerBound"]) : null,
+    pastSlaPct: num(past?.["pct"]),
+  };
+}
+
+/**
+ * The board over one team. `viewer` for a scoped caller (or a Settings → Access preview);
+ * otherwise the header scope. Severities are the display subset the caller asked for (scoped:
+ * the register's display severities, exactly as the summary reads them).
+ */
+function championBoardData(
+  domain: string,
+  supportGroup: string,
+  severities: string[] | null,
+  viewer: access.ViewerScope | null,
+): Rec {
+  const { base, exposureKnown, exposedKeys, rule } =
+    registerPopulation(domain, supportGroup, severities, viewer);
+  const board = championBoard(base as unknown as ChampionRow[], {
+    exposedKeys, exposureKnown, rule, slaTargets: SLA_TARGETS,
+  });
+  // The team's MTTR through the MTTR page's own builder over the same scope. `cachedMttrData`
+  // is not keyed by viewer scope, so a scoped team reads `mttrData` directly — the way
+  // `scopeSummaryData` does — inside this entry's own cache.
+  const teamMttr = viewer
+    ? mttrData(viewerParams(viewer, severities))
+    : cachedMttrData({ domain, supportGroup, severities });
+  // THE ONE BENCHMARK: the whole register's MTTR and past-SLA share, no other team named.
+  const orgMttr = cachedMttrData({ domain: "", supportGroup: "", severities });
+  const latest = ledgerStore.latestScanRow();
+  return {
+    ...(board as unknown as Rec),
+    mttr: { team: mttrHeadline(teamMttr), org: mttrHeadline(orgMttr) },
+    scan: latest ? { ts: latest.ts, total: latest.total } : null,
+  };
+}
+
+/** Durable for a roster scope (warmed); CacheService for a full user's header scope. */
+const cachedChampionBoard = (viewer: access.ViewerScope): Rec =>
+  durablyCached(
+    CHAMPION_BOARD,
+    { ...scopedBootParams(viewer), riskRuleVersion: settingsStore.getRiskRule().version },
+    () => championBoardData("", "", settingsStore.getDisplaySeverities(), viewer),
+  ) as Rec;
+
+const cachedHeaderChampionBoard = (domain: string, supportGroup: string, severities: string[] | null): Rec =>
+  cached(
+    CHAMPION_BOARD,
+    {
+      domain,
+      supportGroup,
+      severities,
+      showNoFix: settingsStore.getShowNoFix(),
+      riskRuleVersion: settingsStore.getRiskRule().version,
+    },
+    () => championBoardData(domain, supportGroup, severities, null),
+    3600,
+  );
+
+/**
+ * The champion board for the caller's scope; for a full user, for the header scope the request
+ * names (or the `viewerScope` Settings → Access previews). A scoped caller's own scope always
+ * wins: nothing a scoped client sends is an authority.
+ */
+export function getChampionBoard(p?: unknown): ApiResult {
+  return run(() => {
+    const viewer = access.enforcedScope() ?? readViewerScope(p);
+    if (viewer) return cachedChampionBoard(viewer);
+    const domain = String((p as Rec)?.["domain"] ?? "");
+    const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
+    if (!domain && !supportGroup) return { needsScope: true };
+    return cachedHeaderChampionBoard(domain, supportGroup, readSeverities(p));
+  });
+}
+
 /** One warm entry per DISTINCT scope set: ten viewers sharing a domain cost one compute. */
 function warmScopedViews(step: (label: string, fn: () => unknown) => void): void {
   let roster: ReturnType<typeof access.currentScoped>;
@@ -4031,6 +4139,7 @@ function warmScopedViews(step: (label: string, fn: () => unknown) => void): void
   for (const scope of distinctScopes(roster).values()) {
     const viewer = access.toViewerScope(scope);
     step("scopedBoot", () => cachedScopedBoot(viewer));
+    step("championBoard", () => cachedChampionBoard(viewer));
     step("scopedRegister", () => {
       const p = viewerParams(viewer, settingsStore.getDisplaySeverities());
       cachedRegisterRows(p, registerRowFilters(p));
