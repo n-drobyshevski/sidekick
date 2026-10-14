@@ -1,5 +1,11 @@
 # `brick/` — vulnerability and code-security metrics on Databricks
 
+> **This tree now has its own repository:
+> [n-drobyshevski/wiz-brick](https://github.com/n-drobyshevski/wiz-brick)**, split out with its
+> history so a Databricks Git folder can sync the code without `tests/`, `fixtures/` or `docs/`.
+> Make changes there. This copy stays only until that Git folder is in use — `devlake/` still
+> runs against it — and nothing keeps the two in step.
+
 A small Spark pipeline that pulls Wiz findings — OS-package CVEs on host workloads, CVEs in the
 libraries a repository depends on, and static-analysis weaknesses in first-party code — into
 Delta, tracks each finding's lifecycle across scans in a persistent ledger, and computes metrics

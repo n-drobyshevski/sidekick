@@ -23,7 +23,9 @@ GraphQL query and client spec — plus its tests: `gas/test/extract_query.py`
 generates `gas/src/server/wizQuery.ts` from its `QUERY`/`VARIABLES`, and
 `tests/test_client.py` is the behavioral spec behind `gas/src/server/wizClient.ts`.
 
-`brick/` is the PySpark + Delta pipeline over the same registers, one tree for
+`brick/` is the PySpark + Delta pipeline over the same registers. It now lives on its own in
+`n-drobyshevski/wiz-brick`; the copy here is kept only until the Databricks Git folder uses that
+repository, so make brick changes there rather than here. It is one tree for
 the three scopes `os`, `sca` and `sast`. Every scope writes the same three tables
 — `wiz_findings_raw` (bronze), `wiz_vuln_ledger` (`MERGE`d, keyed on
 `(vuln_key, scope)`) and `wiz_metrics` (the commit record and every gold family,
