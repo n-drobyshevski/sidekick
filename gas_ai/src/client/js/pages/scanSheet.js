@@ -16,7 +16,7 @@ import { call } from "../../../../../gas_shared/api.js";
 import { navigate } from "../../../../../gas_shared/store.js";
 import { COVERAGE } from "../scanContent.js";
 import {
-  clear, codeBlock, copyButton, el, openSheet, plural, sheetSection, toast,
+  clear, codeBlock, copyButton, el, openSheet, plural, sheetSection, toast, tokenList,
 } from "../ui.js";
 
 /**
@@ -26,6 +26,9 @@ import {
  * five of these were absent for a release without anything breaking: the posture steps were
  * tagged to the configuration-findings area, so their tabs never reached this table.
  */
+// The value-list pickers built for the open sheet, so its onClose can shut their popovers.
+const openPickers = new Set();
+
 const WRITES_LABEL = {
   ai_assets: "the asset register",
   ai_edges: "the graph",
@@ -103,6 +106,10 @@ export function openAreaSheet(area, ctx) {
     subtitle: meta.label + " · " + meta.blurb,
     // The document needs the room; a forty-line query in a 600px drawer is a keyhole.
     expandable: true,
+    onClose: () => {
+      for (const picker of openPickers) picker.closePopover();
+      openPickers.clear();
+    },
   });
 }
 
@@ -513,70 +520,40 @@ function writePath(obj, path, value) {
   cur[keys[keys.length - 1]] = value;
 }
 
-/** A set of string values as removable chips, plus one input that adds. */
+/**
+ * A set of string values as removable chips, plus one input that adds: the shared
+ * `tokenList` (gas_shared/ui/tokenList.js). This was a local `.chipset` of `.chip`s with a
+ * `<datalist>` input and an Add button, and a ✕ whose CSS collided with the AARS gap chips'.
+ * The known values become the picker's rows; a value Wiz does not list can still be typed.
+ */
 function listControl(field, box, onEdit) {
-  const chips = el("div", { class: "chipset" });
-  const input = el("input", {
-    type: "text",
-    class: "chip-input",
-    placeholder: "add a value…",
-    "aria-label": "Add a value to " + field.label,
-    list: field.options && field.options.length ? "opts-" + field.path.replace(/\./g, "-") : null,
-  });
-  const datalist = field.options && field.options.length
-    ? el("datalist", { id: "opts-" + field.path.replace(/\./g, "-") },
-        ...field.options.map((o) => el("option", { value: o })))
-    : null;
-
   function values() {
     const v = readPath(box.draft, field.path);
     return Array.isArray(v) ? v : [];
   }
 
-  function add() {
-    const v = input.value.trim();
-    if (!v) return;
-    const list = values().slice();
-    if (list.indexOf(v) < 0) list.push(v);
-    writePath(box.draft, field.path, list);
-    input.value = "";
-    onEdit();
-    input.focus();
-  }
-
-  input.addEventListener("keydown", (e) => {
-    if (e.key !== "Enter") return;
-    // The sheet is a dialog; Enter would otherwise reach whatever default it has.
-    e.preventDefault();
-    add();
+  const tokens = tokenList({
+    values: values(),
+    options: field.options || [],
+    ariaLabel: "Add a value to " + field.label,
+    placeholder: "add a value…",
+    emptyText: "empty — Wiz would return everything",
+    onChange: (next) => {
+      writePath(box.draft, field.path, next);
+      onEdit();
+    },
   });
+  // The picker's popover lives outside the sheet; closing the sheet closes it too.
+  openPickers.add(tokens);
 
   const node = el("div", { class: "vars-field" },
     el("label", { class: "vars-label" }, field.label),
     el("p", { class: "vars-help" }, field.help),
-    chips,
-    el("div", { class: "chip-add" }, input, el("button", { type: "button", onclick: add }, "Add")),
-    datalist,
+    tokens,
   );
 
-  function sync() {
-    clear(chips);
-    const list = values();
-    if (!list.length) {
-      chips.append(el("span", { class: "chipset-empty" }, "empty — Wiz would return everything"));
-    }
-    for (const v of list) {
-      chips.append(el("span", { class: "chip" }, v, el("button", {
-        type: "button",
-        class: "chip-x",
-        "aria-label": "Remove " + v,
-        onclick: () => {
-          writePath(box.draft, field.path, values().filter((x) => x !== v));
-          onEdit();
-        },
-      }, "×")));
-    }
-  }
+  // Reset and Revert replace the draft wholesale; the list repaints from it.
+  function sync() { tokens.sync(values()); }
 
   return { node, sync };
 }

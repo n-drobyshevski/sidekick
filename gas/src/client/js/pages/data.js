@@ -26,11 +26,13 @@ import {
   scopeBar,
   sectionLabel,
   segmented,
+  select,
   settingRow,
   settingsPanel,
   switchToggle,
   toast,
   tipLabel,
+  togglePills,
 } from "../ui.js";
 
 // A one-line description of the global scope a report/export is generated under, so a
@@ -739,51 +741,36 @@ const AGE_CHOICES = [
   [730, "2 years"],
 ];
 
-/** A severity pill row — the settings-page control, minus the coupling it doesn't need. */
+/**
+ * A severity pill row over a caller-owned array: the shared `togglePills` (gas_shared/ui/
+ * controls.js), which draws the same `.pill-row > button.sev-pill.sev-*` markup this file used
+ * to build by hand. The array is mutated in place, as before, so callers keep reading it.
+ */
 function severityPills(options, selected, { onChange, ariaLabel } = {}) {
-  const node = el("div", {
-    class: "pill-row",
-    role: "group",
-    "aria-label": ariaLabel,
+  const node = togglePills({
+    options,
+    selected,
+    ariaLabel,
+    onToggle: (sev) => {
+      const i = selected.indexOf(sev);
+      if (i >= 0) selected.splice(i, 1);
+      else selected.push(sev);
+      node.set(selected);
+      if (onChange) onChange();
+    },
   });
-  for (const sev of options) {
-    const btn = el(
-      "button",
-      {
-        class: `sev-pill sev-${sev}`,
-        type: "button",
-        "aria-pressed": selected.includes(sev) ? "true" : "false",
-        onclick: () => {
-          const i = selected.indexOf(sev);
-          if (i >= 0) selected.splice(i, 1);
-          else selected.push(sev);
-          btn.setAttribute(
-            "aria-pressed",
-            selected.includes(sev) ? "true" : "false",
-          );
-          if (onChange) onChange();
-        },
-      },
-      sev,
-    );
-    node.append(btn);
-  }
   return { node, selected };
 }
 
+/** The age-threshold select: the shared `select()`, with the id a `settingRow` label targets. */
 function daysSelect(id, value, onChange) {
-  const sel = el(
-    "select",
-    { id, "aria-label": "Age threshold" },
-    ...AGE_CHOICES.map(([v, label]) =>
-      el(
-        "option",
-        { value: String(v), selected: v === value ? true : null },
-        label,
-      ),
-    ),
-  );
-  if (onChange) sel.addEventListener("change", onChange);
+  const sel = select({
+    options: AGE_CHOICES.map(([v, label]) => ({ value: String(v), label })),
+    value: String(value),
+    ariaLabel: "Age threshold",
+    onChange: (v) => onChange && onChange(Number(v)),
+  });
+  sel.id = id;
   return sel;
 }
 
@@ -879,8 +866,8 @@ function renderMaintenanceSection(main, boot, ctx) {
         settingRow({
           label: "Resolved more than",
           description: "Only episodes closed before this are pruned.",
-          control: daysSelect("maint-ep-days", episodeDays, (e) => {
-            episodeDays = Number(e.target.value);
+          control: daysSelect("maint-ep-days", episodeDays, (days) => {
+            episodeDays = days;
             refreshPreview();
           }),
           htmlFor: "maint-ep-days",
@@ -922,8 +909,8 @@ function renderMaintenanceSection(main, boot, ctx) {
         settingRow({
           label: "Keep the last",
           description: "Snapshots older than this are dropped.",
-          control: daysSelect("maint-hist-days", historyDays, (e) => {
-            historyDays = Number(e.target.value);
+          control: daysSelect("maint-hist-days", historyDays, (days) => {
+            historyDays = days;
             refreshPreview();
           }),
           htmlFor: "maint-hist-days",

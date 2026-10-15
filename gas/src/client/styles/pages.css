@@ -232,11 +232,14 @@ table.data td.clickable { cursor: pointer; }
 }
 .rank-row > div:first-child { flex: 1; min-width: 0; }
 .rank-row:last-of-type { border-bottom: none; }
-.mix-strip {
-  display: flex; height: var(--space-2); max-width: 420px; border-radius: var(--radius-pill);
-  overflow: hidden; background: var(--track-bg);
-}
-.mix-strip span { height: 100%; }
+/* The concentration rows' and attribution's one-value bars are the shared `meter()`
+   (components.css `.meter`: 8px, --track-bg, graphite fill); these modifiers keep the two
+   things it does not say — the 420px cap, and each caller's fill. They were a hand-built
+   `.mix-strip` with the fill colour written inline. */
+.meter--rank { max-width: 420px; }
+.meter--rank .meter-fill { background: #6b7280; }
+.meter--accent { max-width: 420px; }
+.meter--accent .meter-fill { background: var(--accent); }
 /* Breakdown severity cell: the proportional strip over its exact per-severity counts. */
 .mix-cell { display: flex; flex-direction: column; gap: var(--space-1); }
 .mix-text { white-space: nowrap; }
@@ -277,14 +280,13 @@ table.data td.clickable { cursor: pointer; }
 .funnel-step__value { font-size: var(--fs-lead); font-weight: var(--fw-semibold); }
 .funnel-step__pct { font-size: var(--fs-label); flex: none; min-width: 84px; text-align: right; }
 .funnel-step__note { margin: 5px 0 0; }
-.funnel-track {
-  height: 10px; border-radius: var(--radius-pill); background: rgba(0, 0, 0, 0.06); overflow: hidden;
-}
-/* The neutral rung fill. #6b7280 is charts.js's own neutral grey, matched by hand so the
-   funnel and the charts beside it read as one system; same argument as the hatch above. */
-.funnel-fill { display: block; height: 100%; background: #6b7280; border-radius: var(--radius-pill); }
+/* The rung bar is the shared `meter()`, 10px tall here. The neutral rung fill, #6b7280, is
+   charts.js's own neutral grey, matched by hand so the funnel and the charts beside it read
+   as one system; same argument as the hatch above. (The rank rows' bar takes it too.) */
+.meter--funnel { height: 10px; }
+.meter--funnel .meter-fill { background: #6b7280; }
 /* The last rung is the one the hero counts, so it takes the page's single saturated mark. */
-.funnel-step--act .funnel-fill { background: var(--sev-critical); }
+.funnel-step--act .meter--funnel .meter-fill { background: var(--sev-critical); }
 .funnel-step--act .funnel-step__value { color: var(--sev-critical-text); }
 
 /* Tier trend small multiples: one frame per tier, each on its own scale. A shared axis
@@ -585,13 +587,7 @@ dialog.domains-dialog .dialog-preview {
   border-top: 1px solid var(--hairline);
   padding-top: 14px;
 }
-.prog-method > summary {
-  cursor: pointer;
-  font-size: var(--fs-label);
-  font-weight: var(--fw-semibold);
-  color: var(--text-2);
-}
-.prog-method > summary:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+.prog-method-actions { margin-top: var(--space-3); }
 .prog-method-list { margin: 14px 0 0; max-width: 78ch; font-size: var(--fs-label); }
 .prog-method-list dt {
   font-weight: var(--fw-semibold);

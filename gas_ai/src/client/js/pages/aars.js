@@ -69,6 +69,7 @@ import {
   toast,
   tokenList,
   uiIcon,
+  verdictMark,
 } from "../ui.js";
 import { precisionLabel, rankEvalCapacity, rankEvalHonesty, rankEvalRows } from "../rankEvalModel.js";
 import { bootstrap } from "../../../../../gas_shared/store.js";
@@ -4661,7 +4662,7 @@ export async function renderAarsRules(main, _params, ctx) {
   /**
    * Remediation capacity — the third P2P figure, on the same windows as the first two.
    *
-   * The word carries the verdict and the dot repeats it (`.cap-dot`, shared with the
+   * The word carries the verdict and the dot repeats it (`verdictMark`, shared with the
    * inventory readout so the three colours mean the same thing on both surfaces). The unit
    * is in the text because the Inventory page's readout is per SYNC and this one is per
    * horizon: two numbers, one register, and only the words tell them apart.
@@ -4683,7 +4684,6 @@ export async function renderAarsRules(main, _params, ctx) {
       block.append(el("p", { class: "rank-eval__note" }, view.detail));
       return block;
     }
-    const dotClass = view.verdictKey ? "cap-dot cap-dot--" + view.verdictKey : "cap-dot";
     const facts = el("dl", { class: "rank-eval__honesty" },
       el("div", { class: "rank-eval__fact" },
         el("dt", {}, "Close rate"),
@@ -4701,9 +4701,7 @@ export async function renderAarsRules(main, _params, ctx) {
             : "Too few to name a cut")),
       el("div", { class: "rank-eval__fact" },
         el("dt", {}, "Net flow"),
-        el("dd", { class: "rank-eval__verdict" },
-          el("span", { class: dotClass, "aria-hidden": "true" }),
-          el("span", {}, view.verdictWord)),
+        el("dd", { class: "rank-eval__verdict" }, verdictMark(view.verdictKey, view.verdictWord)),
         el("p", { class: "rank-eval__fact-note" },
           "Rows gone against rows arrived, " + view.unitNote + ", with a two-percent dead band")),
     );

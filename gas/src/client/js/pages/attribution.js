@@ -16,7 +16,7 @@
 import { bootstrap, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import { renderDomainsEditor } from "./domainsEditor.js";
 import {
-  DEFAULT_PAGE_SIZE, absent, clear, dataTable, el, emptyState, errorState, firstRunNotice, fmtDate, glossaryTip, kpiCard, measuredEmpty, pageHeader, settingsPanel, sevEntries, sevSegmentBar, sevSpoken, statusPill, tableFooter, tip,
+  DEFAULT_PAGE_SIZE, absent, clear, dataTable, el, emptyState, errorState, firstRunNotice, fmtDate, glossaryTip, kpiCard, measuredEmpty, meter, pageHeader, settingsPanel, sevEntries, sevSegmentBar, sevSpoken, statusPill, tableFooter, tip,
 } from "../ui.js";
 
 // The engine's placeholder domain for findings that matched no rule (domainRules.UNASSIGNED).
@@ -803,15 +803,10 @@ export async function renderAttribution(main, params, ctx) {
 
   // ----------------------------------------------------------------- helpers
 
-  /** Single-value proportional bar reusing the mix-strip idiom: one accent fill at `fraction`
-   *  of the width. Decorative — the exact percent rides in the visible .mix-text beside it. */
+  /** Single-value proportional bar: the shared `meter()`, one accent fill at `fraction` of the
+   *  width. Decorative — the exact percent rides in the visible .mix-text beside it. */
   function shareBar(fraction) {
-    const strip = el("div", { class: "mix-strip", "aria-hidden": "true" });
-    const span = el("span", {});
-    span.style.width = `${Math.max(0, Math.min(1, fraction)) * 100}%`;
-    span.style.background = "var(--accent)";
-    strip.append(span);
-    return strip;
+    return meter(fraction, { max: 1, decorative: true, className: "meter--accent" });
   }
 
   /**

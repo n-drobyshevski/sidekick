@@ -84,7 +84,7 @@ import {
   emptyState, errorState, firstRunNotice, fmtCount, fmtDate, fmtDays, kpiCard, meter,
   num, onPageTeardown, pageHeader, pluralize, sectionLabel, sevBadge, sevEntries, sevSegmentBar,
   skeleton, sparkPath, sparkline, statRow, survivalTableModel, tipLabel,
-  closeActiveSheet, confirmDialog, days1, openSheet, segmented, sheetSection, skeletonStack,
+  closeActiveSheet, confirmDialog, days1, openSheet, segmented, select, sheetSection, skeletonStack,
   tableFooter, toast,
 } from "../ui.js";
 
@@ -1983,9 +1983,8 @@ export async function renderMttr(host, params, ctx) {
         toast("No domain is known yet — refresh Repository tags in Settings first.", "error");
         return;
       }
-      const select = el("select", { "aria-label": "Domain" },
-        ...domains.map((d) => el("option", { value: d }, d)));
-      select.value = domains.includes(countedNow) ? countedNow : domains[0];
+      const domainSelect = select({ options: domains, ariaLabel: "Domain", onChange: () => {} });
+      domainSelect.value = domains.includes(countedNow) ? countedNow : domains[0];
       let reason = (sgOverride && sgOverride.reason) || "wrong_tag";
       const radios = Object.entries(SG_REASONS).map(([value, r]) => {
         const input = el("input", { type: "radio", name: "sg-domain-reason", value });
@@ -1993,7 +1992,7 @@ export async function renderMttr(host, params, ctx) {
         input.addEventListener("change", () => {
           reason = value;
           // The CROSS team's groups live in CROSS — preselect it, still changeable.
-          if (value === "cross_team" && domains.includes("CROSS")) select.value = "CROSS";
+          if (value === "cross_team" && domains.includes("CROSS")) domainSelect.value = "CROSS";
         });
         return el("label", { style: "display:block;margin:4px 0" }, input, " ", r.label);
       });
@@ -2003,13 +2002,13 @@ export async function renderMttr(host, params, ctx) {
       const body = el("div", {},
         el("p", { class: "muted" }, `Every finding of ${group} will count under the domain you `
           + "pick, on every page, whatever its repositories are tagged."),
-        el("label", { style: "display:block;margin:8px 0" }, "Domain ", select),
+        el("label", { style: "display:block;margin:8px 0" }, "Domain ", domainSelect),
         el("fieldset", { style: "border:0;padding:0;margin:8px 0" },
           el("legend", { class: "small muted" }, "Why"), ...radios),
         el("label", { class: "small muted", style: "display:block;margin-top:8px" },
           "Note (optional)", note));
       const ok = await confirmDialog({ title: `Domain of ${group}`, body, confirmLabel: "Save" });
-      if (ok) saveDomain({ group, domain: select.value, reason, note: note.value });
+      if (ok) saveDomain({ group, domain: domainSelect.value, reason, note: note.value });
     }
 
     async function resetDomain() {

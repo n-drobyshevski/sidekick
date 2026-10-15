@@ -36,12 +36,13 @@ import {
 import {
   absent, absentText, chartTable, clear, closeActiveSheet, confirmDialog,
   dataTable, debounce, el, encodeColumnChoice, errorState, firstRunNotice, heroStat,
-  measuredEmpty, nextSort, pageHeader, parseColumnChoice,
+  measuredEmpty, nextSort, pageHeader, parseColumnChoice, segmented,
   DEFAULT_PAGE_SIZE, PAGE_SIZES, fmtCount, fmtDate, kpiCard, num, pct1, plural,
   nameCell, sectionLabel, sevBadge, sevEntries, sevKeyRow,
   sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow, tableFooter, toast,
   trendScopeNote,
   tipLabel,
+  verdictMark,
 } from "../ui.js";
 import { trendTableModel } from "./_charts.js";
 
@@ -327,6 +328,7 @@ export async function renderInventory(main, params) {
   // of the page's state because renderResults() is hoisted and runs before its own line.
   let visibleRows = [];
   let countText = null;   // the one live region on the page
+  let viewToggle = null;  // the Table/Cards segmented control, reflected by setView()
   let resultsHost = null;
   let footerCount = null; // the drawer's running result count
   let syncStrip = null;   // re-marks the distribution strip when the AARS filter changes
@@ -700,17 +702,14 @@ export async function renderInventory(main, params) {
       onFilterChange();
     }, allMode ? 150 : 400));
 
-    const tableBtn = el("button", {
-      "aria-pressed": view === "table" ? "true" : "false",
-      onclick: () => setView("table"),
-    }, "Table");
-    const cardsBtn = el("button", {
-      "aria-pressed": view === "cards" ? "true" : "false",
-      onclick: () => setView("cards"),
-    }, "Cards");
-    const viewmode = el("div", {
-      class: "viewmode", role: "group", "aria-label": "Result layout",
-    }, tableBtn, cardsBtn);
+    // The shared segmented control (gas_shared/ui/controls.js). This was a local `.viewmode`
+    // pair with its own joined-button CSS and a pressed tint off the shared one.
+    viewToggle = segmented({
+      ariaLabel: "Result layout",
+      value: view,
+      options: [{ value: "table", label: "Table" }, { value: "cards", label: "Cards" }],
+      onChange: setView,
+    });
 
     // role=status so the result count is announced when a filter changes what is shown.
     // It is the ONLY live region on this page: the chips, the facet counts and the badges
@@ -721,7 +720,7 @@ export async function renderInventory(main, params) {
       el("div", { class: "workbench-search" }, searchInput),
       panel.trigger,
       savedViewsControl(),
-      viewmode,
+      viewToggle,
       el("div", { class: "inv-toolbar-end" }, countText),
     );
   }
@@ -732,9 +731,7 @@ export async function renderInventory(main, params) {
     persistParams();
     renderResults(payload);
     // Only the results were replaced; the toggle itself survives, so focus stays put.
-    for (const btn of document.querySelectorAll(".viewmode button")) {
-      btn.setAttribute("aria-pressed", btn.textContent.toLowerCase() === next ? "true" : "false");
-    }
+    if (viewToggle) viewToggle.set(next);
   }
 
   // ---- saved views (per browser; the URL is the shareable form)
@@ -1494,7 +1491,6 @@ export async function renderInventory(main, params) {
    * carrier of a three-valued fact.
    */
   function capacityCard(readout) {
-    const dotClass = readout.verdict ? `cap-dot cap-dot--${readout.verdict}` : "cap-dot";
     const recent = readout.rows.slice(-6).reverse();
     return el("div", { class: "chart-card" },
       el("h3", {}, tipLabel("Remediation capacity", {
@@ -1505,9 +1501,7 @@ export async function renderInventory(main, params) {
           + " plotted but not compared.",
         ].filter(Boolean),
       })),
-      el("p", { class: "cap-verdict" },
-        el("span", { class: dotClass, "aria-hidden": "true" }),
-        el("span", { class: "cap-verdict-word" }, readout.word)),
+      el("p", { class: "cap-verdict" }, verdictMark(readout.verdict, readout.word)),
       recent.length
         ? el("table", { class: "cap-table" },
             el("thead", {},

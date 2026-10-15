@@ -545,8 +545,9 @@ ul.axis-steps > .axis-step::before {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .gap-chip__pts { color: var(--text-3); }
-/* Scoped to the gap chip: scans.css has its own `.chip .chip-x`, and a bare selector here
-   restyled that one too (this sheet loads later). */
+/* Scoped to the gap chip: a bare `.chip-x` here once restyled the scan sheet's chips too
+   (this sheet loads later). Those are the shared `tokenList` now; this stays local because
+   a gap chip carries a title and a price that a token has no slot for. */
 .gap-chip .chip-x {
   border: none; background: none; box-shadow: none; cursor: pointer;
   min-width: 20px; min-height: 20px; padding: 0 var(--space-half);
@@ -647,8 +648,8 @@ ul.axis-steps > .axis-step::before {
 }
 .rank-eval__table table.data td { font-variant-numeric: tabular-nums; }
 /* The capacity block reuses the honesty grid: four facts of the same weight, one of which is
-   a verdict. `.cap-dot` comes from inventory.css so the three verdict colours are the same
-   three on both surfaces. */
+   a verdict. The dot and word are the shared `verdictMark`, so the three verdict colours are
+   the same three as the inventory's capacity card; here the word keeps the grid's own weight. */
 .rank-eval__capacity { margin: 0 0 var(--space-4); }
 .rank-eval__subhead { margin: 0 0 var(--space-1); font-size: var(--fs-lead); font-weight: 650; }
 .rank-eval__lede {
@@ -656,6 +657,7 @@ ul.axis-steps > .axis-step::before {
   font-size: var(--fs-label); color: var(--text-3); line-height: 1.5;
 }
 .rank-eval__verdict { display: flex; align-items: center; gap: var(--space-2); font-size: var(--fs-lead); }
+.rank-eval__verdict .verdict-word { font-weight: inherit; }
 .rank-eval__note {
   margin: var(--space-3) 0 0; max-width: var(--measure);
   font-size: var(--fs-label); color: var(--text-3); line-height: 1.5;

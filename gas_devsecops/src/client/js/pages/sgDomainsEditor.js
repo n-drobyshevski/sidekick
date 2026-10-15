@@ -10,7 +10,7 @@
 
 import { call } from "../../../../../gas_shared/api.js";
 import {
-  clear, confirmDialog, dataTable, el, settingsPanel, toast,
+  clear, confirmDialog, dataTable, el, select, settingsPanel, toast,
 } from "../ui.js";
 import { SG_REASONS, assignableDomains, sgOverrideBadge } from "./_sgDomains.js";
 
@@ -76,16 +76,18 @@ export function sgDomainsPanel(boot, { onSaved } = {}) {
     if (!canEdit) return;
     const groups = (boot.filterOptions && boot.filterOptions.supportGroups) || [];
     const domains = assignableDomains(boot);
-    const group = el("select", { "aria-label": "Support group" },
-      el("option", { value: "" }, "Support group…"),
-      ...groups.map((g) => el("option", { value: g }, g)));
-    const domain = el("select", { "aria-label": "Domain" },
-      ...domains.map((d) => el("option", { value: d }, d)));
-    const reason = el("select", { "aria-label": "Why" },
-      ...Object.entries(SG_REASONS).map(([v, r]) => el("option", { value: v }, r.label)));
-    reason.addEventListener("change", () => {
-      if (reason.value === "cross_team" && domains.includes("CROSS")) domain.value = "CROSS";
-    });
+    // The shared `select()` (gas_shared/ui/controls.js). It sets `value` outright, so each
+    // control is handed the first option explicitly — a native select picks it on its own.
+    const reasons = Object.entries(SG_REASONS).map(([v, r]) => ({ value: v, label: r.label }));
+    const group = select({ options: groups, placeholder: "Support group…",
+      ariaLabel: "Support group", onChange: () => {} });
+    const domain = select({ options: domains, value: domains[0], ariaLabel: "Domain",
+      onChange: () => {} });
+    const reason = select({ options: reasons, value: reasons.length ? reasons[0].value : "",
+      ariaLabel: "Why",
+      onChange: (v) => {
+        if (v === "cross_team" && domains.includes("CROSS")) domain.value = "CROSS";
+      } });
     const note = el("input", { type: "text", "aria-label": "Note (optional)",
       placeholder: "Note (optional)", maxlength: "500" });
     const add = el("button", { type: "button", onclick: () => {

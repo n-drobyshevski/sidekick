@@ -53,14 +53,6 @@
    shadowing predates this and is the inventory's to settle.) */
 .workbench-search input[type="search"] { width: 170px; }
 
-/* Segmented view-mode control: two aria-pressed buttons sharing one border. */
-.viewmode { display: inline-flex; }
-.viewmode button { border-radius: 0; box-shadow: none; }
-.viewmode button:first-child { border-radius: var(--radius-md) 0 0 var(--radius-md); }
-.viewmode button:last-child { border-radius: 0 var(--radius-md) var(--radius-md) 0; margin-left: -1px; }
-.viewmode button[aria-pressed="true"] {
-  background: rgba(0, 0, 0, 0.07); border-color: var(--hairline-strong); font-weight: 600;
-}
 
 /* --------------------------------------------------- AI Inventory: in-row micro-viz */
 .issue-cell { display: inline-flex; align-items: center; gap: var(--space-2); }
@@ -145,15 +137,10 @@ table.data td.inv-name-col { max-width: 380px; }
    hue alone would be unreadable in greyscale and to a dichromat, and this is the one figure
    on the card a reader takes away. Sized and spaced like .rail-status-dot for the same reason
    — one dot vocabulary in the app. */
-.cap-verdict { display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-2); }
-.cap-verdict-word { font-size: var(--fs-lead); font-weight: 650; }
-.cap-dot {
-  width: 9px; height: 9px; border-radius: var(--radius-pill); flex: 0 0 auto;
-  background: var(--text-3);
-}
-.cap-dot--gaining { background: var(--ok); }
-.cap-dot--keeping-up { background: var(--text-3); }
-.cap-dot--falling-behind { background: var(--bad); }
+/* The dot and word are the shared `verdictMark` (gas_shared/ui/verdict.js, components.css
+   `.verdict-*`), which was promoted from the `.cap-dot` / `.cap-verdict-word` pair this sheet
+   used to carry; only the paragraph's spacing is this page's. */
+.cap-verdict { margin: 0 0 var(--space-2); }
 
 /* The per-sync flow, small and tabular. Its own class rather than `table.data`: that carries
    the register's row height, hover and 320px cell clamp, none of which a six-row readout in a

@@ -29,7 +29,7 @@ import {
   errorLogBody, heroLines,
   fmtDateTime, impactSplit, impactSplitModel, normalizeErrorLog, openSheet, pageHeader, saveBar,
   segmented, settingRow, settingsPanel, statusPill, storageBody, switchToggle, tabList, tip,
-  tipAnchor, tipLabel, toast,
+  tipAnchor, tipLabel, toast, togglePills,
 } from "../ui.js";
 import { renderAccessPanel } from "./accessEditor.js";
 import { hubUrlPanel } from "../../../../../gas_shared/ui/hubPanel.js";
@@ -146,29 +146,25 @@ export async function renderSettings(main, params, ctx) {
   }
 
   // ============================================================================ REGISTER TAB
+  // The shared `togglePills` (gas_shared/ui/controls.js) draws the row; this wrapper adds the
+  // two things it leaves to its caller — the state (read through `getArr`, see below) and the
+  // lock: a pill outside the scan scope carries aria-disabled, and pressing it does nothing.
   function pillGroup(options, getArr, { onChange, ariaLabel } = {}) {
-    const pills = {};
-    const node = el("div", { class: "pill-row", role: "group", "aria-label": ariaLabel });
-    for (const sev of options) {
-      const btn = el("button", {
-        class: `sev-pill sev-${sev}`, type: "button",
-        "aria-pressed": getArr().includes(sev) ? "true" : "false",
-        onclick: () => {
-          if (btn.getAttribute("aria-disabled") === "true") return; // locked (out of scan scope)
-          const arr = getArr();
-          const i = arr.indexOf(sev);
-          if (i >= 0) arr.splice(i, 1); else arr.push(sev);
-          sync();
-          if (onChange) onChange();
-        },
-      }, sev);
-      pills[sev] = btn;
-      node.append(btn);
-    }
-    function sync() {
-      const arr = getArr();
-      for (const sev of options) pills[sev].setAttribute("aria-pressed", arr.includes(sev) ? "true" : "false");
-    }
+    const node = togglePills({
+      options,
+      selected: getArr(),
+      ariaLabel,
+      onToggle: (sev) => {
+        if (node.buttons.get(sev).getAttribute("aria-disabled") === "true") return; // locked (out of scan scope)
+        const arr = getArr();
+        const i = arr.indexOf(sev);
+        if (i >= 0) arr.splice(i, 1); else arr.push(sev);
+        sync();
+        if (onChange) onChange();
+      },
+    });
+    const pills = Object.fromEntries(node.buttons);
+    function sync() { node.set(getArr()); }
     return { node, sync, pills };
   }
 

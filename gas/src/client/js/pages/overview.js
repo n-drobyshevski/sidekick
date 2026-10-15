@@ -42,7 +42,7 @@ import { bootstrap, navigate, setParams, swrCall } from "../../../../../gas_shar
 import {
   DEFAULT_PAGE_SIZE, absent, chartTable, clear, closeActiveSheet, dataTable, days1, denomNote,
   el, emptyState, errorState, firstRunNotice, fmtDate, glossaryTip, heroStat, kpiCard,
-  measuredEmpty, num, nvdUrl, openSheet, pageHeader, scopeBar, sectionLabel, segmented,
+  measuredEmpty, meter, num, nvdUrl, openSheet, pageHeader, scopeBar, sectionLabel, segmented, select,
   sevEntries, sevKeyRow, sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow,
   tableFooter, tip, tipAnchor, tipLabel, togglePills,
   statusPill,
@@ -455,8 +455,7 @@ export async function renderOverview(main, params, ctx) {
         el("span", { class: "funnel-step__value num" }, value.toLocaleString()),
         el("span", { class: "funnel-step__pct num muted" }, `${pctOpen}% of open`),
       ),
-      el("div", { class: "funnel-track" },
-        el("span", { class: "funnel-fill", style: `width:${width}%` })),
+      meter(width, { decorative: true, className: "meter--funnel" }),
       note || pctPrev !== null
         ? el("p", { class: "funnel-step__note small muted" },
           pctPrev !== null ? `${pctPrev}% of the step above` : null,
@@ -1169,8 +1168,7 @@ export async function renderOverview(main, params, ctx) {
         list.append(el("div", { class: "rank-row" },
           el("div", {},
             el("div", { class: "rank-row__name" }, row.key),
-            el("div", { class: "mix-strip", "aria-hidden": "true" },
-              el("span", { style: `width:${width}%; background:#6b7280` })),
+            meter(width, { decorative: true, className: "meter--rank" }),
             meta.length ? el("div", { class: "small muted" }, meta.join(" · ")) : null,
           ),
           el("div", { class: "num rank-row__value" }, row.open.toLocaleString()),
@@ -1583,12 +1581,14 @@ export async function renderOverview(main, params, ctx) {
       clear(controls);
       groupKeys.forEach((key, i) => {
         const used = new Set(groupKeys.filter((_, j) => j !== i));
-        const sel = el("select", { "aria-label": i === 0 ? "Group by" : `then group by (level ${i + 1})` },
-          ...GROUP_DIMENSIONS
+        const sel = select({
+          options: GROUP_DIMENSIONS
             .filter(([v]) => v === key || !used.has(v))
-            .map(([v, label]) => el("option", { value: v, selected: v === key || null }, label)),
-        );
-        sel.addEventListener("change", () => { groupKeys[i] = sel.value; syncAndReload(); });
+            .map(([v, label]) => ({ value: v, label })),
+          value: key,
+          ariaLabel: i === 0 ? "Group by" : `then group by (level ${i + 1})`,
+          onChange: (v) => { groupKeys[i] = v; syncAndReload(); },
+        });
         // The "×" is the whole label, so what it removes has to be said somewhere: the
         // aria-label says it to assistive technology and a `title` used to say it to a mouse.
         // el() throws on `title` now, and `tip` on a button attaches in place — no second

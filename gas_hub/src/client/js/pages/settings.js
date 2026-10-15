@@ -163,11 +163,11 @@ async function buildUrlsPanel(host, ctx) {
   // rhythms visibly different: fields rebuild on `build()`, readout rows mutate on every edit.
   const readoutRows = URL_FIELDS.map((field) => {
     const pill = statusPill("neutral", "");
-    const desc = el("span", { class: "setting-row__desc muted small" }, "");
-    const row = el("div", { class: "setting-row" },
-      el("div", { class: "setting-row__label" },
-        el("span", { class: "setting-row__title" }, field.label), desc),
-      el("div", { class: "setting-row__control" }, pill));
+    // The shared `settingRow`. Its description is a TEXT NODE rather than a string: the row
+    // only renders `__desc` for a truthy description, and an empty string would drop the slot
+    // the repaint below writes into. A Text node is truthy and mutable in place.
+    const desc = document.createTextNode("");
+    const row = settingRow({ label: field.label, description: desc, control: pill });
     return { key: field.key, row, pill, desc };
   });
 

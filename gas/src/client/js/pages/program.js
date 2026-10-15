@@ -1307,9 +1307,6 @@ export async function renderProgram(main, _params, ctx) {
     clear(methodHost);
     const m = p.matrix;
     const t = p.toggles || {};
-    const details = el("details", { class: "prog-method" });
-    details.append(el("summary", {}, "How these numbers are calculated"));
-
     const dl = el("dl", { class: "prog-method-list" });
     const item = (term, ...body) => {
       dl.append(el("dt", {}, term));
@@ -1374,10 +1371,13 @@ export async function renderProgram(main, _params, ctx) {
       "'high risk AND remediated' in a spreadsheet should equal the " + m.tp.toLocaleString() +
       " shown above.");
 
-    details.append(dl);
-    details.append(el("div", { style: "margin-top:12px" },
-      el("button", { class: "linklike", onclick: () => exportCsv("") },
-        "Download classified rows (CSV)")));
-    methodHost.append(details);
+    // The shared "why" disclosure (gas_shared/ui/settings.js), inside a block that keeps this
+    // page's hairline and rhythm. It was a hand-built <details> with its own summary rules.
+    methodHost.append(el("div", { class: "prog-method" },
+      disclosure("How these numbers are calculated",
+        dl,
+        el("div", { class: "prog-method-actions" },
+          el("button", { class: "linklike", onclick: () => exportCsv("") },
+            "Download classified rows (CSV)")))));
   }
 }
