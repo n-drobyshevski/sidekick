@@ -60,7 +60,7 @@ function problemsSkeleton() {
   const kpis = el("div", { class: "kpi-row" });
   for (let i = 0; i < 4; i++) {
     kpis.append(el("div", { class: "kpi-card" },
-      el("div", { class: "skeleton-stack", style: "gap:9px" },
+      el("div", { class: "skeleton-stack kpi-skel" },
         skeleton("line", { width: "62%" }),
         skeleton("stat", { width: "45%" }),
         skeleton("line", { width: "78%" }))));
@@ -69,7 +69,7 @@ function problemsSkeleton() {
     skeleton("pill", { width: "280px" }),
     skeleton("pill", { width: "120px" }),
     skeleton("line", { width: "220px" }));
-  const rows = el("div", { class: "skeleton-stack", style: "margin-top:14px" });
+  const rows = el("div", { class: "skeleton-stack problems-skel-rows" });
   for (let i = 0; i < 6; i++) rows.append(skeleton("line", { height: "22px" }));
   return el("div", { role: "status", "aria-label": "Loading priorities" }, kpis, bar, rows);
 }
@@ -79,14 +79,14 @@ function actionsSkeleton() {
   const kpis = el("div", { class: "kpi-row" });
   for (let i = 0; i < 3; i++) {
     kpis.append(el("div", { class: "kpi-card" },
-      el("div", { class: "skeleton-stack", style: "gap:9px" },
+      el("div", { class: "skeleton-stack kpi-skel" },
         skeleton("line", { width: "62%" }),
         skeleton("stat", { width: "45%" }))));
   }
   const chart = el("div", { class: "chart-card" },
     skeleton("line", { width: "220px" }),
     skeleton("line", { height: "200px", width: "100%" }));
-  const rows = el("div", { class: "skeleton-stack", style: "margin-top:14px" });
+  const rows = el("div", { class: "skeleton-stack problems-skel-rows" });
   for (let i = 0; i < 6; i++) rows.append(skeleton("line", { height: "22px" }));
   return el("div", { role: "status", "aria-label": "Loading actions" }, kpis, chart, rows);
 }
@@ -271,7 +271,7 @@ export async function renderProblems(main, params) {
   }
 
   function modeSwitch() {
-    return el("div", { class: "toolbar", style: "margin-bottom:14px" },
+    return el("div", { class: "toolbar" },
       segmented({
         options: [
           { value: "actions", label: "By action" },
@@ -933,7 +933,7 @@ export async function renderProblems(main, params) {
       el("h3", {}, "Cumulative cover"),
       el("p", { class: "chart-note" },
         "How much of the board each further action closes, ranked by cover"),
-      el("div", { class: "chart-box", style: "height:200px" }, canvas),
+      el("div", { class: "chart-box chart-box--short" }, canvas),
       // THE SAME `curve` THE CHART WRAPPER READS BELOW, named once above and handed to
       // both — `gas_shared/ui/chartTable.js`'s one rule.
       chartTable({ canvas, caption: "Cumulative cover", model: coverTableModel(curve) }));
@@ -1162,7 +1162,7 @@ export async function renderProblems(main, params) {
     if (r.iac) chips.push(statusPill("neutral", "IaC ×" + r.iac));
     if (r.ignored) chips.push(statusPill("warn", "Ignored ×" + r.ignored));
     if (!chips.length) return absent();
-    return el("div", { style: "display:flex; gap:6px; flex-wrap:wrap" }, ...chips);
+    return el("div", { class: "pill-row" }, ...chips);
   }
 
   // ------------------------------------------------------------- action row detail

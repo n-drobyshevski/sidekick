@@ -95,9 +95,7 @@ export function sgDomainsPanel(boot, { onSaved } = {}) {
       save({ group: group.value, domain: domain.value, reason: reason.value, note: note.value },
         `${group.value} now counts under ${domain.value}.`);
     } }, "Set domain");
-    addHost.append(el("div", {
-      style: "display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:12px",
-    }, group, domain, reason, note, add));
+    addHost.append(el("div", { class: "sg-domains__add" }, group, domain, reason, note, add));
   }
 
   async function remove(o) {

@@ -4,6 +4,12 @@
    positioned ancestor — each fills it via inset:0 rather than carrying its own `flex:1`,
    which would collapse to zero height with no normal-flow content of its own. */
 .tab-pane { position: absolute; inset: 0; }
+/* The loading stub each tab pane mounts until its rule arrives. The 20px inset is off the
+   ramp on purpose: it was the stub's inline value, and either neighbour moves it 4px. */
+.aars-loading {
+  position: absolute; inset: 20px;
+  display: flex; flex-direction: column; gap: var(--space-3);
+}
 
 /* Two panes inside the workbench body: the model on the left, its consequence pinned on
    the right. Each pane is its own scroller, so editing a threshold never scrolls the
@@ -88,6 +94,8 @@
   gap: var(--space-3); margin-bottom: var(--space-3);
 }
 .model-hero__total { font-size: var(--fs-label); color: var(--text-3); }
+/* Pushes the view and mode tabs to the right of the head (ui/latticeSection.js). */
+.model-hero__spacer { flex: 1 1 auto; }
 
 /* The three pillars as one stacked budget bar: how the score is composed, and where the
    100-point clamp bites when the caps oversubscribe the scale. Neutral steps rather than
@@ -104,7 +112,7 @@
   flex: 0 0 auto;
   display: flex; align-items: center; justify-content: center;
   min-width: 0; overflow: hidden;
-  font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.03em; white-space: nowrap;
+  font-size: var(--fs-micro); font-weight: var(--fw-semibold); letter-spacing: 0.03em; white-space: nowrap;
   /* A page-coloured edge, not a `gap`: this bar is drawn on the same 0-100 axis as the
      band rail below it, and a gap would consume width the percentages do not know about,
      sliding every pillar boundary off the rail figure it is meant to line up with.
@@ -132,13 +140,14 @@
   border-right: 1px solid var(--hairline);
 }
 .band-rail__seg:last-child { border-right: none; }
-.band-rail__seg-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.band-rail__seg-name { font-weight: var(--fw-semibold); overflow: hidden; text-overflow: ellipsis; }
 .band-rail__seg-meta { color: var(--text-3); font-variant-numeric: tabular-nums; }
-.band-rail__seg.sev-CRITICAL { background: rgba(220, 38, 38, 0.13); color: var(--sev-critical-text); }
-.band-rail__seg.sev-HIGH     { background: rgba(234, 88, 12, 0.13); color: var(--sev-high-text); }
-.band-rail__seg.sev-MEDIUM   { background: rgba(217, 119, 6, 0.13); color: var(--sev-medium-text); }
-.band-rail__seg.sev-LOW      { background: rgba(37, 99, 235, 0.13); color: var(--sev-low-text); }
-.band-rail__seg.sev-INFO     { background: rgba(100, 116, 139, 0.13); color: var(--sev-info-text); }
+/* The shared .sev-* tint alpha (components.css, 0.14). */
+.band-rail__seg.sev-CRITICAL { background: rgba(220, 38, 38, 0.14); color: var(--sev-critical-text); }
+.band-rail__seg.sev-HIGH     { background: rgba(234, 88, 12, 0.14); color: var(--sev-high-text); }
+.band-rail__seg.sev-MEDIUM   { background: rgba(217, 119, 6, 0.14); color: var(--sev-medium-text); }
+.band-rail__seg.sev-LOW      { background: rgba(37, 99, 235, 0.14); color: var(--sev-low-text); }
+.band-rail__seg.sev-INFO     { background: rgba(100, 116, 139, 0.14); color: var(--sev-info-text); }
 
 /* Four real range inputs share one track: the input is transparent and click-through,
    only its thumb takes the pointer. Real inputs mean native keyboard (arrows, Home/End,
@@ -187,11 +196,14 @@
 
 /* --- editor controls ---------------------------------------------------------------- */
 .rule-row { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end; }
+/* A row that follows a table or another row in the same section, and the one that leads it. */
+.rule-row--spaced { margin-top: var(--space-3); }
+.rule-row--lead { margin-bottom: var(--space-3); }
 .rule-row .field { display: flex; flex-direction: column; }
 .field-hint { margin-top: var(--space-1); }
 .rule-num { width: 84px; }
 /* Wide enough for the longest code the model names (DEPRECATED_MODEL) without truncating. */
-.rule-code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; width: 178px; }
+.rule-code { font-family: var(--font-mono); width: 178px; }
 
 /* A value differing from what is saved. The dot marks the field; its title carries the
    saved value in words, so the mark is never the only way to know. */
@@ -200,7 +212,7 @@
   width: 6px; height: 6px; margin-left: var(--space-2); border-radius: 50%;
   background: var(--warn);
 }
-.field-label.field--changed { color: var(--ink); font-weight: 600; }
+.field-label.field--changed { color: var(--ink); font-weight: var(--fw-semibold); }
 
 /* Controls stay at their natural size; the meta column absorbs the slack, so the selects
    and inputs sit together as one readable rule rather than drifting apart. */
@@ -269,7 +281,7 @@
   border: none;
   box-shadow: none;
   color: inherit;
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
   padding-left: var(--space-1);
   min-width: 96px;
 }
@@ -300,9 +312,9 @@
   padding: var(--space-half) var(--space-2);
   border: 1px dashed var(--hairline);
   border-radius: var(--radius-pill);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: var(--fs-micro);
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
   color: var(--text-3);
 }
 
@@ -316,8 +328,8 @@
   font-size: var(--fs-label);
   color: var(--text-2);
 }
-.rule-summary__k { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--ink); }
-.rule-summary__warn { color: var(--warn); font-weight: 600; }
+.rule-summary__k { font-variant-numeric: tabular-nums; font-weight: var(--fw-semibold); color: var(--ink); }
+.rule-summary__warn { color: var(--warn); font-weight: var(--fw-semibold); }
 .rule-summary__sep { color: rgba(0, 0, 0, 0.25); }
 /* The match type is a two-state operator, not chrome — but it sits in a table cell, so it
    loses the standalone control's padding. */
@@ -349,7 +361,7 @@
 }
 .gap-gloss__mark {
   margin-right: var(--space-1);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
 }
 /* A code the codebook does not carry. The mark is a different SHAPE (◇ against ● and ◧)
    and the sentence says "not in the codebook" outright, so nothing rests on the colour. */
@@ -372,12 +384,12 @@
   display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-2);
   margin-bottom: var(--space-half);
 }
-.axis-block__name { margin: 0; font-size: var(--fs-lead); font-weight: 600; }
+.axis-block__name { margin: 0; font-size: var(--fs-lead); font-weight: var(--fw-semibold); }
 /* The values the axis can take. Uppercase already, so no transform — these are the literal
    tokens the cascade's own dropdowns offer, and re-casing them would make them look like
    prose rather than the vocabulary they are. */
 .axis-block__values {
-  font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.04em; color: var(--text-3);
+  font-size: var(--fs-micro); font-weight: var(--fw-semibold); letter-spacing: 0.04em; color: var(--text-3);
 }
 /* Pushed to the far edge: it is a reading about the axis, not part of its name. */
 .axis-block__rate {
@@ -387,13 +399,13 @@
 .axis-block__mark { margin-right: var(--space-1); }
 /* Over the threshold the whole reading changes colour AND gains the ▲ diagList already
    uses, so the finding never rests on colour alone. */
-.axis-block--high .axis-block__rate { color: var(--warn); font-weight: 600; }
+.axis-block--high .axis-block__rate { color: var(--warn); font-weight: var(--fw-semibold); }
 .axis-block__lede { margin: 0 0 var(--space-3); max-width: var(--measure); }
 
 /* The signal ladder. `<ol>` for a first-match axis and `<ul>` for an any-of one — the
    marker is the difference, so the numbers only appear where position carries meaning. */
 .axis-steps { margin: 0; padding: 0 0 0 var(--space-5); display: flex; flex-direction: column; gap: var(--space-2); }
-ol.axis-steps > li::marker { font-size: var(--fs-micro); font-weight: 600; color: var(--text-3); }
+ol.axis-steps > li::marker { font-size: var(--fs-micro); font-weight: var(--fw-semibold); color: var(--text-3); }
 ul.axis-steps { list-style: none; padding-left: 0; }
 .axis-step { font-size: var(--fs-body); }
 ul.axis-steps > .axis-step { padding-left: var(--space-3); position: relative; }
@@ -403,12 +415,12 @@ ul.axis-steps > .axis-step::before {
 }
 .axis-step__line { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-half) var(--space-2); }
 .axis-step__signal { color: var(--ink); }
-.axis-step__yield { font-weight: 600; color: var(--text-2); font-size: var(--fs-label); }
+.axis-step__yield { font-weight: var(--fw-semibold); color: var(--text-2); font-size: var(--fs-label); }
 /* Whose reading it is. A step the operator cannot move is as much a part of the answer as
    the ones they can, so it is marked rather than left to be inferred from the absence of a
    control. */
 .axis-step__origin {
-  font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+  font-size: var(--fs-micro); font-weight: var(--fw-semibold); letter-spacing: 0.06em; text-transform: uppercase;
   color: var(--text-3);
   border: 1px solid var(--hairline); border-radius: var(--radius-sm);
   padding: 0 var(--space-1);
@@ -448,6 +460,15 @@ ul.axis-steps > .axis-step::before {
 .impact-row__nums { font-variant-numeric: tabular-nums; color: var(--text-2); }
 .impact-row__delta { font-variant-numeric: tabular-nums; min-width: 46px; text-align: right; }
 .impact-headline { margin: 0 0 var(--space-3); max-width: var(--measure); }
+/* The line under the headline (leaves / cells counted), and the error state's retry. */
+.impact-subline { margin: 0 0 var(--space-3); }
+.impact-retry { margin-top: var(--space-3); }
+/* The impact pane's sub-sections ("What moves", "Per-axis unknown rate"): closer to what
+   precedes them than a page section. `.section-label.` to outrank base.css's h2 rule. */
+.section-label.aars-subhead { margin-top: var(--space-4); }
+/* A section's lead sentence, and the note under a list in the movers / titles sheets. */
+.aars-lede { margin: 0 0 var(--space-2); }
+.aars-sheet-note { margin-top: var(--space-3); }
 
 /* --- separation read-out ------------------------------------------------------------- */
 /* Same three-column rhythm as .impact-row above, so the two blocks read as one pane
@@ -483,6 +504,7 @@ ul.axis-steps > .axis-step::before {
 /* Two deliberate lines per mover — the name can be long, and wrapping the transition
    under it beats letting a 400px pane break the chips at an arbitrary point. */
 .mover-list { display: flex; flex-direction: column; }
+.mover-more { margin-top: var(--space-2); }
 .mover-row {
   padding: var(--space-2) 0; border-bottom: 1px solid var(--hairline); font-size: var(--fs-label);
 }
@@ -498,21 +520,23 @@ ul.axis-steps > .axis-step::before {
 /* Preview deltas. The arrow is the signal; color only reinforces it. */
 .delta-up::before { content: "▲ "; }
 .delta-down::before { content: "▼ "; }
-.delta-up { color: var(--bad); font-weight: 600; }
-.delta-down { color: var(--ok); font-weight: 600; }
+.delta-up { color: var(--bad); font-weight: var(--fw-semibold); }
+.delta-down { color: var(--ok); font-weight: var(--fw-semibold); }
 
 /* Collapsible foot-of-pane panels (sandbox). Matches the graph legend's disclosure idiom. */
 .rule-disclosure {
   margin-top: var(--space-4); border-top: 1px solid var(--hairline); padding-top: var(--space-3);
 }
 .rule-disclosure > summary {
-  cursor: pointer; font-size: var(--fs-label); font-weight: 600; letter-spacing: 0.05em;
+  cursor: pointer; font-size: var(--fs-label); font-weight: var(--fw-semibold); letter-spacing: 0.05em;
   text-transform: uppercase; color: var(--text-3); list-style: none;
 }
 .rule-disclosure > summary::-webkit-details-marker { display: none; }
 .rule-disclosure > summary::after { content: " ▸"; }
 .rule-disclosure[open] > summary::after { content: " ▾"; }
 .rule-disclosure > summary:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+.sandbox-lede { margin: var(--space-3) 0; }
+.sandbox-block { margin-top: var(--space-3); }
 .sandbox-result {
   display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: var(--space-3);
 }
@@ -523,7 +547,7 @@ ul.axis-steps > .axis-step::before {
   align-items: baseline; font-size: var(--fs-label);
 }
 .sandbox-gap__code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   color: var(--text-2);
 }
 .sandbox-gap > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -538,7 +562,7 @@ ul.axis-steps > .axis-step::before {
   background: var(--page); border: 1px solid var(--hairline); border-radius: var(--radius-pill);
 }
 .gap-chip__code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 600;
+  font-family: var(--font-mono); font-weight: var(--fw-semibold);
 }
 .gap-chip__title {
   color: var(--text-2); max-width: 20ch;
@@ -566,8 +590,8 @@ ul.axis-steps > .axis-step::before {
 }
 .codebook-row:last-child { border-bottom: none; }
 .codebook-row__code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: var(--fs-label); font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: var(--fs-label); font-weight: var(--fw-semibold);
 }
 .codebook-row__title { font-size: var(--fs-label); color: var(--ink); min-width: 0; }
 .codebook-row__blurb { grid-column: 1 / -1; line-height: 1.35; }
@@ -626,7 +650,7 @@ ul.axis-steps > .axis-step::before {
   background: var(--surface);
 }
 .rank-eval__fact dt {
-  font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.05em;
+  font-size: var(--fs-micro); font-weight: var(--fw-semibold); letter-spacing: 0.05em;
   text-transform: uppercase; color: var(--text-3);
 }
 .rank-eval__fact dd {
@@ -642,7 +666,7 @@ ul.axis-steps > .axis-step::before {
 .rank-eval__waiting { margin-top: var(--space-2); }
 /* The basis name and what it ranks by, in one cell: four rows of opaque keys would need a
    legend, and a legend is a second place for the wording to drift. */
-.rank-eval__basis { display: flex; flex-direction: column; gap: 2px; }
+.rank-eval__basis { display: flex; flex-direction: column; gap: var(--space-half); }
 .rank-eval__basis-note {
   font-size: var(--fs-label); color: var(--text-3); white-space: normal;
 }

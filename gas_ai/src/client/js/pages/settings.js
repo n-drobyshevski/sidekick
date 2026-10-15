@@ -59,8 +59,7 @@ export async function renderSettings(main, params, ctx) {
   const host = el("div", {});
   main.append(host);
   host.append(el("div", {
-    class: "card", role: "status", "aria-label": "Loading settings",
-    style: "display:flex; flex-direction:column; gap:16px",
+    class: "card skeleton-stack settings-skel", role: "status", "aria-label": "Loading settings",
   },
     skeleton("line", { width: "140px" }),
     skeleton("pill", { width: "200px" }),
@@ -602,7 +601,7 @@ export async function renderSettings(main, params, ctx) {
         + "collected it.")),
       // THE STANDING NOTICE. Always shown, never gated behind a colour: the words carry the
       // claim (bold, not tinted), and it says what to do about it in the same sentence.
-      el("p", { class: "small", style: "margin:0 0 4px" },
+      el("p", { class: "small settings-notice" },
         el("strong", {}, "Changing this changes what every published figure counts. "),
         "The stored register keeps counting the OLD categories until the next sync applies "
         + "the new scope — nothing here takes effect on its own."),
@@ -682,7 +681,7 @@ export async function renderSettings(main, params, ctx) {
           + "reporting what the tenant returned and what the normalizer kept.")),
       // THE STANDING NOTICE, in the same words the panel above uses, because it is the same
       // fact about a different axis of the same scope.
-      el("p", { class: "small", style: "margin:0 0 4px" },
+      el("p", { class: "small settings-notice" },
         el("strong", {}, "Changing this changes what every published figure counts. "),
         "The stored register keeps counting the OLD perimeters until the next sync applies "
         + "the new scope — nothing here takes effect on its own."),
@@ -720,7 +719,7 @@ export async function renderSettings(main, params, ctx) {
     };
   }
 
-  const shareTotalOut = el("p", { class: "small muted", role: "status", style: "margin:4px 0 0" });
+  const shareTotalOut = el("p", { class: "small muted readout-note", role: "status" });
   function syncShareTotal() {
     const total = rankShareTotal(draft.rankRule.shares);
     shareTotalOut.textContent = "Shares total " + total.toFixed(2) + ". They need not sum to "

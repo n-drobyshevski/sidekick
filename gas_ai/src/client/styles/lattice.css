@@ -89,7 +89,7 @@
    band keeps a gutter of its own rather than relying on the cell width below it. */
 .lat-hsub { justify-content: center; padding: 0 var(--space-1) var(--space-1); }
 .lat-rgroup { padding-right: var(--space-2); }
-.lat-rsub { padding-right: var(--space-2); font-weight: 600; color: var(--text-2); }
+.lat-rsub { padding-right: var(--space-2); font-weight: var(--fw-semibold); color: var(--text-2); }
 
 /* ------------------------------------------------------------------------- the cell */
 .lat-cell {
@@ -103,7 +103,7 @@
   min-height: 34px;
   overflow: hidden;
   font-size: var(--fs-micro);
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
   line-height: 1.15;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
@@ -270,6 +270,9 @@
    and two readings that differ by three orders of magnitude cannot share one unlabelled
    bar. */
 .lat-mass__caption { margin: var(--space-2) 0 0; }
+/* The paint mode's legend under the strip, and the one action a failed measurement offers. */
+.lat-legend { margin: var(--space-3) 0 0; }
+.lat-legend__action { margin: var(--space-2) 0 0; }
 
 /* LANDSCAPE MODE WITH NOTHING MEASURED. The strip does NOT fall back to the leaf shape: that
    is a real bar of real numbers about a different question, and drawn under a grid of hatched
@@ -318,7 +321,7 @@
   min-width: 15px;
   text-align: right;
   font-size: var(--fs-micro);
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
   font-variant-numeric: tabular-nums;
   color: var(--text-2);
 }
@@ -341,8 +344,8 @@
 .lat-icicle text { font-family: var(--font); fill: var(--svg-text-2); }
 .lat-icicle .lat-band { stroke: var(--page); stroke-width: 1; }
 .lat-icicle .lat-band.is-lit { stroke: var(--ink); stroke-width: 2; }
-.lat-icicle .lat-band__label { font-size: var(--fs-micro); font-weight: 600; fill: var(--ink); }
-.lat-icicle .lat-leaf__label { font-size: var(--fs-micro); font-weight: 600; }
+.lat-icicle .lat-band__label { font-size: var(--fs-micro); font-weight: var(--fw-semibold); fill: var(--ink); }
+.lat-icicle .lat-leaf__label { font-size: var(--fs-micro); font-weight: var(--fw-semibold); }
 .lat-icicle .lat-colhead {
   font-size: var(--fs-micro);
   font-weight: 700;
@@ -362,7 +365,7 @@ table.data tr.is-lit > td { background: var(--wash-hover); }
 .lat-pop__vector {
   margin: 0 0 var(--space-2);
   font-size: var(--fs-label);
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
   line-height: 1.35;
   color: var(--ink);
 }
@@ -373,6 +376,7 @@ table.data tr.is-lit > td { background: var(--wash-hover); }
 /* One vector walked through the cascade, so "why did this get Act" stops being work the
    reader does in their head against an ordered table. */
 .lat-trace { margin-top: var(--space-4); }
+.lat-trace__readout { margin: var(--space-3) 0 0; }
 .lat-trace__axes {
   display: flex;
   flex-wrap: wrap;
@@ -411,8 +415,8 @@ table.data tr.rule-won > td:first-child {
 /* Belt and braces against the smear above: text never strokes, whatever it sits inside. */
 .lat-icicle text { stroke: none; paint-order: normal; }
 .lat-icicle .lat-band { fill: rgba(0, 0, 0, 0.045); stroke: var(--page); stroke-width: 1; }
-.lat-icicle .lat-band__label { font-size: var(--fs-micro); font-weight: 600; fill: var(--ink); }
-.lat-icicle .lat-leaf__label { font-size: var(--fs-micro); font-weight: 600; fill: var(--svg-text-2); }
+.lat-icicle .lat-band__label { font-size: var(--fs-micro); font-weight: var(--fw-semibold); fill: var(--ink); }
+.lat-icicle .lat-leaf__label { font-size: var(--fs-micro); font-weight: var(--fw-semibold); fill: var(--svg-text-2); }
 .lat-icicle .lat-colhead {
   font-size: var(--fs-micro); font-weight: 700; letter-spacing: 0.05em;
   text-transform: uppercase; fill: var(--text-3);
@@ -489,4 +493,4 @@ table.data tr.is-lit > td:first-child { box-shadow: inset 2px 0 0 var(--ink); }
 .lat-key__line b { color: var(--ink); font-weight: 700; }
 /* The arrow says which way to read the axis, and is aria-hidden: a screen reader gets the
    whole vector in words from every cell's own label, where direction is not a concept. */
-.lat-key__dir { margin-right: var(--space-1); font-weight: 400; color: var(--accent-text); }
+.lat-key__dir { margin-right: var(--space-1); font-weight: var(--fw-body); color: var(--accent-text); }

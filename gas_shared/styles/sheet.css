@@ -88,8 +88,12 @@
   display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2);
 }
 /* Legacy in-body action row (sync-progress drawer): wrap rather than force a
-   horizontal scrollbar inside the drawer at phone widths. */
-.sheet-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
+   horizontal scrollbar inside the drawer at phone widths. The top margin was an inline
+   `margin-top:16px` on each of the three registers' drawers; it lives here now. */
+.sheet-actions {
+  display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2);
+  margin-top: var(--space-4);
+}
 
 /* The record's headline numbers — always data values, never a grade. Two of them now
    (open issues, cloud findings), so the row gets a wider gap between the pairs than
@@ -161,6 +165,21 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 }
 .sheet-section { margin-bottom: var(--space-4); }
 .sheet-section .label { margin-bottom: var(--space-2); display: block; }
+
+/* The MTTR split-row sheet ("A split row is a record") and its Change-domain dialog. gas and
+   gas_devsecops draw both from near-identical `pages/mttr.js` copies, which carried these as
+   inline `style` strings. */
+.split-sheet__note { margin: 0 0 var(--space-3); }
+.split-sheet__admin { display: flex; gap: var(--space-4); margin: 0 0 var(--space-3); }
+/* A sub-heading inside a section: more air above than `.sheet-section .label` gives, less below. */
+.sheet-section .split-sheet__sev-label { margin: var(--space-4) 0 var(--space-1); }
+.split-sheet__sev { margin-top: var(--space-3); }
+.split-sheet__controls { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-3); }
+.domain-dialog__field { display: block; margin: var(--space-2) 0; }
+.domain-dialog__reasons { border: 0; padding: 0; margin: var(--space-2) 0; }
+.domain-dialog__reason { display: block; margin: var(--space-1) 0; }
+.domain-dialog__note { display: block; margin-top: var(--space-2); }
+.domain-dialog__note > input { width: 100%; }
 /* One scroll, but you always know which section you are in. Sticks directly under the
    header (which is outside the scroll container), over the page ground so rows pass
    behind it rather than through it. */

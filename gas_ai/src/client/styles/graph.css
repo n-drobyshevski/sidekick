@@ -8,6 +8,10 @@
   background: var(--surface);
 }
 .workbench-title { font-size: var(--fs-lead); margin: 0; }
+/* The word after a toolbar button's icon (Columns, Edit query, New search). */
+.graph-btn-label { margin-left: var(--space-1); }
+/* The one field in the "Save this query" / "Save this view" dialogs (pages/inventory.js too). */
+.dialog-input { width: 100%; margin-bottom: var(--space-1); }
 .workbench-meta {
   display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center;
   font-size: var(--fs-label); color: var(--text-2);
@@ -46,7 +50,7 @@
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 18px; padding: 0 var(--space-1); margin-left: var(--space-2);
   border-radius: var(--radius-pill); background: var(--track-bg);
-  font-size: var(--fs-micro); font-weight: 600; font-variant-numeric: tabular-nums;
+  font-size: var(--fs-micro); font-weight: var(--fw-semibold); font-variant-numeric: tabular-nums;
   color: var(--text-2); line-height: 17px;
 }
 .filter-count:empty { display: none; }
@@ -237,7 +241,7 @@
 }
 .gs-status .progress-track { flex: 0 0 88px; }
 .gs-phase {
-  font-size: var(--fs-label); font-weight: 600; color: var(--text-2);
+  font-size: var(--fs-label); font-weight: var(--fw-semibold); color: var(--text-2);
   background: var(--page); border: 1px solid var(--hairline);
   border-radius: var(--radius-pill); padding: var(--space-1) var(--space-3); box-shadow: var(--shadow-card);
 }
@@ -293,7 +297,7 @@
   display: inline-flex; align-items: center; justify-content: center;
   border-radius: var(--radius-pill); border: 1px solid var(--page);
   background: var(--accent); color: var(--on-accent);
-  font-size: var(--fs-micro); font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums;
+  font-size: var(--fs-micro); font-weight: var(--fw-semibold); line-height: 1; font-variant-numeric: tabular-nums;
 }
 .graph-tool-badge:empty { display: none; }
 
@@ -308,13 +312,13 @@
 .graph-layouts-head {
   display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3);
 }
-.graph-layouts-title { font-size: var(--fs-body); font-weight: 600; color: var(--ink); }
+.graph-layouts-title { font-size: var(--fs-body); font-weight: var(--fw-semibold); color: var(--ink); }
 .graph-layouts-key { font-size: var(--fs-micro); color: var(--text-3); }
 .graph-layouts-key kbd {
   margin-left: var(--space-1); padding: var(--space-half) var(--space-1);
   border: 1px solid var(--hairline); border-radius: var(--radius-xs);
   background: var(--track-bg);
-  font: inherit; font-weight: 600; color: var(--text-2);
+  font: inherit; font-weight: var(--fw-semibold); color: var(--text-2);
 }
 /* The listbox itself carries focus (aria-activedescendant moves the cursor), so the ring goes
    here and not on a row. Never removed — this is the only thing telling a keyboard user which
@@ -346,7 +350,7 @@
 /* THE LAYOUT IN FORCE. Weight and the tick, not the reference's blue alone: five rows in one
    tint with the current one merely coloured is a colour-only signal, and the tick is the half a
    forced-colours or monochrome reader still receives. */
-.graph-layouts-row.is-on .graph-layouts-label { font-weight: 600; }
+.graph-layouts-row.is-on .graph-layouts-label { font-weight: var(--fw-semibold); }
 .graph-layouts-row.is-on .graph-layouts-glyph { color: var(--accent-text); }
 .graph-layouts-check {
   flex: 0 0 auto; display: inline-flex; align-items: center; color: var(--accent-text);
@@ -382,14 +386,14 @@
 .ggroup-box, .ggroup-box.is-sub, .gcluster-hull { vector-effect: non-scaling-stroke; }
 .ggroup-box { fill: rgba(0, 0, 0, 0.015); stroke: var(--hairline); stroke-width: 1; }
 .ggroup-label {
-  font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.05em;
+  font-size: var(--fs-micro); font-weight: var(--fw-semibold); letter-spacing: 0.05em;
   text-transform: uppercase; fill: var(--svg-text-2);
 }
 /* The second grouping level, drawn inside the first. NO fill: the parent's wash is
    already under it, and 0.015 over 0.015 reads as a smudge rather than as depth. The
    outline alone says "inside", and the smaller label says which level you are reading. */
 .ggroup-box.is-sub { fill: none; stroke-dasharray: 3 3; }
-.ggroup-label.is-sub { font-size: var(--fs-micro); font-weight: 500; fill: var(--svg-text-2); }
+.ggroup-label.is-sub { font-size: var(--fs-micro); font-weight: var(--fw-medium); fill: var(--svg-text-2); }
 
 /* A connected component's outline. The lightest thing on the canvas, on purpose: the study behind
    it measured a ~25% accuracy cost on path-following for ANY group overlay, and this one sits over
@@ -404,7 +408,7 @@
 }
 /* How much of the picture the outline holds — the one thing the shape itself cannot say. */
 .gcluster-count {
-  font-size: var(--fs-micro); font-weight: 600; fill: var(--svg-text-2);
+  font-size: var(--fs-micro); font-weight: var(--fw-semibold); fill: var(--svg-text-2);
   font-variant-numeric: tabular-nums;
 }
 .gedge-label {
@@ -423,11 +427,11 @@
 .gnode:hover .gnode-box { stroke: rgba(0, 0, 0, 0.3); }
 .gnode:focus { outline: none; }
 .gnode:focus-visible .gnode-box { stroke: var(--accent); stroke-width: 2; }
-.gnode-name { font-size: var(--fs-label); font-weight: 600; fill: var(--ink); }
+.gnode-name { font-size: var(--fs-label); font-weight: var(--fw-semibold); fill: var(--ink); }
 .gnode-kind { font-size: var(--fs-micro); fill: var(--svg-text-2); letter-spacing: 0.04em; }
 .gnode-icon { fill: none; stroke: rgba(0, 0, 0, 0.6); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 /* The AARS figure on a node card: a number in a column of node cards, so tabular. */
-.gnode-counts { font-size: var(--fs-micro); font-weight: 600; fill: var(--svg-text-2); font-variant-numeric: tabular-nums; }
+.gnode-counts { font-size: var(--fs-micro); font-weight: var(--fw-semibold); fill: var(--svg-text-2); font-variant-numeric: tabular-nums; }
 /* Severity label on a node card. The Two-Token Severity Rule: the DOT is painted from the
    server palette (a graphical mark at >=3:1, and a deployment may retint it), the LABEL
    takes the darkened text token so it clears 4.5:1 on the pale category tints underneath.
@@ -497,7 +501,7 @@
 .legend-toggle {
   list-style: none; cursor: pointer; user-select: none;
   display: flex; align-items: center; gap: var(--space-2);
-  padding: var(--space-2) var(--space-2); font-weight: 600; color: var(--ink);
+  padding: var(--space-2) var(--space-2); font-weight: var(--fw-semibold); color: var(--ink);
   border-radius: inherit;
 }
 .legend-toggle::-webkit-details-marker { display: none; }

@@ -186,7 +186,7 @@ export function createAppShell(spec) {
         // prefilled subject exists once rather than in both bundles. No retry: retrying
         // re-sends the same identity and can only fail the same way.
         if (e.contact) {
-          card.append(el("div", { class: "small", style: "margin:8px 0 0" },
+          card.append(el("div", { class: "small empty-contact" },
             "If you think you should have access, contact ",
             el("a", { href: e.contactUrl || ("mailto:" + e.contact) }, e.contact),
             "."));

@@ -547,7 +547,7 @@ export async function renderScans(main, params, ctx) {
     // number — the same false reading this panel exists to refuse, pointed the other way.
     if (edges.dead.length) {
       wrap.append(
-        el("p", { class: "small muted", style: "margin-top:8px" },
+        el("p", { class: "small muted reach-edges-label" },
           tipLabel("Declared, produced by nothing:", {
             lines: ["Each one is a class of question this product looks able to answer and cannot."],
           })),
@@ -558,7 +558,7 @@ export async function renderScans(main, params, ctx) {
     }
     if (edges.synthetic.length) {
       wrap.append(
-        el("p", { class: "small muted", style: "margin-top:8px" },
+        el("p", { class: "small muted reach-edges-label" },
           tipLabel("Derived at read time, not stored:", {
             lines: ["Absent from the persisted graph by design — not a gap."],
           })),
@@ -951,10 +951,10 @@ function scansSkeleton() {
     skeleton("title", { width: "220px" }),
     skeleton("chart", { height: reserve + "px" }),
     skeleton("title", { width: "130px" }),
-    el("div", { class: "skeleton-stack", style: "gap:10px; margin-top:8px" },
+    el("div", { class: "skeleton-stack cov-skel-stack" },
       ...Array.from({ length: 9 }, () => skeleton("line", { height: "22px" }))),
-    el("div", { style: "margin-top:20px" }, skeleton("title", { width: "150px" })),
-    el("div", { class: "skeleton-stack", style: "gap:10px; margin-top:8px" },
+    el("div", { class: "cov-skel-head" }, skeleton("title", { width: "150px" })),
+    el("div", { class: "skeleton-stack cov-skel-stack" },
       ...Array.from({ length: 5 }, () => skeleton("line", { height: "26px" }))),
   );
 }

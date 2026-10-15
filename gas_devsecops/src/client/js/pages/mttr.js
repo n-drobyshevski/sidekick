@@ -1895,7 +1895,7 @@ export async function renderMttr(host, params, ctx) {
     // WHAT THE CAP DROPPED, on the surface: only the repository split is capped.
     const cut = byGroup.cut;
     if (cut && num(cut.groups, 0) > 0) {
-      groupHost.append(el("p", { class: "small muted", style: "margin:8px 0 0" },
+      groupHost.append(el("p", { class: "small muted table-note" },
         `${fmtCount(cut.groups)} more ${num(cut.groups, 0) === 1 ? "repository" : "repositories"} `
         + `not listed — ${fmtCount(num(cut.open, 0))} open, ${fmtCount(num(cut.resolved, 0))} `
         + "resolved"
@@ -1936,7 +1936,7 @@ export async function renderMttr(host, params, ctx) {
 
     const sheetCtx = openSheet((body) => {
       const note = splitBucketNote(dimension, group);
-      if (note) body.append(el("p", { class: "small muted", style: "margin:0 0 12px" }, note));
+      if (note) body.append(el("p", { class: "small muted split-sheet__note" }, note));
       body.append(remediationSection(), findingsSection());
     }, {
       title: group,
@@ -1970,7 +1970,7 @@ export async function renderMttr(host, params, ctx) {
 
     // CHANGING IT: admins only (the server re-checks), and only on a real group.
     if (dimension === "supportGroup" && group !== SPLIT_NONE && boot.canEditAccess === true) {
-      sheetCtx.body.prepend(el("div", { class: "small", style: "display:flex;gap:16px;margin:0 0 12px" },
+      sheetCtx.body.prepend(el("div", { class: "small split-sheet__admin" },
         el("button", { type: "button", class: "linklike", onclick: changeDomain }, "Change domain…"),
         sgOverride
           ? el("button", { type: "button", class: "linklike", onclick: resetDomain }, "Reset to automatic")
@@ -1994,18 +1994,17 @@ export async function renderMttr(host, params, ctx) {
           // The CROSS team's groups live in CROSS — preselect it, still changeable.
           if (value === "cross_team" && domains.includes("CROSS")) domainSelect.value = "CROSS";
         });
-        return el("label", { style: "display:block;margin:4px 0" }, input, " ", r.label);
+        return el("label", { class: "domain-dialog__reason" }, input, " ", r.label);
       });
-      const note = el("input", { type: "text", "aria-label": "Note (optional)", maxlength: "500",
-        style: "width:100%" });
+      const note = el("input", { type: "text", "aria-label": "Note (optional)", maxlength: "500" });
       note.value = (sgOverride && sgOverride.note) || "";
       const body = el("div", {},
         el("p", { class: "muted" }, `Every finding of ${group} will count under the domain you `
           + "pick, on every page, whatever its repositories are tagged."),
-        el("label", { style: "display:block;margin:8px 0" }, "Domain ", domainSelect),
-        el("fieldset", { style: "border:0;padding:0;margin:8px 0" },
+        el("label", { class: "domain-dialog__field" }, "Domain ", domainSelect),
+        el("fieldset", { class: "domain-dialog__reasons" },
           el("legend", { class: "small muted" }, "Why"), ...radios),
-        el("label", { class: "small muted", style: "display:block;margin-top:8px" },
+        el("label", { class: "small muted domain-dialog__note" },
           "Note (optional)", note));
       const ok = await confirmDialog({ title: `Domain of ${group}`, body, confirmLabel: "Save" });
       if (ok) saveDomain({ group, domain: domainSelect.value, reason, note: note.value });
@@ -2057,8 +2056,9 @@ export async function renderMttr(host, params, ctx) {
             ["Open dependency findings with no vendor fix available yet."])
           : null);
 
-      const sevBox = el("div", { role: "status", "aria-label": "Loading the clock by severity",
-        style: "margin-top:12px" }, skeletonStack(3, { widths: ["100%", "100%", "80%"] }));
+      const sevBox = el("div", { class: "split-sheet__sev", role: "status",
+        "aria-label": "Loading the clock by severity" },
+      skeletonStack(3, { widths: ["100%", "100%", "80%"] }));
       groupSinks.push((m, err) => {
         // A revalidation landing after the sheet closed has nowhere to paint.
         if (!sevBox.isConnected) return;
@@ -2073,7 +2073,7 @@ export async function renderMttr(host, params, ctx) {
           `No severity has a clock yet in this ${dim.noun}.`));
       });
       return sheetSection("Remediation", clocks, counts,
-        el("h4", { class: "label", style: "margin:16px 0 4px" }, "By severity"), sevBox);
+        el("h4", { class: "label split-sheet__sev-label" }, "By severity"), sevBox);
     }
 
     function findingsSection() {
@@ -2162,12 +2162,12 @@ export async function renderMttr(host, params, ctx) {
         });
         const mismatch = splitCountNote(row, register, num(data.total, null), st.status);
         tableHost.replaceChildren(table, footer);
-        if (mismatch) tableHost.append(el("p", { class: "small muted", style: "margin:8px 0 0" }, mismatch));
+        if (mismatch) tableHost.append(el("p", { class: "small muted table-note" }, mismatch));
       }
 
       load();
       return sheetSection("Findings",
-        el("div", { style: "display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px" },
+        el("div", { class: "split-sheet__controls" },
           registerToggle, statusToggle),
         tableHost);
     }

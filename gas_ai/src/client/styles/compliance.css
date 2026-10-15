@@ -44,7 +44,7 @@
 .comp-trend-head {
   margin: 0;
   font-size: var(--fs-label);
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
   color: var(--text-2);
 }
 /* SHORTER THAN `.chart-box`'s 240px, deliberately. This canvas sits in a page HEADER beside
@@ -78,7 +78,7 @@
 .comp-key[data-state="noResources"] .comp-key-glyph { color: var(--sev-info-text); }
 .comp-key[data-state="noPolicies"] .comp-key-glyph { color: var(--warn); }
 .comp-key[data-state="unknown"] .comp-key-glyph { color: var(--text-3); }
-.comp-key-num { font-weight: 600; color: var(--ink); }
+.comp-key-num { font-weight: var(--fw-semibold); color: var(--ink); }
 
 /* ---------------------------------------------------------------- the register */
 
@@ -135,7 +135,7 @@
 .comp-posture .meter { flex: 1; min-width: 48px; }
 .comp-posture-num {
   font-variant-numeric: tabular-nums;
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
   min-width: 42px;
   text-align: right;
 }
@@ -158,7 +158,7 @@
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
-.comp-policy-counts b { color: var(--ink); font-weight: 600; }
+.comp-policy-counts b { color: var(--ink); font-weight: var(--fw-semibold); }
 
 /* The 1080px two-up step that used to live here for `.comp-header` retired with the class —
    the header is `pageHeader`'s own `.page-header` now, and its shared 640px one-column
@@ -254,7 +254,7 @@
    never fire on a box that is never allowed to be too small. */
 .comp-fw-head { display: flex; flex-direction: column; min-width: 0; }
 .comp-fw-name {
-  font-size: var(--fs-body); font-weight: 600; color: var(--ink);
+  font-size: var(--fs-body); font-weight: var(--fw-semibold); color: var(--ink);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .comp-fw-meta {
@@ -427,8 +427,8 @@
   border-top: 4px solid var(--accent);
 }
 
-.comp-fw-pct { font-size: var(--fs-lead); font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
-.comp-fw-pct--dash { color: var(--text-3); font-weight: 400; }
+.comp-fw-pct { font-size: var(--fs-lead); font-weight: var(--fw-semibold); text-align: right; font-variant-numeric: tabular-nums; }
+.comp-fw-pct--dash { color: var(--text-3); font-weight: var(--fw-body); }
 
 .comp-rail-key { display: flex; align-items: center; gap: var(--space-1); margin-top: var(--space-3); font-size: var(--fs-micro); color: var(--text-3); }
 .comp-rail-key-swatch { display: inline-block; width: 14px; height: 2px; background: var(--accent); }
@@ -444,7 +444,7 @@
   max-width: var(--measure);
   line-height: 1.5;
 }
-.comp-rail-key--scope b { color: var(--ink); font-weight: 600; }
+.comp-rail-key--scope b { color: var(--ink); font-weight: var(--fw-semibold); }
 .comp-rail-key--scope a { color: var(--accent-text); }
 
 @media (max-width: 1080px) {
@@ -489,8 +489,8 @@
    visual register. */
 .comp-auto {
   display: inline-flex; align-items: center;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: var(--fs-micro); font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro); font-weight: var(--fw-semibold);
   color: var(--ok); background: rgba(21, 128, 61, 0.10);
   border-radius: var(--radius-sm); padding: var(--space-half) var(--space-1);
 }
@@ -545,7 +545,7 @@
   display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-2) var(--space-3);
   margin-bottom: var(--space-2);
 }
-.scope-group-title { flex: 1 1 200px; font-weight: 600; font-size: var(--fs-body); color: var(--ink); }
+.scope-group-title { flex: 1 1 200px; font-weight: var(--fw-semibold); font-size: var(--fs-body); color: var(--ink); }
 .scope-group-count { font-size: var(--fs-label); color: var(--text-3); white-space: nowrap; }
 /* A command, not a state pill: its label already says what pressing it does ("Select all" /
    "Deselect all"), so it does not need `aria-pressed` on top of that to be understood —
@@ -577,7 +577,7 @@
 /* Pinned means a person decided this, not that the landscape did — a different kind of fact
    from crossMapped/linkedFindings/noAiLink, and it earns its own tint so a reader scanning
    the column can tell "derived" from "somebody's call" without reading every word. */
-.scope-reason--pinned { color: var(--accent-text); font-weight: 600; }
+.scope-reason--pinned { color: var(--accent-text); font-weight: var(--fw-semibold); }
 
 /* The row's control. A drawn checkbox-shaped glyph rather than an actual `<input
    type=checkbox>` — filters.js's facet rows (sheet.css's `.facet-box`) set this precedent
@@ -586,7 +586,7 @@
    control planted in the middle of a page that has none. */
 .scope-toggle {
   display: inline-flex; align-items: center; gap: var(--space-2); flex: none;
-  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-1); font-size: var(--fs-label); font-weight: 500;
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-1); font-size: var(--fs-label); font-weight: var(--fw-medium);
   border: 1px solid var(--hairline); border-radius: var(--radius-pill);
   background: var(--page); color: var(--text-2);
 }
@@ -599,7 +599,7 @@
 }
 .scope-box::before { content: "✓"; }
 .scope-toggle[aria-pressed="true"] {
-  border-color: var(--accent); color: var(--ink); font-weight: 600;
+  border-color: var(--accent); color: var(--ink); font-weight: var(--fw-semibold);
 }
 .scope-toggle[aria-pressed="true"] .scope-box {
   background: var(--accent); border-color: var(--accent); color: var(--on-accent);
@@ -634,7 +634,7 @@
    own overlay chrome, and this panel isn't one. Same look as `.label` (base.css) so it
    still reads as this app's one "small caps heading" idiom. */
 .comp-detail-heading {
-  font-size: var(--fs-label); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  font-size: var(--fs-label); font-weight: var(--fw-semibold); letter-spacing: 0.05em; text-transform: uppercase;
   color: var(--text-3); margin: 0;
 }
 .comp-detail-block p { margin: 0; max-width: var(--measure); }
@@ -660,7 +660,7 @@
    coloured as a quiet secondary control: it reveals, it does not commit anything. */
 .scope-disclose {
   flex: 0 0 auto;
-  font: inherit; font-size: var(--fs-label); font-weight: 600;
+  font: inherit; font-size: var(--fs-label); font-weight: var(--fw-semibold);
   color: var(--text-2); background: var(--page);
   border: 1px solid var(--hairline); border-radius: var(--radius-sm);
   padding: var(--space-half) var(--space-2); cursor: pointer;
@@ -689,3 +689,17 @@
   background-color: transparent; opacity: 0.6;
   box-shadow: inset 0 0 0 1px var(--accent);
 }
+
+/* ------------------------------------------------- Settings: lines that were inline */
+/* One row per readout (settingsReadouts.js: category scope, term coverage, the rank
+   histogram), which used to space itself three different ways (12 / 10 / 8px). */
+.readout-row { margin: 0 0 var(--space-3); }
+.readout-label { margin: 0 0 var(--space-1); }
+.readout-label--split { display: flex; justify-content: space-between; gap: var(--space-2); }
+.readout-note { margin: var(--space-1) 0 0; }
+/* The standing "changing this changes every figure" notice on the two scope panels. */
+.settings-notice { margin: 0 0 var(--space-1); }
+/* The page's loading card (pages/settings.js), looser than a plain skeleton stack. */
+.settings-skel { gap: var(--space-4); }
+/* The roster's captions (pages/accessEditor.js): the owner line and the empty lists. */
+.access-note { color: var(--text-3); }

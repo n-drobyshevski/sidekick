@@ -109,6 +109,20 @@ const FONT = {
 const INK2 = "rgba(0,0,0,0.65)";
 const HAIRLINE = "#e6e6e9";
 
+/**
+ * A colour token's CURRENT value, read off the stylesheet at draw time (the way
+ * `pages/sca.js`'s `sevPalette` reads the severities), so a retint in tokens.base.css reaches
+ * the canvas. The fallback is the token's value as of writing, for a context with no
+ * stylesheet (tests, a detached canvas).
+ */
+function tokenColor(name, fallback) {
+  try {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+  } catch (e) {
+    return fallback;
+  }
+}
+
 // Group digits, so figures inside charts follow the same "tabular, thousands-separated,
 // the-number-is-the-product" rule as the rest of the app (canvas ignores
 // font-variant-numeric, so a formatter callback is the only way to get grouping).
@@ -647,8 +661,11 @@ function slaEdgeLine(afterIndex, label) {
       const x = scales.x;
       if (!x || afterIndex < 0 || afterIndex >= x.ticks.length - 1) return;
       const px = (x.getPixelForTick(afterIndex) + x.getPixelForTick(afterIndex + 1)) / 2;
+      // `--warn`, which this used to copy as #a16207 before the token was darkened. There is
+      // no field grade of warn, and the label beside the line is text.
+      const ink = tokenColor("--warn", "#8a5406");
       ctx.save();
-      ctx.strokeStyle = "#a16207";
+      ctx.strokeStyle = ink;
       ctx.lineWidth = 1;
       ctx.setLineDash([4, 3]);
       ctx.beginPath();
@@ -656,7 +673,7 @@ function slaEdgeLine(afterIndex, label) {
       ctx.lineTo(px, chartArea.bottom);
       ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = "#a16207";
+      ctx.fillStyle = ink;
       ctx.font = "600 10px " + FONT.family;
       ctx.textAlign = "left";
       ctx.fillText(label, px + 5, chartArea.top + 10);
@@ -701,48 +718,6 @@ export function stackedAgeBar(canvas, labels, perSev, palette, desc, opts2 = {})
     },
     options: opts,
     plugins,
-  });
-}
-
-/**
- * A sparkline: one series, its own y-scale, no axes, an emphasised endpoint.
- *
- * Small multiples rather than one shared axis is the point — magnitude is carried by the
- * count printed beside it, never by this chart's own scale, so tiers spanning orders of
- * magnitude don't flatten the small ones onto the baseline.
- */
-export function sparkline(canvas, values, { color, desc } = {}) {
-  destroyExisting(canvas);
-  describe(canvas, desc || "Trend sparkline.");
-  const ink = color || "#6b7280";
-  return new Chart(canvas, {
-    type: "line",
-    data: {
-      labels: values.map((_, i) => i),
-      datasets: [{
-        data: values,
-        borderColor: ink,
-        borderWidth: 2,
-        tension: 0.25,
-        fill: false,
-        pointRadius: values.map((_, i) => (i === values.length - 1 ? 3 : 0)),
-        pointBackgroundColor: ink,
-        pointBorderWidth: 0,
-      }],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      animation: reducedMotion ? false : { duration: 300 },
-      plugins: { legend: { display: false }, tooltip: { enabled: false } },
-      scales: {
-        x: { display: false },
-        // NOT beginAtZero: these read as shape, and pinning to zero would flatten a tier
-        // whose whole range sits well above it.
-        y: { display: false, grace: "12%" },
-      },
-      layout: { padding: { top: 4, bottom: 4, left: 2, right: 4 } },
-    },
   });
 }
 
@@ -811,6 +786,11 @@ export function severityTrendLines(canvas, points, palette, sevScope) {
  * colorblind pair, so it's encoded three ways: color, a dash on Resolved, and a distinct
  * legend point-style (circle vs rect) shown via usePointStyle — the swatches differ by
  * shape, not color alone. `xRange` (epoch days) pins the visible window when set.
+ *
+ * The two lines take the FIELD grade (`--bad-field` / `--ok-field`), not the text-grade
+ * `--bad` / `--ok`: they are marks, not type, and the field pair is the one that stays apart
+ * in greyscale and under deuteranopia (tokens.base.css). Resolved used to copy #15803d, the
+ * pre-darkening `--ok`.
  */
 export function openResolvedLines(canvas, points, { xRange } = {}) {
   destroyExisting(canvas);
@@ -839,7 +819,7 @@ export function openResolvedLines(canvas, points, { xRange } = {}) {
         {
           label: "Open",
           data: points.map((p, i) => ({ x: days[i], y: p.open })),
-          borderColor: "#b91c1c",
+          borderColor: tokenColor("--bad-field", "#c2453f"),
           borderWidth: 2,
           pointStyle: "circle",
           pointRadius: 0,
@@ -849,7 +829,7 @@ export function openResolvedLines(canvas, points, { xRange } = {}) {
         {
           label: "Resolved",
           data: points.map((p, i) => ({ x: days[i], y: p.resolved })),
-          borderColor: "#15803d",
+          borderColor: tokenColor("--ok-field", "#4a9167"),
           borderDash: [6, 4],
           borderWidth: 2,
           pointStyle: "rect",

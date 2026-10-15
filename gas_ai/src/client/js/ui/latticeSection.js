@@ -183,8 +183,7 @@ export function latticeSection(opts) {
   for (const axis of spec.axes) traceState[axis.key] = axis.values[axis.values.length - 1];
 
   const traceReadout = el("p", {
-    class: "small",
-    style: "margin:10px 0 0",
+    class: "small lat-trace__readout",
     role: "status",
     "aria-live": "polite",
   });
@@ -254,10 +253,10 @@ export function latticeSection(opts) {
   }
 
   const massHost = el("div", { class: "lat-mass" });
-  const legend = el("p", { class: "small muted", style: "margin:12px 0 0" });
+  const legend = el("p", { class: "small muted lat-legend" });
   // A failed measurement is the one legend state with something to DO about it, and the
   // button cannot live inside a node whose whole content is replaced by `textContent`.
-  const legendAction = el("div", { style: "margin:8px 0 0" });
+  const legendAction = el("div", { class: "lat-legend__action" });
   const note = el("div", {});
 
   // Both lattices offer both views. The titles read from the caller's own vocabulary rather
@@ -280,7 +279,7 @@ export function latticeSection(opts) {
       "div",
       { class: "model-hero__head" },
       el("span", { class: "label" }, "The decision space"),
-      el("span", { style: "flex:1 1 auto" }),
+      el("span", { class: "model-hero__spacer" }),
       viewTabs,
       modeTabs,
     ),
@@ -545,13 +544,13 @@ export function latticeSection(opts) {
         body.append(el("p", { class: "lat-pop__vector" }, vectorSentence(spec, cell.vector)));
         body.append(el("p", { class: "lat-pop__row" }, K.badge(verdict)));
         body.append(el(
-          "p", { class: "small muted", style: "margin:0 0 8px" },
+          "p", { class: "small muted lat-pop__row" },
           claimed
             ? `Claimed by rule ${d.ruleIndex + 1} — ${whenWords(getRules()[d.ruleIndex])}.`
             : `No rule matches this ${unitOne}, so the fallback decides it.`,
         ));
         body.append(el(
-          "p", { class: "small muted", style: "margin:0 0 10px" },
+          "p", { class: "small muted lat-pop__row" },
           count === null
             ? unmeasuredReason(occ)
             : count === 0

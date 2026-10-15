@@ -193,7 +193,7 @@ function renderReportSection(main, boot, domain, supportGroup) {
   main.append(
     el(
       "p",
-      { class: "muted small", style: "margin:-2px 0 8px" },
+      { class: "muted small scope-line" },
       scopeLine(domain, supportGroup),
     ),
     controls,
@@ -235,7 +235,7 @@ function renderReportSection(main, boot, domain, supportGroup) {
     previewHost.append(
       el(
         "div",
-        { class: "label", style: "margin:2px 0 6px" },
+        { class: "label report-preview__label" },
         "Report preview — severity by source",
       ),
     );
@@ -277,7 +277,7 @@ function renderReportSection(main, boot, domain, supportGroup) {
     }
     table.append(tbody);
     previewHost.append(
-      el("div", { class: "table-wrap", style: "margin-top:4px" }, table),
+      el("div", { class: "table-wrap report-preview__table" }, table),
     );
   }
 
@@ -322,11 +322,11 @@ function renderExportSection(main, boot, domain, supportGroup) {
     ),
     el(
       "p",
-      { class: "muted small", style: "margin-top:-4px" },
+      { class: "muted small tuck-up" },
       scopeLine(domain, supportGroup),
     ),
   );
-  const row = el("div", { style: "display:flex; gap:8px; flex-wrap:wrap" });
+  const row = el("div", { class: "btn-row" });
   const csvBtn = el("button", { onclick: csv }, "Download CSV");
   const rawBtn = el("button", { onclick: raw }, "Raw JSON (Drive)");
   const bundleBtn = el(
@@ -335,8 +335,8 @@ function renderExportSection(main, boot, domain, supportGroup) {
     "Migration bundle (Drive)",
   );
   row.append(csvBtn, rawBtn, bundleBtn);
-  const rawHost = el("div", { style: "margin-top:10px" });
-  const bundleHost = el("div", { style: "margin-top:10px" });
+  const rawHost = el("div", { class: "gap-above" });
+  const bundleHost = el("div", { class: "gap-above" });
   card.append(row, rawHost, bundleHost);
   // The bundle is the whole register, not the filtered frame — say so, because it sits
   // under a heading whose other two buttons honor the global filters.
@@ -491,7 +491,7 @@ function renderImportSection(main, ctx) {
     type: "file",
     accept: "application/json",
     multiple: "",
-    style: "display:none",
+    hidden: true,
     "aria-hidden": "true",
     tabindex: "-1",
   });
@@ -506,11 +506,11 @@ function renderImportSection(main, ctx) {
     { class: "danger", onclick: resetLedger },
     "Reset ledger…",
   );
-  const statusHost = el("div", { style: "margin-top:10px" });
+  const statusHost = el("div", { class: "gap-above" });
   card.append(
     el(
       "div",
-      { style: "display:flex; gap:8px; flex-wrap:wrap" },
+      { class: "btn-row" },
       importBtn,
       resetBtn,
       fileInput,
@@ -1034,7 +1034,7 @@ function renderMaintenanceSection(main, boot, ctx) {
         ),
         el(
           "div",
-          { style: "margin:10px 0" },
+          { class: "dialog-setting" },
           settingRow({
             label: "Also stop scanning for these severities",
             description: narrowable.length

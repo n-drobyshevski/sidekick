@@ -82,9 +82,9 @@ export async function renderAccessPanel() {
     usersHost.append(
       el("div", { class: "access-row access-row--locked" },
         el("span", { class: "access-row__email" }, owner),
-        el("span", { class: "small", style: "color:var(--text-3)" }, "Owner · always has access")));
+        el("span", { class: "small access-note" }, "Owner · always has access")));
     if (!users.length) {
-      usersHost.append(el("p", { class: "small", style: "color:var(--text-3)" },
+      usersHost.append(el("p", { class: "small access-note" },
         "Nobody else yet — only the owner can open the app."));
     }
     users.forEach((email, i) => {
@@ -104,7 +104,7 @@ export async function renderAccessPanel() {
   function drawAdmins() {
     clear(adminsHost);
     if (!admins.length) {
-      adminsHost.append(el("p", { class: "small", style: "color:var(--text-3)" },
+      adminsHost.append(el("p", { class: "small access-note" },
         "No admins — only the owner."));
     }
     admins.forEach((email, i) => {
@@ -124,8 +124,8 @@ export async function renderAccessPanel() {
   }
 
   function addRow(placeholder, add) {
-    const input = el("input", { type: "text", placeholder, "aria-label": placeholder,
-      style: "flex:1; min-height:30px" });
+    const input = el("input", { type: "text", class: "add-input", placeholder,
+      "aria-label": placeholder });
     const commit = () => {
       const v = input.value.trim().toLowerCase();
       if (!v) return true;

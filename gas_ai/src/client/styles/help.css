@@ -69,7 +69,7 @@
 }
 
 .help-index-label {
-  padding: 0 var(--space-2) var(--space-1); font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.05em;
+  padding: 0 var(--space-2) var(--space-1); font-size: var(--fs-micro); font-weight: var(--fw-semibold); letter-spacing: 0.05em;
   text-transform: uppercase; color: var(--text-3);
 }
 .help-index-item + .help-index-label { margin-top: var(--space-4); }
@@ -89,7 +89,7 @@
    bar plus weight, never a colour fill on its own. `aria-current` is both the hook and the
    non-colour cue, so the state is never carried by the tint alone. */
 .help-index-item[aria-current="true"] {
-  color: var(--ink); font-weight: 600;
+  color: var(--ink); font-weight: var(--fw-semibold);
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 .help-index-item[aria-current="true"]::before {
@@ -97,7 +97,7 @@
   border-radius: var(--radius-pill); background: var(--accent);
 }
 .help-index-item[aria-current="true"] .help-index-count {
-  color: var(--accent-hover); font-weight: 600;
+  color: var(--accent-hover); font-weight: var(--fw-semibold);
 }
 
 /* --------------------------------------------------------------------------- the header */
@@ -145,7 +145,7 @@
 .help-lexkey[data-bucket="zero"] .help-lexkey-glyph { color: var(--sev-info-text); }
 .help-lexkey[data-bucket="uncounted"] .help-lexkey-glyph { color: var(--warn); }
 .help-lexkey[data-bucket="convention"] .help-lexkey-glyph { color: var(--text-3); }
-.help-lexkey-num { font-weight: 600; color: var(--ink); }
+.help-lexkey-num { font-weight: var(--fw-semibold); color: var(--ink); }
 
 /* ------------------------------------------------------------------------- the sections */
 /* The structuring ink used to be inverted: every ROW carried a hairline and the four
@@ -188,7 +188,7 @@
 .help-map-item:hover .help-map-icon,
 .help-map-item:focus-visible .help-map-icon { color: var(--accent-text); border-color: var(--accent); }
 .help-map-text { min-width: 0; }
-.help-map-q { display: block; font-size: var(--fs-body); font-weight: 600; color: var(--ink); }
+.help-map-q { display: block; font-size: var(--fs-body); font-weight: var(--fw-semibold); color: var(--ink); }
 .help-map-page { display: block; font-size: var(--fs-label); color: var(--text-3); margin-top: var(--space-half); }
 .help-map-go { display: inline-flex; color: var(--text-3); }
 .help-map-item:hover .help-map-go,
@@ -212,7 +212,7 @@
    the dot the same way, for the same reason. */
 .help-limit-row .pill::before { display: none; }
 .help-limit-row .pill { gap: var(--space-1); }
-.help-limit-name { font-weight: 600; }
+.help-limit-name { font-weight: var(--fw-semibold); }
 /* The note is the longest running text on the page after a definition, and it had no cap
    at all — in a 1fr column it already overran the measure at 1080px. */
 .help-limit-note { color: var(--text-2); max-width: var(--measure); }
@@ -270,7 +270,7 @@
 .help-node-icon { fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .help-node-icon[data-category="asset"] { stroke: var(--cat-asset-ink); color: var(--cat-asset-ink); }
 .help-node-icon[data-category="vuln"] { stroke: var(--cat-vuln-ink); color: var(--cat-vuln-ink); }
-.help-node-name { font-size: var(--fs-label); font-weight: 600; fill: var(--ink); }
+.help-node-name { font-size: var(--fs-label); font-weight: var(--fw-semibold); fill: var(--ink); }
 .help-node-kind { font-size: var(--fs-micro); letter-spacing: 0.04em; fill: var(--svg-text-2); }
 .help-node-kind[data-category="asset"] { fill: var(--cat-asset-text); }
 .help-node-kind[data-category="vuln"] { fill: var(--cat-vuln-text); }
@@ -279,7 +279,7 @@
 .help-node-dot { fill: var(--sev-high); }
 .help-node-sev { font-size: var(--fs-micro); font-weight: 700; fill: var(--sev-high-text); }
 .help-node-counts {
-  font-size: var(--fs-micro); font-weight: 600; fill: var(--svg-text-2);
+  font-size: var(--fs-micro); font-weight: var(--fw-semibold); fill: var(--svg-text-2);
   font-variant-numeric: tabular-nums;
 }
 .help-edge { fill: none; stroke: rgba(0, 0, 0, 0.3); stroke-width: 1.3; }
@@ -317,13 +317,13 @@
   display: inline-flex; align-items: center; justify-content: center;
   width: 20px; height: 20px; border-radius: var(--radius-pill);
   background: var(--surface); border: 1px solid var(--hairline);
-  font-size: var(--fs-micro); font-weight: 600; color: var(--text-2);
+  font-size: var(--fs-micro); font-weight: var(--fw-semibold); color: var(--text-2);
 }
 .help-callout:hover .help-callout-n, .help-callout:focus-visible .help-callout-n {
   background: var(--accent); border-color: var(--accent); color: var(--on-accent);
 }
 .help-callout-t { font-size: var(--fs-label); line-height: 1.45; }
-.help-callout-t b { display: block; font-weight: 600; }
+.help-callout-t b { display: block; font-weight: var(--fw-semibold); }
 .help-callout-t span { color: var(--text-2); }
 
 /* -------------------------------------------------------------------------- the lexicon */
@@ -345,7 +345,7 @@
   display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3);
   margin: var(--space-5) 0 var(--space-half); padding: var(--space-2) 0 var(--space-1);
   background: var(--page);
-  font-size: var(--fs-label); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  font-size: var(--fs-label); font-weight: var(--fw-semibold); letter-spacing: 0.05em; text-transform: uppercase;
   color: var(--text-3);
 }
 .help-family-block:first-child .help-family { margin-top: 0; }
@@ -383,8 +383,8 @@
   display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap;
   gap: var(--space-1); padding-top: var(--space-half);
 }
-.help-entry-term { font-size: var(--fs-body); font-weight: 600; }
-.help-entry-term em { font-style: normal; font-weight: 400; color: var(--text-3); }
+.help-entry-term { font-size: var(--fs-body); font-weight: var(--fw-semibold); }
+.help-entry-term em { font-style: normal; font-weight: var(--fw-body); color: var(--text-3); }
 .help-entry-def { margin: var(--space-1) 0 0; font-size: var(--fs-label); color: var(--text-2); max-width: var(--measure); }
 .help-entry-more {
   margin: var(--space-2) 0 0; font-size: var(--fs-label); color: var(--text-3); max-width: var(--measure);
@@ -397,7 +397,7 @@
   margin-top: var(--space-2); font-size: var(--fs-label); color: var(--text-3);
 }
 .help-where-lead {
-  font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  font-size: var(--fs-micro); font-weight: var(--fw-semibold); letter-spacing: 0.05em; text-transform: uppercase;
 }
 .help-where-item { display: inline-flex; align-items: center; gap: var(--space-1); }
 .help-where-icon { display: inline-flex; color: var(--text-3); }
@@ -414,7 +414,7 @@
   min-height: 38px; text-align: right; padding-top: var(--space-half);
 }
 .help-count-link, .help-count-value {
-  font-size: var(--fs-body); font-weight: 600; letter-spacing: -0.01em;
+  font-size: var(--fs-body); font-weight: var(--fw-semibold); letter-spacing: -0.01em;
 }
 .help-count-unit { font-size: var(--fs-micro); line-height: 1.35; color: var(--text-3); }
 .help-count-none { font-size: var(--fs-label); color: var(--text-3); }

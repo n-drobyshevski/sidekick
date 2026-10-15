@@ -25,7 +25,7 @@
   display: flex; align-items: center; gap: var(--space-2);
   font-size: var(--fs-micro); color: var(--text-3);
 }
-.combo-shift-rule-glyph { color: var(--text-2); font-weight: 600; }
+.combo-shift-rule-glyph { color: var(--text-2); font-weight: var(--fw-semibold); }
 
 /* The condition matrix. A grid, not a table element, because the row heads are buttons
    and the column heads are filter toggles; role=table/row/cell carries the semantics. */
@@ -45,7 +45,7 @@
 .combo-cond-btn {
   display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
   gap: var(--space-half); width: 100%; min-height: 0; padding: var(--space-1) var(--space-1) var(--space-1);
-  font-size: var(--fs-micro); font-weight: 600; line-height: 1.2; text-align: center;
+  font-size: var(--fs-micro); font-weight: var(--fw-semibold); line-height: 1.2; text-align: center;
   border: 1px solid transparent; border-radius: var(--radius-sm);
   background: none; box-shadow: none; color: var(--text-2);
 }
@@ -65,13 +65,13 @@
 .combo-matrix-jump {
   display: flex; align-items: center; gap: var(--space-1); width: 100%;
   min-height: 0; padding: var(--space-2) var(--space-1); text-align: left;
-  font-size: var(--fs-label); font-weight: 600; line-height: 1.25;
+  font-size: var(--fs-label); font-weight: var(--fw-semibold); line-height: 1.25;
   background: none; border: none; box-shadow: none; color: var(--ink);
   border-radius: var(--radius-sm);
 }
 .combo-matrix-jump:hover { background: var(--wash-hover); }
 .combo-matrix-jump .sev-dot { flex: 0 0 auto; margin-right: 0; }
-.combo-matrix-jump-num { margin-left: auto; color: var(--text-3); font-weight: 600; }
+.combo-matrix-jump-num { margin-left: auto; color: var(--text-3); font-weight: var(--fw-semibold); }
 
 .combo-cell {
   display: flex; align-items: center; justify-content: center; gap: var(--space-half);
@@ -86,7 +86,7 @@
 .combo-cell-mark.is-extra { color: var(--text-2); }
 .combo-cell-mark.is-unknown { color: var(--text-3); font-weight: 700; }
 .combo-cell-mark.is-none { color: var(--text-3); }
-.combo-cell-num { font-size: var(--fs-micro); font-weight: 600; color: var(--text-2); }
+.combo-cell-num { font-size: var(--fs-micro); font-weight: var(--fw-semibold); color: var(--text-2); }
 
 /* combo group cards */
 .combo-toolbar {
@@ -105,12 +105,12 @@
 }
 .combo-card .combo-title { flex: 0 1 auto; margin: 0; }
 .combo-card .combo-count {
-  margin-left: auto; font-weight: 600; font-size: var(--fs-label); color: var(--text-2);
+  margin-left: auto; font-weight: var(--fw-semibold); font-size: var(--fs-label); color: var(--text-2);
 }
 /* Native and adjusted as one reading. The arrow IS the amplifier, so the re-rating is a
    single object with one accessible name rather than a badge and a loose caption. */
 .combo-shift-badge { display: inline-flex; align-items: center; gap: var(--space-1); }
-.combo-shift-arrow { color: var(--text-3); font-weight: 600; }
+.combo-shift-arrow { color: var(--text-3); font-weight: var(--fw-semibold); }
 .combo-note {
   margin: var(--space-2) 0; padding: var(--space-2) var(--space-2); font-size: var(--fs-label); color: var(--text-2);
   background: rgba(0, 0, 0, 0.03); border-radius: var(--radius-md);
@@ -154,13 +154,22 @@
    findings score's band was demoted — see pages/combos.js at this call site. Neutral now,
    so the only tinted marks on a combo card are the ones that really are severities. */
 .asset-chip-score {
-  font-size: var(--fs-micro); font-weight: 600; border-radius: var(--radius-pill); padding: 0 var(--space-1);
-  color: var(--text-2); background: rgba(0, 0, 0, 0.05);
+  font-size: var(--fs-micro); font-weight: var(--fw-semibold); border-radius: var(--radius-pill); padding: 0 var(--space-1);
+  color: var(--text-2); background: rgba(0, 0, 0, 0.06);
   font-variant-numeric: tabular-nums;
 }
-.asset-more { color: var(--text-2); font-weight: 600; border-style: dashed; }
+.asset-more { color: var(--text-2); font-weight: var(--fw-semibold); border-style: dashed; }
 
 .combo-actions { display: flex; gap: var(--space-2); margin-top: var(--space-4); }
+/* A card block with nothing of its own to space by (the framework tags), and the line under
+   the shift and the matrix. */
+.combo-block { margin-top: var(--space-3); }
+.combo-foot { margin: var(--space-3) 0 0; }
+/* The loading stub (`combosSkeleton`) borrows the real card's head, asset and action rows
+   above; these are the parts with no real counterpart. */
+.combo-skel-stack { margin-top: var(--space-3); }
+.combo-skel-pills { display: flex; gap: var(--space-2); margin-top: var(--space-3); }
+.combo-skel-gap { height: var(--space-2); }
 .combo-issues:not(:empty) { margin-top: var(--space-3); }
 .combo-issues .filter-bar { margin-bottom: var(--space-3); }
 /* Wide enough for the placeholder that names all four searchable fields — clipped, it
@@ -176,11 +185,11 @@
   .combo-cond-btn span:not(.sr-only) { display: none; }
 }
 .fw-tags { display: flex; flex-wrap: wrap; gap: var(--space-1); }
-.fw-tag { font-size: var(--fs-micro); font-weight: 600; }
+.fw-tag { font-size: var(--fs-micro); font-weight: var(--fw-semibold); }
 /* Four taxonomies in one strip read as one vocabulary. Name each family instead. */
 .fw-groups { display: flex; flex-direction: column; gap: var(--space-1); }
 .fw-group { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-1); }
 .fw-group-label {
-  font-size: var(--fs-micro); font-weight: 600; color: var(--text-3);
+  font-size: var(--fs-micro); font-weight: var(--fw-semibold); color: var(--text-3);
   min-width: 92px;
 }

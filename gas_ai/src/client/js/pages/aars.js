@@ -724,7 +724,7 @@ export async function renderAarsRules(main, _params, ctx) {
       {
         role: "status",
         "aria-label": "Loading the AARS rule",
-        style: "position:absolute; inset:20px; display:flex; flex-direction:column; gap:14px",
+        class: "aars-loading",
       },
       skeleton("title", { width: "220px" }),
       skeleton("chart", { height: "120px" }),
@@ -1015,7 +1015,7 @@ export async function renderAarsRules(main, _params, ctx) {
   railsA.append(capARail, railScale(P_MAX));
   linkPillar("a", railsA);
 
-  const rowA = el("div", { class: "rule-row", style: "margin-top:14px" });
+  const rowA = el("div", { class: "rule-row rule-row--spaced" });
   const multId = nextId("mult");
   const multInput = numberInput(multId, {
     value: draft.multiIssueMultiplier, min: M_MIN, max: M_MAX, step: "0.05",
@@ -1179,9 +1179,9 @@ export async function renderAarsRules(main, _params, ctx) {
       "Each gap code is priced by the FIRST rule that matches it, so order is meaning: an " +
         "exact LLM04 must sit above the LLM family, or it prices as a primary gap.",
       [
-        el("div", { class: "rule-row", style: "margin-bottom:10px" }, refBtn),
+        el("div", { class: "rule-row rule-row--lead" }, refBtn),
         cascadeTable,
-        el("div", { class: "rule-row", style: "margin-top:12px" },
+        el("div", { class: "rule-row rule-row--spaced" },
           addBtnWrap, capBField.node, testField),
       ],
     ),
@@ -1213,7 +1213,7 @@ export async function renderAarsRules(main, _params, ctx) {
   // so its cascade table is the host that lights instead.
   linkPillar("c", railsC);
 
-  const rowC = el("div", { class: "rule-row", style: "margin-top:14px" });
+  const rowC = el("div", { class: "rule-row rule-row--spaced" });
   const ampId = nextId("amp");
   const ampInput = numberInput(ampId, {
     value: draft.dataAmplifier, min: M_MIN, max: M_MAX, step: "0.05",
@@ -1324,7 +1324,7 @@ export async function renderAarsRules(main, _params, ctx) {
 
   const importInput = el("input", {
     type: "file", accept: "application/json,.json",
-    style: "display:none", "aria-hidden": "true", tabindex: "-1",
+    hidden: true, "aria-hidden": "true", tabindex: "-1",
   });
   importInput.addEventListener("change", () => {
     const file = importInput.files && importInput.files[0];
@@ -1358,11 +1358,11 @@ export async function renderAarsRules(main, _params, ctx) {
   const impactHeadline = el("p", { class: "impact-headline small muted" });
   const impactState = el("div", {});
   const moverList = el("div", { class: "mover-list" });
-  const moverMore = el("div", { style: "margin-top:8px" });
+  const moverMore = el("div", { class: "mover-more" });
   const moverSection = el(
     "div",
     {},
-    el("h2", { class: "section-label", style: "margin-top:18px" }, "What moves"),
+    el("h2", { class: "section-label aars-subhead" }, "What moves"),
     moverList,
     moverMore,
   );
@@ -1376,7 +1376,7 @@ export async function renderAarsRules(main, _params, ctx) {
   const diagSection = el(
     "div",
     {},
-    el("h2", { class: "section-label", style: "margin-top:18px" }, "How well it separates"),
+    el("h2", { class: "section-label aars-subhead" }, "How well it separates"),
     diagList,
     diagWarn,
   );
@@ -1629,7 +1629,7 @@ export async function renderAarsRules(main, _params, ctx) {
           sheetBody.append(
             sheetSection(
               `${family.group} · ${family.vintage}`,
-              el("p", { class: "small muted", style: "margin:0 0 8px" }, family.standing),
+              el("p", { class: "small muted aars-lede" }, family.standing),
               rows,
             ),
           );
@@ -1637,7 +1637,7 @@ export async function renderAarsRules(main, _params, ctx) {
         sheetBody.append(
           el(
             "p",
-            { class: "small muted", style: "margin-top:14px" },
+            { class: "small muted aars-sheet-note" },
             "Titles are annotation. The score matches on the code itself, exactly as it " +
               "always has, so a title this page gets wrong can never produce a wrong score.",
           ),
@@ -1700,23 +1700,23 @@ export async function renderAarsRules(main, _params, ctx) {
     // Quick-add reflects what the landscape actually carries, not a constant somebody typed
     // once. Empty until the first preview lands, which is honest: before then the page has
     // no idea what is common here.
-    sandboxQuick = el("div", { class: "pill-row", style: "margin-top:10px" });
+    sandboxQuick = el("div", { class: "pill-row sandbox-block" });
 
     sandboxResultHost = el("div", { class: "sandbox-result" });
     sandboxBody.append(
-      el("p", { class: "small muted", style: "margin:10px 0" },
+      el("p", { class: "small muted sandbox-lede" },
         "Scored by the server with your draft rule — the same code that scores the real " +
           "inventory, so what you see here is what a matching asset would get."),
       countsRow,
       el(
         "div",
-        { class: "field", style: "margin-top:12px" },
+        { class: "field sandbox-block" },
         el("label", { class: "field-label", for: addId }, "Compliance gap codes"),
         sandboxChips,
         sandboxCodeBox,
       ),
       sandboxQuick,
-      el("div", { class: "rule-row", style: "margin-top:12px" },
+      el("div", { class: "rule-row rule-row--spaced" },
         field(expId, "Data exposure", exposureSel).node),
       sandboxResultHost,
     );
@@ -2136,7 +2136,7 @@ export async function renderAarsRules(main, _params, ctx) {
       moverSection.hidden = true;
       paintDiscrimination(null);
       setText(impactHeadline, "");
-      const retry = el("button", { style: "margin-top:10px" }, "Try again");
+      const retry = el("button", { class: "impact-retry" }, "Try again");
       retry.addEventListener("click", () => {
         previewError = "";
         schedulePreview();
@@ -2240,7 +2240,7 @@ export async function renderAarsRules(main, _params, ctx) {
             sheetBody.append(list);
             if (preview.truncated) {
               sheetBody.append(
-                el("p", { class: "small muted", style: "margin-top:10px" },
+                el("p", { class: "small muted aars-sheet-note" },
                   moversTruncatedNote(preview.movers.length, preview.moverCount,
                     "level changes first, then the largest moves.")),
               );
@@ -2576,7 +2576,7 @@ export async function renderAarsRules(main, _params, ctx) {
         {
           role: "status",
           "aria-label": "Loading the problem tree rule",
-          style: "position:absolute; inset:20px; display:flex; flex-direction:column; gap:14px",
+          class: "aars-loading",
         },
         skeleton("title", { width: "220px" }),
         skeleton("chart", { height: "120px" }),
@@ -2998,7 +2998,7 @@ export async function renderAarsRules(main, _params, ctx) {
             ),
             pExploitEmpty,
             pExploitTable,
-            el("div", { class: "rule-row", style: "margin-top:10px" }, pExploitAddBtn),
+            el("div", { class: "rule-row rule-row--spaced" }, pExploitAddBtn),
           ),
         },
         {
@@ -3157,7 +3157,7 @@ export async function renderAarsRules(main, _params, ctx) {
         "Each row is tried in order; the first whose conditions ALL match wins. An axis " +
           "left on “any” is a wildcard, not a value — a row with no conditions at all " +
           "matches every remaining vector.",
-        [pSummary, pCascadeTable, el("div", { class: "rule-row", style: "margin-top:10px" }, pAddBtnWrap)],
+        [pSummary, pCascadeTable, el("div", { class: "rule-row rule-row--spaced" }, pAddBtnWrap)],
       ),
       section(
         "How the four axes are read",
@@ -3181,7 +3181,7 @@ export async function renderAarsRules(main, _params, ctx) {
     // ---------------------------------------------------------------- impact (preview)
     const pImpactStrip = el("div", { class: "impact-strip" });
     const pImpactHeadline = el("p", { class: "impact-headline small muted" });
-    const pLeavesLine = el("p", { class: "small muted", style: "margin:0 0 12px" });
+    const pLeavesLine = el("p", { class: "small muted impact-subline" });
     const pImpactState = el("div", {});
     const pLiveNote = el("span", { role: "status", "aria-live": "polite", class: "sr-only" });
 
@@ -3193,9 +3193,9 @@ export async function renderAarsRules(main, _params, ctx) {
     const pUnknownSection = el(
       "div",
       {},
-      el("h2", { class: "section-label", style: "margin-top:18px" }, "Per-axis unknown rate"),
+      el("h2", { class: "section-label aars-subhead" }, "Per-axis unknown rate"),
       el(
-        "p", { class: "small muted", style: "margin:0 0 6px" },
+        "p", { class: "small muted aars-lede" },
         "How often each axis could not be established, over the issues and findings this " +
           "draft actually decided. A high rate here — not the outcome counts above — is " +
           "usually the real finding."),
@@ -3204,10 +3204,10 @@ export async function renderAarsRules(main, _params, ctx) {
     );
 
     const pMoverList = el("div", { class: "mover-list" });
-    const pMoverMore = el("div", { style: "margin-top:8px" });
+    const pMoverMore = el("div", { class: "mover-more" });
     const pMoverSection = el(
       "div", {},
-      el("h2", { class: "section-label", style: "margin-top:18px" }, "What moves"),
+      el("h2", { class: "section-label aars-subhead" }, "What moves"),
       pMoverList, pMoverMore,
     );
 
@@ -3304,7 +3304,7 @@ export async function renderAarsRules(main, _params, ctx) {
         paintProblemUnknownRates(null);
         setText(pImpactHeadline, "");
         setText(pLeavesLine, "");
-        const retry = el("button", { style: "margin-top:10px" }, "Try again");
+        const retry = el("button", { class: "impact-retry" }, "Try again");
         retry.addEventListener("click", retryProblemPreview);
         pImpactState.append(emptyState(IMPACT_ERROR_TITLE, problemPreviewError), retry);
         return;
@@ -3391,7 +3391,7 @@ export async function renderAarsRules(main, _params, ctx) {
               if (problemPreview.truncated) {
                 sheetBody.append(
                   el(
-                    "p", { class: "small muted", style: "margin-top:10px" },
+                    "p", { class: "small muted aars-sheet-note" },
                     moversTruncatedNote(problemPreview.movers.length, problemPreview.moverCount,
                     "worst proposed priority first.")),
                 );
@@ -3726,7 +3726,7 @@ export async function renderAarsRules(main, _params, ctx) {
         {
           role: "status",
           "aria-label": "Loading the posture rule",
-          style: "position:absolute; inset:20px; display:flex; flex-direction:column; gap:14px",
+          class: "aars-loading",
         },
         skeleton("title", { width: "220px" }),
         skeleton("chart", { height: "120px" }),
@@ -4055,7 +4055,7 @@ export async function renderAarsRules(main, _params, ctx) {
           "left on “any” is a wildcard, not a value — a row with no conditions at all " +
           "matches every remaining vector. A capability envelope, not an aggregate of open " +
           "issues: nothing here reads a problem verdict.",
-        [uSummary, uCascadeTable, el("div", { class: "rule-row", style: "margin-top:10px" }, uAddBtnWrap)],
+        [uSummary, uCascadeTable, el("div", { class: "rule-row rule-row--spaced" }, uAddBtnWrap)],
       ),
       section(
         "Validation only",
@@ -4068,7 +4068,7 @@ export async function renderAarsRules(main, _params, ctx) {
     // ---------------------------------------------------------------- impact (preview)
     const uImpactStrip = el("div", { class: "impact-strip" });
     const uImpactHeadline = el("p", { class: "impact-headline small muted" });
-    const uCellsLine = el("p", { class: "small muted", style: "margin:0 0 12px" });
+    const uCellsLine = el("p", { class: "small muted impact-subline" });
     const uImpactState = el("div", {});
     const uLiveNote = el("span", { role: "status", "aria-live": "polite", class: "sr-only" });
 
@@ -4077,9 +4077,9 @@ export async function renderAarsRules(main, _params, ctx) {
     const uUnknownSection = el(
       "div",
       {},
-      el("h2", { class: "section-label", style: "margin-top:18px" }, "Per-axis unknown rate"),
+      el("h2", { class: "section-label aars-subhead" }, "Per-axis unknown rate"),
       el(
-        "p", { class: "small muted", style: "margin:0 0 6px" },
+        "p", { class: "small muted aars-lede" },
         "How often each axis could not be established, over the assets this draft actually " +
           "tiered. A high rate here — not the tier counts above — is usually the real finding."),
       uUnknownList,
@@ -4087,10 +4087,10 @@ export async function renderAarsRules(main, _params, ctx) {
     );
 
     const uMoverList = el("div", { class: "mover-list" });
-    const uMoverMore = el("div", { style: "margin-top:8px" });
+    const uMoverMore = el("div", { class: "mover-more" });
     const uMoverSection = el(
       "div", {},
-      el("h2", { class: "section-label", style: "margin-top:18px" }, "What moves"),
+      el("h2", { class: "section-label aars-subhead" }, "What moves"),
       uMoverList, uMoverMore,
     );
 
@@ -4180,7 +4180,7 @@ export async function renderAarsRules(main, _params, ctx) {
         paintPostureUnknownRates(null);
         setText(uImpactHeadline, "");
         setText(uCellsLine, "");
-        const retry = el("button", { style: "margin-top:10px" }, "Try again");
+        const retry = el("button", { class: "impact-retry" }, "Try again");
         retry.addEventListener("click", retryPosturePreview);
         uImpactState.append(emptyState(IMPACT_ERROR_TITLE, posturePreviewError), retry);
         return;
@@ -4266,7 +4266,7 @@ export async function renderAarsRules(main, _params, ctx) {
               if (posturePreview.truncated) {
                 sheetBody.append(
                   el(
-                    "p", { class: "small muted", style: "margin-top:10px" },
+                    "p", { class: "small muted aars-sheet-note" },
                     moversTruncatedNote(posturePreview.movers.length, posturePreview.moverCount,
                     "worst proposed tier first.")),
                 );
@@ -4495,7 +4495,7 @@ export async function renderAarsRules(main, _params, ctx) {
         {
           role: "status",
           "aria-label": "Loading the rank evaluation",
-          style: "position:absolute; inset:20px; display:flex; flex-direction:column; gap:14px",
+          class: "aars-loading",
         },
         skeleton("title", { width: "220px" }),
         skeleton("line", { width: "70%" }),

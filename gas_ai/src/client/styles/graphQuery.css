@@ -41,7 +41,7 @@
   min-width: 42px; text-align: center;
   padding: var(--space-half) var(--space-2); border-radius: var(--radius-sm);
   background: var(--track-bg);
-  font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  font-size: var(--fs-micro); font-weight: var(--fw-semibold); letter-spacing: 0.05em; text-transform: uppercase;
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
@@ -115,7 +115,7 @@
 .gq-term-edge {
   flex: 0 1 auto; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: var(--fs-body); font-weight: 500;
+  font-size: var(--fs-body); font-weight: var(--fw-medium);
   color: var(--text-2);
 }
 .gq-term:hover .gq-term-edge { color: var(--ink); }
@@ -129,7 +129,7 @@
   border: 1px solid var(--hairline);
   background: var(--page);
   box-shadow: none;
-  font-size: var(--fs-body); font-weight: 600;
+  font-size: var(--fs-body); font-weight: var(--fw-semibold);
   color: var(--ink);
   max-width: 260px;
 }
@@ -177,9 +177,9 @@
    a step lighter than a real entity: it is a count of things not shown, and dressing it like the
    chips beside it would read as a sixth category nobody can point at. */
 .gq-chip--more {
-  padding-inline: 8px;
+  padding-inline: var(--space-2);
   border-color: transparent; background: var(--track-bg);
-  font-size: var(--fs-label); font-weight: 500; color: var(--text-3);
+  font-size: var(--fs-label); font-weight: var(--fw-medium); color: var(--text-3);
 }
 
 /* Row actions: flat 26px squares. They reset the 36px bordered global button recipe the same
@@ -373,7 +373,7 @@
 .gq-pal-search:focus-visible { outline: none; }
 .gq-pal-search::placeholder { color: var(--text-3); }
 
-.gq-pal-panes { display: flex; min-height: 0; align-items: stretch; }
+.gq-pal-panes { display: flex; min-height: 0; align-items: stretch; height: var(--gq-pal-h, auto); }
 
 /* -- rail */
 .gq-pal-rail {
@@ -394,14 +394,14 @@
 .gq-pal-rail-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gq-pal-rail-count { flex: 0 0 auto; font-size: var(--fs-micro); font-variant-numeric: tabular-nums; color: var(--text-3); }
 .gq-pal-rail-item.is-active {
-  position: relative; color: var(--ink); font-weight: 600;
+  position: relative; color: var(--ink); font-weight: var(--fw-semibold);
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 .gq-pal-rail-item.is-active::before {
   content: ""; position: absolute; left: 0; top: 5px; bottom: 5px; width: 2px;
   border-radius: var(--radius-pill); background: var(--accent);
 }
-.gq-pal-rail-item.is-active .gq-pal-rail-count { color: var(--accent-hover); font-weight: 600; }
+.gq-pal-rail-item.is-active .gq-pal-rail-count { color: var(--accent-hover); font-weight: var(--fw-semibold); }
 
 /* -- list */
 .gq-pal-list {
@@ -411,7 +411,7 @@
 }
 .gq-pal-section {
   padding: var(--space-2) var(--space-2) var(--space-1);
-  font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  font-size: var(--fs-micro); font-weight: var(--fw-semibold); letter-spacing: 0.05em; text-transform: uppercase;
   color: var(--text-3);
 }
 .gq-pal-option {
@@ -443,13 +443,13 @@
 /* What the row ALREADY says, in a palette opened to change it. The tick is the cue and the
    faint ground is only its echo — the tinted row alone would be a colour-only signal, and this
    one sits beside four others in the same category tint. */
-.gq-pal-option.is-current .gq-pal-option-label { font-weight: 600; }
+.gq-pal-option.is-current .gq-pal-option-label { font-weight: var(--fw-semibold); }
 /* PRESSED, in entity mode's multi-select. SEVERAL rows can be on at once, so the list has to read
    as a set rather than as one highlighted answer: `aria-pressed` carries it to a screen reader,
    the tick to the eye, and the ring traces the chosen rows down the glyph column so the set is
    scannable without reading every label. No wash — `is-active` owns the row's ground, and a
    pressed row under the keyboard cursor would be two washes arguing about which one means what. */
-.gq-pal-option.is-on .gq-pal-option-label { font-weight: 600; }
+.gq-pal-option.is-on .gq-pal-option-label { font-weight: var(--fw-semibold); }
 .gq-pal-option.is-on .gq-pal-glyph-wrap { box-shadow: inset 0 0 0 1.5px currentColor; }
 .gq-pal-option-current {
   flex: 0 0 auto; display: inline-flex; align-items: center;
@@ -467,7 +467,7 @@
 .gq-pal-option[data-category="exposure"] .gq-pal-glyph-wrap { background: var(--cat-exposure-tint); color: var(--cat-exposure-ink); }
 .gq-pal-option-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: var(--space-half); }
 .gq-pal-option-label {
-  font-size: var(--fs-body); font-weight: 600; color: var(--ink);
+  font-size: var(--fs-body); font-weight: var(--fw-semibold); color: var(--ink);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .gq-pal-option-sub {
@@ -496,7 +496,7 @@
 .gq-pal-detail-title { margin: 0 0 var(--space-half); font-size: var(--fs-body); font-weight: 650; color: var(--ink); }
 .gq-pal-detail-type {
   margin: 0 0 var(--space-2);
-  font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  font-size: var(--fs-micro); font-weight: var(--fw-semibold); letter-spacing: 0.05em; text-transform: uppercase;
   color: var(--text-3);
 }
 .gq-pal-detail-blurb { margin: 0; font-size: var(--fs-label); line-height: 1.5; color: var(--text-2); }
@@ -511,7 +511,7 @@
 .gq-filter-chip { min-height: 26px; font-size: var(--fs-label); }
 .gq-filter-key { color: var(--text-3); }
 /* The operator is the word that makes the chip unambiguous, so it is weighted, not muted. */
-.gq-filter-op { color: var(--text-2); font-weight: 600; }
+.gq-filter-op { color: var(--text-2); font-weight: var(--fw-semibold); }
 /* The body is a real button now — the chip is editable, where it used to be only dismissible.
    It resets off the global button recipe the way every other control in this bar does. */
 .gq-filter-chip .filter-chip-body {
@@ -542,7 +542,7 @@
   background: var(--surface);
 }
 .gq-fe-pair-label {
-  font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  font-size: var(--fs-micro); font-weight: var(--fw-semibold); letter-spacing: 0.05em; text-transform: uppercase;
   color: var(--text-3);
 }
 .gq-fe-pair input { min-width: 0; }
@@ -575,7 +575,7 @@
 /* Below the breakpoint the palette is hosted in a modal sheet, where it is one column: the
    rail becomes a wrapping row of filters and the detail pane follows the list. */
 @media (max-width: 800px) {
-  .gq-pal-panes { flex-direction: column; height: auto !important; }
+  .gq-pal-panes { flex-direction: column; height: auto; }
   .gq-pal-rail {
     flex: 0 0 auto; width: auto;
     display: flex; flex-wrap: wrap; gap: var(--space-1);
@@ -614,7 +614,7 @@
   font-size: var(--fs-label); color: var(--text-2);
 }
 .gq-pal-back:hover { background: var(--wash-hover); border-color: transparent; color: var(--ink); }
-.gq-pal-drill-title { font-size: var(--fs-body); font-weight: 600; color: var(--ink); }
+.gq-pal-drill-title { font-size: var(--fs-body); font-weight: var(--fw-semibold); color: var(--ink); }
 .gq-pal-drill-body { display: block; padding: 0 var(--space-1) var(--space-1); }
 
 /* ------------------------------------------------------------------ column panel */
@@ -626,7 +626,7 @@
   display: flex; align-items: center; gap: var(--space-2);
   padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--hairline);
   background: var(--surface);
-  font-size: var(--fs-body); font-weight: 600; color: var(--ink);
+  font-size: var(--fs-body); font-weight: var(--fw-semibold); color: var(--ink);
 }
 .gq-cols-master input { margin: 0; }
 .gq-cols-list { padding: var(--space-1); overflow-y: auto; overscroll-behavior: contain; }
@@ -654,7 +654,7 @@
 .gq-cols-tile[data-category="vuln"] { background: var(--cat-vuln-tint); color: var(--cat-vuln-ink); }
 .gq-cols-tile[data-category="exposure"] { background: var(--cat-exposure-tint); color: var(--cat-exposure-ink); }
 .gq-cols-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: var(--space-half); }
-.gq-cols-kind { font-size: var(--fs-label); font-weight: 600; color: var(--ink); }
+.gq-cols-kind { font-size: var(--fs-label); font-weight: var(--fw-semibold); color: var(--ink); }
 /* The current columns as prose — the reference's summary line, and the reason a row does not
    have to be expanded to be understood. */
 .gq-cols-summary {

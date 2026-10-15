@@ -44,7 +44,7 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
   const fileInput = el("input", {
     type: "file",
     accept: "application/json",
-    style: "display:none",
+    hidden: true,
     "aria-hidden": "true",
     tabindex: "-1",
   });
@@ -59,14 +59,12 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
     { class: "primary", onclick: save },
     "Save manual groups",
   );
-  const dirtyHost = el("span", {
-    style: "display:inline-flex; align-items:center; margin-left:2px",
-  });
+  const dirtyHost = el("span", { class: "dirty-slot" });
   host.append(
     listHost,
     el(
       "div",
-      { style: "display:flex; gap:8px; margin-top:10px; align-items:center" },
+      { class: "ctl-row gap-above" },
       addBtn,
       exportBtn,
       importBtn,
@@ -144,7 +142,7 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
             el("strong", {}, item.name),
             el(
               "span",
-              { class: "domain-chip", style: "margin-left:8px" },
+              { class: "domain-chip trail-chip" },
               `${ruleCount} rule(s)`,
             ),
           ),
@@ -249,7 +247,7 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
       value: editing.name,
       placeholder: "e.g. Payments",
       "aria-label": "Manual group name",
-      style: "width:100%",
+      class: "input-full",
     });
     const rulesHost = el("div", { class: "rules-host" });
     const previewHost = el(
@@ -272,7 +270,7 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
         prefill ? prefillContextLine(prefill.resource) : null,
         el(
           "p",
-          { class: "small muted", style: "margin:10px 0 12px" },
+          { class: "small muted rule-intro" },
           "A finding matches the domain when ANY rule matches; a rule matches when ALL its conditions do.",
         ),
         rulesHost,
@@ -324,7 +322,7 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
       if (r.supportGroup) bits.push(`support group ${r.supportGroup}`);
       return el(
         "p",
-        { class: "small muted", style: "margin:6px 0 4px" },
+        { class: "small muted prefill-line" },
         `Attributing: ${r.asset || "(unnamed asset)"}`,
         bits.length ? ` — ${bits.join(", ")}` : "",
       );
@@ -538,7 +536,7 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
       function valuePicker(cond, knownValues, opts) {
         if (!Array.isArray(cond.values)) cond.values = [];
         const claimed = claimedValues(opts.condType);
-        const wrap = el("div", { style: "flex:1; min-width:220px" });
+        const wrap = el("div", { class: "value-picker" });
         const listHost = el("div", {
           class: "sub-picker",
           role: "group",
@@ -575,7 +573,7 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
             listHost.append(
               el(
                 "p",
-                { class: "muted small", style: "margin:2px 0" },
+                { class: "muted small sub-picker__empty" },
                 opts.emptyText,
               ),
             );
@@ -634,7 +632,7 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
           type: "text",
           placeholder: opts.addPlaceholder,
           "aria-label": opts.addAria,
-          style: "flex:1; min-height:30px",
+          class: "input-compact",
         });
         const addValue = () => {
           const v = addInput.value.trim();
@@ -670,7 +668,7 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
           value,
           placeholder,
           "aria-label": label,
-          style: "margin-left:6px; min-height:30px",
+          class: "input-compact cond-text",
         });
         inp.addEventListener("input", () => {
           set(inp.value);

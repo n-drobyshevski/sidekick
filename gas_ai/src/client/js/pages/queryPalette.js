@@ -1203,8 +1203,10 @@ export function openQueryPalette(spec) {
     // "Excessive Rights" and "AI assets & comp…" ran out of line. `positionPopover` clamps to
     // the viewport, and below 800px this is a sheet anyway, so the wider box cannot overflow.
     position: { width: 780, minWidth: 780, maxHeight: 460, minHeight: 260, flipBelow: 300,
+      // A custom property rather than `height` itself: graphQuery.css reads it, and its
+      // narrow-width rule can then put the panes back to auto without an !important.
       onRoom: (room) => {
-        panes.style.height = Math.max(240, room) + "px";
+        panes.style.setProperty("--gq-pal-h", Math.max(240, room) + "px");
       } },
     build: () => body,
     onClose: () => { host = null; if (onClose) onClose(); },

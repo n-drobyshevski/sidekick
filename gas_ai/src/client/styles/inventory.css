@@ -26,7 +26,7 @@
    this size. */
 .inv-count-row { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5); align-items: baseline; }
 .inv-count { display: flex; flex-direction: column; gap: var(--space-half); }
-.inv-count-n { font-size: var(--fs-display-sm); font-weight: 600; font-variant-numeric: tabular-nums; }
+.inv-count-n { font-size: var(--fs-display-sm); font-weight: var(--fw-semibold); font-variant-numeric: tabular-nums; }
 
 /* The distribution strip. The bar is a graphic; the keys under it are the controls, so
    the cross-filter has a real keyboard path (a canvas would not). Both are the shared
@@ -89,7 +89,7 @@
 .asset-card-icon { flex: 0 0 16px; color: var(--text-3); }
 .asset-card-icon .gnode-icon { stroke: currentColor; fill: none; stroke-width: 1.4; }
 .asset-card-name {
-  flex: 1; min-width: 0; font-weight: 600; font-size: var(--fs-body);
+  flex: 1; min-width: 0; font-weight: var(--fw-semibold); font-size: var(--fs-body);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .asset-card-marks { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); }
@@ -108,9 +108,12 @@
 .config-facets { margin: var(--space-3) 0 var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); }
 .config-facet { display: flex; align-items: baseline; gap: var(--space-3); }
 .config-facet-name {
-  flex: 0 0 104px; font-size: var(--fs-label); font-weight: 600; letter-spacing: 0.05em;
+  flex: 0 0 104px; font-size: var(--fs-label); font-weight: var(--fw-semibold); letter-spacing: 0.05em;
   text-transform: uppercase; color: var(--text-3);
 }
+/* The By control / By finding toolbar (its flex row is `.toolbar`'s), and the clear-all row. */
+.config-toolbar { margin-top: var(--space-4); }
+.config-applied { margin-top: var(--space-3); }
 
 /* The Name column carries a kind medallion (ui/cells.js), which costs about 26px of a cell
    tables.css clips at 320px. Paid for out of the table's width rather than out of the name:
@@ -132,6 +135,13 @@ table.data td.inv-name-col { max-width: 380px; }
 .posture-trend-grid {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: var(--space-3);
 }
+/* The trend cards' plots, shorter than `.chart-box`'s 240px: 220px for the counts card, 200px
+   for the rest (and for the Priorities cover curve, pages/problems.js). */
+.chart-box--counts { height: 220px; }
+.chart-box--short { height: 200px; }
+/* The Priorities loading stubs (pages/problems.js): a KPI card's lines, and the row stack. */
+.kpi-skel { gap: var(--space-2); }
+.problems-skel-rows { margin-top: var(--space-4); }
 
 /* THE VERDICT IS A WORD. The dot repeats it and never carries it: three states told apart by
    hue alone would be unreadable in greyscale and to a dichromat, and this is the one figure
@@ -147,11 +157,11 @@ table.data td.inv-name-col { max-width: 380px; }
    card wants. */
 .cap-table { width: 100%; border-collapse: collapse; margin: var(--space-2) 0 var(--space-3); }
 .cap-table th, .cap-table td {
-  padding: 4px 6px; text-align: left; font-size: var(--fs-label);
+  padding: var(--space-1) var(--space-2); text-align: left; font-size: var(--fs-label);
   border-bottom: 1px solid var(--hairline);
 }
 .cap-table th {
-  font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-3);
+  font-weight: var(--fw-semibold); letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-3);
 }
 .cap-table td.num, .cap-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .cap-table tr:last-child td { border-bottom: 0; }

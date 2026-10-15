@@ -668,7 +668,7 @@ export function openAssetSheet(assetId, opts = {}) {
           // not name should not have to open the browser console to read it. Most analysts
           // never open this, so the stringify + code block are built lazily on first toggle
           // rather than paid on every Overview paint.
-          const rawWrap = el("div", { style: "padding:8px 0 4px" });
+          const rawWrap = el("div", { class: "sheet-raw" });
           let rawBuilt = false;
           const rawDetails = el("details", { class: "disclosure" },
             el("summary", { class: "disclosure-toggle" }, "Raw record"),
@@ -1102,8 +1102,8 @@ export function openIssueSheet(issueId, opts = {}) {
           }
           pane.append(sheetSection("Why it matters",
             issue.justification
-              ? el("p", { class: "small", style: "margin:0" }, issue.justification)
-              : el("p", { class: "small muted", style: "margin:0" },
+              ? el("p", { class: "small sheet-text" }, issue.justification)
+              : el("p", { class: "small muted sheet-text" },
                   "Wiz supplied no justification for this issue.")));
           pane.append(sheetSection("At a glance",
             el("dl", { class: "kv kv--cols2" },
@@ -1129,7 +1129,7 @@ export function openIssueSheet(issueId, opts = {}) {
             ));
             return;
           }
-          pane.append(el("p", { class: "sheet-fix-body", style: "margin:0" }, fix));
+          pane.append(el("p", { class: "sheet-fix-body sheet-text" }, fix));
         },
 
         tickets(pane) {
@@ -1137,14 +1137,13 @@ export function openIssueSheet(issueId, opts = {}) {
             pane.append(emptyState("No tickets linked to this issue."));
             return;
           }
-          const list = el("div", { style: "display:grid; gap:6px" });
+          const list = el("div", { class: "sheet-tickets" });
           tickets.forEach((url, n) => {
             list.append(el("a", {
               href: url,
               target: "_blank",
               rel: "noopener noreferrer",
-              class: "small",
-              style: "overflow-wrap:anywhere",
+              class: "small sheet-ticket",
               "aria-label": "Open ticket " + (n + 1) + " in a new tab",
             }, url));
           });
@@ -1160,11 +1159,11 @@ export function openIssueSheet(issueId, opts = {}) {
             return;
           }
           if (issue.ignoreExpiredAt) {
-            pane.append(el("div", { style: "margin-bottom:8px" },
+            pane.append(el("div", { class: "sheet-lede" },
               statusPill("warn", "Ignore expired " + fmtDate(issue.ignoreExpiredAt))));
           }
           if (issue.ignoreNote) {
-            pane.append(el("p", { class: "small", style: "margin:0; white-space:pre-wrap" },
+            pane.append(el("p", { class: "small sheet-text sheet-text--pre" },
               issue.ignoreNote));
           }
         },
@@ -1184,11 +1183,11 @@ export function openIssueSheet(issueId, opts = {}) {
             pane.append(emptyState("Wiz returned no AI analysis for this issue."));
             return;
           }
-          const verdict = el("div", { style: "display:flex; align-items:center; gap:8px" },
+          const verdict = el("div", { class: "sheet-verdict-row" },
             el("strong", { class: "small" }, issue.aiVerdict));
           if (issue.aiRecommendedSeverity) verdict.append(sevBadge(issue.aiRecommendedSeverity));
           pane.append(verdict,
-            el("p", { class: "small muted", style: "margin:8px 0 0" },
+            el("p", { class: "small muted sheet-note" },
               "Wiz's recommendation, not this register's adjusted severity."));
         },
 
@@ -1344,7 +1343,7 @@ export function openIssueSheet(issueId, opts = {}) {
         chips: life.chip ? [statusPill(life.chip.kind, life.chip.text, [life.chip.help])] : [],
       });
       body.append(sheetSection("What the register knows",
-        el("p", { class: "small", style: "margin:0" },
+        el("p", { class: "small sheet-text" },
           "This issue was in the register and is not any more. Wiz never reports a "
           + "resolution to this register, so the date below is the sync that first stopped "
           + "seeing it — an upper bound, not a measurement.")));
@@ -1496,7 +1495,7 @@ export function openConfigFindingSheet(findingId, opts = {}) {
       const panes = {
         overview(pane) {
           pane.append(sheetSection("What failed",
-            el("p", { class: "small", style: "margin:0" },
+            el("p", { class: "small sheet-text" },
               f.ruleName || f.name || "This control has no description on the rule.")));
           if (f.risks && f.risks.length) {
             pane.append(sheetSection("Risk categories",
@@ -1505,13 +1504,13 @@ export function openConfigFindingSheet(findingId, opts = {}) {
           }
           if (f.firstSeenAt) {
             pane.append(sheetSection("Age",
-              el("p", { class: "small", style: "margin:0" },
+              el("p", { class: "small sheet-text" },
                 "First seen " + fmtDate(f.firstSeenAt) +
                 (f.analyzedAt ? " · last evaluated " + fmtDate(f.analyzedAt) : "")),
               // Wiz sends no resolvedAt on a configuration finding, so this sheet can date
               // the start of the problem and never its end. Saying so beats implying the
               // absent field is a zero.
-              el("p", { class: "small muted", style: "margin:6px 0 0" },
+              el("p", { class: "small muted sheet-note" },
                 "Wiz reports no resolution date for configuration findings; " +
                 "closure can only be dated from this app's own sync history.")));
           }
@@ -1536,7 +1535,7 @@ export function openConfigFindingSheet(findingId, opts = {}) {
             pane.append(sheetSection("Rule template", codeBlock(template, {
               label: "Rule remediation template", maxHeight: "260px",
             })),
-            el("p", { class: "small muted", style: "margin:6px 0 0" },
+            el("p", { class: "small muted sheet-note" },
               "The rule's generic instructions, placeholders unresolved."));
           }
         },
@@ -1547,7 +1546,7 @@ export function openConfigFindingSheet(findingId, opts = {}) {
             pane.append(emptyState("No ignore rule covers this finding."));
             return;
           }
-          pane.append(el("p", { class: "small", style: "margin:0 0 8px" },
+          pane.append(el("p", { class: "small sheet-lede" },
             plural(ids.length, "ignore rule") + " cover this finding, so someone has " +
             "accepted this risk. It still counts as a failing control while its status " +
             "stays OPEN."));
@@ -1564,7 +1563,7 @@ export function openConfigFindingSheet(findingId, opts = {}) {
             ));
             return;
           }
-          pane.append(el("p", { class: "small", style: "margin:0 0 8px" },
+          pane.append(el("p", { class: "small sheet-lede" },
             "Wiz mapped this misconfiguration back to IaC. Fixing it at source stops it " +
             "returning on the next deploy."));
           pane.append(el("div", { class: "sheet-list" },
@@ -1576,7 +1575,7 @@ export function openConfigFindingSheet(findingId, opts = {}) {
             pane.append(emptyState("The rule carries no description."));
             return;
           }
-          pane.append(el("p", { class: "small", style: "margin:0; white-space:pre-wrap" },
+          pane.append(el("p", { class: "small sheet-text sheet-text--pre" },
             f.ruleDescription));
         },
 
@@ -1586,7 +1585,7 @@ export function openConfigFindingSheet(findingId, opts = {}) {
             return;
           }
           pane.append(
-            el("p", { class: "small muted", style: "margin:0 0 8px" },
+            el("p", { class: "small muted sheet-lede" },
               "The Rego the evaluation actually ran — the definition of pass and fail here."),
             codeBlock(f.opaPolicy, { label: "Rule policy", maxHeight: "420px" }),
           );

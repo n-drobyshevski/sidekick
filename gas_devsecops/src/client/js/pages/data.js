@@ -597,7 +597,7 @@ export async function renderData(host, _params, ctx) {
     // Disabled, rather than absent, while there is nothing it could remove.
     const boot = bootstrapCached();
     if (boot && boot.canEditAccess) {
-      errorsHost.append(el("div", { style: "margin-bottom:12px" },
+      errorsHost.append(el("div", { class: "errors-actions" },
         el("button", { disabled: v.serverCount ? null : true, onclick: onClearErrors }, "Clear log")));
     }
     if (!v.errors.length) {

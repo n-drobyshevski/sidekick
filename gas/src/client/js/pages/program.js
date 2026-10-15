@@ -21,7 +21,7 @@ import {
   DEFAULT_PAGE_SIZE, PAGE_SIZES, absent, absentText, bookTip, chartTable, clear, dataTable,
   downloadText, el, emptyState, errorState, fmtCount, fmtDate,
   glossaryTip, meter, num, openSheet, pageHeader, pct1, quadModel, quadTable,
-  scopeBar, sectionLabel, sevBadge, skeleton, statRow, statusPill, tableFooter, tipLabel,
+  scopeBar, sectionLabel, sevBadge, skeleton, skeletonStack, statRow, statusPill, tableFooter, tipLabel,
   toast,
   disclosure,
 } from "../ui.js";
@@ -522,9 +522,8 @@ export async function renderProgram(main, _params, ctx) {
         skeleton("stat", { width: "260px", height: "56px" })),
     );
     clear(matrixHost).append(
-      el("div", { style: "margin:28px 0 12px" }, skeleton("line", { width: "180px" })),
-      el("div", { class: "table-wrap", style: "padding:14px" },
-        ...[0, 1, 2].map(() => el("div", { style: "margin:10px 0" }, skeleton("line")))),
+      el("div", { class: "skel-section" }, skeleton("line", { width: "180px" })),
+      el("div", { class: "table-wrap skel-table" }, skeletonStack(3)),
     );
   }
 
@@ -928,7 +927,7 @@ export async function renderProgram(main, _params, ctx) {
             { detail: String((e && e.message) || e) }));
         }
       };
-      body.append(el("div", { style: "margin-bottom:12px" },
+      body.append(el("div", { class: "lead-in" },
         el("button", { class: "linklike", onclick: () => exportCsv(quadrant) },
           "Download this cell as CSV")));
       load();

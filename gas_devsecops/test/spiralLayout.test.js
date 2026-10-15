@@ -214,6 +214,7 @@ const HISTORY_SRC = readFileSync(
   new URL("../src/client/js/pages/history.js", import.meta.url), "utf8",
 );
 const APP_SRC = readFileSync(new URL("../src/client/js/app.js", import.meta.url), "utf8");
+const PAGES_CSS = readFileSync(new URL("../src/client/styles/pages.css", import.meta.url), "utf8");
 
 const HISTORY = code(HISTORY_SRC);
 
@@ -259,8 +260,12 @@ describe("history.js — the spiral is behind the toggle, and hands the slot bac
   });
 
   it("draws the marks in the ink accent and never in the fill accent", () => {
-    expect(HISTORY).toContain("fill: var(--accent-text)");
-    expect(HISTORY).toContain("stroke: var(--accent-text)");
+    // The inks are classes now (pages.css), not inline `style`s on each element.
+    expect(HISTORY).toContain('"spiral__mark"');
+    expect(HISTORY).toContain('class: "spiral__path"');
+    expect(PAGES_CSS).toContain(".spiral__mark { fill: var(--accent-text); }");
+    expect(PAGES_CSS).toContain(".spiral__path { stroke: var(--accent-text); }");
+    expect(/\.spiral[^{]*\{[^}]*var\(--accent\)/.test(PAGES_CSS)).toBe(false);
     // `--accent` is 1.52:1 on white here — a fill token, never ink (CLAUDE.md, tokens.test.js).
     expect(/var\(--accent\)/.test(HISTORY)).toBe(false);
     // Shape, not colour, carries the register.

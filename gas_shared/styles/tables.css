@@ -149,6 +149,9 @@ a { color: var(--accent-text); }
 .table-footer { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-3); }
 .table-footer .pager { margin-top: 0; }
 .table-footer select { font-size: var(--fs-body); }
+/* The one line under a table saying what it left out or where its count disagrees: a
+   `p.small.muted`, a half-step below the table it qualifies. */
+.table-note { margin: var(--space-2) 0 0; }
 /* A page fetched from the server: the old rows stay legible but read as superseded. */
 .table-host[aria-busy="true"] { opacity: 0.5; transition: opacity var(--dur-quick) ease; }
 @media (prefers-reduced-motion: reduce) {
@@ -166,6 +169,8 @@ a { color: var(--accent-text); }
   gap: var(--space-3);
   margin-bottom: var(--space-5);
 }
+/* A line in the row that belongs to every column (a caption or a cross-link), not to one chart. */
+.chart-row__full { grid-column: 1 / -1; }
 /* PROMOTED FROM gas/ AND gas_devsecops/ src/client/styles/pages.css, P3.4b (2026-09-08) —
    byte-identical in both. Small multiples: one survival curve per severity, on an MTTR page.
    `auto-fit` + a 280px floor gives three per row on a desktop content column, two around

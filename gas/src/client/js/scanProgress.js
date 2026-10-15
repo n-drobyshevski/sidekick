@@ -304,7 +304,7 @@ export function openScanDetails(job, opts = {}) {
       );
     }
 
-    const actions = el("div", { class: "sheet-actions", style: "margin-top:16px" });
+    const actions = el("div", { class: "sheet-actions" });
     // v.canStop / v.canForceStop are recomputed each paint, so the button retires once the job
     // leaves FETCHING and returns as "Force stop" if the run then goes quiet.
     if (v.canStop && onStop) {

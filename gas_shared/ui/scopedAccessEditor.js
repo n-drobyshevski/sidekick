@@ -226,7 +226,7 @@ export function scopedAccessSection({ info, dims, onSaved }) {
     const scope = emptyScope();
     const input = el("input", { type: "text", inputmode: "email", autocomplete: "off",
       placeholder: "Add a viewer by email (name@" + (info.domain || "example.com") + ")",
-      "aria-label": "Scoped viewer's email", style: "flex:1; min-height:30px" });
+      "aria-label": "Scoped viewer's email", class: "add-input" });
     const note = el("p", { class: "muted small" });
     const commit = () => {
       const email = normEmail(input.value);

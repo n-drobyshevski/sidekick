@@ -169,7 +169,7 @@ export function strandedRowsModel(stranded) {
 export function strandedRowsReadout(stranded) {
   const model = strandedRowsModel(stranded);
   return el(
-    "p", { class: "small", style: "display:flex; align-items:center; gap:8px; margin:0 0 12px" },
+    "p", { class: "small stranded-readout" },
     statusPill(model.tone, model.pillText),
     model.text,
   );
@@ -357,8 +357,8 @@ const SLA_CUTLINE_BUCKETS = 30;
  */
 export function createSlaCutlineReadout({ sev, capDays = AGE_HISTOGRAM_CAP_DAYS, unit = "findings" }) {
   let onCutChange = null;
-  const headlineEl = el("p", { class: "small", style: "margin:8px 0 0" });
-  const savedEl = el("p", { class: "small muted", style: "margin:2px 0 0" });
+  const headlineEl = el("p", { class: "small sla-cutline__headline" });
+  const savedEl = el("p", { class: "small muted sla-cutline__saved" });
   const cutHist = createCutHistogram({
     min: 0, max: capDays, step: 1, buckets: SLA_CUTLINE_BUCKETS,
     ariaLabel: `${sev} remediation window`,

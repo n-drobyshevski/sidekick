@@ -589,6 +589,6 @@ function destinationSection(area, ctx) {
       type: "button",
       onclick: () => navigate(dest.id, {}),
     }, "Open the " + dest.title + " →"),
-    el("p", { class: "small muted", style: "margin-top:4px" }, dest.sub),
+    el("p", { class: "small muted scan-dest-sub" }, dest.sub),
   );
 }

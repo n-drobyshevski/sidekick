@@ -143,7 +143,7 @@ export function emptyState(message, hint, opts) {
     "div",
     { class: "empty" + (o.variant ? " empty--" + o.variant : ""), role: "status" },
     el("div", {}, message),
-    hint ? el("div", { class: "small", style: "margin-top:6px" }, hint) : null,
+    hint ? el("div", { class: "small empty-hint" }, hint) : null,
   );
   if (items.length) {
     node.append(el("ul", { class: "empty-items" }, ...items.map((it) => el(

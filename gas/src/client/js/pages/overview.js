@@ -428,7 +428,7 @@ export async function renderOverview(main, params, ctx) {
     // stays in a drawer: the concentration lists above answer "where is it piling up" on the
     // page, and this answers "let me pivot it myself", which is a different, rarer question.
     insightsHost.append(el("button", {
-      type: "button", style: "margin-top:12px",
+      type: "button", class: "gap-above",
       onclick: () => openSheet((body) => renderBreakdown(body),
         { title: "Breakdown", subtitle: "Group open findings by any dimension and drill in." }),
     }, "Explore breakdown →"));
@@ -551,7 +551,7 @@ export async function renderOverview(main, params, ctx) {
         prev ? deltaChip(open, prev[tier] || 0) : null,
       ));
     }
-    insightsHost.append(el("div", { class: "chart-grid", style: "align-items:start" },
+    insightsHost.append(el("div", { class: "chart-grid chart-grid--start" },
       card, tierTrendCard(insights)));
   }
 
@@ -685,7 +685,7 @@ export async function renderOverview(main, params, ctx) {
           ...(split.show ? [split.caption] : []),
         ],
       })),
-      el("div", { class: "small muted", style: "margin-bottom:8px" },
+      el("div", { class: "small muted chart-sub" },
         `${aging.totalOpen.toLocaleString()} still-open findings by age and risk tier.`
         + (split.show ? ` ${split.line}.` : "")),
       el("div", { class: "chart-box" }, canvas),
@@ -728,7 +728,7 @@ export async function renderOverview(main, params, ctx) {
       )));
     }
     insightsHost.append(el("button", {
-      type: "button", style: "margin-top:10px",
+      type: "button", class: "gap-above",
       // renderOldestPanel RETURNS its card; openSheet passes the body in and ignores the
       // return value, so it has to be appended rather than handed over directly.
       onclick: () => openSheet((body) => body.append(renderOldestPanel()), {
@@ -786,7 +786,7 @@ export async function renderOverview(main, params, ctx) {
       el("h3", {}, tipLabel("How much of the SLA window is used", {
         lines: [slaConsumedCaption(consumed)].filter(Boolean),
       })),
-      el("div", { class: "small muted", style: "margin-bottom:8px" },
+      el("div", { class: "small muted chart-sub" },
         `${(consumed.totalOpen || 0).toLocaleString()} open findings inside their window, `
         + "by tenth consumed and severity."),
       el("div", { class: "chart-box" }, canvas),
@@ -898,8 +898,7 @@ export async function renderOverview(main, params, ctx) {
       caption.textContent = "Ranked by open findings older than 90 days.";
       if (!loaded.has(view)) {
         clear(tableHost).append(el("div", { role: "status", "aria-label": "Loading ranked rows" },
-          ...[0, 1, 2, 3, 4].map(() =>
-            el("div", { style: "margin-bottom:10px" }, skeleton("line")))));
+          skeletonStack(5)));
         clear(footerHost);
         return;
       }
@@ -1113,7 +1112,7 @@ export async function renderOverview(main, params, ctx) {
     } else {
       card.append(el("p", { class: "muted small" }, "Trend appears after the second scan."));
     }
-    insightsHost.append(el("div", { class: "chart-grid chart-grid--2", style: "align-items:start" },
+    insightsHost.append(el("div", { class: "chart-grid chart-grid--2 chart-grid--start" },
       el("div", {}, tiles), card));
     if (ctx.domain || ctx.supportGroup) {
       insightsHost.append(el("p", { class: "section-note" },
@@ -1438,7 +1437,7 @@ export async function renderOverview(main, params, ctx) {
     const lineMsg = el("p", { class: "chart-empty muted", style: "display:none" });
     const lineCaption = el("p", { class: "chart-caption muted" });
     const lineTableHost = el("div", {});
-    const chartGrid = el("div", { class: "chart-grid", style: "align-items:start" },
+    const chartGrid = el("div", { class: "chart-grid chart-grid--start" },
       el("div", { class: "chart-card" },
         el("h3", {}, "Group share"),
         el("div", { class: "chart-box" }, pieCanvas, pieMsg),
@@ -1601,7 +1600,7 @@ export async function renderOverview(main, params, ctx) {
           : null;
         controls.append(el("div", { class: "field" },
           el("label", { class: "field-label" }, i === 0 ? "Group by" : "then by"),
-          el("div", { style: "display:flex; gap:6px; align-items:center" }, sel, remove)));
+          el("div", { class: "ctl-row" }, sel, remove)));
       });
       if (groupKeys.length < GROUP_DIMENSIONS.length) {
         const next = groupDims.find((v) => !groupKeys.includes(v));
@@ -1698,7 +1697,7 @@ export async function renderOverview(main, params, ctx) {
       tbody.append(row.tr);
     }
     host.append(el("div", { class: "table-wrap" }, table));
-    host.append(el("p", { class: "small muted", style: "margin-top:8px" },
+    host.append(el("p", { class: "small muted tree-foot" },
       "Busiest groups first; up to 20 per level. Click a group to drill in."));
     applyVisibility();
 
@@ -1750,12 +1749,12 @@ export async function renderOverview(main, params, ctx) {
       const needsInvestigate = (node.dim === "domain" && node.key === "Unassigned") ||
         (node.dim === "supportGroup" && node.key === "(none)");
       const investigateLink = needsInvestigate
-        ? el("a", { class: "small muted", style: "margin-left:6px", href: "#/attribution", target: "_self" },
+        ? el("a", { class: "small muted tree-link", href: "#/attribution", target: "_self" },
             "investigate →")
         : null;
       const groupCell = el("td",
         { class: hasChildren ? "clickable" : null, style: `padding-left:${depth * 20 + 8}px` },
-        el("span", { style: "display:inline-flex; align-items:center; gap:6px" }, caret, label, investigateLink));
+        el("span", { class: "inline-cluster" }, caret, label, investigateLink));
       if (hasChildren) {
         // The whole group cell toggles (the footer promises "click a group to drill in"),
         // except clicks on a CVE link, which should still open NVD.

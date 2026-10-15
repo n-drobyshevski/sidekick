@@ -309,8 +309,7 @@ export async function renderConfigFindings(main, params, ctx) {
     if (loss) headHost.append(scopeNote(loss));
 
     headHost.append(el("div", {
-      class: "toolbar",
-      style: "margin-top:14px; display:flex; gap:10px; flex-wrap:wrap; align-items:center",
+      class: "toolbar config-toolbar",
     },
       segmented({
         options: [
@@ -375,7 +374,7 @@ export async function renderConfigFindings(main, params, ctx) {
 
     const applied = activeConfigFilters(view.query);
     if (applied.length) {
-      headHost.append(el("div", { style: "margin-top:10px" },
+      headHost.append(el("div", { class: "config-applied" },
         el("button", {
           class: "sheet-tool",
           onclick: () => {

@@ -607,7 +607,7 @@ export async function renderGraphPage(main, params, _ctx) {
   const columnsBtn = el("button", {
     "aria-haspopup": "dialog",
     onclick: () => openColumns(),
-  }, uiIcon("columns", 14), el("span", { style: "margin-left:6px" }, "Columns"));
+  }, uiIcon("columns", 14), el("span", { class: "graph-btn-label" }, "Columns"));
 
   // The chip row is built above the trigger it falls back to, so the reference is set here.
   // Where focus lands when the last chip is cleared out from under it. The Filters button used
@@ -622,7 +622,7 @@ export async function renderGraphPage(main, params, _ctx) {
     "aria-expanded": "false",
     "aria-controls": "gq-panel",
     onclick: () => setEditing(!editing, false),
-  }, uiIcon("pencil", 14), el("span", { style: "margin-left:6px" }, "Edit query"));
+  }, uiIcon("pencil", 14), el("span", { class: "graph-btn-label" }, "Edit query"));
 
   // The one row that never leaves: how to change the question, how to read the answer, and how
   // many there are. The question itself is in the card this row opens.
@@ -647,7 +647,7 @@ export async function renderGraphPage(main, params, _ctx) {
         update({ find: serializeQuery(defaultQuery()), where: "", columns: "", page: "", sortCol: "" });
         toast("New search");
       },
-    }, uiIcon("doc", 14), el("span", { style: "margin-left:6px" }, "New search")),
+    }, uiIcon("doc", 14), el("span", { class: "graph-btn-label" }, "New search")),
     savedHost,
     tip(
       tipMark(),
@@ -1243,7 +1243,7 @@ export async function renderGraphPage(main, params, _ctx) {
   async function saveCurrentQuery() {
     const input = el("input", {
       type: "text", placeholder: "e.g. Agents running as a dormant identity",
-      "aria-label": "Query name", style: "width:100%; margin-bottom:4px",
+      "aria-label": "Query name", class: "dialog-input",
     });
     const ok = await confirmDialog({
       title: "Save this query",

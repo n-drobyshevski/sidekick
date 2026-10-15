@@ -756,8 +756,7 @@ export async function renderInventory(main, params) {
       onclick: async () => {
         const input = el("input", {
           type: "text", placeholder: "e.g. Agents missing a guardrail",
-          "aria-label": "View name",
-          style: "width:100%; margin-bottom:4px",
+          "aria-label": "View name", class: "dialog-input",
         });
         const ok = await confirmDialog({
           title: "Save this view",
@@ -1273,7 +1272,7 @@ export async function renderInventory(main, params) {
       // than a filter. `null` when no view is set.
       trendScopeNote(fresh.trendScope),
       trend.length >= 2
-        ? el("div", { class: "chart-box", style: "height:220px" }, canvas)
+        ? el("div", { class: "chart-box chart-box--counts" }, canvas)
         : el("div", { class: "chart-empty", role: "status" },
             trend.length === 1
               ? "One sync recorded so far — the trend draws from the second."
@@ -1449,7 +1448,7 @@ export async function renderInventory(main, params) {
       el("p", { class: "chart-note" },
         points.length >= 2 ? `${points.length} syncs` : "One point per sync"),
       points.length >= 2 && present.length
-        ? el("div", { class: "chart-box", style: "height:200px" }, canvas)
+        ? el("div", { class: "chart-box chart-box--short" }, canvas)
         : el("div", { class: "chart-empty", role: "status" },
             points.length === 1
               ? "One sync has recorded this — the series draws from the second."
