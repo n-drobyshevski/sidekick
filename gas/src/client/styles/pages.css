@@ -128,37 +128,34 @@
    color-mix over --accent rather than as a second copy of #2563eb — the brand belongs in
    styles/tokens.css and nowhere else, and 22% / 14% of the accent over transparent
    resolves to exactly the rgba() literals they replace. */
-/* ui/scopeBar.js builds these with the shared `filterChipRow` (gas_shared/ui/controls.js)
-   now, so the DOM is `.filter-chips.scope-bar > .filter-chip > .filter-chip-body >
-   (.filter-chip-key + .filter-chip-value)` plus a `.filter-chip-x`. The rules below are the
-   old `.scope-chip*` declarations, unchanged in value, moved onto those selectors.
+/* ui/scopeBar.js builds these with the shared `filterChipRow` (gas_shared/ui/controls.js),
+   so the DOM is `.filter-chips.scope-bar > .filter-chip > .filter-chip-body >
+   (.filter-chip-key + .filter-chip-value)` plus a `.filter-chip-x`, and the chip's geometry,
+   key/value weights and ✕ all come from components.css.
 
-   THIS IS DRESSING A SHARED COMPONENT, NOT FORKING ONE, and the difference is worth stating
-   because the file it is in usually means the opposite. `gas_shared/styles/components.css`
-   carries only the chip BASE for `.filter-chip` — `display: inline-flex`, centre, 12px/600,
-   shared with `.sev-badge`, `.pill` and `.aars-chip` — and no rule at all for the row, the
-   key, the value or the ✕. There is nowhere else for the rest to live: adding it to
-   gas_shared is a change this package is not allowed to make. When it lands there, delete
-   everything below except the two `--accent` mixes, which are this brand's. */
-.filter-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0 0 18px; }
-.filter-chip {
-  gap: var(--space-1);
-  padding: 3px var(--space-1) 3px 10px;
-  border-radius: var(--radius-pill);
+   ONLY THE BRAND IS DRESSED HERE, AND ONLY ON THE SCOPE BAR. This block used to re-declare
+   the whole chip, unscoped, on the belief that the shared sheet had no rule for the row, the
+   key, the value or the ✕ — stale once components.css grew them. The two copies then fought:
+   the shared `.filter-chip:not([class*="sev-"])` (0,2,0) beat this file's `.filter-chip`
+   (0,1,0), so the accent wash below was dead while the accent border still won, the left
+   padding stacked (10px on the chip + 8px on the body), and every filterChipRow in the app
+   (coldZone's included) picked up both the shared toolbar band and this margin. Scoped to
+   `.scope-bar` and matching the shared selector's shape, the wash reaches the chip again and
+   nothing else is touched.
+
+   The scope bar is not a toolbar band: it sits loose above the page's figures, so the band's
+   padding, hairline and 37px floor come off and the row keeps its own rhythm. */
+.filter-chips.scope-bar {
+  gap: var(--space-2); min-height: 0; padding: 0; border-bottom: none;
+  margin: 0 0 var(--space-4);
+}
+.scope-bar .filter-chip:not([class*="sev-"]) {
   background: var(--accent-wash); color: var(--sev-low-text);
-  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
 }
-.filter-chip-body { display: inline-flex; align-items: center; gap: var(--space-1); }
-/* The value is the part a reader is scanning for — the key beside it is the dimension's
-   name and is deliberately the quieter half. This is what the old markup said with a bare
-   <b> around the value. */
-.filter-chip-value { font-weight: var(--fw-semibold); }
-.filter-chip-x {
-  border: none; background: none; box-shadow: none; color: inherit;
-  min-height: 0; padding: var(--space-half) var(--space-1); font-size: var(--fs-micro);
-  line-height: 1; border-radius: var(--radius-pill);
-}
-.filter-chip-x:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.scope-bar .filter-chip-body:hover,
+.scope-bar .filter-chip-x:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.scope-bar .filter-chip-x { color: inherit; }
 
 /* The global filter combobox triggers gain an accent border when active (see
    .combobox-trigger.active in the PENDING P4 block), and the scan zone a hairline accent,
@@ -175,14 +172,7 @@
    gas_shared/ui/controls.js's `segmented()` already is (components.css's `.segmented` rule).
    Every call site now takes that shared control instead; nothing under src/client/js/pages/
    references these three selectors any more (test/segmented.test.js sweeps for a regression). */
-/* Section label + inline control on one row, title left and control right.
-   The wrapper owns the section-label's vertical rhythm; the h2 margin resets to 0. */
-.section-head {
-  display: flex; align-items: baseline; justify-content: space-between;
-  gap: var(--space-3); flex-wrap: wrap; margin: var(--space-6) 0 var(--space-3);
-}
-.section-head .section-label { margin: 0; }
-/* Card title + inline toggle on one row — the in-card variant of .section-head with no
+/* Card title + inline toggle on one row — the in-card variant of .section-head (components.css) with no
    outer margin (the .chart-card padding owns the rhythm). */
 .chart-head {
   display: flex; align-items: baseline; justify-content: space-between;
@@ -208,9 +198,6 @@
    through, and the band is the reader's own place-keeper. */
 table.data tbody tr:hover { background: rgba(0, 0, 0, 0.025); }
 table.data td.clickable { cursor: pointer; }
-/* The principal KPI cell in a comparison pair (e.g. KM median beside the muted naive median):
-   heavier weight + full ink so the eye lands on it first while the .muted comparison recedes. */
-td.num--key { font-weight: var(--fw-semibold); color: var(--ink); }
 .th-sort:focus-visible {
   outline: 2px solid var(--accent-text); outline-offset: 2px; border-radius: var(--radius-xs);
 }
@@ -404,18 +391,11 @@ dialog.domains-dialog .dialog-actions {
   color: var(--text-2); font-size: var(--fs-micro); margin-left: auto; white-space: nowrap;
   background: rgba(0, 0, 0, 0.06); border-radius: var(--radius-sm); padding: 1px 6px;
 }
-.sub-add { display: flex; gap: 6px; margin-top: 6px; }
 
 /* --------------------------------------------------------------- settings panels */
 /* No description -> the body sits directly under the title with tighter rhythm. */
 .settings-panel__head:not(:has(.settings-panel__desc)) + .settings-panel__body {
   margin-top: var(--space-3);
-}
-/* Two labeled sub-blocks inside the Severity scope panel (scan scope / display filter),
-   split by a hairline so the coupled pair reads as one control with two zones. */
-.scope-block__note { margin: var(--space-1) 0 var(--space-2); }
-.scope-block--divided {
-  margin-top: var(--space-4); padding-top: var(--space-4); border-top: 1px solid var(--hairline);
 }
 /* Attribution: a table that runs edge-to-edge inside a .settings-panel card (cancels the
    panel's horizontal padding and drops the wrap's side borders) — a "card with a title and
@@ -477,14 +457,14 @@ dialog.domains-dialog .dialog-actions {
   font-size: var(--fs-micro); font-weight: var(--fw-medium); letter-spacing: 0; text-transform: none;
   color: var(--text-3);
 }
-.rule-card__remove, .cond-remove {
-  min-height: 0; padding: var(--space-half) 7px; font-size: var(--fs-label); line-height: 1;
+/* Same ✕ as the shared `.cond-remove` (components.css), minus its push to the row's end:
+   the rule card's remove sits in a header that already places it. */
+.rule-card__remove {
+  min-height: 0; padding: var(--space-half) var(--space-2); font-size: var(--fs-label); line-height: 1;
   background: none; border: 1px solid transparent; box-shadow: none;
   color: var(--text-3); border-radius: var(--radius-sm);
 }
-.rule-card__remove:hover, .cond-remove:hover {
-  background: rgba(0, 0, 0, 0.05); color: var(--ink); border-color: var(--hairline);
-}
+.rule-card__remove:hover { background: var(--wash-hover); color: var(--ink); border-color: var(--hairline); }
 
 /* OR divider between rule cards: a centered chip on a hairline (the rules are OR-ed). */
 .rule-or { display: flex; align-items: center; gap: 10px; margin: 10px var(--space-half); }
@@ -506,7 +486,6 @@ dialog.domains-dialog .dialog-actions {
   font-size: var(--fs-micro); font-weight: var(--fw-hero); letter-spacing: 0.05em; color: var(--text-3);
 }
 .cond-row select { min-height: 32px; }
-.cond-remove { margin-left: auto; }
 .cond-fields {
   flex: 1 1 100%; margin-left: 38px;
   display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
@@ -632,13 +611,6 @@ dialog.domains-dialog .dialog-preview {
   padding: 1px 5px;
 }
 
-/* ------------------------------------------------------------ settings: access */
-/* components.css carries .access-row and .access-row--locked; the two hover states are
-   this register's, because its roster is the only one with a locked owner row. */
-.access-row:hover { background: var(--surface-2); }
-/* No hover affordance and no remove control — nothing here is actionable. */
-.access-row--locked:hover { background: var(--surface); }
-
 /* -------------------------------------------------------------- settings: filter grid */
 /* The vendor-fix and end-of-life filters side by side, so neither is a full-bleed card for one
    switch and a sentence. Same auto-fit idiom as .chart-grid / .kpi-row — collapses to a single
@@ -703,13 +675,18 @@ table.data.jobs-table td.job-status-cell { white-space: normal; max-width: 420px
 .combobox-option-hint { font-variant-numeric: tabular-nums; }
 
 /* ------------------------------------------------------------------- the empty chart */
-/* NOT an override of gas_shared/styles/tables.css `.chart-empty` — a genuinely different
-   shape, kept because this app draws it differently and P4 changed no chart code. The
-   shared rule REPLACES a plot: a 200px dashed block sized to match .chart-box. This one is
-   an OVERLAY — chartsLoader.js and the mttr/history pages append it INSIDE a `.chart-box`
-   (position: relative, height 240px) and toggle it while the canvas stays put. Taking the
-   shared rule would put a second 200px block under every chart. */
-.chart-empty {
+/* Two shapes under one class, told apart by WHERE the note sits. The shared rule
+   (tables.css) REPLACES a plot: a 200px dashed block sized to match .chart-box. Inside a
+   `.chart-box` (position: relative, 240px) the overview/mttr/history pages toggle the note
+   OVER a canvas that stays put, so there it is an overlay.
+
+   SCOPED TO `.chart-box >`, AND THAT IS THE FIX. This rule used to be a bare `.chart-empty`,
+   so it also caught `chartUnavailable` (chartsLoader.js), which REPLACES the `.chart-box`
+   with the note — leaving an absolutely positioned note with no positioned parent, pinned to
+   `.app-body` across the top of the page (the same escape history.js's comment records for
+   its own branch). Outside a box, the shared block now applies, which is the shape a
+   replaced chart wants. */
+.chart-box > .chart-empty {
   position: absolute; inset: 0; margin: 0;
   display: flex; align-items: center; justify-content: center;
   text-align: center; font-size: var(--fs-label); padding: 0 var(--space-5);

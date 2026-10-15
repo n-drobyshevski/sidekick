@@ -145,6 +145,11 @@
   box-shadow: none; color: var(--ink);
 }
 .asset-chip:hover, .asset-more:hover { background: var(--surface); border-color: var(--hairline-strong); }
+/* A long asset name (a full cloud resource path) used to stretch the chip past its card. The
+   chip stops at the row's width and the name ellipsises inside it; the button's aria-label
+   still carries the whole name, and the record it opens shows it in full. */
+.asset-chip { max-width: 100%; }
+.asset-chip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The percentile on an asset chip. It took its ground from a `sev-*` class until the
    findings score's band was demoted — see pages/combos.js at this call site. Neutral now,
    so the only tinted marks on a combo card are the ones that really are severities. */

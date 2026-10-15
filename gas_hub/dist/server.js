@@ -39,7 +39,7 @@ var Server = (() => {
   });
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "17ee4719f646" : "dev";
+  var BUILD_ID = true ? "5740ba6095fb" : "dev";
 
   // src/server/access.ts
   var access_exports = {};

@@ -6,9 +6,6 @@
 
 .sheet--record { width: var(--sheet-w-record); }
 .sheet--record.sheet--wide { width: var(--sheet-w-record-wide); }
-/* Under the pointer the edge tracks the hand; the 160ms width ease is for the widen
-   preset's single jump, and would read as lag on a drag. */
-.sheet.is-resizing { transition: none; }
 
 /* --------------------------------------------------------------------- header */
 /* Kind tile: the record's own category, at the size the reference gives it. It is

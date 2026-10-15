@@ -225,15 +225,6 @@ details.why[open] > summary .why__caret { transform: rotate(90deg); }
    sentence beside it says what is wrong, so the colour is emphasis and not the message. */
 .health-mismatch { margin: 0; color: var(--bad); max-width: var(--measure); }
 
-/* An identifier quoted inside a settings row — a project id, a build stamp. Monospace so a
-   hash reads as a hash, at the row's own size rather than a code block's. */
-.code-inline {
-  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: var(--fs-small);
-  color: var(--text-2);
-  overflow-wrap: anywhere;
-}
-
 /* A settings row's control when it is more than one thing: a state pill, a sentence, and
    sometimes an action. Wraps, because the credential row's failure state is three steps
    long and a nowrap control would push the row off its own panel. */
@@ -262,7 +253,7 @@ details.why[open] > summary .why__caret { transform: rotate(90deg); }
   min-width: 0;
   margin: var(--space-1) 0 0;
   padding-left: 1.25rem;
-  font-size: var(--fs-small);
+  font-size: var(--fs-label);
   color: var(--text-2);
   line-height: 1.5;
 }

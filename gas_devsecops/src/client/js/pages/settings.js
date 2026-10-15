@@ -830,11 +830,11 @@ export async function renderSettings(host, params, ctx) {
       ? tipLabel(SCOPE_LABELS[scope] || scope, { term: SCOPE_TERMS[scope] })
       : (SCOPE_LABELS[scope] || scope);
 
-    const checkbox = el("input", {
-      type: "checkbox", id,
-      checked: draft.scopes.includes(scope) ? true : null,
-      onchange: (ev) => {
-        const on = ev.target.checked;
+    // The same switch as the panel's other booleans. This was a raw checkbox, the one
+    // native-styled control on a tab whose four other on/off rows are `switchToggle`s.
+    const collectSwitch = switchToggle({
+      checked: draft.scopes.includes(scope), id,
+      onChange: (on) => {
         const set = new Set(draft.scopes);
         if (on) set.add(scope); else set.delete(scope);
         draft.scopes = [...set];
@@ -844,7 +844,7 @@ export async function renderSettings(host, params, ctx) {
     const collectRow = settingRow({
       label: labelNode, htmlFor: id,
       description: "Included when a sync runs.",
-      control: checkbox,
+      control: collectSwitch.node,
     });
 
     const view = registerFieldView(scope, draft.fetchSeverities[scope]);

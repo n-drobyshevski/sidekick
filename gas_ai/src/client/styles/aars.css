@@ -545,12 +545,14 @@ ul.axis-steps > .axis-step::before {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .gap-chip__pts { color: var(--text-3); }
-.chip-x {
+/* Scoped to the gap chip: scans.css has its own `.chip .chip-x`, and a bare selector here
+   restyled that one too (this sheet loads later). */
+.gap-chip .chip-x {
   border: none; background: none; box-shadow: none; cursor: pointer;
   min-width: 20px; min-height: 20px; padding: 0 var(--space-half);
   font-size: var(--fs-micro); line-height: 1; color: var(--text-3);
 }
-.chip-x:hover { color: var(--ink); background: var(--wash-hover); border-radius: var(--radius-pill); }
+.gap-chip .chip-x:hover { color: var(--ink); background: var(--wash-hover); border-radius: var(--radius-pill); }
 
 /* --- the code reference sheet -------------------------------------------------------- */
 /* One row per entry: the code, what it means, what THIS draft prices it at, how many live

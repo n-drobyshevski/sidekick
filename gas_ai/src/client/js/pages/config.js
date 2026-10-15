@@ -330,7 +330,6 @@ export async function renderConfigFindings(main, params, ctx) {
       }),
       el("input", {
         type: "search",
-        class: "input",
         value: view.query.q,
         placeholder: "Search rule, resource, subscription…",
         "aria-label": "Search configuration findings",

@@ -514,6 +514,13 @@
   background: none; border: none; padding: 0; font-size: var(--fs-label); font-weight: 600;
   color: var(--accent-text); cursor: pointer;
 }
+/* Most `.linklike`s are <button>s, and the button rule below gives every button a 36px floor,
+   a lift shadow and — through `button:hover` (0,1,1), which outranks `.linklike` (0,1,0) — a
+   grey hover fill. Without these resets a "link" drew as a borderless button, beside
+   `button.link`, which already cleared all three. The hover is (0,2,0) so it wins. */
+button.linklike { min-height: 0; box-shadow: none; }
+.linklike:hover { background: none; text-decoration: underline; }
+.linklike:disabled { text-decoration: none; }
 .linklike.danger { color: var(--bad); }
 .linklike:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; border-radius: var(--radius-xs); }
 
@@ -969,6 +976,9 @@ button, .btn {
   box-shadow: var(--shadow-button);
 }
 button:hover, .btn:hover { background: var(--surface-2); border-color: var(--hairline-strong); }
+/* A link that navigates but should read as a button: the button shell above, plus what an
+   <a> lacks — a box to centre its label in and no underline. */
+a.btn { display: inline-flex; align-items: center; gap: var(--space-1); text-decoration: none; }
 button:focus-visible, .btn:focus-visible, a:focus-visible, input:focus-visible,
 select:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
   outline: 2px solid var(--accent-text);
@@ -992,7 +1002,8 @@ button.link {
 }
 
 /* ----------------------------------------------------------------------- inputs */
-input[type="text"], input[type="search"], input[type="number"], select {
+input[type="text"], input[type="search"], input[type="number"], input[type="url"],
+input[type="email"], select {
   font-family: inherit;
   font-size: var(--fs-body);
   background: var(--page);
@@ -1004,7 +1015,7 @@ input[type="text"], input[type="search"], input[type="number"], select {
 }
 label.field-label { display: block; font-size: var(--fs-label); color: var(--text-2); margin-bottom: var(--space-1); }
 
-input[type="range"] { accent-color: var(--accent-text); }
+input[type="range"], input[type="checkbox"], input[type="radio"] { accent-color: var(--accent-text); }
 
 /* Invalid input state — border + focus ring pair the color with the field position, and
    .field-error carries the plain-language reason in text (never color alone). */

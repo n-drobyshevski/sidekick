@@ -4535,10 +4535,10 @@ export async function renderAarsRules(main, _params, ctx) {
     const section = el("section", { class: "rule-section" });
     const pane = el("div", { class: "rank-eval" }, section);
     section.append(
-      el("h2", {}, "Rank evaluation"),
+      el("h2", { class: "section-label" }, "Rank evaluation"),
       el(
         "p",
-        { class: "rule-section__lede" },
+        { class: "rule-section__lede small muted" },
         "Every committed sync is replayed as a queue, and each row is asked whether it left "
         + "the register within the horizon. A row the register has not finished observing is "
         + "counted as unknown and never as unremediated.",

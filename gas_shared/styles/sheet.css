@@ -17,6 +17,11 @@
   display: flex; flex-direction: column;
 }
 .sheet--wide { width: var(--sheet-w-wide); }
+/* Under the pointer the edge tracks the hand; the 160ms width ease is for the widen
+   preset's single jump, and would read as lag on a drag. `ui/sheet.js` sets the class on
+   any resizable sheet, so the rule is shared — it used to live in gas_ai's recordSheet.css
+   only, and the two resizable sheets in gas lagged the pointer. */
+.sheet.is-resizing { transition: none; }
 .sheet.open { transform: translateX(0); }
 /* Severity accent on the header only, absolutely positioned so header and body text keep
    one left edge. Header-height, not full-height: a floor-to-ceiling red bar is exactly the
@@ -246,7 +251,5 @@ h3.sheet-section-title {
   .kv { grid-template-columns: 1fr; gap: 0 0; }
   .kv dt { margin-top: var(--space-2); }
   .kv dt:first-child { margin-top: 0; }
-  .pillar-row { flex-wrap: wrap; }
-  .pillar-row .pillar-name { width: auto; flex: 1 1 auto; }
   .meter--flex { flex: 1 1 100%; order: 3; }
 }

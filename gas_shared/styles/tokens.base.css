@@ -354,10 +354,13 @@
   --shadow-dialog: 0 12px 32px -8px rgba(0, 0, 0, 0.2);
   --shadow-toast: 0 6px 18px -6px rgba(0, 0, 0, 0.35);
 
-  /* The two non-neutral toast backgrounds (.toast.warn / .toast.error), which were carrying
-     bare literals in feedback.css alongside the graphite default above. */
+  /* The non-neutral toast backgrounds (.toast.warn / .toast.error / .toast.success), which
+     were carrying bare literals in feedback.css alongside the graphite default above.
+     `success` is what the access editors pass after a save; until it had a rule it fell
+     through to the neutral graphite. */
   --toast-warn-bg: #3f2d04;
   --toast-error-bg: #450a0a;
+  --toast-success-bg: #0f3a20;
 
   --font: -apple-system, BlinkMacSystemFont, Inter, "Segoe UI", Roboto, "Helvetica Neue",
     sans-serif;

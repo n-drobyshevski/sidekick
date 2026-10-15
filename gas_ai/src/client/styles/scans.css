@@ -186,9 +186,12 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   background: var(--surface); border: 1px solid var(--hairline);
   border-radius: var(--radius-pill); padding: var(--space-half) var(--space-1) var(--space-half) var(--space-2); }
-.chip-x { border: none; background: none; cursor: pointer; color: var(--text-3);
-  font-size: var(--fs-label); line-height: 1; padding: 0 var(--space-1); border-radius: 50%; }
-.chip-x:hover { background: var(--wash-hover); color: var(--ink); }
+/* Scoped to its own chip. aars.css draws a second `.chip-x` for the sandbox's gap chips, and
+   while both were bare `.chip-x` the later sheet won: the scan sheet's ✕ took the AARS
+   geometry, and only that rule's resets kept it from being a 36px shadowed button. */
+.chip .chip-x { border: none; background: none; box-shadow: none; cursor: pointer; color: var(--text-3);
+  min-height: 0; font-size: var(--fs-label); line-height: 1; padding: 0 var(--space-1); border-radius: 50%; }
+.chip .chip-x:hover { background: var(--wash-hover); color: var(--ink); }
 .chip-add { display: flex; gap: var(--space-1); margin-top: var(--space-half); }
 .chip-input { font: inherit; font-size: var(--fs-label); padding: var(--space-1) var(--space-2); min-width: 0; flex: 1;
   border: 1px solid var(--hairline); border-radius: var(--radius-sm); background: var(--page); }
