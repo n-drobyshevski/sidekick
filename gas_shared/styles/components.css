@@ -179,7 +179,7 @@
    is how it is read, so it scrolls in both axes inside its own box rather than reflowing
    into something that is no longer the query. */
 .code-block {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: var(--fs-label); line-height: 1.55; color: var(--ink);
   background: var(--surface); border: 1px solid var(--hairline);
   border-radius: var(--radius-md);
@@ -1283,6 +1283,16 @@
   border-color: var(--text-3);
 }
 
+/* Section label + inline control on one row, title left and control right. The wrapper owns
+   the section-label's vertical rhythm; the h2 margin resets to 0. Promoted from gas's
+   pages.css: gas_devsecops emits it too (repos.js, the cold-repositories heading and its
+   toggle) and, without the rule, drew the heading and the toggle stacked as plain blocks. */
+.section-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: var(--space-3); flex-wrap: wrap; margin: var(--space-6) 0 var(--space-3);
+}
+.section-head .section-label { margin: 0; }
+
 /* ------------------------------------------------------------------ Settings → Access
    The roster editor. Rows rather than a table: each entry is one address plus at most two
    affordances, and a table would spend three header cells saying so.
@@ -1338,6 +1348,36 @@
    approach — the confirm dialog is what actually holds the decision. */
 .access-remove:hover { color: var(--bad); }
 .access-add { display: flex; align-items: center; gap: var(--space-2); }
+
+/* The registers' own roster editor (gas and gas_devsecops `pages/accessEditor.js`, plus
+   `ui/scopedAccessEditor.js`, which every register shares) draws the same screen with an
+   older vocabulary: `.scope-block` for a labelled sub-block, `.sub-add` for the add row,
+   `.cond-remove` for the ✕. Those rules lived in BOTH registers' pages.css — and only the
+   `__note`/`--divided` half of `.scope-block` in gas's — so the shared scoped editor drew an
+   unstyled ✕ anywhere neither sheet shipped, and gas's blocks had no flex column at all. One
+   copy here; the class names stay because three emitters use them. */
+.scope-block { display: flex; flex-direction: column; gap: var(--space-1); }
+.scope-block__note { margin: var(--space-1) 0 var(--space-2); }
+/* Two labelled sub-blocks in one panel (scan scope / display filter, people / admins), split
+   by a hairline so the coupled pair reads as one control with two zones. */
+.scope-block--divided {
+  margin-top: var(--space-4); padding-top: var(--space-4); border-top: 1px solid var(--hairline);
+}
+.sub-add { display: flex; gap: var(--space-2); margin-top: var(--space-2); }
+/* The email field in an add row (`.sub-add`, `.scoped-add`): takes the row's spare width, at
+   the compact height the roster's ✕ buttons use. `input.` to outrank base.css's
+   `input[type="text"]` min-height. */
+input.add-input { flex: 1; min-height: 30px; }
+.cond-remove {
+  min-height: 0; padding: var(--space-half) var(--space-2); font-size: var(--fs-label); line-height: 1;
+  background: none; border: 1px solid transparent; box-shadow: none;
+  color: var(--text-3); border-radius: var(--radius-sm); margin-left: auto;
+}
+.cond-remove:hover { background: var(--wash-hover); color: var(--ink); border-color: var(--hairline); }
+/* Hover on an editable row; the owner's locked row has nothing to act on, so it keeps its
+   surface tint instead of lighting up. */
+.access-row:hover { background: var(--surface-2); }
+.access-row--locked:hover { background: var(--surface); }
 
 /* ------------------------------------------------------- the chart's data-table alternative
 
@@ -1667,7 +1707,7 @@ tr.rule-drop-after > td { box-shadow: inset 0 -2px 0 var(--accent-text); }
   padding: var(--space-half) var(--space-half) var(--space-half) var(--space-2);
   border: 1px solid var(--hairline); border-radius: var(--radius-pill);
   background: var(--page);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: var(--fs-label);
 }
 
@@ -1788,17 +1828,6 @@ tr.rule-drop-after > td { box-shadow: inset 0 -2px 0 var(--accent-text); }
    rail status dot chrome moved into tables.css / base.css instead, beside the rules they
    extend; what follows is everything that had no such natural neighbour here. */
 
-/* Executive's ranked "fix next" list. AN ORDERED LIST, DRAWN AS ONE: the counter is the claim
-   (rank 1 is the thing to do first), so it stays visible rather than being suppressed the way
-   a decorative list's markers would be. No colour of its own — the tier reads through the
-   shared `.pill` kinds, which already pair a tint with a dot and a word. */
-.fixnext { margin: 0 0 var(--space-3); padding-left: var(--space-5); display: grid; gap: var(--space-2); }
-.fixnext-item { padding-left: var(--space-1); }
-.fixnext-item::marker { color: var(--text-3); font-variant-numeric: tabular-nums; }
-.fixnext-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
-.fixnext-repo { font-weight: 600; }
-.fixnext-meta { margin-top: var(--space-half); }
-
 /* The movement strip: one row per register plus a total, inside a page header's second
    column. The label and the raw pair sit either side of the chip so the delta is never the
    only number visible — "280 open, was 320" is the arithmetic the chip is a summary of. `gap`
@@ -1815,39 +1844,6 @@ tr.rule-drop-after > td { box-shadow: inset 0 -2px 0 var(--accent-text); }
 /* The tally's own right margin is for a table cell, where it sits before a figure with no
    gap of its own; this row is a flex box that already spaces its children. */
 .movement-row .isotype { margin-right: 0; }
-/* A row carrying a tally has four parts, not three, and the auto margin that right-aligns
-   the count pair in a three-part row pushes the fourth onto a line of its own inside the
-   strip's 46ch. The modifier is on the ROW rather than a rule on `.movement-row`, because
-   a sibling register draws the same class with no tally in it and its right-aligned counts
-   are correct as they are. */
-.movement-row--tally .movement-counts { margin-left: 0; }
-/* THE MARKS MUST SHARE A LEFT EDGE OR THEY COMPARE NOTHING. `.movement-label`'s 8ch is a
-   MIN width, and a severity word wider than it pushes that row's tally right: measured on
-   the shipped page, CRITICAL's marks began at x=424, HIGH's at 423 and UNKNOWN's at 433 —
-   UNKNOWN is a shorter word than CRITICAL and a wider one to set, so the stagger does not
-   even follow the label length. A reader comparing two mark runs against a moving origin
-   is doing the arithmetic the picture was drawn to save them.
-
-   10ch is measured against THIS register's own severity vocabulary (UNKNOWN is the widest
-   at 63px; 10ch is 67px at --fs-label), and it is a FIXED basis rather than a minimum so a
-   longer word could never silently reintroduce the stagger. Tally rows only: the total row
-   is passed no unit, carries no modifier, and has no marks to line anything up with. */
-.movement-row--tally .movement-label { flex: 0 0 10ch; }
-/* And the strip itself needs the room the fourth part takes. 46ch fits a label, a pill and
-   a count pair; it does not fit a tally as well, and the longest row wrapped its counts
-   onto a line of their own — measured on a screenshot, not guessed. The modifier keeps a
-   sibling's three-part strip at the width that is right for three parts. */
-.movement-rows--tally { max-width: 60ch; }
-
-/* NO PHONE-WIDTH RULE HERE, AND THE ABSENCE IS MEASURED. The first version of this tally
-   ran at the module's default 40-mark ceiling, drew 39 marks for the largest severity,
-   and took this page from 364px of horizontal overflow at 360px to 404px — an .isotype is
-   one inline-flex run that cannot wrap, so a long one pushes the register off the side of
-   a phone. The first fix hid it below 640px; the right fix was a 12-mark ceiling at the
-   CALL SITE (gas/pages/executive.js), which is the readable count for an inline strip
-   anyway. Re-measured without any hide rule: 364px, the same figure every other route in
-   that app carries. So a phone reader keeps the picture. Do not reintroduce a display:none
-   here without re-measuring first — it would be hiding a symptom this ceiling removed. */
 .movement-block { display: grid; gap: var(--space-2); margin-top: var(--space-4); }
 
 /* `.chart-row` (tables.css) is `repeat(auto-fit, minmax(420px, 1fr))` — right for a page's two
@@ -2333,7 +2329,6 @@ input[type="range"].cut-hist__range {
 .token--stale { border-style: dashed; color: var(--text-3); }
 .token-dim { font-family: var(--font); }
 .scoped-add { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-2); }
-.scoped-actions { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-2); }
 .scoped-problems:empty { display: none; }
 
 .scoped-preview {
@@ -2555,7 +2550,7 @@ a.brief-list__row:hover .brief-list__primary { text-decoration: underline; }
 .brief-clocks__half--bound { background: var(--page); border: 2px solid var(--text-2); }
 .brief-clocks__half--bound.brief-clocks__half--over { border-color: var(--bad); }
 .brief-clocks__reach {
-  position: absolute; top: 50%; height: 0; border-top: 2px dashed var(--hairline-strong);
+  position: absolute; top: 50%; right: 0; height: 0; border-top: 2px dashed var(--hairline-strong);
 }
 .brief-clocks__key { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5); padding-top: var(--space-3); border-top: 1px solid var(--hairline); font-size: var(--fs-label); color: var(--text-2); }
 .brief-clocks__key > span { display: inline-flex; align-items: center; gap: var(--space-1); }

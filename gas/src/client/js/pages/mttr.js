@@ -27,7 +27,7 @@ import {
   DEFAULT_PAGE_SIZE, PAGE_SIZES,
   absent, absentText, boundedDays, changeChip, chartTable, clear, closeActiveSheet, confirmDialog, dataTable, denomNote,
   el, emptyState, errorState, firstRunNotice, fmtCount, fmtDays, fmtSpan, meter, num, openSheet, pageHeader, pluralize, scopeBar, sectionLabel,
-  segmented, sevBadge, sheetSection, skeleton, skeletonStack, sparkline, statRow, survivalTableModel,
+  segmented, select, sevBadge, sheetSection, skeleton, skeletonStack, sparkline, statRow, survivalTableModel,
   tableFooter, tip, tipLabel, toast,
 } from "../ui.js";
 
@@ -777,36 +777,35 @@ function renderMttrSkeleton({ heroHost, chartsHost, survivalHost, slaHost }) {
   clear(heroHost).append(
     el("div", { class: "page-header", role: "status", "aria-label": "Computing MTTR" },
       el("div", { class: "page-hero" },
-        el("div", { style: "margin-bottom:8px" }, skeleton("line", { width: "150px" })),
+        el("div", { class: "skel-label" }, skeleton("line", { width: "150px" })),
         skeleton("stat", { width: "180px" }),
-        el("div", { style: "margin-top:10px" }, skeleton("line", { width: "70%" }))),
+        el("div", { class: "skel-sub" }, skeleton("line", { width: "70%" }))),
       el("div", { class: "page-strip trend-aside" },
-        el("div", { style: "margin-bottom:8px" }, skeleton("line", { width: "120px" })),
+        el("div", { class: "skel-label" }, skeleton("line", { width: "120px" })),
         skeleton("line", { width: "220px" })),
       el("div", { class: "stat-list" },
         ...[0, 1, 2, 3, 4].map(() => el("div", { class: "stat-row" },
-          el("div", { style: "margin-bottom:8px" }, skeleton("line", { width: "84px" })),
+          el("div", { class: "skel-label" }, skeleton("line", { width: "84px" })),
           skeleton("stat", { width: "56px" }))))),
   );
   clear(chartsHost).append(
     el("div", { class: "section-head" },
       skeleton("line", { width: "110px" }),
       skeleton("pill", { width: "180px" })),
-    el("div", { class: "chart-grid chart-grid--2", style: "align-items:start" },
+    el("div", { class: "chart-grid chart-grid--2 chart-grid--start" },
       ...[0, 1].map(() => el("div", { class: "chart-card" },
-        el("div", { style: "margin-bottom:12px" }, skeleton("line", { width: "140px" })),
+        el("div", { class: "skel-card-title" }, skeleton("line", { width: "140px" })),
         el("div", { class: "chart-box" }, skeleton("chart"))))),
   );
   clear(survivalHost).append(
-    el("div", { style: "margin:28px 0 12px" }, skeleton("line", { width: "130px" })),
+    el("div", { class: "skel-section" }, skeleton("line", { width: "130px" })),
     el("div", { class: "chart-card" },
-      el("div", { style: "margin-bottom:12px" }, skeleton("line", { width: "220px" })),
+      el("div", { class: "skel-card-title" }, skeleton("line", { width: "220px" })),
       el("div", { class: "chart-box chart-box--tall" }, skeleton("chart"))),
   );
   clear(slaHost).append(
-    el("div", { style: "margin:28px 0 12px" }, skeleton("line", { width: "180px" })),
-    el("div", { class: "table-wrap", style: "padding:14px" },
-      ...[0, 1, 2, 3, 4].map(() => el("div", { style: "margin:10px 0" }, skeleton("line")))),
+    el("div", { class: "skel-section" }, skeleton("line", { width: "180px" })),
+    el("div", { class: "table-wrap skel-table" }, skeletonStack(5)),
   );
 }
 
@@ -1381,7 +1380,7 @@ export async function renderMttr(main, _params, ctx) {
       // bare `chart-grid` it used to carry is a 3-up template, which auto-fit collapses to two
       // halves for two cards anyway — indistinguishable inside an 820px drawer, and a needless
       // second answer to "how wide is a two-card row" now that the row is on the page.
-      const chartPair = el("div", { class: "chart-grid chart-grid--2", style: "align-items:start" },
+      const chartPair = el("div", { class: "chart-grid chart-grid--2 chart-grid--start" },
         lensCard,
         el("div", { class: "chart-card" },
           lineHead,
@@ -1550,7 +1549,7 @@ export async function renderMttr(main, _params, ctx) {
     // the page-level honesty note already covers it).
     const awaitingTotal = byDomain.rows.reduce((a, r) => a + (r.awaiting ?? 0), 0);
     const footnote = boot.settings.showNoFix !== false && awaitingTotal > 0
-      ? el("p", { class: "small muted", style: "margin:8px 0 0" },
+      ? el("p", { class: "small muted table-note" },
         `${awaitingTotal.toLocaleString()} open finding${awaitingTotal === 1 ? "" : "s"} across `
         + `these ${dim.noun}s are awaiting a vendor fix — excluded from Open past SLA until a fix appears.`)
       : null;
@@ -1561,7 +1560,7 @@ export async function renderMttr(main, _params, ctx) {
     // to state, not a thing this renderer should have a second opinion about.
     const cutText = groupCutNote(byDomain.cut, dim.noun);
     const cutNote = cutText
-      ? el("p", { class: "small muted", style: "margin:8px 0 0" }, cutText)
+      ? el("p", { class: "small muted table-note" }, cutText)
       : null;
 
     // NOTHING IS SET ASIDE ANY MORE, and this is where a footnote used to say otherwise.
@@ -1597,19 +1596,19 @@ export async function renderMttr(main, _params, ctx) {
     // pair was 0. It is the first `.chart-grid` in the app followed by a block with no top
     // margin of its own, which is why the class never needed this and still does not get it —
     // `.chart-grid { margin-bottom }` would collapse into every section label harmlessly but
-    // would also push the Trends row's `margin:4px 0 0` honesty note away from the row it
+    // would also push the Trends row's `.table-note--hug` honesty note away from the row it
     // qualifies, and that 4px is a deliberate hug, not an oversight.
     //
-    // 16px, not 12: the row's own cards sit 14px apart, so a following block at 12 would be
+    // 16px (`.split-charts`), not 12: the row's own cards sit 14px apart, so a following block at 12 would be
     // TIGHTER than the grid's internal gutter and read as a third cell. `.sev-fan` on this same
     // page already states that shape — 12px between its cards, `margin-bottom: var(--space-4)`
     // under the grid — and this is the same relationship one step up the gutter.
     const chartHost = el("div", {
-      role: "status", "aria-label": "Loading trend charts", style: "margin-bottom:16px",
+      role: "status", "aria-label": "Loading trend charts", class: "split-charts",
     },
-      el("div", { class: "chart-grid chart-grid--2", style: "align-items:start" },
+      el("div", { class: "chart-grid chart-grid--2 chart-grid--start" },
         ...[0, 1].map(() => el("div", { class: "chart-card" },
-          el("div", { style: "margin-bottom:12px" }, skeleton("line", { width: "140px" })),
+          el("div", { class: "skel-card-title" }, skeleton("line", { width: "140px" })),
           el("div", { class: "chart-box" }, skeleton("chart"))))));
 
     byDomainHost.append(sectionLabel(dim.title, { lines: dim.help }));
@@ -2238,7 +2237,7 @@ export async function renderMttr(main, _params, ctx) {
 
     // Section-head controls: the view toggle (survival ⇄ histogram, only when both draw)
     // plus the survival x-axis width control, the latter shown only while the curve is up.
-    const controls = el("div", { style: "display:flex; gap:12px; flex-wrap:wrap" });
+    const controls = el("div", { class: "head-controls" });
     if (modes.length > 1) {
       controls.append(toggleRow("Distribution view",
         [["Survival", "survival"], ["Time to resolve", "histogram"]], mode, (v) => {
@@ -2395,7 +2394,7 @@ export async function renderMttr(main, _params, ctx) {
     // series (KM vs naive; attainment vs burn) — the methodology moves from an always-on
     // caption onto the card-title helpTip. Chart draws are deferred into `painters` and run
     // in one rAF after layout, so a card's canvas is in the DOM before it's sized.
-    const grid = el("div", { class: "chart-grid chart-grid--2", style: "align-items:start" });
+    const grid = el("div", { class: "chart-grid chart-grid--2 chart-grid--start" });
     const painters = [];
 
     // Card 1 — MTTR over time: the KM headline vs the naive closed-only comparison, one
@@ -2529,7 +2528,7 @@ export async function renderMttr(main, _params, ctx) {
     chartsHost.append(sectionHead, grid);
     // Caption keyed to the windowed set — no note about shading that isn't on screen.
     if (trend.some((t) => t.reconstructed)) {
-      chartsHost.append(el("p", { class: "small muted", style: "margin:4px 0 0" },
+      chartsHost.append(el("p", { class: "small muted table-note table-note--hug" },
         "Shaded days precede the first saved scan — reconstructed from first-detection dates. "
           + "Open counts there are exact; resolved and MTTR are lower bounds."));
     }
@@ -2585,7 +2584,7 @@ export async function renderMttr(main, _params, ctx) {
 
     const sheetCtx = openSheet((body) => {
       const note = splitBucketNote(dimension, group);
-      if (note) body.append(el("p", { class: "small muted", style: "margin:0 0 12px" }, note));
+      if (note) body.append(el("p", { class: "small muted lead-in" }, note));
       body.append(remediationSection(), findingsSection());
     }, {
       title: group,
@@ -2633,7 +2632,7 @@ export async function renderMttr(main, _params, ctx) {
     }
 
     function domainControls() {
-      return el("div", { class: "small", style: "display:flex;gap:16px;margin:0 0 12px" },
+      return el("div", { class: "small link-row lead-in" },
         el("button", { type: "button", class: "linklike", onclick: changeDomain }, "Change domain…"),
         sgOverride
           ? el("button", { type: "button", class: "linklike", onclick: resetDomain }, "Reset to automatic")
@@ -2642,9 +2641,8 @@ export async function renderMttr(main, _params, ctx) {
 
     async function changeDomain() {
       const domains = assignableDomains(boot);
-      const select = el("select", { "aria-label": "Domain" },
-        ...domains.map((d) => el("option", { value: d }, d)));
-      select.value = domains.includes(countedNow) ? countedNow : (domains[0] || "");
+      const domainSelect = select({ options: domains, ariaLabel: "Domain", onChange: () => {} });
+      domainSelect.value = domains.includes(countedNow) ? countedNow : (domains[0] || "");
       let reason = (sgOverride && sgOverride.reason) || "wrong_tag";
       const radios = Object.entries(SG_REASONS).map(([value, r]) => {
         const input = el("input", { type: "radio", name: "sg-domain-reason", value });
@@ -2652,23 +2650,22 @@ export async function renderMttr(main, _params, ctx) {
         input.addEventListener("change", () => {
           reason = value;
           // The CROSS team's groups live in CROSS — preselect it, still changeable.
-          if (value === "cross_team" && domains.includes("CROSS")) select.value = "CROSS";
+          if (value === "cross_team" && domains.includes("CROSS")) domainSelect.value = "CROSS";
         });
-        return el("label", { style: "display:block;margin:4px 0" }, input, " ", r.label);
+        return el("label", { class: "domain-dialog__reason" }, input, " ", r.label);
       });
-      const note = el("input", { type: "text", "aria-label": "Note (optional)", maxlength: "500",
-        style: "width:100%" });
+      const note = el("input", { type: "text", "aria-label": "Note (optional)", maxlength: "500" });
       note.value = (sgOverride && sgOverride.note) || "";
       const body = el("div", {},
         el("p", { class: "muted" }, `Every finding of ${group} will count under the domain you `
           + "pick, on every page, whatever its hosts are tagged."),
-        el("label", { style: "display:block;margin:8px 0" }, "Domain ", select),
-        el("fieldset", { style: "border:0;padding:0;margin:8px 0" },
+        el("label", { class: "domain-dialog__field" }, "Domain ", domainSelect),
+        el("fieldset", { class: "domain-dialog__reasons" },
           el("legend", { class: "small muted" }, "Why"), ...radios),
-        el("label", { class: "small muted", style: "display:block;margin-top:8px" },
+        el("label", { class: "small muted domain-dialog__note" },
           "Note (optional)", note));
       const ok = await confirmDialog({ title: `Domain of ${group}`, body, confirmLabel: "Save" });
-      if (ok) saveDomain({ group, domain: select.value, reason, note: note.value });
+      if (ok) saveDomain({ group, domain: domainSelect.value, reason, note: note.value });
     }
 
     async function resetDomain() {
@@ -2726,7 +2723,7 @@ export async function renderMttr(main, _params, ctx) {
           : null);
 
       const sevHost = el("div", { role: "status", "aria-label": "Loading remediation by severity",
-        style: "margin-top:12px" }, skeletonStack(3, { widths: ["100%", "100%", "80%"] }));
+        class: "gap-above" }, skeletonStack(3, { widths: ["100%", "100%", "80%"] }));
       const paintSev = (mttr) => {
         // A revalidation landing after the sheet closed has nowhere to paint.
         if (!sevHost.isConnected) return;
@@ -2743,7 +2740,7 @@ export async function renderMttr(main, _params, ctx) {
           { detail: String((err && err.message) || err) }));
       });
       return sheetSection("Remediation", clocks, counts,
-        el("h4", { class: "label", style: "margin:16px 0 4px" }, "By severity"), sevHost);
+        el("h4", { class: "label split-sheet__sev-label" }, "By severity"), sevHost);
     }
 
     function findingsSection() {
@@ -2819,12 +2816,12 @@ export async function renderMttr(main, _params, ctx) {
         });
         const mismatch = splitCountNote(row, num(data.total, null), st.status);
         tableHost.replaceChildren(table, footer);
-        if (mismatch) tableHost.append(el("p", { class: "small muted", style: "margin:8px 0 0" }, mismatch));
+        if (mismatch) tableHost.append(el("p", { class: "small muted table-note" }, mismatch));
       }
 
       load();
       return sheetSection("Findings",
-        el("div", { style: "margin-bottom:12px" }, toggle), tableHost);
+        el("div", { class: "lead-in" }, toggle), tableHost);
     }
   }
 

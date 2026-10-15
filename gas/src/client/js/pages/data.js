@@ -26,11 +26,13 @@ import {
   scopeBar,
   sectionLabel,
   segmented,
+  select,
   settingRow,
   settingsPanel,
   switchToggle,
   toast,
   tipLabel,
+  togglePills,
 } from "../ui.js";
 
 // A one-line description of the global scope a report/export is generated under, so a
@@ -191,7 +193,7 @@ function renderReportSection(main, boot, domain, supportGroup) {
   main.append(
     el(
       "p",
-      { class: "muted small", style: "margin:-2px 0 8px" },
+      { class: "muted small scope-line" },
       scopeLine(domain, supportGroup),
     ),
     controls,
@@ -233,7 +235,7 @@ function renderReportSection(main, boot, domain, supportGroup) {
     previewHost.append(
       el(
         "div",
-        { class: "label", style: "margin:2px 0 6px" },
+        { class: "label report-preview__label" },
         "Report preview — severity by source",
       ),
     );
@@ -275,7 +277,7 @@ function renderReportSection(main, boot, domain, supportGroup) {
     }
     table.append(tbody);
     previewHost.append(
-      el("div", { class: "table-wrap", style: "margin-top:4px" }, table),
+      el("div", { class: "table-wrap report-preview__table" }, table),
     );
   }
 
@@ -320,11 +322,11 @@ function renderExportSection(main, boot, domain, supportGroup) {
     ),
     el(
       "p",
-      { class: "muted small", style: "margin-top:-4px" },
+      { class: "muted small tuck-up" },
       scopeLine(domain, supportGroup),
     ),
   );
-  const row = el("div", { style: "display:flex; gap:8px; flex-wrap:wrap" });
+  const row = el("div", { class: "btn-row" });
   const csvBtn = el("button", { onclick: csv }, "Download CSV");
   const rawBtn = el("button", { onclick: raw }, "Raw JSON (Drive)");
   const bundleBtn = el(
@@ -333,8 +335,8 @@ function renderExportSection(main, boot, domain, supportGroup) {
     "Migration bundle (Drive)",
   );
   row.append(csvBtn, rawBtn, bundleBtn);
-  const rawHost = el("div", { style: "margin-top:10px" });
-  const bundleHost = el("div", { style: "margin-top:10px" });
+  const rawHost = el("div", { class: "gap-above" });
+  const bundleHost = el("div", { class: "gap-above" });
   card.append(row, rawHost, bundleHost);
   // The bundle is the whole register, not the filtered frame — say so, because it sits
   // under a heading whose other two buttons honor the global filters.
@@ -489,7 +491,7 @@ function renderImportSection(main, ctx) {
     type: "file",
     accept: "application/json",
     multiple: "",
-    style: "display:none",
+    hidden: true,
     "aria-hidden": "true",
     tabindex: "-1",
   });
@@ -504,11 +506,11 @@ function renderImportSection(main, ctx) {
     { class: "danger", onclick: resetLedger },
     "Reset ledger…",
   );
-  const statusHost = el("div", { style: "margin-top:10px" });
+  const statusHost = el("div", { class: "gap-above" });
   card.append(
     el(
       "div",
-      { style: "display:flex; gap:8px; flex-wrap:wrap" },
+      { class: "btn-row" },
       importBtn,
       resetBtn,
       fileInput,
@@ -739,51 +741,36 @@ const AGE_CHOICES = [
   [730, "2 years"],
 ];
 
-/** A severity pill row — the settings-page control, minus the coupling it doesn't need. */
+/**
+ * A severity pill row over a caller-owned array: the shared `togglePills` (gas_shared/ui/
+ * controls.js), which draws the same `.pill-row > button.sev-pill.sev-*` markup this file used
+ * to build by hand. The array is mutated in place, as before, so callers keep reading it.
+ */
 function severityPills(options, selected, { onChange, ariaLabel } = {}) {
-  const node = el("div", {
-    class: "pill-row",
-    role: "group",
-    "aria-label": ariaLabel,
+  const node = togglePills({
+    options,
+    selected,
+    ariaLabel,
+    onToggle: (sev) => {
+      const i = selected.indexOf(sev);
+      if (i >= 0) selected.splice(i, 1);
+      else selected.push(sev);
+      node.set(selected);
+      if (onChange) onChange();
+    },
   });
-  for (const sev of options) {
-    const btn = el(
-      "button",
-      {
-        class: `sev-pill sev-${sev}`,
-        type: "button",
-        "aria-pressed": selected.includes(sev) ? "true" : "false",
-        onclick: () => {
-          const i = selected.indexOf(sev);
-          if (i >= 0) selected.splice(i, 1);
-          else selected.push(sev);
-          btn.setAttribute(
-            "aria-pressed",
-            selected.includes(sev) ? "true" : "false",
-          );
-          if (onChange) onChange();
-        },
-      },
-      sev,
-    );
-    node.append(btn);
-  }
   return { node, selected };
 }
 
+/** The age-threshold select: the shared `select()`, with the id a `settingRow` label targets. */
 function daysSelect(id, value, onChange) {
-  const sel = el(
-    "select",
-    { id, "aria-label": "Age threshold" },
-    ...AGE_CHOICES.map(([v, label]) =>
-      el(
-        "option",
-        { value: String(v), selected: v === value ? true : null },
-        label,
-      ),
-    ),
-  );
-  if (onChange) sel.addEventListener("change", onChange);
+  const sel = select({
+    options: AGE_CHOICES.map(([v, label]) => ({ value: String(v), label })),
+    value: String(value),
+    ariaLabel: "Age threshold",
+    onChange: (v) => onChange && onChange(Number(v)),
+  });
+  sel.id = id;
   return sel;
 }
 
@@ -879,8 +866,8 @@ function renderMaintenanceSection(main, boot, ctx) {
         settingRow({
           label: "Resolved more than",
           description: "Only episodes closed before this are pruned.",
-          control: daysSelect("maint-ep-days", episodeDays, (e) => {
-            episodeDays = Number(e.target.value);
+          control: daysSelect("maint-ep-days", episodeDays, (days) => {
+            episodeDays = days;
             refreshPreview();
           }),
           htmlFor: "maint-ep-days",
@@ -922,8 +909,8 @@ function renderMaintenanceSection(main, boot, ctx) {
         settingRow({
           label: "Keep the last",
           description: "Snapshots older than this are dropped.",
-          control: daysSelect("maint-hist-days", historyDays, (e) => {
-            historyDays = Number(e.target.value);
+          control: daysSelect("maint-hist-days", historyDays, (days) => {
+            historyDays = days;
             refreshPreview();
           }),
           htmlFor: "maint-hist-days",
@@ -1047,7 +1034,7 @@ function renderMaintenanceSection(main, boot, ctx) {
         ),
         el(
           "div",
-          { style: "margin:10px 0" },
+          { class: "dialog-setting" },
           settingRow({
             label: "Also stop scanning for these severities",
             description: narrowable.length

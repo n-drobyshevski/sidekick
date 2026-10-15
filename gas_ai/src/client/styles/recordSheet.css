@@ -6,9 +6,6 @@
 
 .sheet--record { width: var(--sheet-w-record); }
 .sheet--record.sheet--wide { width: var(--sheet-w-record-wide); }
-/* Under the pointer the edge tracks the hand; the 160ms width ease is for the widen
-   preset's single jump, and would read as lag on a drag. */
-.sheet.is-resizing { transition: none; }
 
 /* --------------------------------------------------------------------- header */
 /* Kind tile: the record's own category, at the size the reference gives it. It is
@@ -38,11 +35,24 @@
 .sheet-toolbar:empty { display: none; }
 .sheet-tool {
   display: inline-flex; align-items: center; gap: var(--space-1);
-  min-height: 30px; padding: var(--space-1) var(--space-2); font-size: var(--fs-label); font-weight: 500;
+  min-height: 30px; padding: var(--space-1) var(--space-2); font-size: var(--fs-label); font-weight: var(--fw-medium);
   background: var(--page);
 }
 .sheet-tool svg { flex: 0 0 auto; color: var(--text-3); }
 .sheet-tool:hover svg { color: var(--ink); }
+
+/* -------------------------------------------------------------- pane text spacing */
+/* The panes' own paragraphs (detailSheets.js). A section body sits flush under its label; a
+   lead line spaces off what follows it; a note spaces off what precedes it. `.sheet-text`
+   also flattens `.sheet-fix-body`'s top margin where the fix IS the pane. */
+.sheet-text { margin: 0; }
+.sheet-text--pre { white-space: pre-wrap; }
+.sheet-lede { margin: 0 0 var(--space-2); }
+.sheet-note { margin: var(--space-2) 0 0; }
+.sheet-raw { padding: var(--space-2) 0 var(--space-1); }
+.sheet-tickets { display: grid; gap: var(--space-2); }
+.sheet-ticket { overflow-wrap: anywhere; }
+.sheet-verdict-row { display: flex; align-items: center; gap: var(--space-2); }
 
 /* ------------------------------------------------------------ panes and rail */
 .sheet-panes { flex: 1 1 auto; display: flex; min-height: 0; }
@@ -61,7 +71,7 @@
 
 .sheet-rail-group { margin-top: var(--space-4); }
 .sheet-rail-label {
-  padding: 0 var(--space-2) var(--space-1); font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.05em;
+  padding: 0 var(--space-2) var(--space-1); font-size: var(--fs-micro); font-weight: var(--fw-semibold); letter-spacing: 0.05em;
   text-transform: uppercase; color: var(--text-3);
 }
 .sheet-rail-item {
@@ -80,14 +90,14 @@
 /* Active section: the app's own rule for a nav rail (accent bar plus weight), not a tint
    on its own — DESIGN.md forbids leaning on a colored fill to carry state. */
 .sheet-rail-item.is-active {
-  position: relative; color: var(--ink); font-weight: 600;
+  position: relative; color: var(--ink); font-weight: var(--fw-semibold);
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 .sheet-rail-item.is-active::before {
   content: ""; position: absolute; left: 0; top: 5px; bottom: 5px; width: 2px;
   border-radius: var(--radius-pill); background: var(--accent);
 }
-.sheet-rail-item.is-active .sheet-rail-count { color: var(--accent-hover); font-weight: 600; }
+.sheet-rail-item.is-active .sheet-rail-count { color: var(--accent-hover); font-weight: var(--fw-semibold); }
 /* A section with nothing in it stays in the rail and stays selectable — its pane says so
    in words. Dimmed AND counted 0: the state never rests on the dimming alone. */
 .sheet-rail-item.is-empty { color: var(--text-3); }
@@ -146,7 +156,7 @@
   background: var(--surface); color: var(--text-2);
 }
 .insight--warn .insight-mark { background: rgba(161, 98, 7, 0.12); color: var(--warn); }
-.insight--bad .insight-mark  { background: rgba(185, 28, 28, 0.1);  color: var(--bad); }
+.insight--bad .insight-mark  { background: rgba(185, 28, 28, 0.12); color: var(--bad); }
 
 /* Properties: the reference's two columns, which is four grid tracks of dt/dd. Below the
    pane's own breakpoint it falls back to the one-column .kv in sheet.css. */
@@ -174,7 +184,7 @@
   display: flex; align-items: center; gap: var(--space-2);
   padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--hairline);
 }
-.sheet-card-title { font-size: var(--fs-body); font-weight: 600; margin: 0; flex: 1 1 auto; }
+.sheet-card-title { font-size: var(--fs-body); font-weight: var(--fw-semibold); margin: 0; flex: 1 1 auto; }
 .sheet-card-body { padding: var(--space-1) var(--space-3) var(--space-2); }
 .sheet-card-body .empty { border: none; padding: var(--space-3) 0; }
 /* More than one tool in a card head; the head is a flex row, so they need their own box. */

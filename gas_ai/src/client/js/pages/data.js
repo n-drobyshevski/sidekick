@@ -70,8 +70,7 @@ export async function renderData(main, _params, ctx) {
 
   // Seed each host with a skeleton until its RPC resolves; paintHistory()/paintStats() clear.
   historyHost.append(el("div", {
-    role: "status", "aria-label": "Loading sync history",
-    style: "display:flex; flex-direction:column; gap:12px",
+    class: "skeleton-stack", role: "status", "aria-label": "Loading sync history",
   }, ...Array.from({ length: 4 }, () => skeleton("line", { height: "18px" }))));
   // Shape-matched to what lands: a stat strip, not three cards.
   statsHost.append(el("div", { class: "stat-list", role: "status", "aria-label": "Loading storage" },
@@ -112,8 +111,8 @@ export async function renderData(main, _params, ctx) {
   // disagree with the sidebar switcher reading the same fields.
   main.append(prunePanel(bootstrapCached(), { refresh: ctx.refresh, call }));
   main.append(
-    el("div", { class: "card", style: "display:flex; gap:12px; align-items:center" },
-      el("div", { style: "flex:1" },
+    el("div", { class: "card reset-card" },
+      el("div", { class: "reset-card__body" },
         el("strong", {}, "Reset synced data"),
         el("div", { class: "small muted" },
           "Clears assets, edges, issues and sync history. The next sync repopulates " +

@@ -414,12 +414,12 @@ function r2(n) {
 /** One scan, as its register's mark. */
 function spiralMark(p) {
   const shape = SPIRAL_SHAPES[p.scope] || "circle";
-  const style = "fill: var(--accent-text)";
-  if (shape === "circle") return svgEl("circle", { cx: r2(p.x), cy: r2(p.y), r: 2.4, style });
+  const cls = "spiral__mark";
+  if (shape === "circle") return svgEl("circle", { class: cls, cx: r2(p.x), cy: r2(p.y), r: 2.4 });
   // A diamond is the square, turned — one code path, so the two can never drift in size.
   const half = shape === "diamond" ? 2.8 : 2.2;
   return svgEl("rect", {
-    x: r2(p.x - half), y: r2(p.y - half), width: r2(half * 2), height: r2(half * 2), style,
+    class: cls, x: r2(p.x - half), y: r2(p.y - half), width: r2(half * 2), height: r2(half * 2),
     transform: shape === "diamond" ? `rotate(45 ${r2(p.x)} ${r2(p.y)})` : null,
   });
 }
@@ -445,18 +445,18 @@ function spiralSvg(layout) {
   });
   for (const q of layout.quarters) {
     svg.append(svgEl("circle", {
-      cx: 0, cy: 0, r: r2(q.r), fill: "none",
-      style: "stroke: currentColor", "stroke-width": 0.5, "stroke-opacity": 0.22,
+      class: "spiral__ring", cx: 0, cy: 0, r: r2(q.r), fill: "none",
+      "stroke-width": 0.5, "stroke-opacity": 0.22,
     }));
     const label = svgEl("text", {
-      x: 0, y: r2(-q.r - 2.5), "text-anchor": "middle", "font-size": 6.5,
-      style: "fill: currentColor", "fill-opacity": 0.55,
+      class: "spiral__key", x: 0, y: r2(-q.r - 2.5), "text-anchor": "middle", "font-size": 6.5,
+      "fill-opacity": 0.55,
     });
     label.textContent = q.key;
     svg.append(label);
   }
   svg.append(svgEl("polyline", {
-    fill: "none", style: "stroke: var(--accent-text)", "stroke-width": 1,
+    class: "spiral__path", fill: "none", "stroke-width": 1,
     "stroke-linejoin": "round", "stroke-opacity": 0.75,
     points: layout.points.map((p) => `${r2(p.x)},${r2(p.y)}`).join(" "),
   }));
@@ -1231,7 +1231,7 @@ export async function renderHistory(host, _params, _ctx) {
     // that the sixth is elsewhere; the first half is provenance and rides on the phrase, the
     // second half is the link. `historyTrendSlice` (domain/pagePayload.ts) is why the series
     // is absent at all — see this file's header.
-    chartsHost.append(el("p", { class: "small muted", style: "grid-column:1/-1" },
+    chartsHost.append(el("p", { class: "small muted chart-row__full" },
       tipLabel("The open-past-SLA series is not published on this page", {
         lines: [
           "This page's trend slice ships date, reconstructed, open, resolved and the KM"

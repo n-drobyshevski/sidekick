@@ -252,7 +252,7 @@ export function openSyncDetails(job, opts = {}) {
       );
     }
 
-    const actions = el("div", { class: "sheet-actions", style: "margin-top:16px" });
+    const actions = el("div", { class: "sheet-actions" });
     // v.canStop is recomputed each paint, so the Stop button retires once the job leaves FETCHING.
     if (v.canStop && onStop) {
       actions.append(el("button", { class: "danger", onclick: () => { onStop(); closeFn(); } },

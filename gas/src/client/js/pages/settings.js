@@ -29,7 +29,7 @@ import {
   errorLogBody, heroLines,
   fmtDateTime, impactSplit, impactSplitModel, normalizeErrorLog, openSheet, pageHeader, saveBar,
   segmented, settingRow, settingsPanel, statusPill, storageBody, switchToggle, tabList, tip,
-  tipAnchor, tipLabel, toast,
+  tipAnchor, tipLabel, toast, togglePills,
 } from "../ui.js";
 import { renderAccessPanel } from "./accessEditor.js";
 import { hubUrlPanel } from "../../../../../gas_shared/ui/hubPanel.js";
@@ -146,29 +146,25 @@ export async function renderSettings(main, params, ctx) {
   }
 
   // ============================================================================ REGISTER TAB
+  // The shared `togglePills` (gas_shared/ui/controls.js) draws the row; this wrapper adds the
+  // two things it leaves to its caller — the state (read through `getArr`, see below) and the
+  // lock: a pill outside the scan scope carries aria-disabled, and pressing it does nothing.
   function pillGroup(options, getArr, { onChange, ariaLabel } = {}) {
-    const pills = {};
-    const node = el("div", { class: "pill-row", role: "group", "aria-label": ariaLabel });
-    for (const sev of options) {
-      const btn = el("button", {
-        class: `sev-pill sev-${sev}`, type: "button",
-        "aria-pressed": getArr().includes(sev) ? "true" : "false",
-        onclick: () => {
-          if (btn.getAttribute("aria-disabled") === "true") return; // locked (out of scan scope)
-          const arr = getArr();
-          const i = arr.indexOf(sev);
-          if (i >= 0) arr.splice(i, 1); else arr.push(sev);
-          sync();
-          if (onChange) onChange();
-        },
-      }, sev);
-      pills[sev] = btn;
-      node.append(btn);
-    }
-    function sync() {
-      const arr = getArr();
-      for (const sev of options) pills[sev].setAttribute("aria-pressed", arr.includes(sev) ? "true" : "false");
-    }
+    const node = togglePills({
+      options,
+      selected: getArr(),
+      ariaLabel,
+      onToggle: (sev) => {
+        if (node.buttons.get(sev).getAttribute("aria-disabled") === "true") return; // locked (out of scan scope)
+        const arr = getArr();
+        const i = arr.indexOf(sev);
+        if (i >= 0) arr.splice(i, 1); else arr.push(sev);
+        sync();
+        if (onChange) onChange();
+      },
+    });
+    const pills = Object.fromEntries(node.buttons);
+    function sync() { node.set(getArr()); }
     return { node, sync, pills };
   }
 
@@ -333,7 +329,7 @@ export async function renderSettings(main, params, ctx) {
   );
   const riskThreshold = el("input", {
     type: "number", id: "risk-epss-threshold", min: "0", max: "1", step: "0.01",
-    value: draft.riskRule.epssThreshold.toFixed(2), style: "width:96px",
+    value: draft.riskRule.epssThreshold.toFixed(2), class: "input-num",
     "aria-describedby": riskThresholdErrorId,
     oninput: (e) => setEpssThreshold(e.target.value),
     onchange: () => { riskThreshold.value = draft.riskRule.epssThreshold.toFixed(2); },
@@ -383,7 +379,7 @@ export async function renderSettings(main, params, ctx) {
   const unassignedHost = el("div", {});
   if (typeof boot.unassignedCount === "number" && boot.unassignedCount > 0) {
     unassignedHost.append(el("p",
-      { class: "small", style: "display:flex; align-items:center; gap:8px; margin:0 0 12px" },
+      { class: "small ctl-row lead-in" },
       statusPill("warn", `${boot.unassignedCount.toLocaleString()} findings unassigned`),
       el("a", { href: "#/attribution", target: "_self" }, "Review in Attribution →")));
   }
@@ -430,7 +426,7 @@ export async function renderSettings(main, params, ctx) {
   const retentionDays = el("input", {
     type: "number", id: "settings-retention-days", min: "30", step: "1",
     value: draft.retentionDays ?? 180,
-    style: "width:96px", "aria-label": "Retention window in days",
+    class: "input-num", "aria-label": "Retention window in days",
     "aria-describedby": retentionDaysErrorId,
     disabled: draft.retentionDays === null ? true : null,
     oninput: (e) => {
@@ -468,7 +464,7 @@ export async function renderSettings(main, params, ctx) {
         label: "Retention window", htmlFor: "settings-retention-days",
         description: "Scans older than this are sealed (minimum 30 days).",
         control: el("div", {},
-          el("div", { style: "display:flex; align-items:center; gap:6px" },
+          el("div", { class: "ctl-row" },
             retentionDays, el("span", { class: "muted small" }, "days")),
           retentionDaysError),
       }),
@@ -528,7 +524,7 @@ export async function renderSettings(main, params, ctx) {
   const coldAfterDays = el("input", {
     type: "number", id: "settings-cold-after-days",
     min: String(COLD_AFTER_DAYS_MIN), max: String(COLD_AFTER_DAYS_MAX), step: "1",
-    value: draft.coldAfterDays, style: "width:96px",
+    value: draft.coldAfterDays, class: "input-num",
     "aria-label": "Cold-zone window in days",
     "aria-describedby": coldAfterDaysErrorId,
     // Only a value that PARSES updates the draft — an in-progress "1" before a second digit
@@ -550,7 +546,7 @@ export async function renderSettings(main, params, ctx) {
   const coldTargetShare = el("input", {
     type: "number", id: "settings-cold-target-share",
     min: String(COLD_TARGET_SHARE_PCT_MIN), max: String(COLD_TARGET_SHARE_PCT_MAX), step: "1",
-    value: draft.coldTargetSharePct, style: "width:96px",
+    value: draft.coldTargetSharePct, class: "input-num",
     "aria-label": "Cold-zone target share in per cent",
     "aria-describedby": coldTargetErrorId,
     oninput: (e) => {
@@ -570,7 +566,7 @@ export async function renderSettings(main, params, ctx) {
   const coldFloorDays = el("input", {
     type: "number", id: "settings-cold-floor-days",
     min: String(COLD_FLOOR_DAYS_MIN), max: String(COLD_FLOOR_DAYS_MAX), step: "1",
-    value: draft.coldFloorDays, style: "width:96px",
+    value: draft.coldFloorDays, class: "input-num",
     "aria-label": "Cold-zone floor in days",
     "aria-describedby": coldFloorErrorId,
     oninput: (e) => {
@@ -593,7 +589,7 @@ export async function renderSettings(main, params, ctx) {
         + "idlest go first, and ties at the line are all cold, so the share actually reached "
         + "can come out larger.",
       control: el("div", {},
-        el("div", { style: "display:flex; align-items:center; gap:6px" },
+        el("div", { class: "ctl-row" },
           coldTargetShare, el("span", { class: "muted small" }, "%")),
         coldTargetError),
     }),
@@ -608,7 +604,7 @@ export async function renderSettings(main, params, ctx) {
         + "names somebody, and on an estate where nothing has been quiet for long, this is "
         + "what stops the zone being filled anyway.",
       control: el("div", {},
-        el("div", { style: "display:flex; align-items:center; gap:6px" },
+        el("div", { class: "ctl-row" },
           coldFloorDays, el("span", { class: "muted small" }, "days")),
         coldFloorError),
     }),
@@ -645,7 +641,7 @@ export async function renderSettings(main, params, ctx) {
           + "is called cold. In relative mode this is still published as the window that was "
           + "asked for, beside the line the estate produced.",
         control: el("div", {},
-          el("div", { style: "display:flex; align-items:center; gap:6px" },
+          el("div", { class: "ctl-row" },
             coldAfterDays, el("span", { class: "muted small" }, "days")),
           coldAfterDaysError),
       }),
@@ -725,7 +721,7 @@ export async function renderSettings(main, params, ctx) {
     clear(historyStatusCell);
     historyStatusCell.append(statusPill(kind, label));
     if (view.text) {
-      historyStatusCell.append(el("div", { class: "muted small", style: "margin-top:3px" }, view.text));
+      historyStatusCell.append(el("div", { class: "muted small job-detail" }, view.text));
     }
     clear(historyLastRunCell).append(b && b.updatedAt ? fmtDateTime(b.updatedAt) : absent());
     historyBtn.disabled = view.busy;
@@ -783,7 +779,7 @@ export async function renderSettings(main, params, ctx) {
       // different answers, and only the unrecoverable count tells them apart.
       tagStatusCell.append(
         statusPill(res.recovered ? "ok" : "neutral", res.recovered ? "Recovered" : "Nothing to recover"),
-        el("div", { class: "muted small", style: "margin-top:3px" },
+        el("div", { class: "muted small job-detail" },
           `${res.recovered.toLocaleString()} recovered · ${res.alreadyHad.toLocaleString()} ` +
           `already had tags · ${res.unrecoverable.toLocaleString()} not in any checkpoint`));
       if (res.recovered) toast(`Recovered domain tags for ${res.recovered} finding(s).`);
@@ -815,7 +811,7 @@ export async function renderSettings(main, params, ctx) {
   const sgStatusCell = el("td", { class: "job-status-cell" });
   if (!boot.hasCredentials) {
     sgStatusCell.append(statusPill("neutral", "Dry-run"),
-      el("div", { class: "muted small", style: "margin-top:3px" }, "Connect Wiz credentials to refresh."));
+      el("div", { class: "muted small job-detail" }, "Connect Wiz credentials to refresh."));
   } else {
     sgStatusCell.append(statusPill("neutral", "Not run this session"));
   }
@@ -838,7 +834,7 @@ export async function renderSettings(main, params, ctx) {
       const res = await call("api_refreshSupportGroups", {});
       clear(sgStatusCell);
       sgStatusCell.append(statusPill("ok", "Refreshed"),
-        el("div", { class: "muted small", style: "margin-top:3px" },
+        el("div", { class: "muted small job-detail" },
           `Mapped ${res.subscriptions} subscription(s) → ${res.groups} support group(s) ` +
           `(tag ${res.tagKey}).`));
       toast("Support groups refreshed.");

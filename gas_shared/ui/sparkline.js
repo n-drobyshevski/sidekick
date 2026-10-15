@@ -46,12 +46,11 @@
 // sets a size and a weight and inherits its ink. Same shape as the `.health-` / `.diag-` split
 // CLAUDE.md already records, and the same resolution — take the unclaimed name and say why.
 //
-// THE FUNCTION NAME OVERLAPS TOO, and that one is left alone deliberately. `gas` and
-// `gas_devsecops` each have a CANVAS `sparkline(canvas, values, opts)` in their own
-// `charts.js`, reached as `charts.sparkline(...)` through a namespace import, so nothing
-// resolves ambiguously today. Those two are near-duplicates of each other and are the obvious
-// next promotion; folding them into this module is a behaviour change to two shipped charts
-// and belongs in its own round, not in the commit that adds an SVG one.
+// THE FUNCTION NAME OVERLAPS TOO, and that one is left alone deliberately. `gas` has a
+// CANVAS `sparkline(canvas, values, opts)` in its own `charts.js`, reached as
+// `charts.sparkline(...)` through a namespace import, so nothing resolves ambiguously today.
+// (`gas_devsecops` had a near-duplicate; nothing called it, and it was removed.) Folding gas's
+// into this module is a behaviour change to a shipped chart and belongs in its own round.
 //
 // `svgEl` RATHER THAN A LOCAL createElementNS, AND THE REASON IS THE BUILD, not taste. The
 // SVG namespace is a URL containing a literal `//`, and `esbuild.config.mjs`'s middlebox

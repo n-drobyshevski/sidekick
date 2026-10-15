@@ -205,7 +205,7 @@ export async function renderScopeSummary(main, _params, opts = {}) {
     host.append(detail.node);
   }
 
-  host.append(el("p", {}, el("a", { href: findingsHref, class: "button" }, "See my findings →")));
+  host.append(el("p", {}, el("a", { href: findingsHref, class: "btn" }, "See my findings →")));
 }
 
 /**

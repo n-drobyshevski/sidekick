@@ -69,35 +69,33 @@ function combosSkeleton(count) {
   const summary = el("div", { class: "chart-row" },
     el("div", { class: "chart-card" },
       skeleton("line", { width: "220px" }),
-      el("div", { class: "skeleton-stack", style: "margin-top:14px; gap:14px" },
+      el("div", { class: "skeleton-stack combo-skel-stack" },
         skeleton("line", { height: "26px" }),
         skeleton("line", { height: "26px" }))),
     el("div", { class: "chart-card" },
       skeleton("line", { width: "200px" }),
-      el("div", { class: "skeleton-stack", style: "margin-top:14px" },
+      el("div", { class: "skeleton-stack combo-skel-stack" },
         ...[0, 1, 2, 3].map(() => skeleton("line", { height: "18px" })))));
 
   const stack = el("div", {});
   for (let i = 0; i < count; i++) {
-    stack.append(el("div", { class: "card combo-card", style: "margin-bottom:16px" },
-      el("div", { style: "display:flex; align-items:center; gap:10px" },
+    stack.append(el("div", { class: "card combo-card" },
+      el("div", { class: "combo-head" },
         skeleton("line", { width: "min(40%, 26rem)" }),
         skeleton("pill", { width: "150px" })),
       // The real .combo-note is capped at --measure, so a percentage bar here would
       // promise a full-pane slab and then snap back to a third of it.
-      el("div", { style: "margin-top:12px" },
+      el("div", { class: "combo-block" },
         skeleton("line", { width: "min(90%, var(--measure))" })),
-      el("div", { style: "display:flex; gap:8px; margin-top:12px" },
+      el("div", { class: "combo-skel-pills" },
         skeleton("pill", { width: "90px" }),
         skeleton("pill", { width: "110px" }),
         skeleton("pill", { width: "70px" })),
       // The affected-asset chips are the widest, tallest part of a real card — without
       // them the placeholder is a short block that jumps when the data arrives.
-      el("div", {
-        style: "display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; align-items:center",
-      }, ...["60px", "210px", "180px", "230px", "170px", "200px"]
+      el("div", { class: "combo-assets" }, ...["60px", "210px", "180px", "230px", "170px", "200px"]
         .map((w) => skeleton("pill", { width: w }))),
-      el("div", { style: "display:flex; gap:8px; margin-top:14px" },
+      el("div", { class: "combo-actions" },
         skeleton("pill", { width: "104px" }),
         skeleton("pill", { width: "118px" }))));
   }
@@ -283,7 +281,7 @@ export async function renderCombos(main, params) {
         ),
         shiftRow("Adjusted", totals.adjustedMix, total),
       ),
-      el("p", { class: "small muted", style: "margin:12px 0 0" }, shiftSummary(totals)),
+      el("p", { class: "small muted combo-foot" }, shiftSummary(totals)),
     );
   }
 
@@ -374,7 +372,7 @@ export async function renderCombos(main, params) {
         "Filled: the Wiz rule tests this condition. Hollow: the rule doesn't, but the " +
         "affected assets carry it anyway. Counts are assets."),
       grid,
-      el("p", { class: "small muted", style: "margin:10px 0 0" },
+      el("p", { class: "small muted combo-foot" },
         "Internet exposure is tested by no rule here, so every mark in that column is " +
         "risk stacked on top of the pattern. “?” is exposure inherited from a host and " +
         "not determined."),
@@ -514,7 +512,7 @@ export async function renderCombos(main, params) {
     if (conditions) card.append(conditions);
 
     const fw = fwTags(group.frameworks, false);
-    if (fw) card.append(el("div", { style: "margin-top:12px" }, fw));
+    if (fw) card.append(el("div", { class: "combo-block" }, fw));
 
     if (group.assets.length) card.append(assetRow(group));
 
@@ -677,7 +675,7 @@ export async function renderCombos(main, params) {
     }
     clear(mount).append(el("div", { role: "status", "aria-label": "Loading issues" },
       skeleton("line", { height: "18px" }),
-      el("div", { style: "height:8px" }),
+      el("div", { class: "combo-skel-gap" }),
       skeleton("line", { height: "18px" })));
     try {
       const res = await swrCall(

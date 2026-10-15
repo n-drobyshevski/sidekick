@@ -485,7 +485,7 @@ export function briefClocks(c) {
       }));
       if (r.bounded) {
         track.append(el("span", {
-          class: "brief-clocks__reach", style: "left: " + g.halfPos + "%; right: 0",
+          class: "brief-clocks__reach", style: "left: " + g.halfPos + "%",
         }));
       }
     }

@@ -16,7 +16,7 @@
 import { bootstrap, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import { renderDomainsEditor } from "./domainsEditor.js";
 import {
-  DEFAULT_PAGE_SIZE, absent, clear, dataTable, el, emptyState, errorState, firstRunNotice, fmtDate, glossaryTip, kpiCard, measuredEmpty, pageHeader, settingsPanel, sevEntries, sevSegmentBar, sevSpoken, statusPill, tableFooter, tip,
+  DEFAULT_PAGE_SIZE, absent, clear, dataTable, el, emptyState, errorState, firstRunNotice, fmtDate, glossaryTip, kpiCard, measuredEmpty, meter, pageHeader, settingsPanel, sevEntries, sevSegmentBar, sevSpoken, statusPill, tableFooter, tip,
 } from "../ui.js";
 
 // The engine's placeholder domain for findings that matched no rule (domainRules.UNASSIGNED).
@@ -207,7 +207,7 @@ export async function renderAttribution(main, params, ctx) {
     // page. onCommitted saves each Apply immediately and ctx.refresh() re-runs the audit, so a
     // rule gets fixed here without a trip to Settings. (The visible domain-management list —
     // reorder / add / import — stays in Settings; the "Edit domains in Settings →" link reaches it.)
-    const editorHost = el("div", { style: "display:none" });
+    const editorHost = el("div", { hidden: true });
     bodyHost.append(editorHost);
     const editor = renderDomainsEditor(editorHost, boot, ctx, { onCommitted: () => editor.save() });
 
@@ -364,7 +364,7 @@ export async function renderAttribution(main, params, ctx) {
       ["none", "claimed by neither"],
       ["missing", "no attribution input"],
     ].filter(([k]) => (bySource[k] || 0) > 0 || k === "tag" || k === "rule");
-    const line = el("p", { class: "small muted", style: "margin:-4px 0 14px" },
+    const line = el("p", { class: "small muted by-source-line" },
       "Attributed ");
     parts.forEach(([k, label], i) => {
       const n = bySource[k] || 0;
@@ -403,7 +403,7 @@ export async function renderAttribution(main, params, ctx) {
             : d.domain === UNASSIGNED
               ? (d.findings > 0 ? statusPill("bad", "coverage gap") : null)
               : (d.findings === 0 ? statusPill("warn", "no matches") : null);
-          return el("span", { style: "display:inline-flex; align-items:center; gap:8px" },
+          return el("span", { class: "inline-cluster" },
             el("strong", {}, d.domain), marker);
         },
       },
@@ -457,7 +457,7 @@ export async function renderAttribution(main, params, ctx) {
     // populated one that isn't joining the findings' subscription identity (keys > 0 yet
     // nothing resolves) — the two failure modes an operator otherwise can't distinguish.
     if (!sgMap.configured) {
-      notes.push(el("p", { class: "section-note", style: "margin-top:0" },
+      notes.push(el("p", { class: "section-note section-note--flush" },
         "Support groups aren’t mapped yet — every finding resolves to (none). Use “Refresh " +
         "support groups” in ",
         el("a", { href: "#/settings", target: "_self" }, "Settings"), " to build the map."));
@@ -466,7 +466,7 @@ export async function renderAttribution(main, params, ctx) {
       const resolved = sg.resolvedFindings || 0;
       const pct = total ? Math.round((resolved / total) * 100) : 0;
       const stuck = (sgMap.keys || 0) > 0 && resolved === 0 && total > 0;
-      notes.push(el("p", { class: "section-note", style: "margin-top:0" },
+      notes.push(el("p", { class: "section-note section-note--flush" },
         `Map: ${(sgMap.keys || 0).toLocaleString()} subscription key${sgMap.keys === 1 ? "" : "s"} → `
         + `${(sgMap.groups || 0).toLocaleString()} group${sgMap.groups === 1 ? "" : "s"} (tag `,
         el("code", {}, sgMap.tagKey || "Wiz/provisioning"),
@@ -474,7 +474,7 @@ export async function renderAttribution(main, params, ctx) {
       // Keys present but nothing joins → a subscription-identity mismatch, not an empty map.
       // Its own paragraph (statusPill is inline, but the copy is a distinct diagnostic line).
       if (stuck) {
-        notes.push(el("p", { class: "small", style: "margin-top:-4px" },
+        notes.push(el("p", { class: "small tuck-up" },
           statusPill("bad", "not joining"),
           " The map has keys but no finding matched — the subscription identity on findings "
           + "isn’t joining the map. Check the tag key and that findings carry the same "
@@ -494,7 +494,7 @@ export async function renderAttribution(main, params, ctx) {
           if (i) chips.push(document.createTextNode(", "));
           chips.push(el("code", {}, k));
         });
-        notes.push(el("p", { class: "small muted", style: "margin-top:-4px" },
+        notes.push(el("p", { class: "small muted tuck-up" },
           "Indexed under (sample): ", ...chips,
           more > 0 ? ` … (+${more.toLocaleString()} more)` : "",
           ". Compare these against the subscription id / external id / name your findings "
@@ -519,7 +519,7 @@ export async function renderAttribution(main, params, ctx) {
         cell: (g) => {
           // A non-empty "(none)" row is the unresolved gap; resolved groups carry no marker.
           const marker = g.unresolved && g.findings > 0 ? statusPill("bad", "unresolved") : null;
-          return el("span", { style: "display:inline-flex; align-items:center; gap:8px" },
+          return el("span", { class: "inline-cluster" },
             el("strong", {}, g.group), marker);
         },
       },
@@ -803,15 +803,10 @@ export async function renderAttribution(main, params, ctx) {
 
   // ----------------------------------------------------------------- helpers
 
-  /** Single-value proportional bar reusing the mix-strip idiom: one accent fill at `fraction`
-   *  of the width. Decorative — the exact percent rides in the visible .mix-text beside it. */
+  /** Single-value proportional bar: the shared `meter()`, one accent fill at `fraction` of the
+   *  width. Decorative — the exact percent rides in the visible .mix-text beside it. */
   function shareBar(fraction) {
-    const strip = el("div", { class: "mix-strip", "aria-hidden": "true" });
-    const span = el("span", {});
-    span.style.width = `${Math.max(0, Math.min(1, fraction)) * 100}%`;
-    span.style.background = "var(--accent)";
-    strip.append(span);
-    return strip;
+    return meter(fraction, { max: 1, decorative: true, className: "meter--accent" });
   }
 
   /**

@@ -255,21 +255,21 @@ function categoryScopeRow(row, scale) {
     : el("span", { class: "small" }, "Not measured");
   const nameLine = el(
     "p",
-    { class: "small", style: "margin:0 0 4px; display:flex; justify-content:space-between; gap:8px" },
+    { class: "small readout-label readout-label--split" },
     el("strong", {}, row.name),
     countEl,
   );
   const datedLine = row.dated
     ? el(
       "p",
-      { class: "small muted", style: "margin:4px 0 0" },
+      { class: "small muted readout-note" },
       `Measured ${row.dated.measuredAt}, ${row.dated.measuredScope}: `
       + `${fmt(row.dated.count)} open issue${row.dated.count === 1 ? "" : "s"} — a one-off `
       + "figure, never live.",
     )
     : null;
   return el(
-    "div", { class: "category-scope-row", style: "margin:0 0 12px" }, nameLine, bar, datedLine,
+    "div", { class: "category-scope-row readout-row" }, nameLine, bar, datedLine,
   );
 }
 
@@ -391,8 +391,8 @@ export function termCoverageReadout(termCoverage, timeSource) {
   if (!model) return null;
   const rows = model.terms.map((t) => el(
     "div",
-    { class: "term-coverage-row", style: "margin:0 0 10px" },
-    el("p", { class: "small", style: "margin:0 0 2px" }, el("strong", {}, t.label)),
+    { class: "term-coverage-row readout-row" },
+    el("p", { class: "small readout-label" }, el("strong", {}, t.label)),
     impactSplit(t.splitModel),
   ));
   const note = el(
@@ -452,8 +452,8 @@ function histBars(counts) {
 export function rankHistogramReadout(model) {
   if (!model) return null;
   const row = (label, counts) => el(
-    "div", { class: "rank-hist-row", style: "margin:0 0 8px" },
-    el("p", { class: "small", style: "margin:0 0 2px" }, label),
+    "div", { class: "rank-hist-row readout-row" },
+    el("p", { class: "small readout-label" }, label),
     el(
       "div",
       { class: "cut-hist", role: "img", "aria-label": `${label} score histogram, ${fmt(model.total)} rows` },

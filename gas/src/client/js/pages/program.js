@@ -21,7 +21,7 @@ import {
   DEFAULT_PAGE_SIZE, PAGE_SIZES, absent, absentText, bookTip, chartTable, clear, dataTable,
   downloadText, el, emptyState, errorState, fmtCount, fmtDate,
   glossaryTip, meter, num, openSheet, pageHeader, pct1, quadModel, quadTable,
-  scopeBar, sectionLabel, sevBadge, skeleton, statRow, statusPill, tableFooter, tipLabel,
+  scopeBar, sectionLabel, sevBadge, skeleton, skeletonStack, statRow, statusPill, tableFooter, tipLabel,
   toast,
   disclosure,
 } from "../ui.js";
@@ -522,9 +522,8 @@ export async function renderProgram(main, _params, ctx) {
         skeleton("stat", { width: "260px", height: "56px" })),
     );
     clear(matrixHost).append(
-      el("div", { style: "margin:28px 0 12px" }, skeleton("line", { width: "180px" })),
-      el("div", { class: "table-wrap", style: "padding:14px" },
-        ...[0, 1, 2].map(() => el("div", { style: "margin:10px 0" }, skeleton("line")))),
+      el("div", { class: "skel-section" }, skeleton("line", { width: "180px" })),
+      el("div", { class: "table-wrap skel-table" }, skeletonStack(3)),
     );
   }
 
@@ -928,7 +927,7 @@ export async function renderProgram(main, _params, ctx) {
             { detail: String((e && e.message) || e) }));
         }
       };
-      body.append(el("div", { style: "margin-bottom:12px" },
+      body.append(el("div", { class: "lead-in" },
         el("button", { class: "linklike", onclick: () => exportCsv(quadrant) },
           "Download this cell as CSV")));
       load();
@@ -1307,9 +1306,6 @@ export async function renderProgram(main, _params, ctx) {
     clear(methodHost);
     const m = p.matrix;
     const t = p.toggles || {};
-    const details = el("details", { class: "prog-method" });
-    details.append(el("summary", {}, "How these numbers are calculated"));
-
     const dl = el("dl", { class: "prog-method-list" });
     const item = (term, ...body) => {
       dl.append(el("dt", {}, term));
@@ -1374,10 +1370,13 @@ export async function renderProgram(main, _params, ctx) {
       "'high risk AND remediated' in a spreadsheet should equal the " + m.tp.toLocaleString() +
       " shown above.");
 
-    details.append(dl);
-    details.append(el("div", { style: "margin-top:12px" },
-      el("button", { class: "linklike", onclick: () => exportCsv("") },
-        "Download classified rows (CSV)")));
-    methodHost.append(details);
+    // The shared "why" disclosure (gas_shared/ui/settings.js), inside a block that keeps this
+    // page's hairline and rhythm. It was a hand-built <details> with its own summary rules.
+    methodHost.append(el("div", { class: "prog-method" },
+      disclosure("How these numbers are calculated",
+        dl,
+        el("div", { class: "prog-method-actions" },
+          el("button", { class: "linklike", onclick: () => exportCsv("") },
+            "Download classified rows (CSV)")))));
   }
 }

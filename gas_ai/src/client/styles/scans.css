@@ -34,7 +34,7 @@
 .cov-key[data-state="live"] .cov-key-glyph { color: var(--ok); }
 .cov-key[data-state="partial"] .cov-key-glyph { color: var(--warn); }
 .cov-key[data-state="unscanned"] .cov-key-glyph { color: var(--sev-info-text); }
-.cov-key-num { font-weight: 600; color: var(--ink); }
+.cov-key-num { font-weight: var(--fw-semibold); color: var(--ink); }
 
 /* --------------------------------------------------------------- provenance diagram */
 /* Below its minimum the diagram scrolls rather than shrinking: 11px labels reduced to fit
@@ -59,7 +59,7 @@
 .cov-node[data-state="unscanned"] .cov-node-box {
   fill: var(--page); stroke: rgba(0, 0, 0, 0.28); stroke-dasharray: 5 4;
 }
-.cov-node-name { font-size: var(--fs-label); font-weight: 600; fill: var(--ink); }
+.cov-node-name { font-size: var(--fs-label); font-weight: var(--fw-semibold); fill: var(--ink); }
 .cov-node-fig { font-size: var(--fs-micro); fill: var(--svg-text-2); font-variant-numeric: tabular-nums; }
 .cov-node[data-state="unscanned"] .cov-node-name { fill: var(--svg-text-2); }
 
@@ -72,7 +72,7 @@
 .cov-dot[data-state="partial"] .cov-dot-fill { fill: var(--warn); }
 
 .cov-spine { fill: var(--surface); stroke: var(--hairline); }
-.cov-spine-title { font-size: var(--fs-label); font-weight: 600; fill: var(--ink); }
+.cov-spine-title { font-size: var(--fs-label); font-weight: var(--fw-semibold); fill: var(--ink); }
 .cov-spine-step { font-size: var(--fs-micro); fill: var(--svg-text-2); }
 
 /* The edge ink mirrors .gedge (graph.css) so the two pictures read as one system. An
@@ -85,7 +85,7 @@
 .cov-edge[data-state="unscanned"] { stroke-dasharray: 5 4; stroke-opacity: 0.55; }
 
 .cov-dest-box { fill: var(--page); stroke: var(--accent); stroke-opacity: 0.35; }
-.cov-dest-name { font-size: var(--fs-label); font-weight: 600; fill: var(--accent); }
+.cov-dest-name { font-size: var(--fs-label); font-weight: var(--fw-semibold); fill: var(--accent); }
 .cov-dest-sub { font-size: var(--fs-micro); fill: var(--svg-text-2); }
 
 /* Lighting one area from its register row. Opacity only, so nothing moves. */
@@ -109,12 +109,12 @@
    the whole point of the row. */
 .cov-register td .cov-q { white-space: normal; max-width: 34ch; display: inline-block; }
 .cov-q {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: var(--fs-label); color: var(--text-3);
 }
-.cov-area { font-weight: 600; color: var(--ink); }
+.cov-area { font-weight: var(--fw-semibold); color: var(--ink); }
 .cov-figure { display: flex; flex-direction: column; gap: var(--space-half); }
-.cov-figure-value { font-weight: 600; font-variant-numeric: tabular-nums; }
+.cov-figure-value { font-weight: var(--fw-semibold); font-variant-numeric: tabular-nums; }
 .cov-figure-unit { font-size: var(--fs-label); color: var(--text-3); }
 .cov-lands { color: var(--text-2); }
 .cov-none { color: var(--text-3); }
@@ -150,20 +150,20 @@
   content: ""; position: absolute; left: 7.5px; top: 16px; bottom: -5px;
   width: 1px; background: var(--hairline);
 }
-.prov-k { font-size: var(--fs-micro); font-weight: 600; letter-spacing: .05em; text-transform: uppercase;
+.prov-k { font-size: var(--fs-micro); font-weight: var(--fw-semibold); letter-spacing: .05em; text-transform: uppercase;
   color: var(--text-3); }
 .prov-v { font-size: var(--fs-label); color: var(--ink); }
-.prov-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+.prov-mono { font-family: var(--font-mono);
   font-size: var(--fs-label); overflow-wrap: anywhere; }
 .prov-sub { font-size: var(--fs-label); color: var(--text-3); }
 
 /* ------------------------------------------------------------------ panel: one query */
 .step-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-bottom: var(--space-3); }
-.step-id { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: var(--fs-label); font-weight: 600; }
+.step-id { font-family: var(--font-mono);
+  font-size: var(--fs-label); font-weight: var(--fw-semibold); }
 .q-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
   margin: var(--space-3) 0 var(--space-1); }
-.q-label { font-size: var(--fs-micro); font-weight: 600; letter-spacing: .05em; text-transform: uppercase;
+.q-label { font-size: var(--fs-micro); font-weight: var(--fw-semibold); letter-spacing: .05em; text-transform: uppercase;
   color: var(--text-3); }
 .q-cap { font-size: var(--fs-micro); color: var(--text-3); margin-top: var(--space-2); }
 
@@ -173,7 +173,7 @@
   margin-bottom: var(--space-2); }
 .vars-fields { display: flex; flex-direction: column; gap: var(--space-3); }
 .vars-field { display: flex; flex-direction: column; gap: var(--space-1); }
-.vars-label { font-size: var(--fs-label); font-weight: 600; }
+.vars-label { font-size: var(--fs-label); font-weight: var(--fw-semibold); }
 .vars-help { font-size: var(--fs-label); color: var(--text-3); margin: 0; max-width: var(--measure); }
 .vars-select { font: inherit; font-size: var(--fs-label); padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm);
   border: 1px solid var(--hairline); background: var(--page); align-self: flex-start; }
@@ -183,15 +183,12 @@
 .chipset { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 .chipset-empty { font-size: var(--fs-label); color: var(--warn); }
 .chip { display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--fs-label);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   background: var(--surface); border: 1px solid var(--hairline);
   border-radius: var(--radius-pill); padding: var(--space-half) var(--space-1) var(--space-half) var(--space-2); }
-.chip-x { border: none; background: none; cursor: pointer; color: var(--text-3);
-  font-size: var(--fs-label); line-height: 1; padding: 0 var(--space-1); border-radius: 50%; }
-.chip-x:hover { background: var(--wash-hover); color: var(--ink); }
-.chip-add { display: flex; gap: var(--space-1); margin-top: var(--space-half); }
-.chip-input { font: inherit; font-size: var(--fs-label); padding: var(--space-1) var(--space-2); min-width: 0; flex: 1;
-  border: 1px solid var(--hairline); border-radius: var(--radius-sm); background: var(--page); }
+/* The step variables' value lists are the shared `tokenList`; its empty line keeps this
+   sheet's warning colour, because an empty list here means "ask Wiz for everything". */
+.vars-field .token-empty { color: var(--warn); }
 
 .vars-json { margin-top: var(--space-3); }
 .vars-json summary { font-size: var(--fs-label); color: var(--text-2); cursor: pointer; }
@@ -211,7 +208,7 @@
 /* ------------------------------------------------------- sheet body, page-local prose */
 .cov-para { margin: 0; font-size: var(--fs-body); color: var(--text-2); }
 .cov-sheet-figure { color: var(--ink); font-size: var(--fs-body); }
-.cov-sheet-figure strong { font-size: var(--fs-display-sm); font-weight: 600; }
+.cov-sheet-figure strong { font-size: var(--fs-display-sm); font-weight: var(--fw-semibold); }
 .cov-note {
   font-size: var(--fs-label); color: var(--text-2); background: rgba(0, 0, 0, 0.03);
   border-radius: var(--radius-md); padding: var(--space-2) var(--space-2); margin: var(--space-2) 0 0;
@@ -222,7 +219,7 @@
    the name as the boilerplate. Scrolls in its own box so a long message cannot widen the
    drawer — the page body must never scroll sideways. */
 .cov-reason {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: var(--fs-label); line-height: 1.55; color: var(--ink);
   background: var(--surface); border: 1px solid var(--hairline);
   border-radius: var(--radius-md);
@@ -246,7 +243,7 @@
   display: grid; grid-template-columns: minmax(120px, 190px) 1fr 48px;
   align-items: center; gap: var(--space-3);
 }
-.reach-stage-label { font-size: var(--fs-label); font-weight: 600; color: var(--ink); }
+.reach-stage-label { font-size: var(--fs-label); font-weight: var(--fw-semibold); color: var(--ink); }
 .reach-stage-figure { display: flex; align-items: center; gap: var(--space-2); }
 .reach-stage-count {
   min-width: 84px; font-size: var(--fs-label); font-variant-numeric: tabular-nums; color: var(--ink);
@@ -262,16 +259,29 @@
   font-size: var(--fs-label); color: var(--text-3); text-align: right; font-variant-numeric: tabular-nums;
 }
 
-.reach-kind-ai { font-weight: 600; color: var(--ink); }
+.reach-kind-ai { font-weight: var(--fw-semibold); color: var(--ink); }
 .reach-kinds td .num { font-variant-numeric: tabular-nums; }
 
 .reach-edges { margin-top: var(--space-1); }
+.reach-edges-label { margin-top: var(--space-2); }
 .reach-chip-dead { color: var(--text-3); opacity: 0.75; }
 
 @media (max-width: 620px) {
   .reach-stage { grid-template-columns: 1fr; gap: var(--space-1); }
   .reach-stage-pct { text-align: left; }
 }
+
+/* ------------------------------------------------------- lines that were inline */
+/* The page's loading stub (pages/scans.js): two row stacks under their titles. The 20px
+   above the second title is off the ramp; it was the stub's inline value. */
+.cov-skel-stack { margin-top: var(--space-2); }
+.cov-skel-head { margin-top: 20px; }
+/* The scan sheet's "Where the results land" caption (pages/scanSheet.js). */
+.scan-dest-sub { margin-top: var(--space-1); }
+/* The Data page's Reset card (pages/data.js): its prose takes the room, the button sits at
+   the end. */
+.reset-card { display: flex; gap: var(--space-3); align-items: center; }
+.reset-card__body { flex: 1; }
 
 /* ------------------------------------------------------------------- narrow widths */
 /* The 980px two-up step that used to live here for `.cov-header` retired with the class —

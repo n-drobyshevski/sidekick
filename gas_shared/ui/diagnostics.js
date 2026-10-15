@@ -122,7 +122,7 @@ export function storageBody({ used, total, label, state = "", note, lines } = {}
   for (const line of Array.isArray(lines) ? lines : []) {
     if (line === null || line === undefined || String(line).trim() === "") continue;
     out.push(el("p", {
-      class: "muted small", style: first ? "margin:10px 0 0" : "margin:6px 0 0",
+      class: "muted small health-line" + (first ? " health-line--lead" : ""),
     }, line));
     first = false;
   }
@@ -433,7 +433,7 @@ export function errorLogBody({
   const rows = Array.isArray(items) ? items : [];
   const out = [];
   if (onRefresh || onClear) {
-    out.push(el("div", { style: "display:flex; gap:8px; margin-bottom:12px" },
+    out.push(el("div", { class: "health-actions" },
       onRefresh ? el("button", { onclick: () => onRefresh() }, "Refresh") : null,
       onClear
         ? el("button", { disabled: rows.length ? null : true, onclick: () => onClear() }, "Clear log")
@@ -448,7 +448,7 @@ export function errorLogBody({
   const tbody = el("tbody", {});
   for (const e of rows) {
     tbody.append(el("tr", {},
-      el("td", { class: "small muted", style: "white-space:nowrap" },
+      el("td", { class: "small muted health-when" },
         e.at ? (fmtDateTime ? fmtDateTime(e.at) : String(e.at)) : absent()),
       // absent(), not a bolded em dash: an error the log could not name is a gap in the
       // record, and printing it in the same weight as a real operation name claims one.
@@ -456,7 +456,7 @@ export function errorLogBody({
       el("td", {}, e.kind ? statusPill(e.kind === "error" ? "bad" : "warn", e.kind) : absent()),
       el("td", {},
         e.message
-          ? el("code", { class: "small", style: "white-space:pre-wrap; word-break:break-word" },
+          ? el("code", { class: "small health-message" },
             e.message)
           : absent()),
     ));

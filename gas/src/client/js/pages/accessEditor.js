@@ -131,8 +131,7 @@ export async function renderAccessPanel() {
   }
 
   function addRow(placeholder, add) {
-    const input = el("input", { type: "text", placeholder, "aria-label": placeholder,
-      style: "flex:1; min-height:30px" });
+    const input = el("input", { type: "text", class: "add-input", placeholder, "aria-label": placeholder });
     const commit = () => {
       const v = input.value.trim().toLowerCase();
       if (!v) return true;

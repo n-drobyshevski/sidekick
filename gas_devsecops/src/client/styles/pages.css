@@ -1,8 +1,8 @@
 /* THIS APP'S PAGES, and nothing a sibling would want.
    Everything the three sidekicks draw the same way lives in gas_shared/styles/; the rules
    below dress pages only this register draws - the coverage headline, the signal-rows
-   tri-state bar, the capacity verdict word, the repository foothold cell, the scan-scopes
-   list and the history spiral. Imported after the shared
+   tri-state bar, the capacity verdict word, the repository foothold cell and the history
+   spiral. Imported after the shared
    sheets and before gas_shared/styles/overrides.css, which must stay last.
 
    P3.4b (2026-09-08) promoted the rules that used to live here BYTE-IDENTICAL to gas's own
@@ -19,35 +19,18 @@
    them for every register rather than this one. The class name did not change with the
    move, and dev/densityModel.mjs's isotype bucket is why - see that file's own comment. */
 
-/* ------------------------------------------------------------------------ .section-note
-   The line under a section heading that is prose, not a chart caption (`.chart-note` is the
-   canvas's own version of this same idea, in tables.css) - what a table below is scoped to,
-   or the one sentence a movement block earns instead of five. Pulled up half a step toward
-   its heading, the way a caption reads as belonging to what is above it rather than what
-   follows; capped at `--measure` so a wide viewport does not stretch a sentence edge to edge. */
-.section-note {
-  margin: calc(-1 * var(--space-1)) 0 var(--space-3);
-  font-size: var(--fs-label); color: var(--text-2); max-width: var(--measure);
-}
-
-/* --------------------------------------------------------------------------- .scan-scopes
-   The Executive front door's "what that sync covered" list - one register per line, muted
-   against the paragraphs around it. A bare `<ul>` carries the browser's own 40px indent and
-   paragraph-height gaps, which is print-era default styling this app never uses anywhere
-   else; `display: grid` gives it the same row rhythm as gas_shared's `.movement-rows`, and
-   `::marker` (the same idiom gas_shared's `.fixnext-item` already uses) lets the bullet
-   itself go muted without a `list-style: none` + hand-drawn dot detour. */
-.scan-scopes {
-  display: grid; gap: var(--space-1); margin: var(--space-2) 0 0; padding-left: 1.1em;
-}
-.scan-scopes li::marker { color: var(--text-3); }
-
 /* ------------------------------------------------------------------------------ .spiral
    Scan history's quarterly spiral (history.js, spiralSvg). The sizing used to be an inline
    `style` on the element itself; a rule here is the one every other sized SVG in this app
    already gets (the isotype marks above are the HTML-background version of the same
    problem). */
 .spiral { width: 100%; max-width: 360px; height: auto; display: block; margin: 0 auto var(--space-3); }
+/* Its inks, which were inline `style`s on each element (spiralSvg / spiralMark): the rings and
+   their quarter keys in the surrounding text colour, the path and the marks in the accent INK. */
+.spiral__ring { stroke: currentColor; }
+.spiral__key { fill: currentColor; }
+.spiral__path { stroke: var(--accent-text); }
+.spiral__mark { fill: var(--accent-text); }
 /* Forced colours drop an SVG `fill` the same way base.css's isotype comment already found
    for a plain `background`: a filled circle or square resolves to Canvas, the page's own
    ground, and the scan marks disappear against it while the quarter rings (already
@@ -90,7 +73,7 @@
 .signal-row__head {
   display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
 }
-.signal-row__name { font-weight: 600; }
+.signal-row__name { font-weight: var(--fw-semibold); }
 /* The bar sits directly under the name it belongs to; `--measure` is kept from `.axis-bar` so
    the legend beside it wraps at a readable width rather than at the card's own edge. */
 .signal-row .axis-bar { margin: var(--space-2) 0 0; }
@@ -110,50 +93,6 @@
 
 /* The verdict dot-and-word moved to gas_shared/styles/components.css, beside ui/verdict.js.
    gas drew byte-identical rules for it, which is the promotion trigger. */
-
-/* ------------------------------------------ Repositories: the team x idle-bucket heatmap
-   An app-local table (`table.data.heat`), not a component: this is the one grid in the app
-   whose cells carry an ordinal shade, and nothing in `gas_shared` draws one.
-
-   THE RAMP IS NEUTRAL INK, AND THAT IS A RULE RATHER THAN A PREFERENCE. DESIGN.md §4 says
-   outright that if this register ever grows an ordinal scale the brand yellow would be tier 2
-   of 4 (it is literally gas_ai's `--rank-2-solid`) and that at that point "the ramp moves, not
-   the brand" — so the brand is not in the ramp at all. The severity palette is the other
-   thing a reader already knows the meaning of, and idle time is not severity: borrowing
-   red/orange/amber here would have a 70-day-idle cell read as "HIGH". What is left is ink at
-   four alphas over the page's own ground — a scale with no second meaning to mistake it for.
-
-   AND THE COUNT IS ALWAYS PRINTED. The shade is the redundancy, never the reading: every cell
-   spells its repository count and, under it, the open findings sitting in that bucket, so the
-   grid survives greyscale, a dichromat, and the forced-colors rule below that strips the
-   fills outright (`background` is one of the properties forced-colors mode overrides, so the
-   alphas would land on a system ground they were never measured against). */
-/* The caption is the grid's method sentence and reads as prose, so it is left-aligned and
-   sits above the header rather than centred over it the way a browser's default caption does.
-   No other table in this app has one — `dataTable` puts its explanation in a `<p>` beside the
-   table — but this grid's columns move with the operator's threshold, and a sentence a reader
-   might not connect to the table it belongs to is worse than no sentence. */
-table.data.heat caption {
-  caption-side: top; text-align: left; padding: 0 0 var(--space-2);
-}
-/* A project name is a row LABEL, not a column heading: the base `table.data th` rule dresses
-   every `th` as an uppercase micro-label, which is right above a column of numbers and wrong
-   in front of one. Only the alignment, weight and case are restored; the ground stays. */
-table.data.heat th[scope="row"] {
-  font-size: var(--fs-body); font-weight: 600; letter-spacing: normal;
-  text-transform: none; color: var(--ink);
-}
-.heat-cell[data-level="0"] { background: transparent; }
-.heat-cell[data-level="1"] { background: rgba(23, 23, 23, 0.06); }
-.heat-cell[data-level="2"] { background: rgba(23, 23, 23, 0.12); }
-.heat-cell[data-level="3"] { background: rgba(23, 23, 23, 0.20); }
-.heat-cell[data-level="4"] { background: rgba(23, 23, 23, 0.30); }
-/* The open-findings line under the count, on its own line rather than trailing it: a cell is
-   a figure and its denominator-in-miniature, and inline they read as one run-on number. */
-.heat-cell > .small { display: block; }
-@media (forced-colors: active) {
-  .heat-cell { background: transparent; }
-}
 
 /* ------------------------------------------------ Repositories: the foothold cell, as a verdict
    Yes/No used to print as plain text; the glyph now carries the same word rather than replacing
@@ -206,20 +145,12 @@ table.data.heat th[scope="row"] {
    FOR PROMOTION to gas_shared/styles/settings.css once a second app draws this same caption. */
 .settings-retention-warn { display: block; margin-top: var(--space-1); color: var(--warn); }
 
-/* ------------------------------------------------------ Settings → Access (accessEditor.js)
-   The roster editor ported from gas/, which carries these rules in its own pages.css. Kept
-   app-local like there; components.css holds the .access-row / .access-list primitives. */
-.sub-add { display: flex; gap: 6px; margin-top: 6px; }
-.scope-block { display: flex; flex-direction: column; gap: var(--space-1); }
-.scope-block__note { margin: var(--space-1) 0 var(--space-2); }
-.scope-block--divided {
-  margin-top: var(--space-4); padding-top: var(--space-4); border-top: 1px solid var(--hairline);
-}
-.cond-remove {
-  min-height: 0; padding: var(--space-half) 7px; font-size: var(--fs-label); line-height: 1;
-  background: none; border: 1px solid transparent; box-shadow: none;
-  color: var(--text-3); border-radius: var(--radius-sm); margin-left: auto;
-}
-.cond-remove:hover { background: var(--wash-hover); color: var(--ink); border-color: var(--hairline); }
-.access-row:hover { background: var(--surface-2); }
-.access-row--locked:hover { background: var(--surface); }
+/* ------------------------------------------------- Settings / Data: lines that were inline
+   strandedRowsReadout (settingsReadouts.js): the state pill and its sentence on one row. Not
+   `.settings-inline`, which wraps — a sentence this long would drop below its pill there. */
+.stranded-readout { display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-3); }
+/* createSlaCutlineReadout: the headline over the histogram, and the saved value under it. */
+.sla-cutline__headline { margin: var(--space-2) 0 0; }
+.sla-cutline__saved { margin: var(--space-half) 0 0; }
+/* The Data page's "Clear log" row above the recent-errors table. */
+.errors-actions { margin-bottom: var(--space-3); }

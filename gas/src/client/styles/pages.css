@@ -14,15 +14,68 @@
    making them look like the shared component before the markup matches it would be a
    silent visual change with nothing to point at.
 
-   TOKENISATION RULE USED THROUGHOUT: a length moves onto --space-* only where it is
-   already ON that scale (2/4/8/12/16/24/32/48). 5, 6, 7, 9, 10, 14, 18, 20, 26, 28, 34,
-   38, 53, 58, 64, 84, 108, 112, 180, 320, 420 and the two `max()` chart-grid gutters stay
-   literal — nudging a value to reach a token is a visual change wearing a cleanup's
-   clothes, and this package has enough real ones already. */
+   TOKENISATION RULE USED THROUGHOUT: a spacing length within 2px of a --space-* step
+   (2/4/8/12/16/24/32/48) is written as that step; a tie (3, 6, 10, 14) goes UP, toward the
+   layout tier tokens.base.css says this tree is short of. Anything further off stays literal
+   (20, 28, the 38px condition indent, the 53px sticky offset), and so do sizes that are not
+   spacing (control heights, swatches, caps) and the chart-grid's 14px gutter, which the two
+   `max()` track formulas and mttr.js's row-gap argument both do arithmetic on.
+
+   NO STATIC INLINE STYLE IN src/client/js. A page module's fixed margin, gap or width is a
+   class here; what stays inline is data (a computed width, a tree indent, a tier colour the
+   canvas also paints), a custom property, or a runtime show/hide. */
 
 /* ------------------------------------------------------------------- typography */
 /* A note that sits directly under a section label (structural, not a pixel nudge). */
-.section-note { margin: -4px 0 var(--space-3); font-size: var(--fs-label); color: var(--text-2); }
+.section-note { margin: calc(var(--space-1) * -1) 0 var(--space-3); font-size: var(--fs-label); color: var(--text-2); }
+/* The same note where nothing above it needs pulling up to (Attribution's map-health lines). */
+.section-note--flush { margin-top: 0; }
+
+/* ---------------------------------------------------------------- spacing roles */
+/* Named for the job, not the number: a lead-in above what it introduces, a block that follows
+   its sibling, a line tucked up under the one above, and a note trailing what it qualifies.
+   Each sets only the sides its inline style set, so a <p>'s own 1em on the other side holds. */
+.lead-in { margin: 0 0 var(--space-3); }
+.gap-above { margin-top: var(--space-3); }
+.tuck-up { margin-top: calc(var(--space-1) * -1); }
+/* A note trailing what it qualifies is the shared `.table-note` (tables.css); these two
+   adjust its gap. The Trends row's honesty note hugs the row on purpose (mttr.js). */
+.table-note--hug { margin-top: var(--space-1); }
+.table-note--loose { margin-top: var(--space-3); }
+/* A short list under a sentence: a step of indent rather than the UA's 40px. */
+.indent-list { padding-left: var(--space-4); }
+
+/* ------------------------------------------------------------------ inline rows */
+/* A control and what sits beside it (a number input and its unit, a select and its ✕). */
+.ctl-row { display: flex; align-items: center; gap: var(--space-2); }
+/* A wrapping row of page-scale buttons. */
+.btn-row { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+/* Text-weight link buttons, spaced wider than buttons because they carry no box. */
+.link-row { display: flex; gap: var(--space-4); }
+/* A section head's control cluster (a toggle beside a window picker). */
+.head-controls { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+/* A name and its marker inside one table cell. */
+.inline-cluster { display: inline-flex; align-items: center; gap: var(--space-2); }
+.inline-cluster--wrap { flex-wrap: wrap; }
+/* A chip trailing the name or date it qualifies. */
+.trail-chip { margin-left: var(--space-2); }
+
+/* ------------------------------------------------------------- loading stubs */
+/* Wrappers that space skeleton lines the way the real block spaces its content: a label line
+   over a figure, a sub-line under it, a card title over its chart, a section label over its
+   section (28px, under the real label's 32, as it always was), and a table body of lines. */
+.skel-label { margin-bottom: var(--space-2); }
+.skel-sub { margin-top: var(--space-3); }
+.skel-card-title { margin-bottom: var(--space-3); }
+.skel-section { margin: 28px 0 var(--space-3); }
+.skel-table { padding: var(--space-5) var(--space-4); }
+
+/* ---------------------------------------------------------------------- inputs */
+/* A number field sized for a few digits and its unit, not the row it sits in. */
+input.input-num { width: 96px; }
+input.input-full { width: 100%; }
+/* `input.input-compact`, the 30px inline add/edit field, sits after `.cond-fields input` in
+   the domain rule builder block: the two tie on specificity, so source order decides. */
 
 /* ------------------------------------------------------------------------ cards */
 /* Fixed two-up. For a four-tile row sitting in half the page width beside a chart, where
@@ -100,13 +153,17 @@
   outline: 2px solid var(--accent-text); outline-offset: 2px; border-radius: var(--radius-xs);
 }
 .tree-caret-spacer { display: inline-block; width: 12px; }
+/* The Unassigned / (none) row's "investigate →" escape hatch, after the group's own label. */
+.tree-link { margin-left: var(--space-2); }
+/* The tree's "click a group to drill in" line under its table (top only: a <p> keeps its 1em). */
+.tree-foot { margin-top: var(--space-2); }
 
 /* --------------------------------------------------------------- severity pills */
 /* components.css carries the five graded levels; UNKNOWN is this register's own sixth. */
 .sev-pill[aria-pressed="true"].sev-UNKNOWN {
-  background: rgba(71, 85, 105, 0.14);
+  background: color-mix(in srgb, var(--sev-unknown) 14%, transparent);
   color: var(--sev-unknown-text);
-  border-color: rgba(71, 85, 105, 0.3);
+  border-color: color-mix(in srgb, var(--sev-unknown) 30%, transparent);
 }
 /* A leading check makes on/off legible without relying on the ~14% colour tint alone. */
 .sev-pill[aria-pressed="true"]::before {
@@ -128,37 +185,34 @@
    color-mix over --accent rather than as a second copy of #2563eb — the brand belongs in
    styles/tokens.css and nowhere else, and 22% / 14% of the accent over transparent
    resolves to exactly the rgba() literals they replace. */
-/* ui/scopeBar.js builds these with the shared `filterChipRow` (gas_shared/ui/controls.js)
-   now, so the DOM is `.filter-chips.scope-bar > .filter-chip > .filter-chip-body >
-   (.filter-chip-key + .filter-chip-value)` plus a `.filter-chip-x`. The rules below are the
-   old `.scope-chip*` declarations, unchanged in value, moved onto those selectors.
+/* ui/scopeBar.js builds these with the shared `filterChipRow` (gas_shared/ui/controls.js),
+   so the DOM is `.filter-chips.scope-bar > .filter-chip > .filter-chip-body >
+   (.filter-chip-key + .filter-chip-value)` plus a `.filter-chip-x`, and the chip's geometry,
+   key/value weights and ✕ all come from components.css.
 
-   THIS IS DRESSING A SHARED COMPONENT, NOT FORKING ONE, and the difference is worth stating
-   because the file it is in usually means the opposite. `gas_shared/styles/components.css`
-   carries only the chip BASE for `.filter-chip` — `display: inline-flex`, centre, 12px/600,
-   shared with `.sev-badge`, `.pill` and `.aars-chip` — and no rule at all for the row, the
-   key, the value or the ✕. There is nowhere else for the rest to live: adding it to
-   gas_shared is a change this package is not allowed to make. When it lands there, delete
-   everything below except the two `--accent` mixes, which are this brand's. */
-.filter-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0 0 18px; }
-.filter-chip {
-  gap: var(--space-1);
-  padding: 3px var(--space-1) 3px 10px;
-  border-radius: var(--radius-pill);
+   ONLY THE BRAND IS DRESSED HERE, AND ONLY ON THE SCOPE BAR. This block used to re-declare
+   the whole chip, unscoped, on the belief that the shared sheet had no rule for the row, the
+   key, the value or the ✕ — stale once components.css grew them. The two copies then fought:
+   the shared `.filter-chip:not([class*="sev-"])` (0,2,0) beat this file's `.filter-chip`
+   (0,1,0), so the accent wash below was dead while the accent border still won, the left
+   padding stacked (10px on the chip + 8px on the body), and every filterChipRow in the app
+   (coldZone's included) picked up both the shared toolbar band and this margin. Scoped to
+   `.scope-bar` and matching the shared selector's shape, the wash reaches the chip again and
+   nothing else is touched.
+
+   The scope bar is not a toolbar band: it sits loose above the page's figures, so the band's
+   padding, hairline and 37px floor come off and the row keeps its own rhythm. */
+.filter-chips.scope-bar {
+  gap: var(--space-2); min-height: 0; padding: 0; border-bottom: none;
+  margin: 0 0 var(--space-4);
+}
+.scope-bar .filter-chip:not([class*="sev-"]) {
   background: var(--accent-wash); color: var(--sev-low-text);
-  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
 }
-.filter-chip-body { display: inline-flex; align-items: center; gap: var(--space-1); }
-/* The value is the part a reader is scanning for — the key beside it is the dimension's
-   name and is deliberately the quieter half. This is what the old markup said with a bare
-   <b> around the value. */
-.filter-chip-value { font-weight: var(--fw-semibold); }
-.filter-chip-x {
-  border: none; background: none; box-shadow: none; color: inherit;
-  min-height: 0; padding: var(--space-half) var(--space-1); font-size: var(--fs-micro);
-  line-height: 1; border-radius: var(--radius-pill);
-}
-.filter-chip-x:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.scope-bar .filter-chip-body:hover,
+.scope-bar .filter-chip-x:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.scope-bar .filter-chip-x { color: inherit; }
 
 /* The global filter combobox triggers gain an accent border when active (see
    .combobox-trigger.active in the PENDING P4 block), and the scan zone a hairline accent,
@@ -175,14 +229,7 @@
    gas_shared/ui/controls.js's `segmented()` already is (components.css's `.segmented` rule).
    Every call site now takes that shared control instead; nothing under src/client/js/pages/
    references these three selectors any more (test/segmented.test.js sweeps for a regression). */
-/* Section label + inline control on one row, title left and control right.
-   The wrapper owns the section-label's vertical rhythm; the h2 margin resets to 0. */
-.section-head {
-  display: flex; align-items: baseline; justify-content: space-between;
-  gap: var(--space-3); flex-wrap: wrap; margin: var(--space-6) 0 var(--space-3);
-}
-.section-head .section-label { margin: 0; }
-/* Card title + inline toggle on one row — the in-card variant of .section-head with no
+/* Card title + inline toggle on one row — the in-card variant of .section-head (components.css) with no
    outer margin (the .chart-card padding owns the rhythm). */
 .chart-head {
   display: flex; align-items: baseline; justify-content: space-between;
@@ -208,9 +255,6 @@
    through, and the band is the reader's own place-keeper. */
 table.data tbody tr:hover { background: rgba(0, 0, 0, 0.025); }
 table.data td.clickable { cursor: pointer; }
-/* The principal KPI cell in a comparison pair (e.g. KM median beside the muted naive median):
-   heavier weight + full ink so the eye lands on it first while the .muted comparison recedes. */
-td.num--key { font-weight: var(--fw-semibold); color: var(--ink); }
 .th-sort:focus-visible {
   outline: 2px solid var(--accent-text); outline-offset: 2px; border-radius: var(--radius-xs);
 }
@@ -236,26 +280,35 @@ td.num--key { font-weight: var(--fw-semibold); color: var(--ink); }
    content pane via main's own overflow. At <=800px the inherited .table-wrap contained scroll
    stays (the fixed-viewport shell is off there and sticky headers aren't expected). */
 @media (min-width: 801px) { .history-table-wrap { overflow: visible; } }
+/* The trends grid under History's two section notes: 20px, a beat looser than the note's own
+   12 so the cards read as the section's body rather than as a third note. */
+.history-charts { margin-top: 20px; }
+/* A signed posture delta: rising risk reads bad, resolutions good (the sign carries it too). */
+.delta-good { color: var(--ok); }
+.delta-bad { color: var(--bad); }
 
 /* ---------------------------------------------------- insight ranks & mix strips */
 .rank-list { margin-top: var(--space-1); }
 .rank-row {
   display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4);
-  padding: 10px 0; border-bottom: 1px solid var(--hairline);
+  padding: var(--space-3) 0; border-bottom: 1px solid var(--hairline);
 }
 .rank-row > div:first-child { flex: 1; min-width: 0; }
 .rank-row:last-of-type { border-bottom: none; }
-.mix-strip {
-  display: flex; height: var(--space-2); max-width: 420px; border-radius: var(--radius-pill);
-  overflow: hidden; background: var(--track-bg);
-}
-.mix-strip span { height: 100%; }
+/* The concentration rows' and attribution's one-value bars are the shared `meter()`
+   (components.css `.meter`: 8px, --track-bg, graphite fill); these modifiers keep the two
+   things it does not say — the 420px cap, and each caller's fill. They were a hand-built
+   `.mix-strip` with the fill colour written inline. */
+.meter--rank { max-width: 420px; }
+.meter--rank .meter-fill { background: #6b7280; }
+.meter--accent { max-width: 420px; }
+.meter--accent .meter-fill { background: var(--accent); }
 /* Breakdown severity cell: the proportional strip over its exact per-severity counts. */
 .mix-cell { display: flex; flex-direction: column; gap: var(--space-1); }
 .mix-text { white-space: nowrap; }
 /* Concentration rows carry a name over a proportional bar over a meta line, so the name
    needs its own weight and the value needs to hold the right edge. */
-.rank-row__name { font-weight: var(--fw-medium); margin-bottom: 5px; }
+.rank-row__name { font-weight: var(--fw-medium); margin-bottom: var(--space-1); }
 .rank-row__value { font-weight: var(--fw-semibold); font-size: var(--fs-lead); flex: none; }
 
 /* ------------------------------------------------------------- risk tiers & funnel */
@@ -282,35 +335,34 @@ td.num--key { font-weight: var(--fw-semibold); color: var(--ink); }
    narrowing is visible at a glance; the "% of the step above" line underneath is what stays
    legible when a step drops two orders of magnitude, which on a Critical-only register it
    routinely does. */
-.funnel { display: flex; flex-direction: column; gap: 14px; margin: var(--space-1) 0 var(--space-2); }
+.funnel { display: flex; flex-direction: column; gap: var(--space-4); margin: var(--space-1) 0 var(--space-2); }
 .funnel-step__head {
-  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 5px;
+  display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-1);
 }
 .funnel-step__label { font-weight: var(--fw-medium); flex: 1 1 auto; min-width: 0; }
 .funnel-step__value { font-size: var(--fs-lead); font-weight: var(--fw-semibold); }
 .funnel-step__pct { font-size: var(--fs-label); flex: none; min-width: 84px; text-align: right; }
-.funnel-step__note { margin: 5px 0 0; }
-.funnel-track {
-  height: 10px; border-radius: var(--radius-pill); background: rgba(0, 0, 0, 0.06); overflow: hidden;
-}
-/* The neutral rung fill. #6b7280 is charts.js's own neutral grey, matched by hand so the
-   funnel and the charts beside it read as one system; same argument as the hatch above. */
-.funnel-fill { display: block; height: 100%; background: #6b7280; border-radius: var(--radius-pill); }
+.funnel-step__note { margin: var(--space-1) 0 0; }
+/* The rung bar is the shared `meter()`, 10px tall here. The neutral rung fill, #6b7280, is
+   charts.js's own neutral grey, matched by hand so the funnel and the charts beside it read
+   as one system; same argument as the hatch above. (The rank rows' bar takes it too.) */
+.meter--funnel { height: 10px; }
+.meter--funnel .meter-fill { background: #6b7280; }
 /* The last rung is the one the hero counts, so it takes the page's single saturated mark. */
-.funnel-step--act .funnel-fill { background: var(--sev-critical); }
+.funnel-step--act .meter--funnel .meter-fill { background: var(--sev-critical); }
 .funnel-step--act .funnel-step__value { color: var(--sev-critical-text); }
 
 /* Tier trend small multiples: one frame per tier, each on its own scale. A shared axis
    would flatten the smallest tier onto the baseline and read as "nothing here", which is
    the opposite of what a handful of known-exploited findings means. */
 .spark-grid {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap: 10px;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap: var(--space-3);
 }
 .spark {
   border: 1px solid var(--hairline); border-radius: var(--radius-lg);
-  background: var(--page); padding: var(--space-2) 10px 6px;
+  background: var(--page); padding: var(--space-2) var(--space-3);
 }
-.spark__head { display: flex; align-items: center; gap: 5px; margin-bottom: var(--space-half); }
+.spark__head { display: flex; align-items: center; gap: var(--space-1); margin-bottom: var(--space-half); }
 .spark__glyph { font-size: var(--fs-micro); line-height: 1; flex: none; }
 .spark__label {
   font-size: var(--fs-micro); color: var(--text-2); white-space: nowrap;
@@ -336,13 +388,20 @@ td.num--key { font-weight: var(--fw-semibold); color: var(--ink); }
 /* `.dist-grid` / `.chart-grid .dist-main` (a distribution row's 2-of-3-column span) and
    `.chart-card.fill-height` (an aging card stretching its chart into the row's height) are
    GONE, P3.4b. Measured, `grep -c` over `gas/src/client/js/**`: "dist-grid" 0, "dist-main" 0,
-   "fill-height" 0 — every `.chart-grid` call in mttr.js/overview.js/history.js now sets
-   `align-items:start` as an inline style instead, and overview.js's aging card is a bare
-   `.chart-card`. */
+   "fill-height" 0 — the mttr.js/overview.js chart rows take `.chart-grid--start` below
+   instead, and overview.js's aging card is a bare `.chart-card`. */
+/* Cards keep their own height rather than stretching to the row's tallest. */
+.chart-grid--start { align-items: start; }
+/* A one-line count between a card title and its chart box. */
+.chart-sub { margin-bottom: var(--space-2); }
 /* Survival curve gets a little more vertical room than the 240px trend boxes so the
    staircase reads clearly, especially zoomed into a 5w window. */
 .chart-box.chart-box--tall { height: 300px; }
-.chart-caption { margin-top: 10px; font-size: var(--fs-label); }
+.chart-caption { margin-top: var(--space-3); font-size: var(--fs-label); }
+/* MTTR's remediation split: the host owns the gap between the chart pair and the table under
+   it (mttr.js says why 16 and not 12). The split sheet's own parts are sheet.css's
+   `.split-sheet__*`, shared with gas_devsecops. */
+.split-charts { margin-bottom: var(--space-4); }
 
 /* --------------------------------------------------------------- finding sheet */
 /* THE WHOLE SECTION THAT USED TO BE HERE IS GONE, P3.4b: a hand-built `.sheet-resize-handle`
@@ -359,15 +418,18 @@ td.num--key { font-weight: var(--fw-semibold); color: var(--ink); }
    dialog long enough to need them, and the domains editor here does, so this is a kept
    override rather than a drift. */
 dialog { max-height: 90vh; overflow-y: auto; }
+/* The split sheet's "Change domain…" form is sheet.css's `.domain-dialog__*`. */
+/* A settings row set into a dialog's prose (the Data page's purge confirmation). */
+.dialog-setting { margin: var(--space-3) 0; }
 /* Domains editor dialog: pin the heading and the Apply/Cancel row, scroll only the middle,
    so a domain with several rules keeps its actions reachable. */
 dialog.domains-dialog { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
-dialog.domains-dialog > h3 { margin: 0; padding: var(--space-4) var(--space-4) 10px; }
+dialog.domains-dialog > h3 { margin: 0; padding: var(--space-4) var(--space-4) var(--space-3); }
 dialog.domains-dialog .dialog-scroll {
   flex: 1 1 auto; overflow-y: auto; padding: 0 var(--space-4) var(--space-1);
 }
 dialog.domains-dialog .dialog-actions {
-  margin: 0; padding: 14px var(--space-4); border-top: 1px solid var(--hairline);
+  margin: 0; padding: var(--space-4); border-top: 1px solid var(--hairline);
 }
 
 /* ------------------------------------------------------------ domain editor rows */
@@ -379,20 +441,25 @@ dialog.domains-dialog .dialog-actions {
 .domain-row .grow { flex: 1; min-width: 0; }
 /* Compact inline buttons so the reorder/edit/delete cluster reads tighter than page-scale
    actions (no structural change — see domainsEditor.js renderList). */
-.domain-row button { min-height: 30px; padding: var(--space-1) 10px; }
-.domain-row__actions { display: flex; gap: 6px; flex: 0 0 auto; }
+.domain-row button { min-height: 30px; padding: var(--space-1) var(--space-3); }
+.domain-row__actions { display: flex; gap: var(--space-2); flex: 0 0 auto; }
+/* The "unsaved" pill's slot beside the Save button. */
+.dirty-slot { display: inline-flex; align-items: center; margin-left: var(--space-half); }
+/* The editor dialog's ANY/ALL sentence over the rules, and the prefilled asset line. */
+.rule-intro { margin: var(--space-3) 0; }
+.prefill-line { margin: var(--space-2) 0 var(--space-1); }
 
 /* -------------------------------------------------------------- subscription picker */
 .sub-picker {
   border: 1px solid var(--hairline); border-radius: var(--radius-md);
-  max-height: 180px; overflow-y: auto; padding: 6px var(--space-2); background: var(--page);
+  max-height: 180px; overflow-y: auto; padding: var(--space-2); background: var(--page);
 }
 /* ONE rule where the monolith had two: a later "value picker polish" block re-declared
    `.sub-picker label` with `padding: 3px 6px; border-radius` and won on source order
    alone. Folded together here so the winning padding is the only padding written. */
 .sub-picker label {
-  display: flex; align-items: center; gap: 6px; font-size: var(--fs-label);
-  cursor: pointer; padding: 3px 6px; border-radius: var(--radius-sm);
+  display: flex; align-items: center; gap: var(--space-2); font-size: var(--fs-label);
+  cursor: pointer; padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm);
 }
 .sub-picker label.claimed { opacity: 0.55; cursor: not-allowed; }
 .sub-picker label:hover:not(.claimed) { background: var(--surface); }
@@ -402,20 +469,13 @@ dialog.domains-dialog .dialog-actions {
 /* Folded from two rules the same way: the "in <domain>" owner reads as a chip. */
 .sub-owner {
   color: var(--text-2); font-size: var(--fs-micro); margin-left: auto; white-space: nowrap;
-  background: rgba(0, 0, 0, 0.06); border-radius: var(--radius-sm); padding: 1px 6px;
+  background: rgba(0, 0, 0, 0.06); border-radius: var(--radius-sm); padding: var(--space-half) var(--space-2);
 }
-.sub-add { display: flex; gap: 6px; margin-top: 6px; }
 
 /* --------------------------------------------------------------- settings panels */
 /* No description -> the body sits directly under the title with tighter rhythm. */
 .settings-panel__head:not(:has(.settings-panel__desc)) + .settings-panel__body {
   margin-top: var(--space-3);
-}
-/* Two labeled sub-blocks inside the Severity scope panel (scan scope / display filter),
-   split by a hairline so the coupled pair reads as one control with two zones. */
-.scope-block__note { margin: var(--space-1) 0 var(--space-2); }
-.scope-block--divided {
-  margin-top: var(--space-4); padding-top: var(--space-4); border-top: 1px solid var(--hairline);
 }
 /* Attribution: a table that runs edge-to-edge inside a .settings-panel card (cancels the
    panel's horizontal padding and drops the wrap's side borders) — a "card with a title and
@@ -461,11 +521,11 @@ dialog.domains-dialog .dialog-actions {
   background: var(--surface);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-lg);
-  padding: var(--space-3) 14px;
+  padding: var(--space-3) var(--space-4);
 }
 .rule-card__head {
   display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
-  margin-bottom: 10px;
+  margin-bottom: var(--space-3);
 }
 .rule-card__title {
   display: inline-flex; align-items: baseline; gap: var(--space-2);
@@ -477,17 +537,17 @@ dialog.domains-dialog .dialog-actions {
   font-size: var(--fs-micro); font-weight: var(--fw-medium); letter-spacing: 0; text-transform: none;
   color: var(--text-3);
 }
-.rule-card__remove, .cond-remove {
-  min-height: 0; padding: var(--space-half) 7px; font-size: var(--fs-label); line-height: 1;
+/* Same ✕ as the shared `.cond-remove` (components.css), minus its push to the row's end:
+   the rule card's remove sits in a header that already places it. */
+.rule-card__remove {
+  min-height: 0; padding: var(--space-half) var(--space-2); font-size: var(--fs-label); line-height: 1;
   background: none; border: 1px solid transparent; box-shadow: none;
   color: var(--text-3); border-radius: var(--radius-sm);
 }
-.rule-card__remove:hover, .cond-remove:hover {
-  background: rgba(0, 0, 0, 0.05); color: var(--ink); border-color: var(--hairline);
-}
+.rule-card__remove:hover { background: var(--wash-hover); color: var(--ink); border-color: var(--hairline); }
 
 /* OR divider between rule cards: a centered chip on a hairline (the rules are OR-ed). */
-.rule-or { display: flex; align-items: center; gap: 10px; margin: 10px var(--space-half); }
+.rule-or { display: flex; align-items: center; gap: var(--space-3); margin: var(--space-3) var(--space-half); }
 .rule-or::before, .rule-or::after {
   content: ""; flex: 1; height: 1px; background: var(--hairline);
 }
@@ -506,12 +566,21 @@ dialog.domains-dialog .dialog-actions {
   font-size: var(--fs-micro); font-weight: var(--fw-hero); letter-spacing: 0.05em; color: var(--text-3);
 }
 .cond-row select { min-height: 32px; }
-.cond-remove { margin-left: auto; }
 .cond-fields {
   flex: 1 1 100%; margin-left: 38px;
-  display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+  display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center;
 }
 .cond-fields input { min-height: 32px; }
+/* An inline add/edit field a step shorter than a page control: the value picker's and the
+   add row, and a condition's own text field (the access roster's is components.css's
+   `input.add-input`). `input.` so it outranks
+   base.css's `input[type="text"]` 36px; AFTER the rule above so it outranks that one too. */
+input.input-compact { min-height: 30px; }
+.sub-add > .input-compact { flex: 1; }
+.cond-text { margin-left: var(--space-2); }
+/* The value picker beside a condition's type select: takes the row, never under 220px. */
+.value-picker { flex: 1; min-width: 220px; }
+.sub-picker__empty { margin: var(--space-half) 0; }
 
 /* Dashed "add" affordances (real buttons, not text links). */
 .btn-add, .add-rule-btn {
@@ -532,7 +601,7 @@ dialog.domains-dialog .dialog-preview {
   flex: 0 0 auto; padding: var(--space-3) var(--space-4); border-top: 1px solid var(--hairline);
 }
 .rule-preview {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap;
   min-height: 36px; padding: var(--space-2) var(--space-3);
   background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius-md);
 }
@@ -588,13 +657,13 @@ dialog.domains-dialog .dialog-preview {
   box-shadow: var(--shadow-card);
   margin-bottom: var(--space-4);
 }
-.prog-rule-sentence { margin: 0 0 10px; font-size: var(--fs-body); }
+.prog-rule-sentence { margin: 0 0 var(--space-3); font-size: var(--fs-body); }
 .prog-clauses { list-style: none; margin: 0; padding: 0; }
 .prog-clauses li {
   display: flex;
   align-items: baseline;
-  gap: 10px;
-  padding: 6px 0;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
   border-top: 1px solid var(--hairline);
   font-size: var(--fs-label);
 }
@@ -604,40 +673,27 @@ dialog.domains-dialog .dialog-preview {
 .prog-method {
   margin: var(--space-6) 0 var(--space-2);
   border-top: 1px solid var(--hairline);
-  padding-top: 14px;
+  padding-top: var(--space-4);
 }
-.prog-method > summary {
-  cursor: pointer;
-  font-size: var(--fs-label);
-  font-weight: var(--fw-semibold);
-  color: var(--text-2);
-}
-.prog-method > summary:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
-.prog-method-list { margin: 14px 0 0; max-width: 78ch; font-size: var(--fs-label); }
+.prog-method-actions { margin-top: var(--space-3); }
+.prog-method-list { margin: var(--space-4) 0 0; max-width: 78ch; font-size: var(--fs-label); }
 .prog-method-list dt {
   font-weight: var(--fw-semibold);
   font-size: var(--fs-label);
   letter-spacing: 0.03em;
   text-transform: uppercase;
   color: var(--text-3);
-  margin-top: 14px;
+  margin-top: var(--space-4);
 }
 .prog-method-list dd { margin: var(--space-1) 0 0; color: var(--text-2); line-height: 1.55; }
 .prog-method-list code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: var(--fs-label);
   background: var(--surface);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-xs);
-  padding: 1px 5px;
+  padding: var(--space-half) var(--space-1);
 }
-
-/* ------------------------------------------------------------ settings: access */
-/* components.css carries .access-row and .access-row--locked; the two hover states are
-   this register's, because its roster is the only one with a locked owner row. */
-.access-row:hover { background: var(--surface-2); }
-/* No hover affordance and no remove control — nothing here is actionable. */
-.access-row--locked:hover { background: var(--surface); }
 
 /* -------------------------------------------------------------- settings: filter grid */
 /* The vendor-fix and end-of-life filters side by side, so neither is a full-bleed card for one
@@ -649,7 +705,7 @@ dialog.domains-dialog .dialog-preview {
 
 /* -------------------------------------------------------------- settings: risk breakdown */
 .risk-breakdown {
-  margin: 14px 0 var(--space-2); display: flex; flex-direction: column; gap: 6px;
+  margin: var(--space-4) 0 var(--space-2); display: flex; flex-direction: column; gap: var(--space-2);
 }
 .risk-row {
   display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3);
@@ -658,7 +714,7 @@ dialog.domains-dialog .dialog-preview {
 .risk-row__name { color: var(--ink); }
 .risk-row__count { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .risk-row__missing { color: var(--text-2); font-size: var(--fs-label); margin-left: var(--space-2); }
-.risk-sentence { margin: 10px 0 0; font-size: var(--fs-label); }
+.risk-sentence { margin: var(--space-3) 0 0; font-size: var(--fs-label); }
 .risk-sentence strong { font-variant-numeric: tabular-nums; }
 .risk-caveat, .risk-empty { margin: var(--space-1) 0 0; }
 /* The classifier's clause list gains a header, because its rows are the first place a reader
@@ -680,10 +736,21 @@ dialog.domains-dialog .dialog-preview {
   display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
   margin-bottom: var(--space-half);
 }
+/* The figures line under a job's status pill. */
+.job-detail { margin-top: var(--space-1); }
 table.data.jobs-table td:last-child { text-align: right; white-space: nowrap; }
 /* The status cell can carry a longer sentence (the domain-tag three-figure line, a failure
    message) than the table's default nowrap-ellipsis cell allows for. */
 table.data.jobs-table td.job-status-cell { white-space: normal; max-width: 420px; overflow: visible; }
+
+/* ------------------------------------------------------------ data & attribution */
+/* The Data page's "scoped to …" line, tucked under the page title it qualifies. */
+.scope-line { margin: calc(var(--space-half) * -1) 0 var(--space-2); }
+/* The report preview: its label, and the table a hairline step under it. */
+.report-preview__label { margin: var(--space-half) 0 var(--space-2); }
+.report-preview__table { margin-top: var(--space-1); }
+/* Attribution's "attributed by tag / by rule / …" line, pulled up under the KPI row. */
+.by-source-line { margin: calc(var(--space-1) * -1) 0 var(--space-4); }
 
 /* ---------------------------------------------------------------- the scope combobox */
 /* THIS PACKAGE'S OWN COMBOBOX FORK IS GONE (gas/src/client/js has no local combobox.js any
@@ -703,13 +770,18 @@ table.data.jobs-table td.job-status-cell { white-space: normal; max-width: 420px
 .combobox-option-hint { font-variant-numeric: tabular-nums; }
 
 /* ------------------------------------------------------------------- the empty chart */
-/* NOT an override of gas_shared/styles/tables.css `.chart-empty` — a genuinely different
-   shape, kept because this app draws it differently and P4 changed no chart code. The
-   shared rule REPLACES a plot: a 200px dashed block sized to match .chart-box. This one is
-   an OVERLAY — chartsLoader.js and the mttr/history pages append it INSIDE a `.chart-box`
-   (position: relative, height 240px) and toggle it while the canvas stays put. Taking the
-   shared rule would put a second 200px block under every chart. */
-.chart-empty {
+/* Two shapes under one class, told apart by WHERE the note sits. The shared rule
+   (tables.css) REPLACES a plot: a 200px dashed block sized to match .chart-box. Inside a
+   `.chart-box` (position: relative, 240px) the overview/mttr/history pages toggle the note
+   OVER a canvas that stays put, so there it is an overlay.
+
+   SCOPED TO `.chart-box >`, AND THAT IS THE FIX. This rule used to be a bare `.chart-empty`,
+   so it also caught `chartUnavailable` (chartsLoader.js), which REPLACES the `.chart-box`
+   with the note — leaving an absolutely positioned note with no positioned parent, pinned to
+   `.app-body` across the top of the page (the same escape history.js's comment records for
+   its own branch). Outside a box, the shared block now applies, which is the shape a
+   replaced chart wants. */
+.chart-box > .chart-empty {
   position: absolute; inset: 0; margin: 0;
   display: flex; align-items: center; justify-content: center;
   text-align: center; font-size: var(--fs-label); padding: 0 var(--space-5);

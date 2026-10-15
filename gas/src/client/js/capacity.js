@@ -97,7 +97,7 @@ export function renderCapacity(host, stats) {
   }));
 
   if (v.headroomVulns !== null) {
-    host.append(el("p", { class: "muted small", style: "margin:10px 0 0" },
+    host.append(el("p", { class: "muted small table-note table-note--loose" },
       `Room for about ${v.headroomVulns.toLocaleString()} more tracked ` +
       `vulnerabilit${v.headroomVulns === 1 ? "y" : "ies"} — ${v.rowCells} cells per ledger row.`));
   }

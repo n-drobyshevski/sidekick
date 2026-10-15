@@ -30,8 +30,7 @@ function modeCell(mode) {
   if (String(mode || "").includes("incremental")) {
     parts.push(el("span", { class: "domain-chip" }, "Incremental"));
   }
-  return el("span", { style: "display:inline-flex; gap:6px; align-items:center; flex-wrap:wrap" },
-    ...parts);
+  return el("span", { class: "inline-cluster inline-cluster--wrap" }, ...parts);
 }
 // The em dash for an unrecorded shape is the shared muted one, not a black one typed in
 // place: a scan whose shape the ledger never stored is not a scan whose shape is "—", and a
@@ -54,7 +53,7 @@ function deltaCell(n, { good = false, sign = "" } = {}) {
   const v = num(n, 0);
   if (!v) return el("span", { class: "muted num" }, "0");
   return el("span",
-    { class: "num", style: `color:var(--${good ? "ok" : "bad"})` },
+    { class: `num ${good ? "delta-good" : "delta-bad"}` },
     `${sign}${v.toLocaleString()}`);
 }
 
@@ -146,7 +145,7 @@ export async function renderHistory(main, _params, ctx) {
   const scansLabelHost = el("div", {});
   const scansHost = el("div", {});
   const movementHost = el("div", {});
-  const chartsHost = el("div", { class: "chart-grid", style: "margin-top:20px" });
+  const chartsHost = el("div", { class: "chart-grid history-charts" });
   main.append(
     noticeHost, freshLine, kpiLabelHost, kpiRow, scansLabelHost, scansHost,
     sectionLabel("What moved the number", { lines: [
@@ -169,7 +168,7 @@ export async function renderHistory(main, _params, ctx) {
   // fills the charts when it resolves — it never blocks the table. Both charts read
   // api_getMttrTrend scoped to the display severities. A placeholder stands in until the
   // first reconstruction resolves.
-  chartsHost.append(el("p", { class: "muted", style: "grid-column:1/-1" }, "Computing trends…"));
+  chartsHost.append(el("p", { class: "muted chart-row__full" }, "Computing trends…"));
   function loadTrends() {
     swrCall("api_getMttrTrend", { severities: scopeParam() }, paintTrends)
       .then(paintTrends)
@@ -351,7 +350,7 @@ export async function renderHistory(main, _params, ctx) {
         causeTable("Administrative", view.administrativeRows)),
     );
     if (view.asideRows.length) {
-      movementHost.append(el("ul", { class: "small", style: "margin:12px 0 0; padding-left:18px" },
+      movementHost.append(el("ul", { class: "small table-note table-note--loose indent-list" },
         ...view.asideRows.map((r) => el("li", {},
           `${r.label}: `, el("span", { class: "num" }, r.count.toLocaleString())))));
     }
@@ -470,7 +469,7 @@ export async function renderHistory(main, _params, ctx) {
             const when = el("span", {}, fmtDateTime(s.ts));
             if (s.scan_id !== newestId) return when;
             return el("span", {}, when,
-              el("span", { class: "domain-chip", style: "margin-left:8px" }, "Latest"));
+              el("span", { class: "domain-chip trail-chip" }, "Latest"));
           },
         },
         {
@@ -625,7 +624,7 @@ export async function renderHistory(main, _params, ctx) {
         body: el("div", {},
           el("p", {}, "The vulnerability ledger is rebuilt by replaying the surviving scans — " +
             "as if the deleted scans never happened. MTTR and trends are recomputed."),
-          el("ul", { class: "small", style: "margin:8px 0 0; padding-left:18px" },
+          el("ul", { class: "small table-note indent-list" },
             ...chosen.map((s) => el("li", {},
               `${fmtDateTime(s.ts)} — ${s.total.toLocaleString()} finding(s)` +
               (isSample(s.mode) ? " · sample" : "")))),
@@ -667,7 +666,7 @@ export async function renderHistory(main, _params, ctx) {
       return;
     }
     if (anySample) {
-      chartsHost.append(el("p", { class: "section-note", style: "grid-column:1/-1" },
+      chartsHost.append(el("p", { class: "section-note chart-row__full" },
         "Includes sample (dry-run) data — these trends aren't all from live scans."));
     }
     // KM median trend — the same censoring-aware series the MTTR page plots (still-open

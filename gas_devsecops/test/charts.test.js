@@ -108,7 +108,6 @@ function drawEverything(charts) {
     { CRITICAL: [1, 2], HIGH: [0, 1] },
     SEV_PALETTE, "desc",
   );
-  charts.sparkline(c(), [1, 2, 3, 2, 4], { color: "#6b7280" });
   charts.severityTrendLines(
     c(),
     [

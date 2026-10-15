@@ -342,7 +342,7 @@ export function queryBar(opts) {
           class: "filter-chip-x",
           "aria-label": "Remove filter " + text + " from " + kindsLabel(row.kinds),
           onclick: () => removeFilter(query, row, key),
-        }, "×"),
+        }, "✕"),
       ));
     }
     return wrap;
